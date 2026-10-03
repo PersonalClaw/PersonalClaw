@@ -131,6 +131,11 @@ started stops with it: a batch of tasks it handed to `subagent_run`, a backgroun
 started, and the approvals they were waiting on. Each says its chat turn was stopped. What an
 earlier turn of the chat started goes on.
 
+A process a command leaves running in the background is different: it lasts as long as its
+turn, so it ends when the turn ends, stopped or not, even a server that detached itself from the
+command. A loop's lasts as long as the loop, and an agent CLI's as long as the CLI's process for
+that chat.
+
 ### Changing the agent while it answers
 
 Picking another agent, agent CLI, model or reasoning effort while a turn runs — in the

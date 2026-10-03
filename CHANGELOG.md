@@ -184,6 +184,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Stopping a loop or a chat's turn ends the processes its commands left running in the background, a server that detached itself included (a test fixture's database ran on for hours after its loop was stopped), and so does the turn's own end, a loop's ending, an automation's command exiting, a workflow's workspace teardown and an agent CLI's process ending.**
 - **Core's test suite builds images, runs containers and starts the Compose stack only where `PERSONALCLAW_TEST_CONTAINER_RUNTIME=1` is set (CI sets it), and names a test that would otherwise; the programs a test starts keep their caches, logs and shell history in its own folder, and every test loads libraries the way every `personalclaw` command does.**
 - **Each deep-research run keeps its RESEARCH.md in its own folder, and its rounds, its judge and its Document panel all read that one file: a new run starts empty instead of from the last run's report, and continues an earlier run only when its `continue_from` input names it.**
 - **With several tool servers set up, the agent still sees every one of PersonalClaw's own tools: a turn's catalog names each of its groups, what it is for and all its tools first, your servers and apps share the room left, the tools your request is about first, and a last line says what was left out and that `tool_search` finds it. The catalog no longer runs past its size, and `tool_search` cuts its answer after leaving out what the run is not shown.**

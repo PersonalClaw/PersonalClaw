@@ -94,15 +94,28 @@ class CancelScope:
         # kill path must never target a pid this scope did not spawn.
         self._children: dict[int, Any] = {}
         self._report = StopReport()
+        # The marker this turn's commands carry (``run_processes``), whether they are its loop's
+        # rather than its own, and how many carried it: a turn that ran none has nothing to find.
+        self._run_mark = ""
+        self._run_kept = False
+        self._commands = 0
 
     # ── turn lifecycle ──
 
-    def begin_turn(self) -> None:
-        """Arm the scope for a fresh turn. Clears the previous turn's signal+report."""
+    def begin_turn(self, run_owner: str = "turn") -> None:
+        """Arm the scope for a fresh turn. Clears the previous turn's signal+report.
+
+        *run_owner* says whose its commands are (``run_processes.turn_owner``): the turn's own, or
+        a loop worker's loop's."""
+        from personalclaw import run_processes
+
         self._reason = ""
         self._turn_active = True
         self._children.clear()
         self._report = StopReport()
+        self._run_mark = run_processes.mark(run_owner)
+        self._run_kept = run_owner != run_processes.TURN
+        self._commands = 0
 
     def end_turn(self) -> None:
         """The turn is over.
@@ -111,9 +124,22 @@ class CancelScope:
         event and the surface that renders the stop both read them AFTER the turn
         ends. What it does clear is ``_turn_active``, which is what makes a later
         stop a no-op instead of a lie.
-        """
+
+        What the turn's commands left running ends with it, unless they are its loop's and the
+        turn was not stopped: a loop's ending ends those (``run_processes``)."""
         self._turn_active = False
         self._children.clear()
+        if self._commands and (not self._run_kept or self.cancelled):
+            from personalclaw import run_processes
+
+            run_processes.end_soon(self._run_mark)
+
+    def command_started(self) -> str:
+        """The marker a command this turn starts carries, counted; ``""`` outside a turn."""
+        if not self._turn_active:
+            return ""
+        self._commands += 1
+        return self._run_mark
 
     # ── state ──
 
@@ -174,7 +200,12 @@ class CancelScope:
         self._children.pop(int(pid), None)
 
     async def reap_children(self) -> int:
-        """Terminate AND reap every tracked child. Returns the number reaped.
+        """Terminate AND reap every tracked child, and set going the end of what the turn's
+        commands started that left their process group (``run_processes``). Returns the number of
+        children reaped.
+
+        That end is not waited for: a stop answers as soon as the work it reached is stopped, and
+        the turn's own end (its transcript among it) must come after that answer, not race it.
 
         The children are popped BEFORE the first signal, so a concurrent second stop
         finds nothing to kill — the idempotence the atom asks for lives here, not in
@@ -196,6 +227,10 @@ class CancelScope:
         self._report.children_reaped += reaped
         if procs:
             logger.info("cancel: reaped %d/%d child process(es) on stop", reaped, len(procs))
+        if self._commands:
+            from personalclaw import run_processes
+
+            run_processes.end_soon(self._run_mark)
         return reaped
 
     # ── report accumulation ──

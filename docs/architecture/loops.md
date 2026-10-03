@@ -243,6 +243,17 @@ down) is cancelled before it is driven again — never resumed, re-provisioned o
 loop has not ended, and its children go on, except what the cycle its pause stopped had started:
 that ends with the cycle's turn, saying "its loop “…” was paused" (`started_work.end_turn`, the one
 rule a loop's ending, a chat turn's Stop and a workflow run's ending share).
+Every ending also ends the processes its workers' commands left running, wherever they went
+(`run_processes`). Each command a worker's turn runs carries `PERSONALCLAW_RUN`, which names the
+worker it ran for (`loop-<id>`, `loop-<id>-<task>`) and which a server that detached itself (it
+left the command's process group and session, as a test fixture's database does) still carries;
+`end_run` ends every process carrying one of the loop's, SIGTERM then SIGKILL after a grace. A
+cycle's turn ending leaves them running (a server the next cycle tests), a task worker's teardown
+ends its own, and a pause or a Stop of the turn in flight ends what that turn's commands started.
+A process whose environment the system does not show (on macOS, its own programs: a shell,
+`sleep`) is found through the process group its command led, while it is still in it. A loop's
+agent CLI process carries the loop's marker too, so it ends with the loop, and so does what its
+commands detached.
 A restart re-arm keeps the running
 stretch's `started_at` (the trust window and deadline are measured from it), and the watchdog's
 credited-cycle baseline is durable (`credited.json`), so a restart neither resets elapsed time nor

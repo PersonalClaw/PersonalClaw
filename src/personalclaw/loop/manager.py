@@ -617,7 +617,8 @@ async def end_run(state, svc, loop_id: str, *, discard: bool = False) -> None:
       discard (``loop.kept_work``). Only a delete discards them, and its dialog says so.
     * What its workers started outside their turns (a batch run, a background subagent) ends
       with it, saying how the loop ended, a failed loop's too: nothing would read what it found
-      (``children.end_children``).
+      (``children.end_children``). So does every process their commands left running, wherever
+      it went: a server a cycle started, a database a test fixture detached (``run_processes``).
     * A task a worker held in progress goes back to open: no worker holds it now.
     * A loop that cannot be resumed runs nothing again, so nothing of it stays queued; a failed
       loop keeps its queue for Resume.
@@ -626,6 +627,7 @@ async def end_run(state, svc, loop_id: str, *, discard: bool = False) -> None:
       (``loop.kept_work``).
     * The loop's Tasks stay: only a delete removes them (:func:`teardown_for_delete`).
     """
+    from personalclaw import run_processes
     from personalclaw.loop import children, tasks_link
     from personalclaw.loop.plan_walkthrough import planner_session_key
 
@@ -638,6 +640,8 @@ async def end_run(state, svc, loop_id: str, *, discard: bool = False) -> None:
         await children.end_children(state, loop_id, why=why)
     await halt_turn(state, planner_session_key(loop_id))
     await halt_worker_turns(state, loop_id)
+    # After the turns: a stopped turn has ended what it was running, and nothing starts more.
+    await run_processes.end_owned(run_processes.loop_owns(loop_id))
     loop = store.get(loop_id)
     if loop is not None and not kept_for_resume:
         await _settle_worktrees(loop, discard=discard)
@@ -948,7 +952,9 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
 async def teardown_task_worker(svc, loop_id: str, task_id: str) -> None:
     """Remove a finished/cancelled task-worker's loop + clear its per-task guidance
     (so stale steering isn't re-applied on a later re-queue). A task the worker leaves
-    unfinished goes back to open, so a resumed loop can take it again."""
+    unfinished goes back to open, so a resumed loop can take it again, and what its worker's
+    commands left running ends with it (``run_processes``)."""
+    from personalclaw import run_processes
     from personalclaw.loop import tasks_link
 
     nudge_loop = svc.get_by_session(task_session_key(loop_id, task_id))
@@ -956,6 +962,7 @@ async def teardown_task_worker(svc, loop_id: str, task_id: str) -> None:
         await svc.remove(nudge_loop.id)
     loop_files.clear_task_guidance(loop_id, task_id)
     await tasks_link.release_in_progress(loop_id, task_ids=[task_id])
+    await run_processes.end_owned(run_processes.loop_owns(loop_id, task_id))
 
 
 def _is_parallel(loop: Loop) -> bool:

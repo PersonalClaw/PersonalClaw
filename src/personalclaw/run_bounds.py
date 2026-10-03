@@ -131,17 +131,21 @@ CURRENT_SCRATCH: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 
-def shell_env(*, site: str) -> dict[str, str]:
+def shell_env(*, site: str, run: str = "") -> dict[str, str]:
     """The environment a run's shell starts with: the child allowlist
     (``sandbox.build_child_env``) and, when the run has its own temporary folder, that folder as
     ``TMPDIR``, so the scratch files a command makes (``mktemp -d``, a program's temporary files)
-    land where it may write."""
+    land where it may write. *run* is the run's marker (``run_processes``), which everything the
+    command starts inherits, so what it leaves running ends with the run."""
+    from personalclaw.run_processes import RUN_VARIABLE
     from personalclaw.sandbox import build_child_env
 
     env = build_child_env(site=site)
     scratch = CURRENT_SCRATCH.get()
     if scratch:
         env["TMPDIR"] = scratch
+    if run:
+        env[RUN_VARIABLE] = run
     return env
 
 

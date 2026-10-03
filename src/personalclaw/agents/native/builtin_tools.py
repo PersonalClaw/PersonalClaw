@@ -25,7 +25,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from personalclaw import cancellation, run_bounds
+from personalclaw import cancellation, run_bounds, run_processes
 from personalclaw.agents.native import read_gate
 from personalclaw.agents.native.decision_tool_defs import decision_tool_definitions
 from personalclaw.agents.native.inbox_tool_defs import (
@@ -756,8 +756,10 @@ class NativeBuiltinToolProvider(ToolProvider):
                     "is reported. Sandboxed + credential/exfiltration deny-list enforced. To use a "
                     "credential the user stored in Settings → Secrets, write {{secret:NAME}} where "
                     "its value goes: the value is filled in when the command runs and is masked in "
-                    "the output, so you never see it. Args: command (str), optional timeout (int "
-                    "seconds, default 120, max 600 — raise it for a slow test suite or build)."
+                    "the output, so you never see it. What a command leaves running in the "
+                    "background is stopped when this turn ends (in a loop, when the loop ends). "
+                    "Args: command (str), optional timeout (int seconds, default 120, max 600 — "
+                    "raise it for a slow test suite or build)."
                 ),
                 parameters={
                     **s,
@@ -1650,6 +1652,7 @@ class NativeBuiltinToolProvider(ToolProvider):
             return refused
         argv = ["bash", "-lc", command]
         wrapped, cleanup = wrap_argv(argv, mode=self._sandbox_mode)
+        run, proc = run_processes.command(), None
         try:
             # Resource ceiling: the native bash tool is the most direct
             # agent-influenced spawn — deliver the ``tool`` ceiling via the post-exec
@@ -1664,8 +1667,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                 # The agent's command runs with the child allowlist (`build_child_env`), like a
                 # hook or a cron script, never with a copy of the gateway's environment: the
                 # gateway holds every secret saved in PersonalClaw. `bash -l` still reads the
-                # owner's login profile, so the shell is set up the way theirs is.
-                env=run_bounds.shell_env(site="native-bash"),
+                # owner's login profile. What it starts inherits its run's marker, so what it
+                # leaves running ends with the turn, or its loop (`run_processes`).
+                env=run_bounds.shell_env(site="native-bash", run=run.mark),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 # Its own process group. Two reasons, both load-bearing:
@@ -1708,6 +1712,8 @@ class NativeBuiltinToolProvider(ToolProvider):
                     Path(cleanup).unlink(missing_ok=True)
                 except OSError:
                     pass
+            if proc is not None:
+                await run.ended(proc.pid)
         # Masked before it is projected or retained: the values this tool handed the command, which
         # no pattern can recognise, and then what the patterns do (`project_and_retain`'s reason).
         raw = security.redact_for_model(

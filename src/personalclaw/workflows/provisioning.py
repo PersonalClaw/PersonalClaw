@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import run_processes
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.security import mask_child_output
 from personalclaw.workflows import worktrees
@@ -368,8 +369,12 @@ async def run_step(
     runner: Any = None,
     timeout: float = STEP_TIMEOUT_SECS,
     durable_session: str = "",
+    run_id: str = "",
 ) -> tuple[bool, str]:
     """Run one setup/teardown step in `cwd`. Returns `(ok, detail)`.
+
+    A step of workflow run *run_id* carries the run's marker (``run_processes``): a service its
+    setup starts runs until the run's teardown, which ends what is still running then.
 
     Deliberately the same shape and the same guarantees as `effects.run_teardown`, which is the
     established pattern for executing an author-declared command: `shlex.split` with NO shell (a
@@ -415,6 +420,10 @@ async def run_step(
     # env (`build_child_env`), like a hook or a cron script, never with a copy of the gateway's
     # environment and every secret saved in PersonalClaw. The durable path gives it the same.
     spawn_env = build_child_env(site="workflow-step", extra=env)
+    if run_id:
+        spawn_env[run_processes.RUN_VARIABLE] = run_processes.mark(
+            run_processes.workflow_owner(run_id)
+        )
 
     if durable_session and _durable_enabled():
         try:
@@ -655,6 +664,7 @@ async def provision(
             out,
             runner=runner,
             durable_session=durable_session if out.isolated else "",
+            run_id=run_id,
         )
     return out
 
@@ -1014,6 +1024,7 @@ async def _run_setup(
     *,
     runner: Any = None,
     durable_session: str = "",
+    run_id: str = "",
 ) -> None:
     """Execute the pending setup steps, marking each done as it succeeds.
 
@@ -1030,7 +1041,7 @@ async def _run_setup(
     env = worktrees.worktree_env(root)
     for step in to_run:
         ok, detail = await run_step(
-            step, root, env=env, runner=runner, durable_session=durable_session
+            step, root, env=env, runner=runner, durable_session=durable_session, run_id=run_id
         )
         if ok:
             out.setup_ran.append(step)
@@ -1128,10 +1139,16 @@ async def teardown(
     plan = worktrees.plan_teardown(
         teardown=spec_teardown, ephemeral=isolated and not state.get("name"), keep_open=keep_open
     )
+    run_id = str(getattr(run, "id", "") or "")
     if alive and spec_teardown:
         for step in worktrees.setup_steps(spec_teardown):
-            ok, detail = await run_step(step, path, runner=runner)
+            ok, detail = await run_step(step, path, runner=runner, run_id=run_id)
             (out.ran if ok else out.failed).append(step if ok else f"{step}: {detail}"[:500])
+    # What its setup and teardown started and is still running ends now, after the teardown had
+    # its chance to stop it cleanly: a server that detached, whatever the teardown said.
+    if run_id:
+        its_own = run_processes.workflow_owner(run_id)
+        await run_processes.end_owned(lambda owner: owner == its_own)
 
     # Work that cannot be committed (git has no identity to commit it as here) is not deleted
     # with its folder: the folder is kept, and the teardown says why.

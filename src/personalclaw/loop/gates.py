@@ -15,7 +15,8 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from personalclaw.cancellation import kill_timed_out
+from personalclaw import run_processes
+from personalclaw.cancellation import kill_timed_out, terminate_and_reap
 from personalclaw.security import mask_child_output
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,8 @@ async def run_verify_command(
         # preexec_fn: the limit is applied after exec, off the event loop's fork.
         from personalclaw.sandbox import PROFILE_TOOL, build_child_env, create_subprocess_limited
 
+        # A check is a run of its own: what it starts (a test suite's server) ends when it exits.
+        run = run_processes.own()
         proc = await create_subprocess_limited(
             "/bin/sh",
             "-c",
@@ -155,7 +158,7 @@ async def run_verify_command(
             cwd=cwd or None,
             # The loop's persisted command, so the child allowlist (`build_child_env`), like a
             # cron script: never a copy of the gateway's environment and the secrets in it.
-            env=build_child_env(site="loop-verify"),
+            env=build_child_env(site="loop-verify", extra={run_processes.RUN_VARIABLE: run.mark}),
             # What it prints and what it reports as an error, as they came, so its report shows
             # the end a person reads (a test runner's summary, a command's error).
             stdout=asyncio.subprocess.PIPE,
@@ -184,6 +187,12 @@ async def run_verify_command(
             f"it was still running after {_seconds(VERIFY_TIMEOUT_SECS)}, so it was stopped"
         )
         return None
+    except asyncio.CancelledError:
+        # The loop stopped while its check ran: the check is not the task's to abandon.
+        await terminate_and_reap(proc)
+        raise
+    finally:
+        await run.ended(proc.pid)
     rc = proc.returncode
     report.exit_code = rc
     report.output = mask_child_output(printed, limit=CHECK_OUTPUT_TAIL, tail=True, one_line=False)

@@ -5218,6 +5218,11 @@ class GatewayOrchestrator:
         from personalclaw.session import cleanup_orphaned_sessions
 
         cleanup_orphaned_sessions()
+        # And what a run of this home had started that no run holds now: a turn's or a command's
+        # left by the gateway's last life (a restart, a crash), an ended loop's (`run_processes`).
+        from personalclaw import run_processes
+
+        await asyncio.to_thread(run_processes.end_what_no_run_holds)
 
         # ── Initialise all services ──
         self._init_services()
@@ -5475,8 +5480,12 @@ class GatewayOrchestrator:
                 "The stop failed (%s); %s anyway", error or "cancelled", then, exc_info=error
             )
 
-        # Kill any ACP agent processes that survived graceful shutdown
+        # Kill any ACP agent processes that survived graceful shutdown, and what the turns and
+        # commands this gateway ran left running (`run_processes`): none of them outlives it.
         cleanup_orphaned_sessions()
+        from personalclaw import run_processes
+
+        run_processes.end_what_no_run_holds()
         restart = restart_request.pending()
         if restart is not None:
             print("Restarting…")

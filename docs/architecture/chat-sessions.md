@@ -513,7 +513,9 @@ waits for the agent's answer (`agent.soft_stop_budget_secs`). An agent that
 answers keeps its process for the chat's next turn; one that does not is killed,
 and nothing starts in its place until a turn needs one. Between turns an agent
 CLI's process stays up for the chat's next turn until it has been idle for
-`session.timeout_secs`.
+`session.timeout_secs`. What its commands start inherits the process's own run marker
+(`run_processes`), so what they leave running, a server that detached itself included, ends
+when that process is taken down; a loop worker's ends with its loop.
 
 An agent's JSON-RPC error is said in its own words — its message and data,
 masked like any child's output (`acp/errors.py`, `AcpRequestError`) — and a

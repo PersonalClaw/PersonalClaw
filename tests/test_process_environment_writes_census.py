@@ -43,6 +43,10 @@ _AS_A_COMMAND_STARTS: dict[str, str] = {
         "client that asks the egress guard: its downloads, and its children's, are refused"
     ),
     "gateway_base.py::publish": "the port the gateway bound, once, right after it binds",
+    "run_processes.py::end_what_no_run_holds": (
+        "a run marker of this home the gateway was started with, dropped as it starts: it is no "
+        "run's, and the children it starts with its own environment must not carry it"
+    ),
 }
 
 _MIRRORS_THE_CREDENTIAL_STORE: dict[str, str] = {

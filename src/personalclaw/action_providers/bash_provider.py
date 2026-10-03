@@ -2,7 +2,9 @@
 
 Runs ``/bin/sh -c <command>`` with ``PERSONALCLAW_HOOK_EVENT`` and
 ``PERSONALCLAW_HOOK_CONTEXT`` env vars, the structured event dict piped to
-STDIN as JSON, process-group isolation, and timeout-driven SIGKILL.
+STDIN as JSON, process-group isolation, and timeout-driven SIGKILL. Each command is a run of
+its own (``run_processes``): what it leaves running, a server that detached included, ends when
+it exits.
 """
 
 import asyncio
@@ -13,12 +15,13 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import run_processes
 from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
     ActionResult,
 )
-from personalclaw.cancellation import kill_timed_out
+from personalclaw.cancellation import kill_timed_out, terminate_and_reap
 from personalclaw.env import PROGRAM_RESOLUTION_NAMES
 
 if TYPE_CHECKING:
@@ -67,6 +70,8 @@ PROTECTED_ENV_NAMES: frozenset[str] = PROGRAM_RESOLUTION_NAMES | {
     "PERSONALCLAW_WORKSPACE",
     "PERSONALCLAW_HOOK_EVENT",
     "PERSONALCLAW_HOOK_CONTEXT",
+    # the run the command is, read back to end what it started
+    run_processes.RUN_VARIABLE,
 }
 
 
@@ -218,16 +223,18 @@ class BashActionProvider(ActionProvider):
 
         start = time.monotonic()
         # The allowlisted base, plus the values this site COMPUTES (never inherits): the
-        # trigger's `$variables` and the hook event/context the contract promises. The
-        # payload keys have already passed `PROTECTED_ENV_NAMES`, so a payload cannot
-        # shadow PATH or a loader variable; `build_child_env` applies the credential floor
+        # trigger's `$variables`, the hook event/context the contract promises and the command's
+        # run marker. The payload keys have already passed `PROTECTED_ENV_NAMES`, so a payload
+        # cannot shadow PATH or a loader variable; `build_child_env` applies the credential floor
         # to these too, so it cannot set an AWS session either.
+        run = run_processes.own()
         env = build_child_env(
             site="bash-action",
             extra={
                 **payload_env,
                 "PERSONALCLAW_HOOK_EVENT": ctx.event,
                 "PERSONALCLAW_HOOK_CONTEXT": ctx.context,
+                run_processes.RUN_VARIABLE: run.mark,
             },
         )
         argv = ["/bin/sh", "-c", command]
@@ -275,6 +282,12 @@ class BashActionProvider(ActionProvider):
                 error=f"Timed out after {timeout}s",
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
+        except asyncio.CancelledError:
+            # Cancelled while it runs (its workflow run was stopped, the gateway is stopping): the
+            # command is not the task's to abandon, so it is ended and collected first.
+            if proc is not None:
+                await terminate_and_reap(proc)
+            raise
         except Exception as exc:
             return ActionResult(
                 success=False,
@@ -287,6 +300,8 @@ class BashActionProvider(ActionProvider):
                     os.unlink(cleanup_path)
                 except OSError:
                     pass
+            if proc is not None:
+                await run.ended(proc.pid)
 
 
 def create_provider(config: dict[str, Any] | None = None) -> "BashActionProvider":

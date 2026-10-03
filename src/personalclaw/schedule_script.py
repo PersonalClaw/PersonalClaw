@@ -31,7 +31,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from personalclaw import gateway_base
+from personalclaw import gateway_base, run_processes
 from personalclaw.config import loader as config_loader
 from personalclaw.hooks import validate_file_path
 from personalclaw.mcp_core import InternalSecretUnavailable, _internal_secret
@@ -374,8 +374,11 @@ def run_script_sandboxed(
         # variable rides along either. What this replaced was a denylist of exactly one
         # prefix (`PERSONALCLAW_SECRET`), which left every other inherited variable —
         # including the `.env` credentials `config/loader.py` seeds into `os.environ` for
-        # "trusted children" — readable by a user script via `os.environ`.
-        env = build_child_env(site="cron-script")
+        # "trusted children" — readable by a user script via `os.environ`. The one value added is
+        # the script's run marker: what it starts, a server that detached included, ends when it
+        # exits (`run_processes`).
+        run = run_processes.own()
+        env = build_child_env(site="cron-script", extra={run_processes.RUN_VARIABLE: run.mark})
         try:
             proc = subprocess.run(
                 wrapped,
@@ -392,6 +395,7 @@ def run_script_sandboxed(
                     os.unlink(cleanup)
                 except OSError:
                     pass
+            run_processes.end_now(run.mark)
         result = _parse_launcher_output(proc.stdout)
         if result.get("status") == "error" and proc.returncode != 0 and not result.get("error"):
             result["error"] = (proc.stderr or "script failed")[:4000]

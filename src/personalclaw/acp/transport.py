@@ -260,6 +260,7 @@ class AcpProcess:
         self._pgid: int | None = None  # process-group id recorded at spawn
         self._start_time: int | None = None  # start time for PID-recycle detection
         self._child_pids: dict[int, int | None] = {}  # pid → start_time snapshot
+        self._run_mark = ""  # the run marker the process and what it starts carry
         self._sandbox_handle: object | None = None
         self._stderr_lines: deque[str] = deque(maxlen=20)
         self._stderr_task: asyncio.Task | None = None  # type: ignore[type-arg]
@@ -391,6 +392,12 @@ class AcpProcess:
                 computed[name] = value
             else:
                 computed.pop(name, None)
+        # The CLI's own run marker (`run_processes`): what its commands start inherits it, so what
+        # they leave running ends when this process is taken down (`teardown`), or with its loop.
+        from personalclaw import run_processes
+
+        self._run_mark = run_processes.mark(run_processes.agent_owner(self._session_key or ""))
+        computed[run_processes.RUN_VARIABLE] = self._run_mark
         env = build_child_env(
             site="acp-agent",
             extra=computed,
@@ -532,8 +539,14 @@ class AcpProcess:
 
     def teardown(self) -> None:
         """Release process resources after it's dead: close pipes, unlink the
-        sandbox temp profile, cancel the stderr task, untrack PIDs, null state.
+        sandbox temp profile, cancel the stderr task, untrack PIDs, null state, and end what its
+        commands left running wherever it went (``run_processes``).
         (The turn/reader-state reset stays with the owning turn loop.)"""
+        if self._run_mark:
+            from personalclaw import run_processes
+
+            run_processes.end_soon(self._run_mark)
+            self._run_mark = ""
         if self._process:
             for pipe in (self._process.stdin, self._process.stdout, self._process.stderr):
                 if pipe:

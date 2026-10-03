@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import cancellation, run_bounds
+from personalclaw import cancellation, run_bounds, run_processes
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate, refusal_of
@@ -868,7 +868,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         context-built turn-0 prompt the chat runner already assembled)."""
         self._turn_seq += 1
         turn = self._turn_seq
-        self._cancel.begin_turn()
+        self._cancel.begin_turn(run_processes.turn_owner(self._session_key))
         self._breaker.reset()
         self._stop_note = ""
         self._steers_injected = 0

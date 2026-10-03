@@ -36,7 +36,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from personalclaw.cancellation import kill_timed_out
+from personalclaw import run_processes
+from personalclaw.cancellation import kill_timed_out, terminate_and_reap
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows import store
 from personalclaw.workflows.models import Failure, FailureClass
@@ -287,8 +288,13 @@ async def run_teardown(
     from personalclaw.sandbox import PROFILE_TOOL, build_child_env, create_subprocess_limited
 
     # Workflow-authored, so the child allowlist and the output id (`build_child_env`), like a
-    # hook or a cron script: never a copy of the gateway's environment and the secrets in it.
-    env = build_child_env(site="workflow-teardown", extra={"EFFECT_OUTPUT_ID": output_id})
+    # hook or a cron script: never a copy of the gateway's environment and the secrets in it. It
+    # is a run of its own (`run_processes`): what it leaves running ends when it exits.
+    run = run_processes.own()
+    env = build_child_env(
+        site="workflow-teardown",
+        extra={"EFFECT_OUTPUT_ID": output_id, run_processes.RUN_VARIABLE: run.mark},
+    )
 
     try:
         # start_new_session: a teardown command is workflow-authored text, so it is
@@ -312,6 +318,11 @@ async def run_teardown(
             # timed-out teardown. The owner signals the group and reaps under a bound.
             await kill_timed_out(proc)
             return False, f"teardown timed out after {timeout}s"
+        except asyncio.CancelledError:
+            await terminate_and_reap(proc)
+            raise
+        finally:
+            await run.ended(proc.pid)
     except FileNotFoundError:
         return False, f"teardown command not found: {argv[0]}"
     except OSError as exc:
