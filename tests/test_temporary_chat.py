@@ -122,11 +122,13 @@ class TestIsRestrictedSession:
 
         assert _is_restricted_session(state, self._mock_request("dashboard:chat-1-def")) is False
 
-    def test_dashboard_restricted_key_set(self):
+    def test_a_dashboard_chat_the_gateway_does_not_hold_is_restricted(self):
+        """A chat the gateway does not hold and nothing records, as a Temporary chat is once it
+        has ended while its agent's tool still calls in: nothing can say what it allows."""
         from personalclaw.dashboard.handlers import _is_restricted_session
 
         state = MagicMock()
-        state._restricted_keys = {"dashboard:chat-1-eph"}
+        state._restricted_keys = set()
         state._sessions = {}
 
         assert _is_restricted_session(state, self._mock_request("dashboard:chat-1-eph")) is True

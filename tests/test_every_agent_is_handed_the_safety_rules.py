@@ -347,11 +347,25 @@ async def test_an_emptied_snippet_leaves_the_shipped_rules_in_place(tmp_path):
 # ── agents no chat runs ──────────────────────────────────────────────────────────────────────
 
 
+def _a_run_record(run_id: str) -> None:
+    """The record a workflow run has from its start: the run is created in the run store before
+    its first stage is dispatched (``workflows.service.start_run``), and a stage's mode is read
+    from the run its session names (``memory_writes.session_mode``)."""
+    from personalclaw.workflows import store
+    from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+    store.create(WorkflowRun(id=run_id, workflow_name="weekly-release", status=RunStatus.RUNNING))
+
+
 def _spawned(tmp_path: Path, **spawn) -> str:
     """What a spawned agent's model is handed: the real manager, assembler and runtime."""
     from personalclaw.subagent import SubagentManager
+    from personalclaw.workflows import ownership
 
     _install({AGENT: {"provider": "native", "system_prompt": OWN_PROMPT}})
+    stage = ownership.parse_owned(spawn.get("parent_session_key", ""))
+    if stage is not None:
+        _a_run_record(stage[0])
     sessions = _Sessions(tmp_path)
     manager = SubagentManager(
         sessions=sessions.manager(), ctx_builder=_builder(tmp_path), is_yolo=lambda: True

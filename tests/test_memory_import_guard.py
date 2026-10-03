@@ -12,19 +12,23 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
+from personalclaw import memory_writes
 from personalclaw.cli_commands import _memory_cmd
 from personalclaw.dashboard.handlers.memory import (
+    api_memory_consolidate,
     api_memory_import,
     api_memory_migrate,
     api_memory_promote,
     api_memory_vault_sync,
 )
+from personalclaw.workflows import ownership
 
 # The five shapes measured against a live gateway — all of them used to 500.
 NON_OBJECT_BODIES = [[], "a string", 42, None, True]
@@ -172,7 +176,20 @@ def test_cli_import_still_accepts_an_object_file(_home, capsys):
 # explicitly promised memory writes are OFF. The fix copies ``api_memory_import``'s
 # guard verbatim (403 + ``sel.log_api_access(..., outcome="denied")``).
 
-RESTRICTED_KEY = "dashboard:e1"
+RESTRICTED_CHAT = "e1"
+RESTRICTED_KEY = f"dashboard:{RESTRICTED_CHAT}"
+
+
+def _state(*chats: tuple[str, str]):
+    """The dashboard state the gateway holds, with these chats live in it, by name and in their
+    mode, as it holds a chat from its creation on. The guard reads a chat's mode there first
+    (``memory_writes.session_mode``), before its transcript exists."""
+    from personalclaw.dashboard.state import DashboardState
+
+    state = DashboardState(sessions=MagicMock(count=0), start_time=0.0)
+    for name, mode in chats:
+        state.get_or_create_session(name, memory_mode=mode)
+    return state
 
 
 class _WriteStore:
@@ -192,31 +209,34 @@ class _WriteStore:
         return 3
 
 
-def _restricted_request(path, monkeypatch):
-    """A POST from a restricted session, with the provider/service and ``_sel``
-    stubbed so a fired guard touches NOTHING (never a real home).
-
-    ``_is_restricted_session`` returns True on the first check (``sk in
-    state._restricted_keys``), so a real set on the mock state is enough to arm the
-    gate while keeping the file's ``MagicMock`` state + ``make_mocked_request``
-    harness.
-    """
+def _stub_the_writes(monkeypatch):
+    """The provider, the memory service and ``_sel`` stubbed, so a fired guard touches NOTHING
+    (never a real home) and what it audits is kept."""
     provider = MagicMock()
     service = MagicMock()
     monkeypatch.setattr("personalclaw.dashboard.handlers.memory._get_provider", provider)
     monkeypatch.setattr("personalclaw.dashboard.handlers.memory._get_service", service)
     audit = MagicMock()
     monkeypatch.setattr("personalclaw.dashboard.handlers.memory._sel", lambda: audit)
+    return provider, service, audit
 
+
+def _restricted_request(path, monkeypatch, mode):
+    """A POST from a Temporary or Incognito chat's session, with the writes stubbed.
+
+    The chat is live in the gateway's state, as the gateway holds it from its creation on: the
+    record the guard reads first. A mock state holds no chats to read, so the guard would find no
+    record of the chat at all and read its request as work that is no chat's.
+    """
+    provider, service, audit = _stub_the_writes(monkeypatch)
     app = web.Application()
-    state = MagicMock()
-    state._restricted_keys = {RESTRICTED_KEY}
-    app["state"] = state
+    app["state"] = _state((RESTRICTED_CHAT, mode))
     request = make_mocked_request("POST", path, headers={"X-Session-Key": RESTRICTED_KEY}, app=app)
     return request, provider, service, audit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["temporary", "incognito"])
 @pytest.mark.parametrize(
     "handler,path,operation",
     [
@@ -226,9 +246,9 @@ def _restricted_request(path, monkeypatch):
     ],
 )
 async def test_restricted_session_is_denied_with_no_side_effect(
-    monkeypatch, handler, path, operation
+    monkeypatch, handler, path, operation, mode
 ):
-    request, provider, service, audit = _restricted_request(path, monkeypatch)
+    request, provider, service, audit = _restricted_request(path, monkeypatch, mode)
 
     resp = await handler(request)
 
@@ -245,6 +265,156 @@ async def test_restricted_session_is_denied_with_no_side_effect(
         source="dashboard",
         resources="restricted_session_block",
     )
+
+
+# ── a session whose mode cannot be read is refused, over real HTTP ──
+#
+# The guard reads a session's mode from every record of it (``memory_writes.session_mode``): the
+# live chat, the registry a channel marks, the transcript, the run a step names. A record that is
+# there and cannot be read says nothing of what the chat allows, so the write is refused as a
+# Temporary chat's is. Read as a session with nothing recorded, the write would go through.
+
+#: A channel thread's chat: no live dashboard chat names it, so its own records are all there is.
+THREAD_KEY = "channel:thread-4242"
+#: A stage of a workflow run, whose mode is its run's.
+STEP_RUN = "5e1f0a2b"
+STEP_KEY = ownership.owned_key(STEP_RUN, "summarize")
+
+#: Each write route: its path, its handler, what it audits as, and the body it is sent.
+WRITE_ROUTES: list[tuple[str, Any, str, Any]] = [
+    ("/api/memory/vault/sync", api_memory_vault_sync, "memory.vault_sync", None),
+    ("/api/memory/migrate", api_memory_migrate, "memory.migrate", None),
+    ("/api/memory/promote", api_memory_promote, "memory.promote", {}),
+    ("/api/memory/import", api_memory_import, "memory.import", {"semantic": [], "episodic": []}),
+    ("/api/memory/consolidate", api_memory_consolidate, "memory.consolidate", {"key": THREAD_KEY}),
+]
+
+
+def _guarded_app(state) -> web.Application:
+    """The write routes as the gateway serves them: behind the memory write middleware, which
+    makes each request the work of the session it names, beside the gateway's state."""
+    from personalclaw.dashboard.memory_write_gate import memory_write_middleware
+
+    app = web.Application(middlewares=[memory_write_middleware()])
+    app["state"] = state
+    for path, handler, _operation, _body in WRITE_ROUTES:
+        app.router.add_post(path, handler)
+    return app
+
+
+def _transcript_path(key: str):
+    from personalclaw.history import session_path
+
+    path = session_path(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _a_run_record(run_id: str) -> None:
+    """A run's record, as its start creates it before its first stage runs."""
+    from personalclaw.workflows import store
+    from personalclaw.workflows.models import RunStatus, WorkflowRun
+
+    store.create(WorkflowRun(id=run_id, workflow_name="weekly-digest", status=RunStatus.RUNNING))
+
+
+def _metadata_cut_short(monkeypatch) -> str:
+    _transcript_path(THREAD_KEY).write_text('{"_type": "metadata", "memory_mo\n', encoding="utf-8")
+    return THREAD_KEY
+
+
+def _a_transcript_that_cannot_be_opened(monkeypatch) -> str:
+    _transcript_path(THREAD_KEY).mkdir()  # a folder where the file belongs: opening it fails
+    return THREAD_KEY
+
+
+def _a_registry_that_cannot_be_read(monkeypatch) -> str:
+    def _cannot_read(_key: str) -> bool:
+        raise RuntimeError("the registry cannot be read")
+
+    monkeypatch.setattr("personalclaw.session_restrictions.is_temporary", _cannot_read)
+    return THREAD_KEY
+
+
+def _a_run_store_that_cannot_be_read(monkeypatch) -> str:
+    from personalclaw.workflows import store
+
+    database = store.workflows_dir() / "runs.db"
+    database.parent.mkdir(parents=True, exist_ok=True)
+    database.write_bytes(b"this is not a database " * 64)
+    return STEP_KEY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unreadable",
+    [
+        pytest.param(_metadata_cut_short, id="its-transcripts-metadata-is-cut-short"),
+        pytest.param(_a_transcript_that_cannot_be_opened, id="its-transcript-cannot-be-opened"),
+        pytest.param(_a_registry_that_cannot_be_read, id="the-registry-cannot-be-read"),
+        pytest.param(_a_run_store_that_cannot_be_read, id="its-runs-record-cannot-be-read"),
+    ],
+)
+async def test_a_session_whose_mode_cannot_be_read_is_refused_over_real_http(
+    monkeypatch, unreadable
+):
+    """A guard that cannot read what the chat allows refuses: every write route answers the
+    restricted refusal, audits the denial and starts nothing. The same sessions are let through
+    when their records can be read (the test below), so it is the unreadable record that
+    refuses."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    provider, service, audit = _stub_the_writes(monkeypatch)
+    key = unreadable(monkeypatch)
+
+    async with TestClient(TestServer(_guarded_app(_state()))) as client:
+        for path, _handler, _operation, body in WRITE_ROUTES:
+            resp = await client.post(path, json=body, headers={"X-Session-Key": key})
+            assert resp.status == 403, f"{path}: {resp.status} {await resp.text()}"
+            assert (await resp.json())["error"] == memory_writes.REFUSAL
+
+    assert provider.call_count == 0
+    assert service.call_count == 0
+    assert [call.kwargs for call in audit.log_api_access.call_args_list] == [
+        {
+            "caller": key,
+            "operation": operation,
+            "outcome": "denied",
+            "source": "dashboard",
+            "resources": "restricted_session_block",
+        }
+        for _path, _handler, operation, _body in WRITE_ROUTES
+    ]
+
+
+#: A chat that keeps its memory, live in the gateway and not yet transcribed.
+NORMAL_CHAT = "n1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [THREAD_KEY, STEP_KEY, f"dashboard:{NORMAL_CHAT}"])
+async def test_a_session_whose_record_reads_as_keeping_memory_is_let_through(monkeypatch, key):
+    """The control: the thread's transcript and the step's run readable and keeping memory, and a
+    live chat that keeps it, read from the live chat on its first turn."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    store = _RecordingStore()
+    monkeypatch.setattr(
+        "personalclaw.dashboard.handlers.memory._get_provider", lambda _state: store
+    )
+    if key == THREAD_KEY:
+        metadata = {"_type": "metadata", "memory_mode": "persistent"}
+        _transcript_path(THREAD_KEY).write_text(json.dumps(metadata) + "\n", encoding="utf-8")
+    elif key == STEP_KEY:
+        _a_run_record(STEP_RUN)
+    payload = {"semantic": [{"key": "project.x", "value_json": '"v"'}], "episodic": []}
+
+    state = _state((NORMAL_CHAT, "persistent"))
+    async with TestClient(TestServer(_guarded_app(state))) as client:
+        resp = await client.post("/api/memory/import", json=payload, headers={"X-Session-Key": key})
+        assert resp.status == 200, await resp.text()
+
+    assert store.imported == [payload]
 
 
 @pytest.mark.asyncio
