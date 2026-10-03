@@ -186,6 +186,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Signing in to a remote tool server works in the desktop app: its sign-in page opens in your browser, and the Tools page says it opened there and when you are signed in; a sign-in page that did not open, in the app or in a browser that blocked its tab, is said, with its link.**
 - **A lesson update memory refuses leaves the lesson it would have replaced as it was, recalled and in every prompt, and is answered as not saved, saying why: on the Memory page, to the agent's `memory_remember` and to `personalclaw learn add` (`MemoryService.lesson_refusal` is an SDK addition no app has to change for).**
 - **A lesson an earlier version left replaced by a lesson that was never kept comes back when its memory opens, and a lesson taught again after what replaced it was removed is no longer deleted by the Health sweep.**
 - **A Temporary chat's work, or an app's not given your memory, no longer raises the confidence of a lesson it repeats.**

@@ -47,6 +47,7 @@ const IPC_CHANNELS = {
   loginItemSet: `${IPC_PREFIX}login-item-set`,
   notify: `${IPC_PREFIX}notify`,
   notificationActivate: `${IPC_PREFIX}notification-activate`,
+  systemBrowserOpen: `${IPC_PREFIX}system-browser-open`,
 };
 
 /**
@@ -187,5 +188,18 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
       ipcRenderer.on(IPC_CHANNELS.notificationActivate, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.notificationActivate, handler);
     },
+  },
+
+  /** The system's default browser, for a page that is not the gateway's.
+   *
+   * The shell already sends every such page there (a link, a window a page asks for, a
+   * navigation) and refuses to load one in its own windows, a blank window included. `open()` is
+   * the same rule as a call that answers, for a page that has to know whether the browser opened:
+   * a remote tool server's sign-in, which the Tools page then waits on. The main process opens
+   * only an http or https page, whatever is sent here. */
+  systemBrowser: {
+    /** Resolves {ok, reason?}: a browser that did not open is an answer, so the page can offer
+     * the link to open by hand. */
+    open: (url) => ipcRenderer.invoke(IPC_CHANNELS.systemBrowserOpen, String(url ?? "")),
   },
 });

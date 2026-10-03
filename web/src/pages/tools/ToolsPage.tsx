@@ -31,6 +31,7 @@ import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/sta
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { ConsentDeclined } from '../../lib/securityConsent'
+import { prepareExternalPage, type OpenedPage } from '../../lib/externalPage'
 import { ToolInspector } from './ToolInspector'
 import { ToolGroupsTile } from './ToolGroupsTile'
 import { PageTitle } from '../../ui/PageTitle'
@@ -113,11 +114,12 @@ function StartDetails({ detail }: { detail?: string }) {
   )
 }
 
-/** How long the page keeps looking for a sign-in to finish in the other tab before it stops. */
+/** How long the page keeps looking for a sign-in to finish elsewhere before it stops. */
 const SIGN_IN_WAIT_MS = 5 * 60_000
 
-/** A sign-in the owner started from this page and is finishing in another tab. */
-interface PendingSignIn { name: string; url: string; since: number }
+/** A sign-in the owner started from this page and is finishing elsewhere: in a tab of this
+ *  browser, in the system browser the desktop app opened, or in whichever she opens the link in. */
+interface PendingSignIn { name: string; url: string; since: number; opened: OpenedPage }
 /** An authorization server that does not let PersonalClaw register itself: the app to register. */
 interface ClientPrompt extends McpSignInClientNeeded { server: string; message: string }
 
@@ -357,24 +359,24 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     finally { setReconnecting(null); load() }
   }
 
-  // Sign in to a server at a URL with OAuth. The authorization server's page opens in a tab of its
-  // own, opened HERE, inside the click: a tab opened after an `await` is a popup the browser blocks.
-  // It is cut off from this page (`opener = null`) before it is pointed anywhere, so the page it
-  // shows can never reach back into the dashboard. The gateway's callback finishes the sign-in, and
-  // this page looks for it (`pendingSignIn`) until the server reads signed in.
+  // Sign in to a server at a URL with OAuth. Where the authorization server's page opens is settled
+  // HERE, inside the click, before the gateway is asked (`prepareExternalPage`): a tab of its own in a
+  // browser, cut off from this page; the system's default browser in the desktop app, whose windows
+  // refuse a blank one. The gateway's callback finishes the sign-in, and this page looks for it
+  // (`pendingSignIn`) until the server reads signed in, saying meanwhile where the page opened, or
+  // offering it to open by hand when it did not.
   const [pendingSignIn, setPendingSignIn] = useState<PendingSignIn | null>(null)
   const [clientPrompt, setClientPrompt] = useState<ClientPrompt | null>(null)
   async function signIn(s: McpServer, client?: { clientId: string; clientSecret?: string }): Promise<boolean> {
-    const tab = window.open('', '_blank')
-    if (tab) tab.opener = null
+    const page = prepareExternalPage()
     try {
       const started = await api.startMcpSignIn(s.name, client)
-      if (tab) tab.location.href = started.authorizationUrl
+      const opened = await page.open(started.authorizationUrl)
       setClientPrompt(null)
-      setPendingSignIn({ name: s.name, url: started.authorizationUrl, since: Date.now() })
+      setPendingSignIn({ name: s.name, url: started.authorizationUrl, since: Date.now(), opened })
       return true
     } catch (e) {
-      tab?.close()
+      page.discard()
       if (hasApiCode(e, 'mcp_sign_in_needs_client_id') && e instanceof ApiError) {
         const need = e.detail as McpSignInClientNeeded | undefined
         if (need?.redirectUri) {
@@ -402,8 +404,8 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
     if (ok) { setPendingSignIn(null); setTimeout(load, 400) }
   }
 
-  // While a sign-in is finishing in the other tab, the card is read again when the gateway's callback
-  // lands (it probes the server again, which the `mcp` frame announces) and when this tab regains
+  // While a sign-in is finishing elsewhere, the card is read again when the gateway's callback lands
+  // (it probes the server again, which the `mcp` frame announces) and when this window regains
   // focus, until the server reads signed in (then say so) or the wait runs out.
   useEffect(() => {
     if (!pendingSignIn) return
@@ -865,12 +867,7 @@ function GroupBlock({ g, onOpen, onToggleServer, onEditServer, onRemoveServer, o
       {g.server?.enabled && (signInState === 'required' || signInState === 'signed_out') && (
         <div data-type="body-s" className="mb-s rounded-lg bg-surface-container px-m py-3 text-on-surface-low flex flex-wrap items-center gap-s">
           <KeyRound size={14} className="shrink-0" />
-          {pendingSignIn ? (<>
-            <span className="min-w-0 flex-1">
-              Finish signing in to <span className="text-on-surface">{g.server.name}</span> in the tab that opened. This page updates when you are done.
-            </span>
-            <TextLink href={pendingSignIn.url} external ink="emphasis" className="underline">Open the sign-in page</TextLink>
-          </>) : (<>
+          {pendingSignIn ? <SignInPending name={g.server.name} pending={pendingSignIn} /> : (<>
             <span className="min-w-0 flex-1">
               {signInState === 'required'
                 ? <><span className="text-on-surface">{g.server.name}</span> asks you to sign in before its tools can be used.</>
@@ -1515,6 +1512,37 @@ function EditToolServerModal({ name, onClose, onSaved }: { name: string; onClose
 /** The host of `url`, or `''` when it is not a URL. */
 function hostOf(url: string): string {
   try { return new URL(url).host } catch { return '' }
+}
+
+/** A server's sign-in line while the sign-in it started is finishing elsewhere: where the sign-in
+ *  page opened, or that it did not, with the way to open it by hand. A page that did not open is
+ *  never described as one that did. */
+function SignInPending({ name, pending }: { name: string; pending: PendingSignIn }) {
+  const [copied, setCopied] = useState(false)
+  const server = <span className="text-on-surface">{name}</span>
+  const link = <TextLink href={pending.url} external ink="emphasis" className="underline">Open the sign-in page</TextLink>
+  const { opened } = pending
+  if (opened.where === 'tab') return (<>
+    <span className="min-w-0 flex-1">Finish signing in to {server} in the tab that opened. This page updates when you are done.</span>
+    {link}
+  </>)
+  if (opened.where === 'browser') return (<>
+    <span className="min-w-0 flex-1">The sign-in page for {server} opened in your browser. Finish signing in there; this page updates when you are done.</span>
+    {link}
+  </>)
+  if (opened.where === 'no-tab') return (<>
+    <span className="min-w-0 flex-1">The sign-in page for {server} did not open. Open it to sign in; this page updates when you are done.</span>
+    {link}
+  </>)
+  // The desktop app could not open the system browser, so a link would only ask it again: the
+  // address is offered to copy into a browser instead.
+  const copy = async () => { if (await copyText(pending.url, 'the sign-in link')) { setCopied(true); setTimeout(() => setCopied(false), 1500) } }
+  return (<>
+    <span className="min-w-0 flex-1">
+      PersonalClaw could not open your browser: {opened.reason.replace(/[.\s]+$/, '')}. Copy the sign-in link and open it in a browser to sign in to {server}; this page updates when you are done.
+    </span>
+    <Button size="sm" onClick={() => { void copy() }}>{copied ? 'Copied' : 'Copy the sign-in link'}</Button>
+  </>)
 }
 
 /** An authorization server that does not let PersonalClaw register itself: the owner registers an

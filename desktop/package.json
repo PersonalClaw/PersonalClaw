@@ -51,6 +51,7 @@
       "trayPresence.js",
       "loginItem.js",
       "nativeNotifications.js",
+      "systemBrowser.js",
       "gatewayShutdown.js",
       "gatewayEnv.js",
       "localSignIn.js",

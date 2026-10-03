@@ -21,6 +21,7 @@ const {
   registerNativeNotificationIpc,
 } = require("./nativeNotifications");
 const { shutdownGateway } = require("./gatewayShutdown");
+const { makeSystemBrowser, navigationGuard, registerSystemBrowserIpc, windowOpenHandler } = require("./systemBrowser");
 const { buildGatewayEnv } = require("./gatewayEnv");
 const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
 const { openShellStore } = require("./shellStore");
@@ -421,6 +422,13 @@ const nativeNotifications = makeNativeNotifications({
   },
   log: (msg) => console.warn(msg),
 });
+
+/**
+ * The system's default browser, for every page that is not the gateway's: a window a page asks
+ * for, a navigation away from the gateway, and the bridge's `systemBrowser.open`, which a page
+ * calls when it has to know whether the browser opened (a remote tool server's sign-in).
+ */
+const systemBrowser = makeSystemBrowser({ shell, log: (msg) => console.warn(msg) });
 
 /**
  * The always-on capturing indicator.
@@ -863,50 +871,11 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
     }
   };
 
-  view.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      const u = new URL(url);
-      // Compare against the ACTIVE origin, not the spawned gateway's: in connect-mode the page
-      // being rendered belongs to the paired gateway, and a window it opens on its own origin is
-      // as legitimate there as it is on loopback.
-      if (allowedOrigin() && u.origin === allowedOrigin()) {
-        return { action: 'allow' };
-      }
-      if (u.protocol === 'http:' || u.protocol === 'https:') {
-        shell.openExternal(url);
-      }
-    } catch {}
-    return { action: 'deny' };
-  });
-
-  /**
-   * 🔒 THE VIEW MAY NOT LEAVE THE ORIGIN THE USER CONFIRMED.
-   *
-   * This is the guard that matters most once a bridge exists. Without it, a link or a script in
-   * rendered content could navigate this same `WebContents` to any origin — and on the loopback
-   * path that `WebContents` is carrying `preload.js`, so the microphone, hotkey and notification
-   * bridge would follow it there. Same-origin navigations and the local loading document are
-   * allowed; everything else is handed to the system browser, where it belongs.
-   *
-   * `will-navigate` covers link clicks and `location` assignments; `will-redirect` covers a server
-   * 3xx, which is the shape the SSRF guidance singles out — a host that passes validation and then
-   * points the client somewhere it would never have accepted.
-   */
-  const guardNavigation = (event, url) => {
-    let u;
-    try {
-      u = new URL(url);
-    } catch {
-      event.preventDefault();
-      return;
-    }
-    if (u.protocol === "file:" || u.protocol === "about:") return; // loading.html, about:blank
-    const origin = allowedOrigin();
-    if (origin && u.origin === origin) return;
-    event.preventDefault();
-    console.warn(`blocked in-app navigation to ${u.origin} (allowed: ${origin || "none"})`);
-    if (u.protocol === "http:" || u.protocol === "https:") shell.openExternal(url);
-  };
+  // A window opens in the app only on the active origin; a blank or another origin's window is
+  // denied, and a web page goes to the system browser. 🔒 The view never leaves that origin either:
+  // the guard is what keeps the bridge from following a link elsewhere (`systemBrowser.js`).
+  view.webContents.setWindowOpenHandler(windowOpenHandler({ allowedOrigin, systemBrowser }));
+  const guardNavigation = navigationGuard({ allowedOrigin, systemBrowser, log: (msg) => console.warn(msg) });
   view.webContents.on("will-navigate", guardNavigation);
   view.webContents.on("will-redirect", guardNavigation);
 
@@ -1584,6 +1553,8 @@ if (!app.requestSingleInstanceLock()) {
     // The `native` notification target's actuator. Registered before any window
     // loads, like the rest: the first gateway note can arrive as soon as the WS opens.
     registerNativeNotificationIpc(ipcMain, nativeNotifications, IPC_CHANNELS);
+    // A page's request to open a page in the system browser, answered with whether it opened.
+    registerSystemBrowserIpc(ipcMain, systemBrowser, IPC_CHANNELS);
 
     // The shell's own storage scope. Opened before any window so the startup decision below
     // has the registry, and non-fatal by construction: a corrupt or unreadable store degrades to

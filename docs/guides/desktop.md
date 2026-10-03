@@ -89,6 +89,19 @@ If the app is signed out from another device (Settings → Devices), or its sign
 (`auth.session_ttl`, 30 days by default), the window says so. Quit PersonalClaw and open it again
 to sign it back in.
 
+## Other sites open in your browser
+
+The app's windows show only the dashboard of the gateway you are looking at. A link to another
+site, a window a page asks for on another site, and a page a server redirects to all open in your
+default browser instead. Only a web address (`http` or `https`) is handed to the browser: a file,
+another app's link or a blank page is not opened at all.
+
+Signing in to a remote tool server on the **Tools** page works the same way. Its sign-in page opens
+in your browser, the Tools page says it opened there, and the server's card turns to signed in once
+you finish. If the app could not open your browser, the page says why and gives you the sign-in link
+to copy into a browser yourself. On a gateway you paired with (below), the page cannot ask the app to
+open it, so it offers the link instead, and the link opens in your browser too.
+
 ## Connecting to a gateway you did not start
 
 By default the desktop app starts its own gateway on this computer and loads that. That has not
@@ -143,11 +156,12 @@ never as this computer — the next section is why that distinction is load-bear
 
 ### Desktop capabilities are for the gateway on this computer only
 
-The microphone, the global shortcut, native notifications and the login item are exposed to the
-dashboard through a bridge the app attaches to the page. **That bridge is only ever attached to the
-gateway this app started.** A gateway on the network gets a plain window: the panel in **Settings →
-Security → Desktop capabilities** reads "desktop app not connected", exactly as it does in a browser
-tab, and push-to-talk does nothing there.
+The microphone, the global shortcut, native notifications, the login item and opening a sign-in page
+in your browser are exposed to the dashboard through a bridge the app attaches to the page. **That
+bridge is only ever attached to the gateway this app started.** A gateway on the network gets a plain
+window: the panel in **Settings → Security → Desktop capabilities** reads "desktop app not
+connected", exactly as it does in a browser tab, push-to-talk does nothing there, and a remote tool
+server's sign-in offers its link rather than opening it.
 
 That is not a limitation waiting to be lifted. The bridge is authorised by a secret file in
 `~/.personalclaw`, which proves "I am running as you, on this machine" — a claim no other gateway can

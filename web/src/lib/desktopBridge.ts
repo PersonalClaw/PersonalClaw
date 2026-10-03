@@ -71,6 +71,14 @@ export interface LoginItemResult {
   reason?: string
 }
 
+/** What the shell says about a page it was asked to open in the system's default browser.
+ *  `ok: false` is an ANSWER, not a throw: the shell opens only an http or https page, and says
+ *  why when the browser did not open, so the caller can offer the link to open by hand. */
+export interface SystemBrowserResult {
+  ok: boolean
+  reason?: string
+}
+
 export interface DesktopBridge {
   onStatus?: (cb: (msg: string) => void) => () => void
   /** Push-to-talk. Note what is NOT here: no `start()`. The shell cannot open
@@ -102,6 +110,14 @@ export interface DesktopBridge {
   loginItem?: {
     get: () => Promise<LoginItemState>
     set: (enabled: boolean) => Promise<LoginItemResult>
+  }
+  /** The system's default browser, for a page that is not the gateway's. The shell sends every
+   *  such page there anyway (a link, a window a page asks for, a navigation) and refuses to load
+   *  one in its own windows, a blank window included; `open()` is that rule as a call that
+   *  answers, for a page that has to know whether the browser opened. Optional like `loginItem`:
+   *  a shell built before it existed has no such namespace. */
+  systemBrowser?: {
+    open: (url: string) => Promise<SystemBrowserResult>
   }
   capabilities: {
     names: () => string[]
@@ -170,5 +186,26 @@ export async function setLoginItem(enabled: boolean): Promise<LoginItemResult | 
       supported: true,
       reason: e instanceof Error ? e.message : 'The desktop app did not answer',
     }
+  }
+}
+
+/** Whether the shell can open a page in the system browser and say if it did. Asked before
+ *  anything is opened: a browser tab has to be opened inside a click, and the desktop app must
+ *  not be asked for one. */
+export function hasSystemBrowser(): boolean {
+  return !!desktopBridge()?.systemBrowser
+}
+
+/** Open `url` in the system's default browser through the shell.
+ *
+ *  Null means there is nobody to ask (a browser tab, or a shell without the namespace). A thrown
+ *  IPC error resolves to a refusal with its reason: an unanswered call is not an opened browser. */
+export async function openInSystemBrowser(url: string): Promise<SystemBrowserResult | null> {
+  const bridge = desktopBridge()
+  if (!bridge?.systemBrowser) return null
+  try {
+    return await bridge.systemBrowser.open(url)
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : 'the desktop app did not answer' }
   }
 }

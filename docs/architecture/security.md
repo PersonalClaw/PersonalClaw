@@ -77,6 +77,16 @@ cookie) before the gateway stops. A gateway started on a port the system picks n
 cookie for the port it serves on (`token_auth.session_cookie_name`), which is the name the shell
 sets.
 
+The shell's windows show only the active gateway's origin, and `desktop/systemBrowser.js` holds the
+rule for every other page with its three doors: the window handler lets a window open only on that
+origin and denies the rest, a blank window included; the navigation guard cancels a navigation or
+redirect that leaves it; and both hand an `http` or `https` page to the system browser. The bridge's
+`systemBrowser.open(url)` is the same rule as a call that answers whether the browser opened, which
+the Tools page uses for a remote MCP server's sign-in instead of a blank window. The address is
+checked in the main process, whatever the renderer sent: anything that is not an `http` or `https`
+URL (a file, another app's scheme, a blank page) is refused and never reaches `shell.openExternal`,
+and the address is never logged, since a sign-in page's carries its single-use `state`.
+
 ## Token scoping
 
 `dashboard/token_auth.py`:

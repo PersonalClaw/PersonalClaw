@@ -95,9 +95,11 @@ function preloadOf(block) {
  *
  * The `electron` stub is deliberately inert: `exposeInMainWorld` records, `ipcRenderer`
  * records the channel and resolves nothing. This observes the bridge's SHAPE, not its
- * behaviour — the behaviour is already covered against real stubs elsewhere.
+ * behaviour — the behaviour is already covered against real stubs elsewhere. A test that does
+ * want a call answered passes `invoke(channel, ...args)`: the main-process half it stands for,
+ * so a bridge call can be driven from the page's side to the handler that answers it.
  */
-function loadPreloadSandboxed(file) {
+function loadPreloadSandboxed(file, { invoke = () => Promise.resolve(undefined) } = {}) {
   const src = fs.readFileSync(file, "utf8");
   const exposed = Object.create(null);
   const channels = [];
@@ -116,9 +118,9 @@ function loadPreloadSandboxed(file) {
       send: (channel) => {
         channels.push(channel);
       },
-      invoke: (channel) => {
+      invoke: (channel, ...args) => {
         channels.push(channel);
-        return Promise.resolve(undefined);
+        return invoke(channel, ...args);
       },
     },
   };

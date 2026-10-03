@@ -78,6 +78,10 @@ const IPC_CHANNELS = {
    * The main process focuses the window; the renderer owns the SPA's routes, so it is the
    * one that navigates. */
   notificationActivate: `${IPC_PREFIX}notification-activate`,
+  /** renderer → main: open a page that is not the gateway's in the system's default browser, and
+   * answer whether it opened. Handled by `registerSystemBrowserIpc`, which opens only an http or
+   * https page, the rule every other door to the system browser follows. */
+  systemBrowserOpen: `${IPC_PREFIX}system-browser-open`,
 };
 
 /**
