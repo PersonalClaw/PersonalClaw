@@ -893,12 +893,16 @@ async def test_the_client_rearms_the_seam_on_the_session_that_runs_the_turn(monk
     class _StubSession:
         def __init__(self) -> None:
             self.armed: list = []
+            self.asks: list = []
             self.last_prompt_stats = AcpPromptStats()
             self._last_stop_reason = ""
 
         def set_steer_source(self, pull):
             self.armed.append(pull)
             return pull is not None
+
+        def set_question_handler(self, handler):
+            self.asks.append(handler)
 
         def undelivered_steers(self):
             return []
@@ -919,6 +923,11 @@ async def test_the_client_rearms_the_seam_on_the_session_that_runs_the_turn(monk
     assert client.set_steer_source(pull) is True
     assert client._session is None
 
+    async def answer(question: dict) -> dict:
+        return {"answer": "yes"}
+
+    client.set_question_handler(answer)
+
     stub = _StubSession()
 
     async def _ready():
@@ -927,6 +936,7 @@ async def test_the_client_rearms_the_seam_on_the_session_that_runs_the_turn(monk
     monkeypatch.setattr(client, "ensure_ready", _ready)
     assert [e.kind async for e in client.stream_events("hi")] == [EVENT_COMPLETE]
     assert stub.armed == [pull]  # re-armed on the session that ran the turn
+    assert stub.asks == [answer]  # and so is what answers the agent's questions
     assert client.undelivered_steers() == []
 
 

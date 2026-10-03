@@ -62,8 +62,10 @@ def restore_environment() -> None:
         replaced = os.environ.pop("LD_LIBRARY_PATH_ORIG", None)
         if replaced is not None:
             os.environ["LD_LIBRARY_PATH"] = replaced
-        elif os.environ.get("LD_LIBRARY_PATH") == getattr(sys, "_MEIPASS", None):
-            del os.environ["LD_LIBRARY_PATH"]
+        else:
+            bundle = getattr(sys, "_MEIPASS", None)
+            if bundle and os.environ.get("LD_LIBRARY_PATH") == bundle:
+                del os.environ["LD_LIBRARY_PATH"]
 
 
 def child_module(argv: list[str]) -> str | None:
