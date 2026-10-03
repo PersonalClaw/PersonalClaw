@@ -9,6 +9,7 @@ Episodic: conversation fragments with embeddings, importance scoring,
 time-decay retrieval via FAISS (falls back to FTS5 without embeddings).
 """
 
+import contextvars
 import json
 import logging
 import math
@@ -21,7 +22,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 from uuid import uuid4
 
 from snowballstemmer import stemmer as _snowball_stemmer
@@ -158,6 +159,13 @@ _SECURITY_REJECT_CODES = {
 #: ``user_explicit`` only): a markdown file is trivially writable by anything on the
 #: machine, so it may speak for the user about the user's own facts and nothing more.
 _HUMAN_AUTHORED_SOURCES = frozenset({"user_explicit", "vault_edit"})
+
+#: The columns a semantic write may store beside its row, in the transaction that stores it
+#: (`VectorMemoryStore._write_semantic`): a lesson's reach and its vector.
+_STORED_WITH_ROW = frozenset({"scope", "scope_ref", "embedding", "embedding_model"})
+
+#: The source the history names for what the store repairs in itself when it opens.
+_REPAIR_SOURCE = "repair"
 
 _MAX_EVENTS = 10_000
 _DEFAULT_CONFIDENCE_THRESHOLD = 0.8
@@ -956,6 +964,62 @@ def _row_value(row: object, column: str, default: object) -> object:
     return default if value is None else value
 
 
+def _conflict(existing: Any, confidence: float, source: str) -> str | None:
+    """Why conflict resolution keeps the live row *existing* over a write of *confidence* from
+    *source*, or None when the write wins."""
+    if source in _HUMAN_AUTHORED_SOURCES:
+        return None  # the human always wins
+    if existing["source"] in _HUMAN_AUTHORED_SOURCES:
+        # Existing came from the human — only the human can overwrite it
+        return "Existing entry set by user cannot be overwritten by automated source"
+    old_conf = existing["confidence"]
+    if confidence > old_conf:
+        return None  # higher confidence wins
+    if abs(confidence - old_conf) < 0.1:
+        return None  # similar confidence → newer wins (same or different source)
+    return f"Existing entry has higher confidence ({old_conf:.2f} vs {confidence:.2f})"
+
+
+def _lesson_reach(
+    scope: "MemoryScope | None", scope_ref: str | None
+) -> tuple["MemoryScope", str | None]:
+    """The reach a lesson is stored under: GLOBAL when none is named, and a ref only for a
+    WORKSPACE lesson (any other would be a ref the visibility query never consults)."""
+    from personalclaw.memory_record import MemoryScope
+
+    if scope is None:
+        scope = MemoryScope.GLOBAL
+    return scope, (scope_ref if scope is MemoryScope.WORKSPACE else None)
+
+
+def _lesson_record(
+    rule: str,
+    negative: str | None,
+    source: str,
+    scope: "MemoryScope",
+    scope_ref: str | None,
+) -> tuple[str, str, float]:
+    """A lesson's key, the value stored under it, and the confidence it is written with.
+
+    The key is deterministic, so "newer replaces older" can point the lesson it replaces at it.
+    A workspace lesson keys under `lesson.ws.<hash(ref + rule)>` so it can never collide with
+    the global `lesson.<hash(rule)>` for the same text. Sharing one key would make the second
+    write an UPSERT that silently re-scopes the first — a global lesson everyone relies on would
+    become visible in one directory only, the silent re-scope this key exists to prevent.
+    """
+    import hashlib
+
+    from personalclaw.memory_record import MemoryScope
+
+    if scope is MemoryScope.WORKSPACE:
+        digest = hashlib.md5(f"{scope_ref}\x00{rule}".encode()).hexdigest()[:12]
+        key = f"lesson.ws.{digest}"
+    else:
+        key = f"lesson.{hashlib.md5(rule.encode()).hexdigest()[:12]}"
+    value = rule if not negative else f"{rule} — NOT: {negative}"
+    return key, value, 1.0 if source == "user_explicit" else 0.9
+
+
 def _attribution_note(lines: list[str]) -> str:
     """The fence clause explaining a ``[… believes, weight …]`` marker, when one is present.
 
@@ -1229,10 +1293,17 @@ class VectorMemoryStore(MemoryProvider):
                 )
                 self._db.commit()
                 logger.info("Applied memory schema migration v%s", ver)
+        # What an earlier version left in this store is repaired before any work reads it, and
+        # never stops the store opening: a repair that fails runs again when it next opens. It is
+        # no session's work, whichever work opens the store, so it runs outside any work's scope.
+        try:
+            contextvars.Context().run(self._restore_lessons_replaced_by_nothing)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not restore lessons left replaced by nothing", exc_info=True)
         # From here on every statement passes the one memory-write check: inside work that
         # derives from an Incognito or Temporary session, or an app's that was not given your
-        # memory, anything that would change memory is refused. Set after the schema is in place,
-        # which no session's work writes.
+        # memory, anything that would change memory is refused. Set after the schema is in place
+        # and the store's own repairs are made, which no session's work writes.
         self._db.statement_check = memory_writes.check_memory_statement
 
         # Load persisted FAISS index (or rebuild from SQLite embeddings)
@@ -1826,13 +1897,51 @@ class VectorMemoryStore(MemoryProvider):
         """
         source = memory_writes.written_by(source)
         value_json = json.dumps(value)
+        result = self._refusal(key, value, confidence, source, value_json=value_json)
+        if result is not None:
+            return result
+        return self._store_semantic(
+            key,
+            value,
+            value_json,
+            confidence,
+            source,
+            contributor=contributor,
+            holder=holder,
+            weight=weight,
+        )
+
+    def _refusal(
+        self, key: str, value: object, confidence: float, source: str, *, value_json: str
+    ) -> tuple[SemanticRejectCode, str] | None:
+        """:meth:`validate_semantic`'s answer for a write about to be made: a refused one is said in
+        the log and recorded in the memory's history as a write that did not happen
+        (:meth:`log_reject_event`)."""
         result = self.validate_semantic(key, value, confidence, source, value_json=value_json)
         if result is not None:
             code, reason = result
             log = logger.warning if code in _SECURITY_REJECT_CODES else logger.info
             log("Semantic write rejected for %r: %s", key, reason)
             self.log_reject_event(code, key, value, source, value_json=value_json)
-            return result
+        return result
+
+    def _store_semantic(
+        self,
+        key: str,
+        value: object,
+        value_json: str,
+        confidence: float,
+        source: str,
+        *,
+        contributor: str | None = None,
+        holder: str | None = None,
+        weight: float | None = None,
+        retiring: Iterable[str] = (),
+        columns: Mapping[str, object] | None = None,
+    ) -> tuple[SemanticRejectCode, str] | None:
+        """Store a validated write (:meth:`_write_semantic`, which takes ``retiring`` and
+        ``columns``), then link it into the entity graph and embed a fact. None when stored,
+        ``(CONFLICT, reason)`` when conflict resolution kept what was there."""
         prior = self.db.execute(
             "SELECT value_json, embedding_model, embedding IS NOT NULL AS has_vector "
             "FROM semantic_memory WHERE key = ? AND is_deleted = 0",
@@ -1846,6 +1955,8 @@ class VectorMemoryStore(MemoryProvider):
             contributor=contributor,
             holder=holder,
             weight=weight,
+            retiring=retiring,
+            columns=columns,
         )
         if conflict is not None:
             logger.info("Semantic write rejected for %r: %s", key, conflict)
@@ -1895,58 +2006,106 @@ class VectorMemoryStore(MemoryProvider):
         contributor: str | None = None,
         holder: str | None = None,
         weight: float | None = None,
+        retiring: Iterable[str] = (),
+        columns: Mapping[str, object] | None = None,
     ) -> str | None:
         """Write a pre-validated semantic entry (conflict resolution + DB upsert).
 
+        ``retiring`` names the rows this one replaces: each live one is retired toward it
+        (:meth:`_retire_toward`) in the transaction that stores it, so a row is only ever retired
+        for a replacement that was stored, and a write conflict resolution turns away retires
+        nothing. ``columns`` are more of the row's own columns (:data:`_STORED_WITH_ROW`), stored
+        in that transaction too. The history rows, and the data-event triggers told of them,
+        follow once it is committed.
+
         Returns None on success, or a human-readable conflict reason string.
         """
-
-        # 7. Conflict resolution
-        existing = self.db.execute("SELECT * FROM semantic_memory WHERE key = ?", (key,)).fetchone()
-        replaces = bool(existing) and not existing["is_deleted"]
-
-        if replaces:
-            old_conf = existing["confidence"]
-            if source in _HUMAN_AUTHORED_SOURCES:
-                pass  # the human always wins
-            elif existing["source"] in _HUMAN_AUTHORED_SOURCES:
-                # Existing came from the human — only the human can overwrite it
-                self._record_event(
-                    "conflict_skip", "semantic", key, existing["value_json"], value_json, source
-                )
-                return "Existing entry set by user cannot be overwritten by automated source"
-            elif confidence > old_conf:
-                pass  # higher confidence wins
-            elif abs(confidence - old_conf) < 0.1:
-                pass  # similar confidence → newer wins (same or different source)
-            else:
-                self._record_event(
-                    "conflict_skip",
-                    "semantic",
-                    key,
-                    existing["value_json"],
-                    value_json,
-                    source,
-                )
-                return f"Existing entry has higher confidence ({old_conf:.2f} vs {confidence:.2f})"
-
-        # 8. Upsert
-        now = _now_iso()
-        # A semantic fact is tier=semantic by nature; set it on insert so new rows
-        # are self-consistent at the DB level (so tier-filtered queries see them),
-        # not only defaulted on read. A later put()/_apply_axes may refine it.
         # Contributor stamp: who wrote this. Stamped HERE
         # because this is the ONLY statement that creates a semantic row, so all nine
         # typed writers and the HTTP endpoint are covered by one edit and none of them
         # can forget. `contributor=None` means "stamp the current owner"; an explicit
         # value is preserved verbatim so an import can carry a foreign contributor
         # rather than relabelling someone else's memory as the importer's.
-        #
-        # Deliberately NOT in the ON CONFLICT update: an edit to a shared record does
-        # not transfer authorship of the original, and silently reassigning it on every
-        # touch would make the column mean "last writer" while claiming to mean
-        # "contributor".
         who = current_username() if contributor is None else contributor
+        # The session this write is filed under (a subagent's under the chat it works for),
+        # stamped like the contributor at the one statement that writes the row. Both are found
+        # before the transaction, which holds the connection for its statements alone.
+        from_session = memory_writes.filed_under() or None
+        retired: list[tuple[str, str]] = []
+        with self.db.transaction():
+            existing = self.db.execute(
+                "SELECT * FROM semantic_memory WHERE key = ?", (key,)
+            ).fetchone()
+            replaces = bool(existing) and not existing["is_deleted"]
+            # 7. Conflict resolution
+            conflict = _conflict(existing, confidence, source) if replaces else None
+            if conflict is None:
+                # 8. Upsert
+                self._upsert_semantic(
+                    key,
+                    value_json,
+                    confidence,
+                    source,
+                    existing,
+                    who=who,
+                    from_session=from_session,
+                    holder=holder,
+                    weight=weight,
+                )
+                if columns:
+                    self._store_columns(key, columns)
+                retired = self._retire_toward(key, retiring)
+        if conflict is not None:
+            # A write that did not happen: recorded in the history alone, heard by no trigger.
+            self._record_event(
+                "conflict_skip", "semantic", key, existing["value_json"], value_json, source
+            )
+            return conflict
+        # Its history row, and the data-event triggers told of it, once the row is stored: work
+        # that may change nothing has its statement refused above, before anything hears of it.
+        if replaces:
+            self._log_event("update", "semantic", key, existing["value_json"], value_json, source)
+        else:
+            self._log_event("create", "semantic", key, None, value_json, source)
+        for old_key, old_value in retired:
+            self._log_event("supersede", "semantic", old_key, old_value, key, source)
+
+        # 9. Retire conflicting episodic entries that reference the old value
+        if replaces:
+            old_val = existing["value_json"]
+            try:
+                old_text = json.loads(old_val) if isinstance(old_val, str) else str(old_val)
+            except (json.JSONDecodeError, TypeError):
+                old_text = str(old_val)
+            if isinstance(old_text, str) and len(old_text) >= 3:
+                self._retire_stale_episodic(key, old_text)
+
+        return None
+
+    def _upsert_semantic(
+        self,
+        key: str,
+        value_json: str,
+        confidence: float,
+        source: str,
+        existing: Any,
+        *,
+        who: str,
+        from_session: str | None,
+        holder: str | None,
+        weight: float | None,
+    ) -> None:
+        """The one statement that creates or rewrites a semantic row, run inside the caller's
+        transaction (:meth:`_write_semantic`). ``existing`` is the row the key holds now, if any;
+        *who* the contributor and *from_session* the session the row is filed under."""
+        now = _now_iso()
+        # A semantic fact is tier=semantic by nature; set it on insert so new rows
+        # are self-consistent at the DB level (so tier-filtered queries see them),
+        # not only defaulted on read. A later put()/_apply_axes may refine it.
+        # The contributor is deliberately NOT in the ON CONFLICT update: an edit to a shared
+        # record does not transfer authorship of the original, and silently reassigning it on
+        # every touch would make the column mean "last writer" while claiming to mean
+        # "contributor".
         # Holder attribution. Resolved BEFORE the
         # statement, not with a COALESCE, because "not supplied" must mean "keep what the
         # row already had" and SQLite's excluded.* would need the caller to pass the old
@@ -1966,16 +2125,17 @@ class VectorMemoryStore(MemoryProvider):
             row_weight = memory_holder.normalize_weight(
                 row_holder, weight if weight is not None else memory_holder.weight_cap(row_holder)
             )
-        # The session this write is filed under (a subagent's under the chat it works for),
-        # stamped like the contributor at the one statement that writes the row. Unlike the
-        # contributor it IS in the ON CONFLICT update: a fact a later session restates now comes
-        # from that session too, and a value is only ever rewritten by work that may write
-        # (memory_writes refuses the statement otherwise).
-        from_session = memory_writes.filed_under() or None
+        # Unlike the contributor, the session it is filed under IS in the ON CONFLICT update: a
+        # fact a later session restates now comes from that session too, and a value is only ever
+        # rewritten by work that may write (memory_writes refuses the statement otherwise).
+        # A row written is live and replaced by nothing, so a rewrite clears the supersession a
+        # retired row carried: a lesson taught again after what replaced it was removed would
+        # otherwise keep pointing at it, and read as replaced long ago to the sweep that removes
+        # such rows (`memory_lint`).
         self.db.execute(
             "INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted, tier, contributor, holder, weight, source_session) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, 0, 'semantic', ?, ?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value_json=?, confidence=?, source=?, updated_at=?, is_deleted=0, holder=?, weight=?, source_session=?",  # noqa: E501
+            "ON CONFLICT(key) DO UPDATE SET value_json=?, confidence=?, source=?, updated_at=?, is_deleted=0, holder=?, weight=?, source_session=?, superseded_by=NULL, invalidated_at=NULL",  # noqa: E501
             (
                 key,
                 value_json,
@@ -1996,25 +2156,42 @@ class VectorMemoryStore(MemoryProvider):
                 from_session,
             ),
         )
-        self.db.commit()
-        # Its history row, and the data-event triggers told of it, once the row is stored: work
-        # that may change nothing has its statement refused above, before anything hears of it.
-        if replaces:
-            self._log_event("update", "semantic", key, existing["value_json"], value_json, source)
-        else:
-            self._log_event("create", "semantic", key, None, value_json, source)
 
-        # 9. Retire conflicting episodic entries that reference the old value
-        if replaces:
-            old_val = existing["value_json"]
-            try:
-                old_text = json.loads(old_val) if isinstance(old_val, str) else str(old_val)
-            except (json.JSONDecodeError, TypeError):
-                old_text = str(old_val)
-            if isinstance(old_text, str) and len(old_text) >= 3:
-                self._retire_stale_episodic(key, old_text)
+    def _store_columns(self, key: str, columns: Mapping[str, object]) -> None:
+        """Set *columns* (each one of :data:`_STORED_WITH_ROW`) on the row *key*, inside the
+        caller's transaction."""
+        unknown = set(columns) - _STORED_WITH_ROW
+        if unknown:
+            raise ValueError(f"not a column stored with a semantic row: {sorted(unknown)}")
+        names = sorted(columns)
+        assignments = ", ".join(f"{name} = ?" for name in names)
+        # The names are this module's own (`_STORED_WITH_ROW`, checked above); every value is bound.
+        self.db.execute(
+            f"UPDATE semantic_memory SET {assignments} WHERE key = ?",  # noqa: S608
+            (*(columns[name] for name in names), key),
+        )
 
-        return None
+    def _retire_toward(self, new_key: str, old_keys: Iterable[str]) -> list[tuple[str, str]]:
+        """Retire each live row of *old_keys* toward *new_key*, inside the caller's transaction:
+        soft-deleted with ``superseded_by`` and ``invalidated_at`` set, the supersession chain
+        :meth:`undo_event` reverses. Returns each retired row's key and the value it held, for its
+        history row."""
+        retired: list[tuple[str, str]] = []
+        now = _now_iso()
+        for old_key in dict.fromkeys(k for k in old_keys if k and k != new_key):
+            row = self.db.execute(
+                "SELECT value_json FROM semantic_memory WHERE key = ? AND is_deleted = 0",
+                (old_key,),
+            ).fetchone()
+            if row is None:
+                continue
+            self.db.execute(
+                "UPDATE semantic_memory SET is_deleted = 1, superseded_by = ?, "
+                "invalidated_at = ?, updated_at = ? WHERE key = ?",
+                (new_key, now, now, old_key),
+            )
+            retired.append((old_key, row["value_json"]))
+        return retired
 
     def delete_semantic(self, key: str, source: str) -> bool:
         """Tombstone a semantic memory entry."""
@@ -2037,20 +2214,21 @@ class VectorMemoryStore(MemoryProvider):
         supersession chain — *what* replaced *what* and when — so a bad supersede
         is auditable and reversible (the basis for ``mem-reversible-wal``). The
         old row stays soft-deleted but with ``superseded_by`` + ``invalidated_at``
-        set. Returns False if ``old_key`` doesn't exist.
+        set.
+
+        Returns False, changing nothing, when ``old_key`` holds no live row or ``new_key`` none:
+        a row is only retired toward a replacement that is stored, as read in the transaction that
+        retires it, so nothing drops out of recall for a replacement that does not exist. A writer
+        that stores the replacement in the same call retires through :meth:`_write_semantic`.
         """
-        existing = self.get_semantic(old_key)
-        if not existing:
-            return False
-        now = _now_iso()
-        self.db.execute(
-            "UPDATE semantic_memory SET is_deleted = 1, superseded_by = ?, "
-            "invalidated_at = ?, updated_at = ? WHERE key = ?",
-            (new_key, now, now, old_key),
-        )
-        self.db.commit()
-        self._log_event("supersede", "semantic", old_key, existing["value_json"], new_key, source)
-        return True
+        with self.db.transaction():
+            replacement = self.db.execute(
+                "SELECT 1 FROM semantic_memory WHERE key = ? AND is_deleted = 0", (new_key,)
+            ).fetchone()
+            retired = self._retire_toward(new_key, [old_key]) if replacement else []
+        for key, value in retired:
+            self._log_event("supersede", "semantic", key, value, new_key, source)
+        return bool(retired)
 
     def get_supersession_chain(self, key: str) -> list[dict]:
         """Follow ``superseded_by`` from ``key`` forward — newest replacement last.
@@ -3994,7 +4172,7 @@ class VectorMemoryStore(MemoryProvider):
         scope: "MemoryScope | None" = None,
         scope_ref: str | None = None,
     ) -> bool:
-        """Write a lesson as a semantic entry with key lesson.<hash>.
+        """Write a lesson as a semantic entry with key lesson.<hash>. True when it was stored.
 
         ``scope`` is the REACH axis the lesson is stored under (``None`` → GLOBAL,
         today's behavior). A ``WORKSPACE`` lesson persists ``scope_ref`` — the
@@ -4012,21 +4190,29 @@ class VectorMemoryStore(MemoryProvider):
         delete a global one that every other workspace still depends on, and a
         global write would behave differently than it does today.
 
+        Nothing is changed or counted before the lesson is authorised and validated. Work that may
+        change none of your memory (a Temporary or Incognito chat's, an app's not given your
+        memory) is refused with :class:`memory_writes.MemoryWriteRefused` first: the sightings are
+        counted beside this store's database, where the statement check that refuses such work
+        never sees them. A lesson the store's rules refuse (:meth:`lesson_refusal`) returns False,
+        recorded in the history as a write that did not happen. A lesson one already held says in
+        full is a sighting of that one. Neither retires anything: the lessons a new one replaces
+        are retired toward it in the transaction that stores it (:meth:`_write_semantic`), so no
+        lesson drops out of recall for a replacement that was not kept.
+
         An app's work writes its lesson as the app (``memory_writes.written_by``): the source is
         settled here, before it sets the lesson's confidence and counts as a sighting.
         """
-        import hashlib
-
         from personalclaw.memory_record import MemoryScope
 
         source = memory_writes.written_by(source)
+        memory_writes.refuse_memory_write("a lesson")
+        scope, scope_ref = _lesson_reach(scope, scope_ref)
+        key, value, confidence = _lesson_record(rule, negative, source, scope, scope_ref)
+        value_json = json.dumps(value)
+        if self._refusal(key, value, confidence, source, value_json=value_json) is not None:
+            return False
 
-        if scope is None:
-            scope = MemoryScope.GLOBAL
-        if scope is not MemoryScope.WORKSPACE:
-            # Only WORKSPACE carries a ref through this path; anything else would
-            # be a ref the visibility query never consults.
-            scope_ref = None
         rule_lower = rule.lower()
         rule_words = self._lesson_keywords(rule_lower)
         # One embedder for the new lesson and every stored lesson it is compared with.
@@ -4034,34 +4220,14 @@ class VectorMemoryStore(MemoryProvider):
         rule_emb = self._try_embed(rule, embed) if embed is not None else None
         backfills_done = 0
         pending_backfills: list[tuple[bytes, str]] = []  # (blob, key) pairs
-        # The new lesson's deterministic key — computed upfront so "newer replaces
-        # older" paths can SUPERSEDE the loser toward it (reversible pointer)
-        # rather than hard-deleting (lossy). See mem-supersession-chain.
-        #
-        # A workspace lesson keys under `lesson.ws.<hash(ref + rule)>` so it can
-        # never collide with the global `lesson.<hash(rule)>` for the same text.
-        # Sharing one key would make the second write an UPSERT that silently
-        # re-scopes the first — a global lesson everyone relies on would become
-        # visible in one directory only, which is the exact silent-rescope defect
-        # this change exists to remove.
-        if scope is MemoryScope.WORKSPACE:
-            digest = hashlib.md5(f"{scope_ref}\x00{rule}".encode()).hexdigest()[:12]
-            new_key = f"lesson.ws.{digest}"
-        else:
-            new_key = f"lesson.{hashlib.md5(rule.encode()).hexdigest()[:12]}"
+        # What the pass finds, acted on once it is over: the lesson that already says this one,
+        # else the lessons this one replaces ("newer replaces older" SUPERSEDES the loser toward
+        # the new key, a reversible pointer, rather than hard-deleting it).
+        says_it: str | None = None
+        replaced: list[str] = []
         # Best mid-band (same-topic, not-a-dup) neighbor → judged for contradiction
         # AFTER the new lesson is written. (key, value, similarity).
         contradiction_candidate: tuple[str, str, float] | None = None
-
-        def _flush_backfills() -> None:
-            if pending_backfills:
-                for blob, bk in pending_backfills:
-                    self.db.execute(
-                        "UPDATE semantic_memory SET embedding = ?, embedding_model = ? "
-                        "WHERE key = ?",
-                        (blob, lesson_model or None, bk),
-                    )
-                self.db.commit()
 
         for existing in self._lessons_in_bucket(scope, scope_ref):
             existing_val = str(json.loads(existing["value_json"]))
@@ -4070,16 +4236,10 @@ class VectorMemoryStore(MemoryProvider):
             # Substring dedup
             if rule_lower in existing_lower:
                 logger.info("Lesson dedup: %r already covered by %r", rule[:60], existing["key"])
-                # The world produced this rule AGAIN. Recorded against the lesson that
-                # already covers it, because this early return is the exact point where
-                # corroboration used to be destroyed: the repeat vanished, and a rule
-                # observed ten times stayed indistinguishable from one observed once.
-                self._observe_lesson(existing["key"], source)
-                _flush_backfills()
-                return False
+                says_it = existing["key"]
+                break
             if existing_lower in rule_lower:
-                self.supersede_semantic(existing["key"], new_key, source)
-                self._carry_lesson_evidence(existing["key"], new_key)
+                replaced.append(existing["key"])
                 continue
 
             # Topic overlap dedup
@@ -4095,8 +4255,7 @@ class VectorMemoryStore(MemoryProvider):
                             existing_val[:60],
                             ratio * 100,
                         )
-                        self.supersede_semantic(existing["key"], new_key, source)
-                        self._carry_lesson_evidence(existing["key"], new_key)
+                        replaced.append(existing["key"])
                         continue
 
             # Semantic dedup via embeddings: the stored vector when this model wrote it. One
@@ -4134,15 +4293,13 @@ class VectorMemoryStore(MemoryProvider):
                             pending_backfills[:] = [
                                 (b, k) for b, k in pending_backfills if k != existing["key"]
                             ]
-                            self.supersede_semantic(existing["key"], new_key, source)
-                            self._carry_lesson_evidence(existing["key"], new_key)
-                        else:
-                            # Same rule, said no better — a corroborating sighting of the
-                            # one already stored, not a discardable duplicate.
-                            self._observe_lesson(existing["key"], source)
-                            _flush_backfills()
-                            return False
-                    elif (
+                            replaced.append(existing["key"])
+                            continue
+                        # Same rule, said no better — a corroborating sighting of the
+                        # one already stored, not a discardable duplicate.
+                        says_it = existing["key"]
+                        break
+                    if (
                         0.5 <= sim <= 0.85
                         and self.contradiction_judge is not None
                         and (contradiction_candidate is None or sim > contradiction_candidate[2])
@@ -4151,44 +4308,48 @@ class VectorMemoryStore(MemoryProvider):
                         # judge ("always X" vs "never X"). Keep only the nearest.
                         contradiction_candidate = (existing["key"], existing_val, sim)
 
-        _flush_backfills()
+        if says_it is not None:
+            # The world produced this rule AGAIN. Recorded against the lesson that already covers
+            # it, because this return is the exact point where corroboration used to be destroyed:
+            # the repeat vanished, and a rule observed ten times stayed indistinguishable from one
+            # observed once. A lesson the pass would have retired before it reached this one stays.
+            self._observe_lesson(says_it, source)
+            self._store_lesson_vectors(pending_backfills, lesson_model)
+            return False
 
-        key = new_key  # the deterministic lesson.<hash> key computed upfront
-        value = rule if not negative else f"{rule} — NOT: {negative}"
-        confidence = 1.0 if source == "user_explicit" else 0.9
-        err = self.set_semantic(key, value, confidence, source)
-        if err is None and scope is not MemoryScope.GLOBAL:
-            # Persist the REACH axis onto the row `set_semantic` just wrote. Done
-            # here rather than inside `_write_semantic` because that INSERT is the
-            # single statement shared by all nine typed writers, and only the
-            # lesson writer has a caller-declared scope to record. Skipped for
-            # GLOBAL so a global write stays byte-identical to today (the same
-            # rule `_apply_axes` follows for plain global/durable records).
-            self.db.execute(
-                "UPDATE semantic_memory SET scope = ?, scope_ref = ? WHERE key = ?",
-                (scope.value, scope_ref, key),
+        columns: dict[str, object] = {}
+        if scope is not MemoryScope.GLOBAL:
+            # The REACH axis, stored with the row: only the lesson writer has a caller-declared
+            # scope to record. Skipped for GLOBAL so a global write stays byte-identical to today
+            # (the same rule `_apply_axes` follows for plain global/durable records).
+            columns.update(scope=scope.value, scope_ref=scope_ref)
+        if rule_emb:
+            columns.update(
+                embedding=struct.pack(f"{len(rule_emb)}f", *rule_emb),
+                embedding_model=lesson_model or None,
             )
-            self.db.commit()
-        if err is None:
-            # One sighting of the lesson that was actually written. Recorded HERE rather
-            # than in `set_semantic` because only the lesson writer has an observation to
-            # count — a fact upsert is a restatement of a value, not a repeat sighting of
-            # a rule. The `confidence` argument above is a SOURCE constant for write
-            # conflict resolution; the derived confidence that gates injection comes from
-            # these counters alone (`learning.lesson_confidence`).
-            self._observe_lesson(key, source)
-        if err is None and rule_emb:
-            emb_blob = struct.pack(f"{len(rule_emb)}f", *rule_emb)
-            self.db.execute(
-                "UPDATE semantic_memory SET embedding = ?, embedding_model = ? WHERE key = ?",
-                (emb_blob, lesson_model or None, key),
-            )
-            self.db.commit()
-        # Contradiction judge: if the new lesson was written and a same-topic
+        stored = self._store_semantic(
+            key, value, value_json, confidence, source, retiring=replaced, columns=columns
+        )
+        if stored is not None:
+            return False
+        # The evidence of each lesson it retired belongs to it now: a supersession is the same
+        # rule said better (`learning.lesson_confidence`).
+        for old_key in self._retired_toward(key, replaced):
+            self._carry_lesson_evidence(old_key, key)
+        # One sighting of the lesson that was actually written. Recorded HERE rather
+        # than in `set_semantic` because only the lesson writer has an observation to
+        # count — a fact upsert is a restatement of a value, not a repeat sighting of
+        # a rule. The `confidence` argument above is a SOURCE constant for write
+        # conflict resolution; the derived confidence that gates injection comes from
+        # these counters alone (`learning.lesson_confidence`).
+        self._observe_lesson(key, source)
+        self._store_lesson_vectors(pending_backfills, lesson_model)
+        # Contradiction judge: the new lesson is written, so if a same-topic
         # neighbor is in the mid-band, ask the judge whether they contradict. If
         # so, supersede the OLD one (pointer → the new key) — never hard-delete,
         # so it's reversible. Fail-safe: any judge error keeps both.
-        if err is None and contradiction_candidate is not None:
+        if contradiction_candidate is not None:
             old_key, old_val, sim = contradiction_candidate
             try:
                 if self.contradiction_judge(value, old_val):  # type: ignore[misc]
@@ -4206,7 +4367,117 @@ class VectorMemoryStore(MemoryProvider):
                     )
             except Exception:
                 logger.debug("contradiction judge failed — keeping both", exc_info=True)
-        return err is None
+        return True
+
+    def lesson_refusal(
+        self,
+        rule: str,
+        negative: str | None = None,
+        source: str = "user_explicit",
+        *,
+        scope: "MemoryScope | None" = None,
+        scope_ref: str | None = None,
+    ) -> tuple[SemanticRejectCode, str] | None:
+        """Why the store's rules refuse this lesson, as ``(code, reason)``, or None when they keep
+        it: the check :meth:`write_lesson` makes before it changes anything, asked here without
+        recording anything. A write that returned False was refused when this names a reason,
+        and was a lesson memory already holds when it does not."""
+        source = memory_writes.written_by(source)
+        scope, scope_ref = _lesson_reach(scope, scope_ref)
+        key, value, confidence = _lesson_record(rule, negative, source, scope, scope_ref)
+        return self.validate_semantic(key, value, confidence, source)
+
+    def _retired_toward(self, key: str, candidates: list[str]) -> list[str]:
+        """Which of *candidates* are retired toward *key* now."""
+        if not candidates:
+            return []
+        marks = ",".join("?" for _ in candidates)
+        # The interpolation is a run of `?` placeholders, one per key; every key is bound.
+        sql = f"SELECT key FROM semantic_memory WHERE superseded_by = ? AND key IN ({marks})"
+        rows = self.db.execute(sql, (key, *candidates)).fetchall()  # noqa: S608
+        retired = {str(row["key"]) for row in rows}
+        return [k for k in dict.fromkeys(candidates) if k in retired]
+
+    def _store_lesson_vectors(self, vectors: list[tuple[bytes, str]], model: str | None) -> None:
+        """Store the vectors the dedup pass made for lessons no vector of *model* covered yet."""
+        if not vectors:
+            return
+        for blob, key in vectors:
+            self.db.execute(
+                "UPDATE semantic_memory SET embedding = ?, embedding_model = ? WHERE key = ?",
+                (blob, model or None, key),
+            )
+        self.db.commit()
+
+    def _restore_lessons_replaced_by_nothing(self) -> int:
+        """Bring back each lesson an earlier version left retired toward a key that holds nothing.
+
+        That version retired the lessons a new one replaced before it asked whether the new one
+        could be kept, so a refused update left the lesson it would have replaced pointing at a
+        lesson never stored: out of recall and out of every prompt. Each is live again, with the
+        sightings it carried onto that key, unless a lesson kept since says it in full (in its own
+        reach): it then points at that one, as the update taught again would have retired it.
+        Recorded in the history under the source ``repair``, heard by no trigger.
+
+        Run when the store opens, before any work reads it, and idempotent: what it repairs no
+        longer points at nothing. Returns how many it repaired.
+        """
+        from personalclaw.memory_record import MemoryScope
+
+        orphans = self.db.execute(
+            "SELECT s.key, s.value_json, s.superseded_by, s.scope_ref, "
+            "COALESCE(s.scope, 'global') AS reach FROM semantic_memory s "
+            "WHERE s.key LIKE 'lesson.%' AND s.is_deleted = 1 AND s.superseded_by IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM semantic_memory t WHERE t.key = s.superseded_by) "
+            "ORDER BY s.invalidated_at, s.key"
+        ).fetchall()
+        if not orphans:
+            return 0
+        repaired: list[tuple[str, str, str, str]] = []  # (key, value, pointed at, kept since)
+        with self.db.transaction():
+            now = _now_iso()
+            for row in orphans:
+                try:
+                    text = str(json.loads(row["value_json"])).lower()
+                    reach = MemoryScope(row["reach"])
+                except (TypeError, ValueError):
+                    continue
+                kept_since = next(
+                    (
+                        str(live["key"])
+                        for live in self._lessons_in_bucket(reach, row["scope_ref"])
+                        if live["key"] != row["key"]
+                        and text in str(json.loads(live["value_json"])).lower()
+                    ),
+                    "",
+                )
+                if kept_since:
+                    self.db.execute(
+                        "UPDATE semantic_memory SET superseded_by = ?, updated_at = ? "
+                        "WHERE key = ?",
+                        (kept_since, now, row["key"]),
+                    )
+                else:
+                    self.db.execute(
+                        "UPDATE semantic_memory SET is_deleted = 0, superseded_by = NULL, "
+                        "invalidated_at = NULL, updated_at = ? WHERE key = ?",
+                        (now, row["key"]),
+                    )
+                repaired.append(
+                    (str(row["key"]), str(row["value_json"]), str(row["superseded_by"]), kept_since)
+                )
+        for key, value, pointed_at, kept_since in repaired:
+            if kept_since:
+                self._record_event("supersede", "semantic", key, value, kept_since, _REPAIR_SOURCE)
+            else:
+                self._record_event("restore", "semantic", key, pointed_at, value, _REPAIR_SOURCE)
+            self._carry_lesson_evidence(pointed_at, kept_since or key)
+        if repaired:
+            logger.warning(
+                "Restored %d lesson(s) an earlier version left replaced by a lesson never kept",
+                len(repaired),
+            )
+        return len(repaired)
 
     # ── Lesson confidence ──
     #

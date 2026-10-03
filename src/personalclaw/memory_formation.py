@@ -446,7 +446,9 @@ def adjudicate(cand: Candidate, decision: Decision | None) -> Decision:
 
 def _write(
     vs, cand: Candidate, source: str, *, holder_attribution: bool, replaces: str = ""
-) -> bool:
+) -> str:
+    """Store *cand*. The key it was stored under (a marked key is stored under the fact it names,
+    :func:`_as_stored`), or ``""`` when it was not stored."""
     item_source = "user_explicit" if cand.confidence >= 1.0 else source
     kwargs: dict[str, Any] = {}
     if holder_attribution and cand.holder:
@@ -454,9 +456,9 @@ def _write(
     try:
         key, value = _as_stored(vs, cand.key, cand.value, replaces)
     except MaskConflict:
-        return False
+        return ""
     err = vs.set_semantic(key, value, cand.confidence, item_source, **kwargs)
-    return err is None
+    return key if err is None else ""
 
 
 def _as_stored(vs, key: str, value: object, replaces: str = "") -> tuple[str, object]:
@@ -608,14 +610,16 @@ def apply_decisions(
                 report.rejected += 1
             continue
         if final.verdict == VERDICT_SUPERSEDE:
-            written = _write(
+            stored = _write(
                 vs, cand, source, holder_attribution=holder_attribution, replaces=final.target
             )
-            if not written:
+            if not stored:
                 report.rejected += 1
                 continue
             report.added += 1
-            if vs.supersede_semantic(final.target, cand.key, source):
+            # Toward the key the new row was stored under: a marked key is stored under the fact
+            # it names, and the spelling the model wrote holds nothing.
+            if vs.supersede_semantic(final.target, stored, source):
                 report.superseded += 1
             continue
         if _write(vs, cand, source, holder_attribution=holder_attribution):

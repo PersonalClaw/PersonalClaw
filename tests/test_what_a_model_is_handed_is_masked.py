@@ -1224,6 +1224,36 @@ def test_consolidation_updates_the_fact_a_masked_key_names(facts):
     )
 
 
+def test_a_supersede_under_a_masked_key_retires_toward_the_fact_it_names(facts):
+    """🔴 Red on integration: the fact it replaced was retired toward the masked spelling, a key
+    that holds nothing, so it dropped out of recall with nothing in its place."""
+    from personalclaw import memory_formation as mf
+
+    key = "user.token_ghp_" + "zr8" * 12
+    assert facts.set_semantic(key, "the old note", 0.9, "seed") is None
+    moved = mf.Candidate(
+        index=0, key=redact_for_display(key), value="the bot token now lives here", confidence=0.9
+    )
+    moved.overlaps = [
+        mf.Overlap(
+            key="user.github_token", value_str=redact_for_display(f"the bot token is {TOKEN}")
+        )
+    ]
+    report = mf.apply_decisions(
+        facts,
+        [moved],
+        {0: mf.Decision(index=0, verdict=mf.VERDICT_SUPERSEDE, target="user.github_token")},
+        source="consolidation:s1",
+    )
+
+    assert (report.added, report.superseded) == (1, 1), report.summary()
+    replaced = facts.db.execute(
+        "SELECT is_deleted, superseded_by FROM semantic_memory WHERE key = 'user.github_token'"
+    ).fetchone()
+    assert replaced["is_deleted"] == 1 and replaced["superseded_by"] == key
+    assert _fact(facts, key) == "the bot token now lives here"
+
+
 def test_a_consolidated_markdown_rewrite_keeps_hidden_values_or_is_left():
     from personalclaw.history import _kept_lines
 

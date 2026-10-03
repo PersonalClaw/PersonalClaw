@@ -1596,14 +1596,17 @@ def _learn(args: argparse.Namespace) -> None:
     action = getattr(args, "learn_action", None)
     if action == "add":
         # memory.db is the sole lesson store; a store with no embedder still persists
-        # lessons (vector optional). ``write_lesson`` returning False means the lesson
-        # was a dedup/supersession no-op, not that the store was unavailable.
+        # lessons (vector optional). ``write_lesson`` returning False means memory already
+        # holds the lesson, or refused it: ``lesson_refusal`` says which, and why.
         with memory_locality.record_stores([memory_locality.global_partition()]) as opened:
             svc = MemoryService.over_vector_store(opened[0][1])
             rule = args.rule
             category = args.category
             negative = getattr(args, "negative", None)
-            svc.write_lesson(rule, category, negative)
+            saved = svc.write_lesson(rule, category, negative)
+            refused = None if saved else svc.lesson_refusal(rule, negative)
+        if refused is not None:
+            _refuse(f"Not saved, and nothing in memory changed: {refused[1]}.")
         neg = f" ({negative})" if negative else ""
         print(f"Saved: {rule}{neg} [{category}]")
         return

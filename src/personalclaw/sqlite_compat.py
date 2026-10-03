@@ -25,6 +25,8 @@ below reports what actually resolved so the doctor can show it.
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Callable
@@ -179,6 +181,9 @@ class SharedConnection(sqlite3.Connection):
     ``statement_check``, when a store sets one, runs before every statement, with ``script=True``
     for a script; it refuses a statement by raising. A store whose rows another session may be
     shown (memory, knowledge, vocabulary) sets :func:`personalclaw.memory_writes.check_statement`.
+
+    The lock is taken per call, so a change made of several statements is one transaction only
+    under :meth:`transaction`, which holds it from the first statement to the last.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -212,6 +217,37 @@ class SharedConnection(sqlite3.Connection):
     def rollback(self) -> None:
         with self._serial:
             super().rollback()
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Run the enclosed statements as one transaction: all of them are stored, or, when the
+        enclosed work raises, none is.
+
+        The connection's lock is held throughout, so no other thread's statement lands inside it:
+        between two of its statements another thread's commit would store half of it, and its
+        rollback would undo the half already run. It begins ``IMMEDIATE``, taking the database's
+        write lock before anything in it is read. When another thread's statements are already
+        open on the connection (run, and not yet committed), it runs as a savepoint inside them,
+        stored when they are. Nothing inside may commit or roll back itself.
+        """
+        with self._serial:
+            if self.in_transaction:
+                self.execute("SAVEPOINT shared_transaction")
+                try:
+                    yield
+                except BaseException:
+                    self.execute("ROLLBACK TO shared_transaction")
+                    self.execute("RELEASE shared_transaction")
+                    raise
+                self.execute("RELEASE shared_transaction")
+                return
+            self.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                self.rollback()
+                raise
+            self.commit()
 
     def close(self) -> None:
         with self._serial:

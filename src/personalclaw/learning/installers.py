@@ -170,14 +170,15 @@ def install(prop: Any, *, service: Any = None) -> str:
     elif branch == SELF_MODEL:
         from personalclaw.learning import self_model_observer
 
-        # A FALSE return means the principle was not written — no reachable memory store, or no
-        # vector tier on this box. Refused rather than recorded: the handler used to call that
-        # case a best-effort deferral, but a deferral that records an `accepted` decision
-        # suppresses its own retry forever, which is the same bug in a smaller blast radius.
+        # A FALSE return means the principle was not written — no reachable memory store, no
+        # vector tier on this box, or memory refused its text. Refused rather than recorded: the
+        # handler used to call that case a best-effort deferral, but a deferral that records an
+        # `accepted` decision suppresses its own retry forever, which is the same bug in a smaller
+        # blast radius.
         if not self_model_observer.install_accepted_principle(service, data):
             raise proposals.AcceptError(
-                "the self-model principle was not written (no memory store is reachable): "
-                "nothing changed and the proposal is still pending"
+                "the self-model principle was not written (no memory store is reachable, or "
+                "memory refused its text): nothing changed and the proposal is still pending"
             )
     elif branch != NOTHING:
         raise proposals.NoProposalInstallerError(

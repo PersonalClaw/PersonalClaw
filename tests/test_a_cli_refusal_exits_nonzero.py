@@ -281,6 +281,20 @@ def test_learn_remove_that_matches_nothing_exits_1(capsys):
     assert "No lessons match: nothing-like-it" in err
 
 
+def test_learn_add_of_a_lesson_memory_refuses_exits_1(capsys):
+    """🔴 Red on integration: "Saved: …" and exit 0 for a lesson memory refused."""
+    from personalclaw.cli_commands import _learn
+
+    too_long = "Keep the seed trays on the north bench, " + "and check every row, " * 220
+    add = argparse.Namespace(learn_action="add", rule=too_long, category="knowledge", negative=None)
+
+    err = _refused(capsys, lambda: _learn(add))
+
+    assert err.startswith("Not saved, and nothing in memory changed: Value too large"), err
+    _learn(argparse.Namespace(learn_action="list"))
+    assert capsys.readouterr().out.strip() == "No lessons."
+
+
 def test_eval_of_a_scenario_that_is_not_installed_exits_1(capsys):
     """Nothing ran, so there is no report to write either."""
     from personalclaw.cli_commands import _run_eval

@@ -159,13 +159,16 @@ def _load_value(service, key: str) -> Any:
         return None
 
 
-def _write_row(service, key: str, value: dict) -> None:
-    """Best-effort self-model row write. A rejection (e.g. an injection-pattern false hit in a tool
-    name) is logged, never raised — a bookkeeping write must not cost the user their turn."""
+def _write_row(service, key: str, value: dict) -> bool:
+    """Best-effort self-model row write: whether it was stored. A rejection (e.g. an
+    injection-pattern false hit in a tool name) is logged, never raised — a bookkeeping write must
+    not cost the user their turn — and makes room for nothing (no entry is displaced for it)."""
     result = service.set_semantic(key, value, _ROW_CONFIDENCE, _ROW_SOURCE)
     if result is not None:
         code, reason = result
         logger.debug("self-model row %s rejected (%s): %s", key, code, reason)
+        return False
+    return True
 
 
 def load_live_entries(service) -> list[Entry]:
@@ -239,10 +242,12 @@ def _append_retrospection(service, observation: Observation, live: list[Entry]) 
 
     `trim_ring` decides which entries SURVIVE; this then DELETES the rows it dropped, because the
     ring is a store, not an in-memory list — leaving the overflow on disk would let `over_cap`
-    report a ring that quietly outgrew its cap.
+    report a ring that quietly outgrew its cap. An entry memory refuses is not in the ring, so
+    nothing is dropped to make room for it.
     """
     entry = _retrospection_entry(observation)
-    _write_row(service, entry.memory_key, _entry_value(entry))
+    if not _write_row(service, entry.memory_key, _entry_value(entry)):
+        return
     ring = [e for e in live if e.facet == Facet.RETROSPECTION.value] + [entry]
     survivors = {e.memory_key for e in trim_ring(ring)}
     for e in ring:
@@ -442,9 +447,10 @@ def install_accepted_principle(service, proposal_dict: dict) -> bool:
 
     Called by `dashboard/handlers/learning.py`'s accept installer AFTER `require_human` passed —
     this is the human installing, the one path §2.6 permits to write a principle. Enforces the cap
-    on disk the way `plan_promotion` did on paper: if writing this entry would exceed the principle
-    cap, the weakest EXISTING principle is displaced first, so a hand-edited or stale store can
-    never leave the tier over its cap.
+    on disk the way `plan_promotion` did on paper: if this entry takes the principle tier over its
+    cap, the weakest EXISTING principle is displaced once it is stored, so a hand-edited or stale
+    store can never leave the tier over its cap, and a principle memory refuses displaces nothing.
+    False when nothing was written.
     """
     if service is None or not getattr(service, "has_vector", False):
         return False
@@ -462,13 +468,14 @@ def install_accepted_principle(service, proposal_dict: dict) -> bool:
         created_at=_now(),
         last_seen_at=_now(),
     )
+    if not _write_row(service, entry.memory_key, _entry_value(entry)):
+        return False
     _displace_for_cap(service, incoming=entry)
-    _write_row(service, entry.memory_key, _entry_value(entry))
     return True
 
 
 def _displace_for_cap(service, *, incoming: Entry) -> None:
-    """Drop the weakest existing principle if admitting `incoming` would exceed the cap.
+    """Drop the weakest existing principle if `incoming`, just stored, took the tier over its cap.
 
     Skips a row that shares `incoming`'s key (a re-accept UPDATES in place, not counted against the
     cap twice). "Weakest" matches `plan_promotion`'s own order — confidence, then seen_count, then

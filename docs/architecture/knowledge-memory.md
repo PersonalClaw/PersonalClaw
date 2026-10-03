@@ -736,6 +736,24 @@ item vector).
   content is `security.py::fence_untrusted` — see [security.md](security.md).)
 - The after-turn learning path (`after_turn_review.py`) is gated on
   `session.is_restricted` — restricted sessions never write lessons.
+- A lesson is authorised and validated before anything is changed or counted
+  (`VectorMemoryStore.write_lesson`). Work that may change none of your memory is
+  refused first, so it counts no sighting either (the sightings live in
+  `learning.db`, which the statement check never sees); a lesson the store's rules
+  refuse is recorded in the history as a write that did not happen; a lesson one
+  already held says in full is a sighting of that one. None of them retires
+  anything: the lessons a new one replaces are retired toward it in the transaction
+  that stores it (`_write_semantic`'s `retiring`, inside
+  `SharedConnection.transaction`), and `supersede_semantic` retires a row only
+  toward one that is stored, so nothing drops out of recall for a replacement that
+  was not kept. A row written again is live and points at nothing. The lesson route
+  answers a refused lesson `422 lesson_refused` with the store's reason
+  (`MemoryService.lesson_refusal`), which the Memory page, the agent's
+  `memory_remember` and `personalclaw learn add` show, and it scans what not to do
+  beside the rule as it scans the rule. A lesson an earlier version left retired
+  toward one that was never kept comes back when its store opens, with the
+  sightings it had carried onto that key, or points at the lesson taught since that
+  says it in full (recorded in Memory → History under the source `repair`).
 - Learning reads only what the person typed. Every per-turn capture (the
   correction lesson, preference facets and vetoes, the glossary slot, the
   self-model observer, stumble refinement and the skill ladder) is handed

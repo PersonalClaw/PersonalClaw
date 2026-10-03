@@ -75,6 +75,23 @@ def test_synthesize_failures_collapses_cluster(svc):
     assert not [r for r in proc if r.source == "procedural" and "flaky_tool" in r.text]
 
 
+def test_a_prior_memory_refuses_retires_none_of_the_failures_it_would_sum_up(tmp_path):
+    """🔴 Red on integration: the failures were deleted though memory refused the prior that sums
+    them up, so neither was left."""
+    # She asks memory to keep only what it is surer of than a synthesized prior's 0.8.
+    store = VectorMemoryStore(db_path=tmp_path / "m.db", confidence_threshold=0.85)
+    store.init()
+    svc = MemoryService.over_vector_store(store)
+    for shape in ("task a", "task b", "task c"):
+        svc.record_procedural(tool="flaky_tool", task_shape=shape, outcome="failed")
+
+    assert svc.synthesize_failures(min_cluster=3) == 0
+
+    proc = svc.get_records(kinds={MemoryKind.PROCEDURAL.value})
+    assert len([r for r in proc if r.source == "procedural" and "flaky_tool" in r.text]) == 3
+    assert not [r for r in proc if r.source == "failure_synthesis"]
+
+
 def test_synthesize_failures_below_threshold_noop(svc):
     for shape in ("task a", "task b"):  # only 2 — below min_cluster=3
         svc.record_procedural(tool="rare_tool", task_shape=shape, outcome="failed")

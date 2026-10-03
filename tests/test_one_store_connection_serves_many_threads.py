@@ -257,3 +257,79 @@ def test_a_shared_connection_behaves_like_a_plain_one(tmp_path):
     assert [r["name"] for r in cur.fetchmany()] == ["a", "b"]
     assert [r["name"] for r in cur.fetchall()] == ["c", "d"]
     conn.close()
+
+
+# ── a change made of several statements is one transaction ─────────────────────────────────────
+
+
+def _names_table(tmp_path) -> SharedConnection:
+    conn = connect_shared(str(tmp_path / "tx.db"), isolation_level=None)
+    conn.executescript("CREATE TABLE t (name TEXT);")
+    conn.isolation_level = ""
+    return conn
+
+
+def _stored(tmp_path) -> list[str]:
+    """What another connection reads: only what was committed."""
+    reader = sqlite3.connect(str(tmp_path / "tx.db"))
+    try:
+        return [r[0] for r in reader.execute("SELECT name FROM t ORDER BY rowid")]
+    finally:
+        reader.close()
+
+
+def test_a_transaction_stores_all_of_its_statements_or_none(tmp_path):
+    conn = _names_table(tmp_path)
+    with conn.transaction():
+        conn.execute("INSERT INTO t (name) VALUES ('a')")
+        conn.execute("INSERT INTO t (name) VALUES ('b')")
+    assert _stored(tmp_path) == ["a", "b"]
+
+    with pytest.raises(RuntimeError):
+        with conn.transaction():
+            conn.execute("INSERT INTO t (name) VALUES ('c')")
+            raise RuntimeError("the second half failed")
+    assert _stored(tmp_path) == ["a", "b"]
+    assert not conn.in_transaction
+    conn.close()
+
+
+def test_no_other_threads_statement_lands_inside_a_transaction(tmp_path):
+    """Between two of a transaction's statements, another thread's commit would store the half
+    already run, and nothing could take it back when the second half failed."""
+    conn = _names_table(tmp_path)
+    started = threading.Event()
+
+    def other_thread() -> None:
+        started.set()
+        conn.execute("INSERT INTO t (name) VALUES ('other')")
+        conn.commit()
+
+    worker = threading.Thread(target=other_thread)
+    with pytest.raises(RuntimeError):
+        with conn.transaction():
+            conn.execute("INSERT INTO t (name) VALUES ('half')")
+            worker.start()
+            started.wait(5)
+            time.sleep(0.2)
+            assert worker.is_alive(), "the other thread ran inside the transaction"
+            raise RuntimeError("the second half failed")
+    worker.join(5)
+    assert _stored(tmp_path) == ["other"]
+    conn.close()
+
+
+def test_a_transaction_inside_statements_already_open_is_stored_with_them(tmp_path):
+    conn = _names_table(tmp_path)
+    conn.execute("INSERT INTO t (name) VALUES ('open')")  # run, not yet committed
+    with conn.transaction():
+        conn.execute("INSERT INTO t (name) VALUES ('kept')")
+    with pytest.raises(RuntimeError):
+        with conn.transaction():
+            conn.execute("INSERT INTO t (name) VALUES ('undone')")
+            raise RuntimeError("failed")
+    assert conn.in_transaction, "the open statements are still the caller's to commit"
+    assert _stored(tmp_path) == []
+    conn.commit()
+    assert _stored(tmp_path) == ["open", "kept"]
+    conn.close()

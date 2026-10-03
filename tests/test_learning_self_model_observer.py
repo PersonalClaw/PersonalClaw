@@ -357,3 +357,79 @@ def test_the_snapshot_reaches_the_allocator_self_model_slot(svc, home):
     block = _self_model_snapshot(svc)
     rendered = _render_ambient(self_model=block, window=200_000)
     assert "Run the targeted suite before the full run." in rendered
+
+
+# ── what memory refuses makes room for nothing ──
+
+
+def _principles(svc) -> set[str]:
+    return {e.body for e in obs.load_live_entries(svc) if e.facet == Facet.PRINCIPLE.value}
+
+
+def _refuse_wording(monkeypatch, wording: str) -> None:
+    """The memory store's wording rule refuses text carrying *wording* (a stand-in: which words
+    the real rule refuses is its own business)."""
+    from personalclaw import vector_memory
+
+    monkeypatch.setattr(vector_memory, "_contains_injection", lambda text: wording in text)
+
+
+def test_a_principle_memory_refuses_displaces_nothing_and_is_not_installed(svc, monkeypatch):
+    """🔴 Red on integration: the weakest principle was displaced first, memory then refused the
+    newcomer, and the install reported it written."""
+    for i in range(CAPS[Facet.PRINCIPLE.value]):
+        assert obs.install_accepted_principle(
+            svc,
+            {
+                "title": f"seed-{i}",
+                "body": f"seed principle {i}",
+                "confidence": 0.1 * (i + 1),
+                "reinforcements": 3,
+                "source_cadence": "self_model",
+            },
+        )
+    before = _principles(svc)
+    _refuse_wording(monkeypatch, "refused wording")
+
+    installed = obs.install_accepted_principle(
+        svc,
+        {
+            "title": "newcomer",
+            "body": "a principle in refused wording",
+            "confidence": 0.99,
+            "reinforcements": 4,
+            "source_cadence": "self_model",
+        },
+    )
+
+    assert installed is False
+    assert _principles(svc) == before, "a principle was displaced for one memory refused"
+
+
+def test_a_retrospection_entry_memory_refuses_drops_nothing_from_the_ring(
+    svc, staging, monkeypatch
+):
+    """🔴 Red on integration: the ring was trimmed to make room for the refused entry."""
+
+    def resolved_turn(route: str) -> None:
+        for _ in range(2):  # the second turn resolves the first
+            obs.observe_turn(
+                svc,
+                session_key=f"s-{route}",
+                route=route,
+                tools=("edit_file",),
+                succeeded=True,
+                correction=False,
+                staging_store=staging,
+            )
+
+    for i in range(CAPS[Facet.RETROSPECTION.value]):
+        resolved_turn(f"route-{i}")
+    ring = {e.key for e in obs.load_live_entries(svc) if e.facet == Facet.RETROSPECTION.value}
+    assert len(ring) == CAPS[Facet.RETROSPECTION.value], "premise: the ring is full"
+    _refuse_wording(monkeypatch, "via route-refused")
+
+    resolved_turn("route-refused")
+
+    after = {e.key for e in obs.load_live_entries(svc) if e.facet == Facet.RETROSPECTION.value}
+    assert after == ring

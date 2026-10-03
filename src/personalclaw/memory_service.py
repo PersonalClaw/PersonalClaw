@@ -1426,6 +1426,10 @@ class MemoryService:
                     )
                 ]
             )
+            # The scattered rows are retired only once the prior that replaces them is stored: a
+            # prior memory refuses (the confidence it asks of what it keeps) retires none of them.
+            if self.get_record(prior_key) is None:
+                continue
             for m in members:
                 self._vs.delete(m.id, source="failure_synthesis")
             synthesized += 1
@@ -1955,36 +1959,46 @@ class MemoryService:
         lower-band signal is allowed (a lesson legitimately mentioning "ignore" prose
         shouldn't be lost). No-op for trusted (user) sources and empty text. An app's work is
         never one: it writes as the app (``memory_writes.written_by``), whatever it names."""
+        flagged = self._flagged(text, source)
+        if not flagged:
+            return False
+        source = memory_writes.written_by(source)
+        logger.warning(
+            "memory write BLOCKED (source=%s): injection/steering payload (%s)", source, flagged
+        )
+        try:
+            from personalclaw.sel import sel
+
+            sel().log_api_access(
+                caller=f"memory_service.write:{source}",
+                operation="memory_write",
+                outcome="blocked",
+                source="memory",
+                resources="",
+                error="injection/bidi payload in untrusted memory write",
+            )
+        except Exception:
+            pass
+        return True
+
+    def _flagged(self, text: str | None, source: str) -> str:
+        """The scanner rules that read an untrusted memory write's *text* as DANGEROUS, joined, or
+        ``""`` when they do not (and for a trusted source or empty text), saying nothing itself:
+        the write gate's verdict, which :meth:`_memory_write_blocked` acts on and
+        :meth:`lesson_refusal` reports. A scan that errors fails open, as the gate always has."""
         source = memory_writes.written_by(source)
         if not text or source in self._TRUSTED_WRITE_SOURCES:
-            return False
+            return ""
         try:
             from personalclaw.supply_chain import Verdict, default_scanner
 
             report = default_scanner.scan_text(text, surface="manifest")
-            if report.verdict is Verdict.DANGEROUS:
-                logger.warning(
-                    "memory write BLOCKED (source=%s): injection/steering payload (%s)",
-                    source,
-                    ", ".join(sorted({f.rule for f in report.findings})),
-                )
-                try:
-                    from personalclaw.sel import sel
-
-                    sel().log_api_access(
-                        caller=f"memory_service.write:{source}",
-                        operation="memory_write",
-                        outcome="blocked",
-                        source="memory",
-                        resources="",
-                        error="injection/bidi payload in untrusted memory write",
-                    )
-                except Exception:
-                    pass
-                return True
+            if report.verdict is not Verdict.DANGEROUS:
+                return ""
+            return ", ".join(sorted({f.rule for f in report.findings})) or "dangerous content"
         except Exception:
             logger.debug("memory-write scan errored (fail-open)", exc_info=True)
-        return False
+            return ""
 
     def write_episodic(
         self,
@@ -2060,6 +2074,40 @@ class MemoryService:
 
             fire_sync(memory_write_payload(kind="lesson", key=category, scope=source))
         return ok
+
+    def lesson_refusal(
+        self,
+        rule: str,
+        negative: str | None = None,
+        source: str = "user_explicit",
+        *,
+        scope: "MemoryScope | None" = None,
+        scope_ref: str | None = None,
+    ) -> "tuple[SemanticRejectCode, str] | None":
+        """Why memory refuses this lesson, as ``(code, reason)``, or None when it would keep it:
+        the checks :meth:`write_lesson` makes before it changes anything (the scan of an untrusted
+        source's text, then the store's own rules), asked without recording anything. A write that
+        returned False was refused when this names a reason, and was a lesson memory already holds
+        when it does not."""
+        vs = self._vs
+        if vs is None:
+            return None
+        from personalclaw.vector_memory import SemanticRejectCode
+
+        source = memory_writes.written_by(source)
+        flagged = self._flagged(rule, source) or self._flagged(negative, source)
+        if flagged:
+            return (
+                SemanticRejectCode.INJECTION,
+                f"Text flagged by the memory-write scan ({flagged})",
+            )
+        return vs.lesson_refusal(
+            rule,
+            negative,
+            source,
+            scope=scope,
+            scope_ref=normalize_workspace_ref(scope_ref) or None,
+        )
 
     def get_lessons(self, limit: int | None = None) -> list[dict]:
         """The lesson INVENTORY (every scope) — management lists, counts, deletes."""

@@ -98,6 +98,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # A folder's memory that is there and whose memory database cannot be opened, so nothing in
     # it can be listed, changed or removed record by record this time.
     "memory_partition_unavailable": "That folder's memory database cannot be opened right now.",
+    # A lesson memory refused (its store's rules, or the scan of an untrusted source's text)
+    # before it changed anything, so the lesson it would have replaced is kept as it was. The
+    # message says why, and `reason` inside the error is the store's own reject code.
+    "lesson_refused": (
+        "Memory refused the lesson, so nothing in memory changed; the message says why."
+    ),
     # A DIFFERENT check from `invalid_path`, and the distinction is load-bearing: `_reject_name`
     # judges a single NAME (separators, `..`, over-long) before any root is consulted, so it fires
     # on input the allowlist never sees. Its three call sites — mkdir, upload, and the create-file

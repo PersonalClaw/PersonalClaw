@@ -18,7 +18,7 @@ in: the inventory ``memory_list`` reads and ``memory_forget`` removes from.
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -26,8 +26,13 @@ from personalclaw import memory_locality, memory_reads, memory_writes
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.security import MaskConflict, redact_values_for_display, stored_name
+from personalclaw.vector_memory import SemanticRejectCode
 
 from ._shared import _change_refused_for_the_app, _get_memory, _memory_refusal
+
+if TYPE_CHECKING:
+    from personalclaw.memory_record import MemoryScope
+    from personalclaw.memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
 
@@ -129,16 +134,23 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     rule = body.get("rule", "").strip()
     if not rule:
         return web.json_response({"error": "rule is required"}, status=400)
+    negative = body.get("negative") or None
     # Injection gate: a memory write is untrusted content that gets
-    # re-injected into future prompts. Scan it with the shared scanner; a
-    # dangerous verdict (e.g. a bidi-override or an embedded instruction-
-    # override) is refused before it ever lands in the store.
+    # re-injected into future prompts. Everything the lesson stores is scanned with the shared
+    # scanner: the rule, and what not to do beside it, which the agent's tool sends too and which
+    # a lesson written as yours never passes the memory service's own scan for. A dangerous
+    # verdict (e.g. a bidi-override or an embedded instruction-override) is refused before it
+    # ever lands in the store.
     try:
         from personalclaw.supply_chain import Verdict, default_scanner
 
-        report = default_scanner.scan_text(rule, surface="memory")
-        if report.verdict is Verdict.DANGEROUS:
-            cats = ", ".join(sorted({f.rule for f in report.findings})) or "dangerous content"
+        reports = [
+            default_scanner.scan_text(text, surface="memory") for text in (rule, negative) if text
+        ]
+        flagged = [report for report in reports if report.verdict is Verdict.DANGEROUS]
+        if flagged:
+            rules = {finding.rule for report in flagged for finding in report.findings}
+            cats = ", ".join(sorted(rules)) or "dangerous content"
             _sel().log_api_access(
                 caller=request.headers.get("X-Session-Key", ""),
                 operation="memory_remember",
@@ -171,7 +183,6 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
-    negative = body.get("negative") or None
     memories = _memories(request, writes=True)
     if memories is None:
         return json_error("memory_partition_not_found", status=404)
@@ -184,11 +195,43 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     svc = service_for(memories[0][1])
     # Off the event loop: the lesson is embedded, and may be judged against the lessons it could
     # contradict, each a round trip to a model.
-    await asyncio.to_thread(
-        svc.write_lesson, rule, category, negative, scope=scope, scope_ref=scope_ref
+    refusal = await asyncio.to_thread(
+        _save_lesson, svc, rule, category, negative, scope=scope, scope_ref=scope_ref
     )
+    if refusal is not None:
+        code, reason = refusal
+        _sel().log_api_access(
+            caller=sk,
+            operation="memory_remember",
+            outcome="rejected",
+            source="dashboard",
+            resources=f"{code.value}:lesson",
+        )
+        return json_error(
+            "lesson_refused",
+            message=f"Lesson not saved, and nothing in memory changed: {reason}.",
+            status=409 if code is SemanticRejectCode.CONFLICT else 422,
+            error_extra={"reason": code.value},
+        )
     state.push_refresh("lessons")
     return web.json_response({"ok": True})
+
+
+def _save_lesson(
+    svc: "MemoryService",
+    rule: str,
+    category: str,
+    negative: str | None,
+    *,
+    scope: "MemoryScope | None",
+    scope_ref: str | None,
+) -> tuple[SemanticRejectCode, str] | None:
+    """Write the lesson. None when memory holds it now, stored or said in full by a lesson it
+    already held; otherwise why memory refused it (``MemoryService.lesson_refusal``), nothing
+    having changed."""
+    if svc.write_lesson(rule, category, negative, scope=scope, scope_ref=scope_ref):
+        return None
+    return svc.lesson_refusal(rule, negative, scope=scope, scope_ref=scope_ref)
 
 
 async def api_lessons_delete(request: web.Request) -> web.Response:
