@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.safety_flags import strict_bool
 
 logger = logging.getLogger(__name__)
 
@@ -379,7 +380,11 @@ _ENABLED_BY_DEFAULT: dict[str, bool] = {"stt": True, "tts": False}
 def use_case_enabled(use_case: str, settings: dict[str, Any]) -> bool:
     """Whether ``use_case`` is switched on, given its ``settings``: their ``enabled``, else the
     default in :data:`_ENABLED_BY_DEFAULT` (on, for a use case with no switch)."""
-    return bool(settings.get("enabled", _ENABLED_BY_DEFAULT.get(use_case, True)))
+    return strict_bool(
+        settings.get("enabled"),
+        field=f"{use_case} settings enabled",
+        default=_ENABLED_BY_DEFAULT.get(use_case, True),
+    )
 
 
 def load_use_case_settings(use_case: str) -> dict[str, Any]:

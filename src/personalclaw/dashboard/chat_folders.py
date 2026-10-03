@@ -11,8 +11,11 @@ from personalclaw import chores
 from personalclaw.dashboard.chat_persistence import resolve_session, save_session_to_history
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.request_validation import (
+    MISSING,
     RequestValidationError,
     json_object_body,
+    optional_bool,
+    require_bool,
     require_string,
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -128,12 +131,13 @@ async def api_chat_folder_update(request: web.Request) -> web.Response:
     try:
         body = await json_object_body(request)
         new_name = require_string(body, "name")[:100] if "name" in body else None
+        collapsed = optional_bool(body, "collapsed")
     except RequestValidationError as exc:
         return web.json_response({"error": exc.message}, status=exc.status)
     if new_name is not None:
         folder["name"] = new_name
-    if "collapsed" in body:
-        folder["collapsed"] = bool(body["collapsed"])
+    if collapsed is not MISSING:
+        folder["collapsed"] = collapsed
     if "order" in body:
         # Coerce-or-ignore, matching `chat_tags.py`'s tag and column updates verbatim. A bare
         # `int()` here raised `ValueError` on an unparseable order and answered a 500, while the
@@ -239,9 +243,10 @@ async def api_chat_session_pin(request: web.Request) -> web.Response:
     # ABSENT IS NOT "UNPIN" (#2970). `bool(body.get("pinned", False))` made an empty body
     # indistinguishable from `{"pinned": false}`, so `PATCH .../pin {}` silently dropped the
     # pin at `200 {"ok": true}` — and a pin is the user saying *keep this*.
-    if "pinned" not in body:
-        return web.json_response({"error": "body must include 'pinned'"}, status=400)
-    session.pinned = bool(body.get("pinned", False))
+    try:
+        session.pinned = require_bool(body, "pinned")
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
     save_session_to_history(state, session, force=True)
     state.push_sessions_update()
     sel().log_api_access(

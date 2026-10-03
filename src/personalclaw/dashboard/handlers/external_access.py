@@ -26,7 +26,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import json_object_body, require_bool
 from personalclaw.safety_flags import confirm_answer
 
 logger = logging.getLogger(__name__)
@@ -328,12 +328,10 @@ async def api_external_access_client_toggle(request: web.Request) -> web.Respons
     from personalclaw.inbound import clients as clients_mod
 
     client_id = str(request.match_info.get("client_id", "") or "")
-    body = await json_object_body(request)
-    if not isinstance(body, dict) or not isinstance(body.get("disabled"), bool):
-        return json_error("invalid_body", message="body must be {disabled: bool}", status=400)
-    if not clients_mod.set_disabled(client_id, bool(body["disabled"]), reason="operator action"):
+    disabled = require_bool(await json_object_body(request), "disabled")
+    if not clients_mod.set_disabled(client_id, disabled, reason="operator action"):
         return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
-    return web.json_response({"ok": True, "client_id": client_id, "disabled": body["disabled"]})
+    return web.json_response({"ok": True, "client_id": client_id, "disabled": disabled})
 
 
 async def api_bridge_confirmation(request: web.Request) -> web.Response:

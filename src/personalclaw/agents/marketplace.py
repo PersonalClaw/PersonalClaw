@@ -18,6 +18,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw.safety_flags import strict_bool
+
 logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -85,7 +87,9 @@ class AgentDefinition:
             voice=str(d.get("voice", "")),
             # Natural voice — same gotcha: unread here the preference is
             # dropped on every round-trip and stops travelling with the agent.
-            natural_voice=bool(d.get("natural_voice", False)),
+            natural_voice=strict_bool(
+                d.get("natural_voice"), field="agent natural_voice", default=False
+            ),
             skills=list(d.get("skills") or []),
             provider_entry=str(d.get("provider_entry", "")),
             mcp_servers=dict(d.get("mcp_servers") or {}),

@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from personalclaw.mcp_status import switched_off
 from personalclaw.security import is_sensitive_path, redact
 from personalclaw.sel import (  # circular import: sel imports config which imports agent
     SecurityEvent,
@@ -1301,7 +1302,7 @@ def rebuild_agent_config(*, clean: bool = False) -> Path:
         if not isinstance(spec, dict) or name in managed_names:
             continue
         ref = f"@{name}"
-        if spec.get("disabled"):
+        if switched_off(spec, name):
             for key in ("tools", "allowedTools"):
                 lst = config.get(key)
                 if lst is not None and ref in lst:

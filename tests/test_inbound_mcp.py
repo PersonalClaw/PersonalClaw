@@ -797,9 +797,11 @@ class TestConfigWiring:
         "raw,expected",
         [
             (True, True),
-            ("true", True),
-            ("on", True),
-            (1, True),
+            # Text or a number is not a boolean: the schema pass reads it as the default, closed,
+            # as it reads the master switch. Only text that spells false is read, as false.
+            ("true", False),
+            ("on", False),
+            (1, False),
             (False, False),
             ("false", False),  # bool("false") is True — the trap _expose_flag avoids
             ("no", False),

@@ -72,6 +72,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # that missing field name is what made the coercion so hard to notice.
     "field_not_a_string": "A request field must be a JSON string; the message names it.",
     "field_required": "A required request field is missing or blank; the message names it.",
+    # A switch or a consent sent as anything but the JSON literal true or false: the text
+    # "false" is truthy, so a reader that guessed would have read it as yes.
+    "field_not_a_boolean": "A request field must be the JSON true or false; the message names it.",
     "invalid_id": "A record id is not a single path segment (separators, '..' or over-long).",
     # ── dashboard file I/O (handlers/files.py) ──
     # The refusal `_validate_dashboard_path` produces: not a path under any root the dashboard

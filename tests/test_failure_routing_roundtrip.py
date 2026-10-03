@@ -151,8 +151,12 @@ async def _create(state: _State, home, body: dict) -> dict:
 
 async def _update(state: _State, raw: str, body: dict) -> tuple[int, dict]:
     from personalclaw.dashboard.handlers import triggers as handlers
+    from personalclaw.request_validation import RequestValidationError
 
-    resp = handlers._update_schedule(state, raw, body)
+    try:
+        resp = handlers._update_schedule(state, raw, body)
+    except RequestValidationError as exc:
+        resp = exc.response  # what the request boundary answers, for every `/api` route
     return resp.status, json.loads(resp.body.decode())
 
 

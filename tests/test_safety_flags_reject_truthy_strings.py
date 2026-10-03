@@ -13,7 +13,9 @@ The five, and where the value comes from:
 * ``unattended_suppress`` — config.
 
 These tests assert the **CALL SITES**, not just the helper: a correct `strict_bool` is worthless
-if a gate still calls bare `bool()`, which is exactly the shape of the original defect.
+if a gate still calls bare `bool()`, which is exactly the shape of the original defect. A file is
+read through ``strict_bool``; a request body is held stricter, through
+``request_validation.bool_field``, which refuses anything but a JSON boolean.
 """
 
 from __future__ import annotations
@@ -28,13 +30,13 @@ from personalclaw.safety_flags import strict_bool
 
 SRC = pathlib.Path(hooks.__file__).resolve().parent
 
-#: ``(module, flag)`` for every safety flag that reads user-controlled data.
+#: ``(module, flag, reader)`` for every safety flag that reads user-controlled data.
 GUARDED_FLAGS = [
-    ("hooks.py", "auto_approve_subagent_spawn"),
-    ("hooks.py", "auto_approve_subagent_tools"),
-    ("workflows/handlers.py", "skip_preflight"),
-    ("workflows/handlers.py", "always_allow"),
-    ("workflows/engine.py", "unattended_suppress"),
+    ("hooks.py", "auto_approve_subagent_spawn", "strict_bool"),
+    ("hooks.py", "auto_approve_subagent_tools", "strict_bool"),
+    ("workflows/handlers.py", "skip_preflight", "bool_field"),
+    ("workflows/handlers.py", "always_allow", "bool_field"),
+    ("workflows/engine.py", "unattended_suppress", "strict_bool"),
 ]
 
 
@@ -80,8 +82,10 @@ class TestTheHelper:
 class TestTheCallSites:
     """The half that catches a regression: the helper being right does not make the gates right."""
 
-    @pytest.mark.parametrize("module_rel,flag", GUARDED_FLAGS)
-    def test_the_flag_is_read_through_strict_bool_not_bare_bool(self, module_rel, flag):
+    @pytest.mark.parametrize("module_rel,flag,reader", GUARDED_FLAGS)
+    def test_the_flag_is_read_through_its_strict_reader_not_bare_bool(
+        self, module_rel, flag, reader
+    ):
         path = SRC / module_rel
         assert path.exists(), f"{module_rel} moved — re-point this rail"
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -91,26 +95,26 @@ class TestTheCallSites:
             if not isinstance(node, ast.Call):
                 continue
             name = node.func.id if isinstance(node.func, ast.Name) else ""
-            if name not in ("bool", "strict_bool"):
+            if name not in ("bool", reader):
                 continue
             # does this call mention the flag anywhere inside it?
             if flag not in ast.dump(node):
                 continue
-            (strict if name == "strict_bool" else bare).append(node.lineno)
+            (strict if name == reader else bare).append(node.lineno)
         assert not bare, (
             f"{module_rel}:{bare} reads the safety flag {flag!r} with bare bool(). "
             f'bool("false") is True, so a value written to DISABLE the control enables it. '
-            f"Use strict_bool(..., field=...)."
+            f"Use {reader}(...)."
         )
         assert strict, (
-            f"{module_rel} no longer reads {flag!r} through strict_bool — either the flag was "
+            f"{module_rel} no longer reads {flag!r} through {reader} — either the flag was "
             f"renamed or the guard was dropped. A rail that matches nothing is not a rail."
         )
 
-    def test_every_guarded_module_imports_the_helper(self):
-        for module_rel, _ in GUARDED_FLAGS:
+    def test_every_guarded_module_imports_its_reader(self):
+        for module_rel, _, reader in GUARDED_FLAGS:
             text = (SRC / module_rel).read_text()
-            assert "strict_bool" in text, f"{module_rel} does not reference strict_bool"
+            assert reader in text, f"{module_rel} does not reference {reader}"
 
     def test_the_hooks_config_actually_refuses_a_quoted_false(self):
         """End to end through the real loader, not the helper: the defect was that a config file

@@ -225,7 +225,7 @@ describe('the envelope this extracts is the one the backend declares', () => {
     // pass against a reader that answered a bare status, and asserting only the reader would
     // pass while this route quietly kept its own copy.
     expect(py('workflows/handlers.py'), 'the route delegates the read').toMatch(
-      /from personalclaw\.request_validation import json_object_body/,
+      /from personalclaw\.request_validation import [^\n]*\bjson_object_body\b/,
     )
     expect(py('workflows/handlers.py'), 'and actually calls it').toMatch(
       /body = await json_object_body\(request\)/,

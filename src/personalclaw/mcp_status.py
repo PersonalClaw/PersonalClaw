@@ -21,19 +21,39 @@ waits on its owner (a sign-in) does not count toward it.
 **A server still starting is not a failure yet** (:func:`still_starting`): one that had not answered
 by its deadline and was still running is left to finish (`mcp_stdio`), because a first start can be
 installing what it runs. Its card reads as being checked until it is looked at again.
+
+**A server switched off is not started** (:func:`switched_off`): the one reading of a server's
+``disabled`` switch, for every reader of ``mcp.json``.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import Any
+
+from personalclaw.safety_flags import strict_bool
 
 logger = logging.getLogger(__name__)
 
 #: Failed starts in a row after which a server is not started again until its owner says so.
 STOP_AFTER = 3
+
+
+def switched_off(spec: Mapping[str, Any], name: str = "") -> bool:
+    """Whether an ``mcp.json`` server's ``disabled`` switch is on.
+
+    Left out, the server is on. ``true``/``false`` and the words that spell them read as written:
+    ``"false"`` is truthy, so the readers that tested truthiness kept a server switched on in quotes
+    off, and the ones that compared with ``True`` started a server switched off in quotes. A value
+    that spells neither keeps the server off, since a server runs a command.
+    """
+    return strict_bool(
+        spec.get("disabled"), field=f"MCP server {name!r} disabled", default=True, absent=False
+    )
+
 
 #: The status a server reads once it is stopped (`GET /api/mcp`), with Retry on its card.
 STOPPED = "stopped"

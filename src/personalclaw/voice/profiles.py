@@ -55,6 +55,7 @@ from typing import Any
 from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.safety_flags import strict_bool
 
 
 def config_dir() -> Path:
@@ -193,11 +194,13 @@ class VoiceProfile:
             seed=_i("seed", 0),
             language=str(raw.get("language") or ""),
             speed=_f("speed", 1.0),
-            locked=bool(raw.get("locked")),
+            locked=strict_bool(raw.get("locked"), field="voice profile locked", default=False),
             locked_at=str(raw.get("locked_at") or ""),
             # NOTE: whatever the file claims here is overwritten by the recompute in
             # :func:`get_profile`. Kept only so a round-trip preserves the shape.
-            verified_own_voice=bool(raw.get("verified_own_voice")),
+            verified_own_voice=strict_bool(
+                raw.get("verified_own_voice"), field="voice profile verified", default=False
+            ),
             consent_text=str(raw.get("consent_text") or ""),
             consent_audio=str(raw.get("consent_audio") or ""),
             consent_recorded_at=str(raw.get("consent_recorded_at") or ""),

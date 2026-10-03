@@ -13,8 +13,10 @@ from aiohttp import web
 from personalclaw.dashboard import views_store as store
 from personalclaw.request_validation import (
     MISSING,
+    bool_field,
     json_object_body,
     optional_string,
+    require_bool,
     require_string,
     string_field,
 )
@@ -172,7 +174,9 @@ async def api_dashboard_view_tile_refresh(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": {"code": "tile_ref_required", "message": "ref is required"}}, status=400
         )
-    result = await tile_refresh.refresh_tile(view_id, ref, force=bool(body.get("force", False)))
+    result = await tile_refresh.refresh_tile(
+        view_id, ref, force=bool_field(body, "force", default=False)
+    )
     if result.reason == "tile_not_found":
         return web.json_response(
             {"error": {"code": "tile_not_found", "message": "view or tile not found"}}, status=404
@@ -221,7 +225,8 @@ async def api_dashboard_view_tile_resolve(request: web.Request) -> web.Response:
     ref = str(body.get("ref", "")).strip()
     if not ref:
         return web.json_response({"error": "ref is required"}, status=400)
-    keep = bool(body.get("keep", False))
+    # Accept or remove: the answer is said, never assumed, since a removal is not undone here.
+    keep = require_bool(body, "keep")
     try:
         view = store.resolve_tile(view_id, ref, keep=keep)
     except store.ViewNotFoundError:

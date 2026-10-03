@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from personalclaw.atomic_write import atomic_json_write
+from personalclaw.safety_flags import strict_bool
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ class SavedSourceQuery:
             id=str(data.get("id") or ""),
             name=str(data.get("name") or ""),
             query=str(data.get("query") or ""),
-            enabled=bool(data.get("enabled", True)),
+            enabled=strict_bool(data.get("enabled"), field="saved query enabled", default=True),
         )
 
 

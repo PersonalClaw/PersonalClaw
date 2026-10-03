@@ -29,7 +29,7 @@ from aiohttp import web
 
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import bool_field, json_object_body, require_bool
 from personalclaw.security import redact_values_for_display
 
 logger = logging.getLogger(__name__)
@@ -346,8 +346,7 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
 
     dry_run = request.query.get("dry_run", "") in ("1", "true", "yes")
     if not dry_run:
-        body = await json_object_body(request)
-        dry_run = bool(body.get("dry_run", False))
+        dry_run = bool_field(await json_object_body(request), "dry_run", default=False)
 
     if dry_run:
         # Reuse tools.run for the gate plan — the API and the chat tool report identically.
@@ -468,9 +467,7 @@ async def api_trigger_answer(request: web.Request) -> web.Response:
     if refused is not None:
         return refused
     body = await json_object_body(request)
-    answer = body.get("answer")
-    if not isinstance(answer, bool):
-        return json_error("invalid_request", message="'answer' must be true or false", status=400)
+    answer = require_bool(body, "answer")
     token = str(body.get("resume_token", "") or "")
     row = _trigger_store().get(raw)
     if row is None:

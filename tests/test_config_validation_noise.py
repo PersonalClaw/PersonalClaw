@@ -190,7 +190,7 @@ class TestValidationRunsOncePerContent:
         _write(home, {"agent": {"log_level": "not-a-level"}})
         AppConfig.load()
         stored = list(validation._STRIP_MEMO.values())
-        assert stored == [("agent.log_level",)]
+        assert stored == [validation._Repairs(stripped=(("agent", "log_level"),), booleans=())]
         assert "not-a-level" not in json.dumps(stored)
 
     def test_the_uncached_entry_point_still_reports_every_time(self):

@@ -10,6 +10,7 @@ OpenAI-family adapters; this registry is provider-agnostic.
 import logging
 from typing import Any, Mapping
 
+from personalclaw.safety_flags import strict_bool
 from personalclaw.tts.provider import TtsProvider
 
 logger = logging.getLogger(__name__)
@@ -252,7 +253,9 @@ def active_voice_params(*, surface: str = "", profile_id: str = "") -> dict | No
         "speed": speed,
         "speech_voice": str(settings.get("speech_voice", "") or ""),
         "enabled": use_case_enabled("tts", settings),
-        "auto_speak": bool(settings.get("auto_speak", False)),
+        "auto_speak": strict_bool(
+            settings.get("auto_speak"), field="tts settings auto_speak", default=False
+        ),
     }
     if profile is None:
         return params

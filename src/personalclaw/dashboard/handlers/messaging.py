@@ -20,6 +20,7 @@ from personalclaw.dashboard.state import (
     _rewrite_notifications,
 )
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import RequestValidationError, bool_field
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.subagent_persistence import _agent_dir, read_state
 from personalclaw.validation import (
@@ -83,9 +84,7 @@ async def api_spawn(request: web.Request) -> web.Response:
             ),
             status=400,
         )
-    silent = body.get("silent", False)
-    if not isinstance(silent, bool):
-        silent = str(silent).lower() in ("true", "1", "yes")
+    silent = bool_field(body, "silent", default=False)
     agent = cleaned.get("agent") or ""
     max_turns = cleaned.get("max_turns") or 0
     cwd = cleaned.get("cwd") or ""
@@ -616,7 +615,7 @@ async def api_send_message(request: web.Request) -> web.Response:
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     # A check (`dry_run`) says so in every answer it gives, a refusal included, so whoever asked
     # can tell the route's answer to the check from a request that never reached it.
-    checked = {"dry_run": True} if body.get("dry_run") is True else {}
+    checked = {"dry_run": True} if bool_field(body, "dry_run", default=False) else {}
     text = body.get("text", "").strip()
     if not text:
         return web.json_response({"error": "text required", **checked}, status=400)
@@ -627,14 +626,13 @@ async def api_send_message(request: web.Request) -> web.Response:
 
     target_channel = body.get("channel", "").strip()
     target_user = body.get("user", "").strip()
-    unfurl_links = body.get("unfurl_links")
-    unfurl_media = body.get("unfurl_media")
-    if (unfurl_links is not None and not isinstance(unfurl_links, bool)) or (
-        unfurl_media is not None and not isinstance(unfurl_media, bool)
-    ):
-        return web.json_response(
-            {"error": "unfurl_links and unfurl_media must be booleans", **checked}, status=400
-        )
+    # Left out, link previews and a thread reply's broadcast follow the channel's own default.
+    try:
+        unfurl_links = bool_field(body, "unfurl_links", default=None)
+        unfurl_media = bool_field(body, "unfurl_media", default=None)
+        reply_broadcast = bool_field(body, "reply_broadcast", default=None)
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message, **checked}, status=exc.status)
 
     thread_ts = body.get("thread_ts")
     if thread_ts is not None:
@@ -647,11 +645,6 @@ async def api_send_message(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
-    reply_broadcast = body.get("reply_broadcast")
-    if reply_broadcast is not None and not isinstance(reply_broadcast, bool):
-        return web.json_response(
-            {"error": "reply_broadcast must be a boolean", **checked}, status=400
-        )
     if reply_broadcast and not thread_ts:
         return web.json_response(
             {"error": "reply_broadcast requires thread_ts", **checked}, status=400

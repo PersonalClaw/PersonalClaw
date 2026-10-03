@@ -22,7 +22,7 @@ from personalclaw.dashboard.sse import GatewayStopping, next_unless_stopping
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.frontend import build_frontend_async
 from personalclaw.net.git import git_argv, git_env, transport_refusal
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import bool_field, json_object_body
 from personalclaw.security import MaskingFormatter, mask_child_output
 
 
@@ -910,7 +910,7 @@ async def api_update_simulate(request: web.Request) -> web.Response:
     body = await json_object_body(request)
 
     # Simulate a pre-flight rejection (e.g. dirty working tree)
-    if body.get("reject"):
+    if bool_field(body, "reject", default=False):
         msg = body.get(
             "reject_message", "Working tree has uncommitted changes — commit or stash first"
         )

@@ -167,6 +167,14 @@ def _handler_reads(func: str) -> set[str]:
     keys = set(re.findall(r'body\.get\(\s*"([a-z_][a-z_0-9]*)"', region))
     keys |= set(re.findall(r'body\[\s*"([a-z_][a-z_0-9]*)"\s*\]', region))
     keys |= set(re.findall(r'"([a-z_][a-z_0-9]*)"\s+in\s+body', region))
+    # The shared field readers (`request_validation`): `bool_field(body, "enabled", …)` reads it.
+    keys |= set(
+        re.findall(
+            r"(?:bool_field|require_bool|optional_bool|string_field|require_string|optional_string)"
+            r'\(\s*body\s*,\s*"([a-z_][a-z_0-9]*)"',
+            region,
+        )
+    )
     for tup in re.findall(r"for\s+\w+\s+in\s+\(([^)]*)\)", region):
         keys |= set(re.findall(r'"([a-z_][a-z_0-9]*)"', tup))
     return keys

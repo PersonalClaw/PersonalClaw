@@ -49,6 +49,7 @@ from personalclaw.file_view import read_head, whole_text
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import (
     RequestValidationError,
+    bool_field,
     json_object_body,
     require_string,
     string_field,
@@ -618,7 +619,7 @@ async def api_artifact_update(request: web.Request) -> web.Response:
         art = prov.update(
             slug,
             content=content,
-            snapshot=bool(body.get("snapshot", False)),
+            snapshot=bool_field(body, "snapshot", default=False),
             event_type=body.get("event_type"),
             actor="user",
             session_id=_session_key(request),
@@ -1427,7 +1428,7 @@ async def api_artifacts_pin(request: web.Request) -> web.Response:
         body = {}
     # Default TRUE: the route is reached from a Pin control, so the common call carries no body.
     # Defaulting to unpin would make the bodyless call silently do the opposite of its name.
-    want = bool(body.get("pinned", True))
+    want = bool_field(body, "pinned", default=True)
     pins = pinned.pin(slug, run_id=str(body.get("run_id") or "")) if want else pinned.unpin(slug)
     _audit(request, "artifact.pin" if want else "artifact.unpin", "allowed", slug)
     return web.json_response({"ok": True, "pinned": want, "pins": pins})

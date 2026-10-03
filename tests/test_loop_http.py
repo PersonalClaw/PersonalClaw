@@ -15,7 +15,14 @@ from personalclaw.loop import files as loop_files
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Run a handler as the gateway does: a refusal the shared request readers raise is answered
+    by the request boundary, which every `/api` route runs behind."""
+    from personalclaw.request_validation import RequestValidationError
+
+    try:
+        return asyncio.get_event_loop().run_until_complete(coro)
+    except RequestValidationError as exc:
+        return exc.response
 
 
 @pytest.fixture(autouse=True)

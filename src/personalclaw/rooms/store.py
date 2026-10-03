@@ -63,6 +63,7 @@ from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.history import ConversationLog
 from personalclaw.instants import as_instant, utc_now_iso
+from personalclaw.safety_flags import strict_bool
 from personalclaw.security import redact_field
 
 logger = logging.getLogger(__name__)
@@ -242,8 +243,8 @@ class Room:
             title=str(data.get("title", "")),
             # A room created before stamps carried offsets holds this machine's local time.
             created_at=as_instant(str(data.get("created_at", ""))),
-            archived=bool(data.get("archived", False)),
-            paused=bool(data.get("paused", False)),
+            archived=strict_bool(data.get("archived"), field="room archived", default=False),
+            paused=strict_bool(data.get("paused"), field="room paused", default=False),
             rounds_used=max(0, int(data.get("rounds_used", 0) or 0)),
             round_budget=max(0, int(data.get("round_budget", 0) or 0)),
             pending_queue=[str(n) for n in (data.get("pending_queue") or []) if str(n)],

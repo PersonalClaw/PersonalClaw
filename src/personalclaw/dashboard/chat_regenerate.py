@@ -12,6 +12,7 @@ from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_utils import _history_key_for, take_in_the_users_links
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.mcp_artifacts import images_made_in
+from personalclaw.request_validation import bool_field
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -237,7 +238,7 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
     index = body.get("index")
     ts = body.get("ts")
     client_ts = body.get("client_ts")
-    rewind = bool(body.get("rewind"))
+    rewind = bool_field(body, "rewind", default=False)
     content = (body.get("content") or "").strip()
     if not content:
         return web.json_response({"error": "content is required"}, status=400)

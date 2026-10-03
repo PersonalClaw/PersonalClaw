@@ -16,7 +16,9 @@ An agent writes a workflow's definitions and its edits, and a boolean as text as
 * a verify criterion ``"hard": "false"`` failed the run;
 * the loop judge's ``"done": "true"`` read as not done, so a finished loop kept running cycles.
 
-Each is read through ``safety_flags.yes_or_no`` with the safe value of what it guards.
+Each is read through ``safety_flags.yes_or_no`` with the safe value of what it guards. A rewind
+request is held stricter, as every request body is (``request_validation.bool_field``): a JSON
+body can carry a real boolean, so anything else is refused and nothing is rewound.
 """
 
 from __future__ import annotations
@@ -65,10 +67,12 @@ def test_a_rewind_not_forced_keeps_the_regions_cached_outputs():
 # ── a rewind request ─────────────────────────────────────────────────────────────────────────
 
 
-async def _rewind_request(monkeypatch, body: dict) -> dict:
+async def _rewind_request(monkeypatch, body: dict) -> tuple[int, dict]:
+    """The status the route answers, and what it asked the run to do (nothing when refused)."""
     from aiohttp import web
     from aiohttp.test_utils import make_mocked_request
 
+    from personalclaw.request_validation import RequestValidationError
     from personalclaw.workflows import handlers
 
     seen: dict = {}
@@ -87,25 +91,41 @@ async def _rewind_request(monkeypatch, body: dict) -> dict:
 
     request.json = _json  # type: ignore[assignment]
     request.match_info["run_id"] = "a1b2c3d4"
-    response = await handlers.api_run_rewind(request)
-    assert response.status == 200, response.text
-    return seen
+    try:
+        response = await handlers.api_run_rewind(request)
+    except RequestValidationError as exc:
+        # Answered by the request boundary every `/api` route runs behind.
+        response = exc.response
+    return response.status, seen
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("flag", ["redo_effects", "force"])
-@pytest.mark.parametrize("sent", NO + NEITHER)
-async def test_a_rewind_request_asks_for_neither_unless_it_says_yes(monkeypatch, flag, sent):
-    seen = await _rewind_request(monkeypatch, {"node_id": "publish", flag: sent})
-    assert seen[flag] is False
+@pytest.mark.parametrize("says", ["nothing", "no"])
+async def test_a_rewind_request_asks_for_neither_unless_it_says_yes(monkeypatch, flag, says):
+    body = {"node_id": "publish", **({flag: False} if says == "no" else {})}
+    status, seen = await _rewind_request(monkeypatch, body)
+    assert status == 200 and seen[flag] is False
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("flag", ["redo_effects", "force"])
-@pytest.mark.parametrize("sent", YES)
-async def test_a_rewind_request_that_says_yes_asks_for_it(monkeypatch, flag, sent):
-    seen = await _rewind_request(monkeypatch, {"node_id": "publish", flag: sent})
-    assert seen[flag] is True
+async def test_a_rewind_request_that_says_yes_asks_for_it(monkeypatch, flag):
+    status, seen = await _rewind_request(monkeypatch, {"node_id": "publish", flag: True})
+    assert status == 200 and seen[flag] is True
+
+
+NOT_A_JSON_BOOLEAN = [s for s in NO + YES + NEITHER if not isinstance(s, bool)] + [None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", ["redo_effects", "force"])
+@pytest.mark.parametrize("sent", NOT_A_JSON_BOOLEAN)
+async def test_a_rewind_request_that_is_not_a_json_boolean_rewinds_nothing(monkeypatch, flag, sent):
+    """A word, a number or a null: refused, and the run is not rewound, so its cached outputs
+    stay and no request to fire its effects again reaches its history."""
+    status, seen = await _rewind_request(monkeypatch, {"node_id": "publish", flag: sent})
+    assert status == 400 and seen == {}
 
 
 # ── a step's redo_effects: the boundary on an effect already committed ─────────────────────────

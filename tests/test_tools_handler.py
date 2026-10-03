@@ -288,22 +288,36 @@ async def _one_tool(*, skip=()):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bad_enabled", ["false", "true", 0, 1, "0"])
+@pytest.mark.parametrize("bad_enabled", ["false", "true", 0, 1, "0", None])
 async def test_toggle_rejects_non_bool_enabled(bad_enabled, monkeypatch):
     """#444 gap #3: a non-bool ``enabled`` (e.g. the JSON string "false", which is
-    truthy under bool()) must be a 400, not a silent inversion of the toggle."""
-    import json
+    truthy under bool()) must be a 400, not a silent inversion of the toggle. The shared
+    reader refuses it, and the request boundary answers its field-naming envelope."""
+    from personalclaw.request_validation import RequestValidationError
 
     monkeypatch.setattr("personalclaw.tool_providers.registry.list_all_tools", _one_tool)
-    resp = await tools_mod.api_tools_toggle(
-        _InvokeRequest(
-            {"provider": "personalclaw-core", "name": "artifact_list", "enabled": bad_enabled}
+    with pytest.raises(RequestValidationError) as refused:
+        await tools_mod.api_tools_toggle(
+            _InvokeRequest(
+                {"provider": "personalclaw-core", "name": "artifact_list", "enabled": bad_enabled}
+            )
         )
-    )
-    assert resp.status == 400
-    payload = json.loads(resp.body.decode())
-    assert payload["ok"] is False
-    assert payload["error"] == "enabled must be a boolean"
+    assert refused.value.status == 400
+    assert refused.value.code == "field_not_a_boolean"
+    assert "enabled" in refused.value.message
+
+
+@pytest.mark.asyncio
+async def test_toggle_says_which_way(monkeypatch):
+    """A switch that says neither on nor off changes nothing: it used to switch the tool on."""
+    from personalclaw.request_validation import RequestValidationError
+
+    monkeypatch.setattr("personalclaw.tool_providers.registry.list_all_tools", _one_tool)
+    with pytest.raises(RequestValidationError) as refused:
+        await tools_mod.api_tools_toggle(
+            _InvokeRequest({"provider": "personalclaw-core", "name": "artifact_list"})
+        )
+    assert refused.value.code == "field_required"
 
 
 @pytest.mark.asyncio

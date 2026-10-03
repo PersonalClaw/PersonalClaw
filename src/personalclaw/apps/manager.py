@@ -22,6 +22,7 @@ from typing import Any
 from personalclaw.apps.manifest import KEBAB_RE, AppManifest
 from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.config import loader as config_loader
+from personalclaw.safety_flags import strict_bool
 
 
 def config_dir() -> Path:
@@ -296,7 +297,11 @@ class InstalledApp:
             name=str(data.get("name", "")),
             version=str(data.get("version", "")),
             displayName=str(data.get("displayName", "")),
-            enabled=bool(data.get("enabled", True)),
+            # On unless switched off; a switch that reads as neither yes nor no leaves the app off,
+            # since an app runs code (`bool("false")` is True, which kept a switched-off app on).
+            enabled=strict_bool(
+                data.get("enabled"), field="installed app enabled", default=False, absent=True
+            ),
             installedAt=str(data.get("installedAt", "")),
             updatedAt=str(data.get("updatedAt", "")),
             source=str(data.get("source", "")),

@@ -24,6 +24,7 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import secret_refs
+from personalclaw.safety_flags import strict_bool
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ class ExtensionInstance:
             extension_name=str(data.get("extension_name", "")),
             display_name=str(data.get("display_name", "")),
             config=dict(data.get("config", {})),
-            enabled=bool(data.get("enabled", True)),
+            enabled=strict_bool(data.get("enabled"), field="instance enabled", default=True),
         )
 
 

@@ -20,6 +20,12 @@ A key like `loops.max_cycles_hard_cap` means `{"loops": {"max_cycles_hard_cap": 
 in the file. Fields marked **backend-only** have no dashboard control — set them via
 CLI/file (most need a gateway restart). Fields with a UI panel are applied live.
 
+Write a boolean as `true` or `false`, unquoted. A boolean written as anything else, at any depth
+in the file, is read as the field's default and the gateway log says so, with one exception: text
+that spells false (`"false"`, `"no"`, `"off"`, `"0"`) is read as `false`, so a switch you turned
+off in quotes stays off. Text that spells true is not read as `true`: the setting keeps its
+default.
+
 Not everything is in `config.json` by design. Stored elsewhere:
 
 - **Model bindings** (which model serves chat/background/embedding/…): Settings →

@@ -13,7 +13,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from personalclaw.safety_flags import yes_or_no
+from personalclaw.safety_flags import strict_bool, yes_or_no
 from personalclaw.validation import decode_json_text
 
 
@@ -643,7 +643,8 @@ def _as_flag(value: Any, *, strict: bool) -> bool:
 
     `bool("false")` is True, so coercing with `bool()` would turn a caller's `"false"` into ON. A
     READ that meets a non-boolean salvages to ON: the one flag this serves is a reminder opt-out,
-    and an unreadable opt-out is not evidence that the owner opted out.
+    and an unreadable opt-out is not evidence that the owner opted out. A stored "false" is not
+    unreadable, though: it is the opt-out, written as text, and it reads as the word it spells.
     """
     if isinstance(value, bool):
         return value
@@ -651,7 +652,7 @@ def _as_flag(value: Any, *, strict: bool) -> bool:
         return True
     if strict:
         raise ValueError(f"expected true or false, got {type(value).__name__}")
-    return True
+    return yes_or_no(value) is not False
 
 
 def _as_number(value: Any, *, strict: bool) -> float:
@@ -1044,11 +1045,15 @@ class Project:
         return cls(
             id=d.get("id", ""),
             name=name,
-            is_builtin=bool(d.get("is_builtin", d.get("is_default", False)))
+            is_builtin=strict_bool(
+                d.get("is_builtin", d.get("is_default")), field="project is_builtin", default=False
+            )
             or name in BUILTIN_PROJECTS,
             status=str(d.get("status") or "active"),
             workspace_dir=str(d.get("workspace_dir") or ""),
-            name_locked=bool(d.get("name_locked", False)),
+            name_locked=strict_bool(
+                d.get("name_locked"), field="project name_locked", default=False
+            ),
             agent_instructions_template=d.get("agent_instructions_template", ""),
             brief=str(d.get("brief") or ""),
             origin_harness=str(d.get("origin_harness") or ""),

@@ -794,7 +794,11 @@ class ScriptHook:
             provider=data.get("provider", "bash"),
             provider_config=dict(data.get("provider_config") or {}),
             timeout=data.get("timeout", 30),
-            enabled=data.get("enabled", True),
+            # On unless switched off; a switch that reads as neither yes nor no leaves the hook off,
+            # since it runs a script (a raw "false" was truthy wherever the hook was checked).
+            enabled=strict_bool(
+                data.get("enabled"), field="script hook enabled", default=False, absent=True
+            ),
             capabilities=dict(capabilities) if isinstance(capabilities, dict) else {},
             last_run=data.get("last_run", 0.0),
             last_status=data.get("last_status", ""),

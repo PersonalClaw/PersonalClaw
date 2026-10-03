@@ -18,7 +18,7 @@ from personalclaw.config.transactions import mutate_config_async
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
-from personalclaw.request_validation import json_object_body, require_string
+from personalclaw.request_validation import bool_field, json_object_body, require_string
 from personalclaw.security import (
     MaskConflict,
     keep_masked_values,
@@ -604,7 +604,7 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
             scope=str(body.get("scope") or "global"),
             created_from_digest=body.get("created_from_digest"),
             expires_at=body.get("expires_at"),
-            send_capable=bool(body.get("send_capable")),
+            send_capable=bool_field(body, "send_capable", default=False),
         )
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=422)
@@ -1260,7 +1260,7 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
     key = body.get("key", "").strip()
     if not key:
         return web.json_response({"error": "session key required"}, status=400)
-    include_history = body.get("include_history", True)
+    include_history = bool_field(body, "include_history", default=True)
     if state.consolidator.keeps_nothing_from(key):
         # An Incognito or Temporary chat (or one whose mode cannot be read): nothing from it is
         # written to memory, so there is nothing to consolidate.
@@ -1859,7 +1859,7 @@ async def api_memory_facet_pin(request: web.Request) -> web.Response:
         return web.json_response({"error": "body must be JSON"}, status=400)
     if not key:
         return web.json_response({"error": "facet key is required"}, status=400)
-    pinned = bool(body.get("pinned", True))
+    pinned = bool_field(body, "pinned", default=True)
     loop = asyncio.get_event_loop()
     ok = await loop.run_in_executor(None, lambda: svc.facet_pin(key, pinned))
     if not ok:

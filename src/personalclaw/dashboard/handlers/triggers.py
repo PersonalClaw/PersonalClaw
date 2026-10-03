@@ -29,7 +29,7 @@ from personalclaw.config.edit_spec import LOOSEN_TITLE, LooseningAsk
 from personalclaw.dashboard.handlers import trigger_callbacks, trigger_revisions, trigger_runs
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import consent_required, json_error
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import MISSING, bool_field, json_object_body, optional_bool
 from personalclaw.security import (
     MaskConflict,
     keep_masked_spans,
@@ -872,7 +872,7 @@ def _grant_for_save(state: DashboardState, body: dict, *, kind: str, raw: str) -
         if isinstance(action, dict):
             _apply_hook_action(candidate, action)
             return grants.question(candidate, before=hook)
-        need = grants.missing(candidate) if body.get("enabled") is True else []
+        need = grants.missing(candidate) if bool_field(body, "enabled", default=False) else []
         if not need:
             return None
         return grants.Question(need, grants.consent(candidate, need), grants.title(candidate, need))
@@ -1290,16 +1290,12 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
     problem = _delivery.channel_route_problem(failure_delivery)
     if problem:
         return json_error("invalid_request", message=problem, status=400)
-    failure_dedupe = body.get("failure_dedupe", False)
-    if not isinstance(failure_dedupe, bool):
-        return json_error(
-            "invalid_request", message="'failure_dedupe' must be a boolean", status=400
-        )
+    failure_dedupe = bool_field(body, "failure_dedupe", default=False)
     # What a missed slot does: off (the default), it waits on the review; on, it runs once, late.
-    # A non-bool is a 400 for `enabled`'s reason: the string "false" is truthy under `bool()`.
-    catch_up = body.get("catch_up", False)
-    if not isinstance(catch_up, bool):
-        return json_error("invalid_request", message="'catch_up' must be a boolean", status=400)
+    catch_up = bool_field(body, "catch_up", default=False)
+    # Read with the rest, before anything is written: `silent` is set on the row after it is made.
+    silent = bool_field(body, "silent", default=False)
+    strict_schedule = bool_field(body, "strict_schedule", default=False)
 
     # 🔴 the write re-point: the clock spec is built for the STORE, not for `add_job`. The
     # store's spellings are `expr`/`interval_secs`/`at` (the legacy `cron_expr`/`every_secs`/`at_ts`
@@ -1323,7 +1319,7 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
 
     if timezone_val:
         spec["timezone"] = timezone_val
-    if body.get("strict_schedule"):
+    if strict_schedule:
         spec["strict"] = True
     if isinstance(body.get("skip_dates"), list):
         spec["skip_dates"] = [str(d) for d in body["skip_dates"]]
@@ -1332,21 +1328,10 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
 
     # `enabled` is OPTIONAL and defaults to on — but when it is sent it is honored. It used to be
     # read by nobody on this path, so a caller asking for a trigger created switched off got a live,
-    # armed one and no indication otherwise (#587).
-    #
-    # A non-bool is a 400, not a coercion, and deliberately the same rule
-    # `POST /api/triggers/{id}/toggle` already applies: the JSON string "false" is truthy under
-    # `bool()`, so coercing here would silently ARM a trigger a caller asked to be created off —
-    # inverting the request. Two endpoints that take the same field answer about it the same way.
-    #
-    # Structured envelope (`json_error`), unlike its flat siblings a few lines up. `AGENTS.md`
-    # §"Shared conventions" declares the structured shape as THE wire error, and
-    # `test_wire_error_envelope_census` ratchets the flat population down — so a NEW refusal joins
-    # the shape the project is converging on rather than the one it is retiring. Converting this
-    # function's existing flat errors is a separate change; growing their number is not allowed.
-    enabled_raw = body.get("enabled", True)
-    if not isinstance(enabled_raw, bool):
-        return json_error("invalid_request", message="'enabled' must be a boolean", status=400)
+    # armed one and no indication otherwise (#587). A value that is not a JSON boolean is refused,
+    # as the toggle refuses it: the string "false" is truthy, so a coercion would ARM a trigger the
+    # caller asked to be created off.
+    enabled = bool_field(body, "enabled", default=True)
     asked = _creation_consent(request, body, trigger_type=_SCHEDULE)
     if asked is not None:
         return asked
@@ -1359,7 +1344,7 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
         name=name,
         kind="clock",
         spec=spec,
-        enabled=enabled_raw,
+        enabled=enabled,
         # `workflow.inline` is the migrated shape, which `schedule_view` and the gateway's shared
         # dispatch both read — so an API-created row and a migrated one are indistinguishable
         # downstream.
@@ -1385,9 +1370,7 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
         # `"inbox"` is the vocabulary's "deliver normally", and it is what the same field's failure
         # peer already defaults to (`Trigger.failure_delivery`). Written identically in
         # `_update_schedule`: two endpoints that accept one field must encode it the same way.
-        trigger.delivery = (
-            "none" if body.get("silent") else (f"channel:{channel}" if channel else "inbox")
-        )
+        trigger.delivery = "none" if silent else (f"channel:{channel}" if channel else "inbox")
         # Set here rather than through `tools.create`, for the same reason `delivery` is: the
         # constructor takes the schedule mechanism and the action, and delivery is what the entity
         # calls this pair. `failure_policy` is BUILT, not merged, because the row was created one
@@ -1651,32 +1634,20 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
     # `delivery.repeats_last_failure` gates on `failure_policy.dedupe_hash` — and NEITHER field was
     # readable or writable from any surface. `test_trigger_wire_field_census` is what keeps them
     # readable by BOTH this path and `_create_schedule`, which is the omission issue 272 was.
-    for key in (
-        "name",
-        "channel",
-        "silent",
-        "strict_schedule",
-        "failure_delivery",
-        "failure_dedupe",
-        "catch_up",
-    ):
+    for key in ("name", "channel", "failure_delivery"):
         if key in body:
             kwargs[key] = body[key]
-    if "catch_up" in kwargs and not isinstance(kwargs["catch_up"], bool):
-        return json_error("invalid_request", message="'catch_up' must be a boolean", status=400)
+    # The switches are JSON booleans, refused as anything else: the text "false" is truthy, so a
+    # coercion would mute a schedule asked to deliver, or turn on what a caller asked to turn off.
+    for key in ("silent", "strict_schedule", "failure_dedupe", "catch_up"):
+        if (switch := optional_bool(body, key)) is not MISSING:
+            kwargs[key] = switch
     if "failure_delivery" in kwargs:
         if not _delivery.is_valid_route(kwargs["failure_delivery"]):
             return json_error("invalid_request", message=_FAILURE_ROUTE_RULE, status=400)
         problem = _delivery.channel_route_problem(kwargs["failure_delivery"])
         if problem:
             return json_error("invalid_request", message=problem, status=400)
-    if "failure_dedupe" in kwargs and not isinstance(kwargs["failure_dedupe"], bool):
-        # A 400, not a coercion, and for the reason `enabled` gives on the create path: the JSON
-        # string "false" is truthy under `bool()`, so coercing would silently turn dedup ON for a
-        # caller asking to turn it off — inverting the request.
-        return json_error(
-            "invalid_request", message="'failure_dedupe' must be a boolean", status=400
-        )
     if "action" in body and isinstance(body["action"], dict):
         kwargs["action"] = body["action"]  # validated + canonicalized in update_job
     if "channel" in kwargs:
@@ -1955,8 +1926,9 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         if row is None:
             return web.json_response({"error": "not found"}, status=404)
         body = await json_object_body(request)
-        want = body.get("enabled") if isinstance(body, dict) else None
-        paused = row.trigger.enabled if want is None else (not bool(want))
+        # Left out, the switch flips; sent, it is the JSON true or false (`bool("false")` is True).
+        want = bool_field(body, "enabled", default=None)
+        paused = row.trigger.enabled if want is None else not want
         if not paused:
             asked = _switch_on_grant(
                 request,
@@ -1979,8 +1951,8 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         if not hook:
             return web.json_response({"error": "not found"}, status=404)
         body = await json_object_body(request)
-        want = body.get("enabled") if isinstance(body, dict) else None
-        on = (not hook.enabled) if want is None else bool(want)
+        want = bool_field(body, "enabled", default=None)
+        on = (not hook.enabled) if want is None else want
         if on:
             asked = _switch_on_grant(
                 request,
@@ -1997,7 +1969,7 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
         )
     # schedule
     body = await json_object_body(request)
-    enabled = body.get("enabled")
+    enabled = bool_field(body, "enabled", default=None)
     # 🔴 the write re-point: the store owns the row. Routed through `tools.set_paused`, which
     # already refuses to enable a row that failed to parse and reports WHY — so the API and a
     # chat command cannot answer differently about the same trigger.
@@ -2006,7 +1978,7 @@ async def api_trigger_toggle(request: web.Request) -> web.Response:
     if row is not None:
         from personalclaw.triggers import tools as _tools
 
-        want = (not row.trigger.enabled) if enabled is None else bool(enabled)
+        want = (not row.trigger.enabled) if enabled is None else enabled
         if want:
             asked = _switch_on_grant(
                 request,

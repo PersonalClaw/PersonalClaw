@@ -79,16 +79,16 @@ async def toggle(request: web.Request, state: DashboardState, raw: str) -> web.R
     from personalclaw.dashboard.handlers.triggers import _audit_grant
     from personalclaw.http_errors import consent_required, json_error
     from personalclaw.owner_grants import seal
-    from personalclaw.request_validation import json_object_body
+    from personalclaw.request_validation import bool_field, json_object_body
     from personalclaw.safety_flags import confirm_granted
 
     callback = webhook_callbacks.get(raw)
     if callback is None:
         return web.json_response({"error": "not found"}, status=404)
     body = await json_object_body(request)
-    want = body.get("enabled") if isinstance(body, dict) else None
+    want = bool_field(body, "enabled", default=None)
     allowed = webhook_callbacks.allowed(callback)
-    on = (not allowed) if want is None else bool(want)
+    on = (not allowed) if want is None else want
     caller = request.get("user", "dashboard")
     if on and not allowed:
         if body.get("seal") != seal(callback.context_summary):

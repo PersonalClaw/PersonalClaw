@@ -14,7 +14,9 @@ from personalclaw.http_errors import json_error
 from personalclaw.record_ids import UnsafeRecordId
 from personalclaw.request_validation import (
     MISSING,
+    bool_field,
     json_object_body,
+    optional_bool,
     optional_string,
     require_string,
     string_field,
@@ -191,7 +193,7 @@ async def api_projects_create(request: web.Request) -> web.Response:
             # so it isn't mislabeled "Auto-named" and isn't auto-renamed by the LLM. The
             # loop's auto-backing-project path (tasks_link.ensure_project) omits this, so
             # those stay correctly auto-named.
-            name_locked=bool(body.get("name_locked", False)),
+            name_locked=bool_field(body, "name_locked", default=False),
         )
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
@@ -715,6 +717,9 @@ async def api_projects_update(request: web.Request) -> web.Response:
     # The create door's rule, re-asked on every string field the caller actually sent
     # (#456). MISSING = omitted = leave it alone, so a PUT stays a partial write.
     _revalidate_strings(body, _PROJECT_NON_BLANK, _PROJECT_NULLABLE)
+    # And the one boolean, a JSON true or false: the store's `bool()` reads "false" as true.
+    if (name_locked := optional_bool(body, "name_locked")) is not MISSING:
+        body["name_locked"] = name_locked
     if "workspace_dir" in body:
         refusal = _workspace_refusal(string_field(body, "workspace_dir"))
         if refusal is not None:
@@ -946,7 +951,7 @@ async def api_task_lists_create(request: web.Request) -> web.Response:
             name=require_string(body, "name"),
             project_id=string_field(body, "project_id"),
             project_name=string_field(body, "project_name"),
-            repeatable=bool(body.get("repeatable", False)),
+            repeatable=bool_field(body, "repeatable", default=False),
             agent_instructions_template=string_field(
                 body, "agent_instructions_template", strip=False
             ),

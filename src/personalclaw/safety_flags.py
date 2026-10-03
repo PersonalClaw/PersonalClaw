@@ -10,7 +10,7 @@ That is not a hypothetical typo. Five flags read this way from data a user or a 
   hooks JSON file the user edits by hand. JSON accepts both ``false`` and ``"false"``, and the
   quoted form is the habit anyone arriving from YAML or a shell env brings with them.
 * ``workflows/handlers.py`` — ``skip_preflight`` / ``always_allow``, from an **HTTP request body**,
-  where the value is whatever the client sent.
+  where the value is whatever the client sent (now refused unless it is a JSON boolean, below).
 * ``workflows/engine.py`` — ``unattended_suppress``, from config.
 
 The asymmetry is what makes it worth a helper rather than five local fixes: for a normal field a
@@ -33,6 +33,12 @@ neither yes nor no there, and its caller resolves that to the field's own safe v
 unmet, a run attended, an effect not fired twice). It reads every boolean a tool's schema declares
 (``tests/test_tool_boolean_census.py`` holds each one to it) and each one a model writes into what
 a tool saves: a workflow node's config, an edit op, an automation patch, a judge's verdict.
+
+An HTTP request body is held stricter than either: a JSON body can always carry a real boolean,
+so ``request_validation.bool_field`` / ``require_bool`` / ``optional_bool`` refuse anything else
+with a 400 that names the field. A stored setting cannot be refused once it is written, so it is
+read here as the word it spells, with the switch's safe value for anything else (``strict_bool``).
+``tests/test_request_boolean_census.py`` holds both.
 
 Destructive consent — the ``confirm`` family — is the same defect on a sharper edge, and it
 lives here too
@@ -94,16 +100,21 @@ CONFIRM_FIELDS: frozenset[str] = frozenset({"confirm", "confirm_cascade"})
 QUERY_CONFIRM_TRUE = "true"
 
 
-def strict_bool(value: object, *, field: str, default: bool = False) -> bool:
+def strict_bool(
+    value: object, *, field: str, default: bool = False, absent: bool | None = None
+) -> bool:
     """Coerce *value* to a bool without letting a string enable a safety control by accident.
 
     *field* is used only in the warning, so an operator can find the line they wrote.
-    *default* is returned for ``None`` and for anything unrecognised — pass the SAFE value.
+    *default* is returned for anything unrecognised — pass the SAFE value — and for ``None``
+    unless *absent* says otherwise. *absent* is for a stored switch whose missing key and whose
+    unreadable value mean different things: an installed app is on unless switched off, but an
+    app whose switch reads as neither yes nor no stays off, because it runs code.
     """
     if isinstance(value, bool):
         return value
     if value is None:
-        return default
+        return default if absent is None else absent
     if isinstance(value, str):
         word = value.strip().lower()
         if word in BOOL_FALSE_WORDS:

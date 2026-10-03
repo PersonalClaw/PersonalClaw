@@ -25,6 +25,7 @@ from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_nam
 from personalclaw.env import augmented_path, gateway_env, startup_path
 from personalclaw.hooks import safe_read_file
 from personalclaw.mcp_argument_secrets import HEADER_FLAGS, SCHEME_RE, flag_carries, looks_secret
+from personalclaw.mcp_status import switched_off
 from personalclaw.security import redact_for_display
 
 if TYPE_CHECKING:
@@ -761,7 +762,7 @@ def list_servers(*, include_disabled: bool = False) -> list[McpServerInfo]:
     for name, spec in agent_cfg.get("mcpServers", {}).items():
         if not isinstance(spec, dict) or name in own:
             continue
-        off = bool(spec.get("disabled") or entries.get(name, {}).get("disabled"))
+        off = switched_off(spec, name) or switched_off(entries.get(name, {}), name)
         if off and not include_disabled:
             continue
         # Re-resolve stale managed MCP server paths at runtime
@@ -772,7 +773,7 @@ def list_servers(*, include_disabled: bool = False) -> list[McpServerInfo]:
     # 2. From mcp.json, whose switch is the owner's: the agent config's copy of it is rebuilt to
     #    match, and between rebuilds holds a stale one.
     for name, spec in own.items():
-        off = bool(spec.get("disabled"))
+        off = switched_off(spec, name)
         if off and not include_disabled:
             continue
         servers[name] = _server_from_spec(name, spec, "mcp.json")

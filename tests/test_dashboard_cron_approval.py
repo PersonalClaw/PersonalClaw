@@ -241,14 +241,18 @@ class TestCreateHonorsEnabledOverTheWire:
         """
         import json
 
+        from personalclaw.request_validation import RequestValidationError
         from personalclaw.triggers.store import TriggerStore
 
         self._home(monkeypatch, tmp_path)
-        resp = await api_trigger_create(self._request(self._body(enabled=bad)))
+        try:
+            resp = await api_trigger_create(self._request(self._body(enabled=bad)))
+        except RequestValidationError as exc:
+            resp = exc.response  # what the request boundary answers, for every `/api` route
         assert resp.status == 400
-        # The STRUCTURED envelope, unlike this function's older flat siblings: a new refusal joins
-        # the shape `test_wire_error_envelope_census` ratchets the codebase toward.
+        # The STRUCTURED envelope, unlike this function's older flat siblings: the shared boolean
+        # reader's refusal, which names the field.
         error = json.loads(resp.body.decode())["error"]
-        assert error["code"] == "invalid_request"
+        assert error["code"] == "field_not_a_boolean"
         assert "enabled" in error["message"]
         assert TriggerStore(base_dir=tmp_path).load() == [], "a refused create must persist nothing"

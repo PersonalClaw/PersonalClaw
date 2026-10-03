@@ -20,7 +20,9 @@ from personalclaw.http_errors import json_error
 from personalclaw.request_validation import (
     MISSING,
     RequestValidationError,
+    bool_field,
     json_object_body,
+    optional_bool,
     optional_string,
     require_string,
     string_field,
@@ -130,7 +132,7 @@ async def api_chat_tag_create(request: web.Request) -> web.Response:
         state,
         require_string(body, "name"),
         color=string_field(body, "color", default=_DEFAULT_COLOR) or _DEFAULT_COLOR,
-        status=bool(body.get("status", False)),
+        status=bool_field(body, "status", default=False),
     )
     if tag is None:
         return web.json_response({"error": "name required"}, status=400)
@@ -155,6 +157,7 @@ async def api_chat_tag_update(request: web.Request) -> web.Response:
     try:
         body = await json_object_body(request)
         new_name = require_string(body, "name")[:_NAME_MAX] if "name" in body else None
+        status = optional_bool(body, "status")
     except RequestValidationError as exc:
         return web.json_response({"error": exc.message}, status=exc.status)
     if new_name is not None:
@@ -166,8 +169,8 @@ async def api_chat_tag_update(request: web.Request) -> web.Response:
             tag["order"] = int(body["order"])
         except (TypeError, ValueError):
             pass
-    if "status" in body:
-        tag["status"] = bool(body["status"])
+    if status is not MISSING:
+        tag["status"] = status
     state.save_tags()
     state.push_sessions_update()
     sel().log_api_access(

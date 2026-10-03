@@ -31,7 +31,14 @@ from personalclaw.loop.loop import (
     LoopStatus,
 )
 from personalclaw.loop.watchdog import registry_key
-from personalclaw.request_validation import json_object_body, require_string
+from personalclaw.request_validation import (
+    MISSING,
+    bool_field,
+    json_object_body,
+    optional_bool,
+    require_bool,
+    require_string,
+)
 from personalclaw.security import MaskConflict, keep_masked_values
 from personalclaw.stale_write import stale_write_refusal
 
@@ -195,9 +202,9 @@ def _build_loop_from_body(body: dict) -> Loop:
         skill_ids=[str(s) for s in _as_list(body.get("skill_ids")) if str(s).strip()],
         workflow_ids=[str(w) for w in _as_list(body.get("workflow_ids")) if str(w).strip()],
         # A loop is Unattended only when its creator says so; one that names no Mode asks.
-        attended=body.get("attended") is not False,
-        autopilot=bool(body.get("autopilot", True)),
-        auto_teardown_on_complete=bool(body.get("auto_teardown_on_complete", False)),
+        attended=bool_field(body, "attended", default=True),
+        autopilot=bool_field(body, "autopilot", default=True),
+        auto_teardown_on_complete=bool_field(body, "auto_teardown_on_complete", default=False),
         max_cycles=int(body.get("max_cycles", 30)),
         # `AG-14` ceilings: optional, 0 = uncapped. Clamped non-negative so a negative
         # payload value cannot mean "already exceeded" and stop the loop on its first poll.
@@ -509,8 +516,9 @@ async def _create_ported_kind_as_run(
     # run started anywhere else does. Both are already type-checked by `validation.validate`
     # (a non-boolean `attended` and a non-integer `max_cycles` are 400s before this point).
     overrides: dict[str, Any] = {}
-    if isinstance(body.get("attended"), bool):
-        overrides["attended"] = body["attended"]
+    attended = optional_bool(body, "attended")
+    if attended is not MISSING:
+        overrides["attended"] = attended
     # The validator's own coercion, so "30" and 30 mean the same budget here as they did there.
     cycles = validation._as_int(body.get("max_cycles"))
     if cycles is not None:
@@ -1357,13 +1365,7 @@ async def api_loop_autopilot(request: web.Request) -> web.Response:
     # Require an explicit boolean `on`. A defaulted bool(body.get("on", True)) silently
     # turned autopilot ON for a missing/malformed body — and ON is the consequential
     # direction (the system takes over driving the plan). A toggle must say which way.
-    raw = body.get("on")
-    if not isinstance(raw, bool):
-        return web.json_response(
-            {"error": "'on' must be a boolean (true to enable autopilot, false for one-by-one)"},
-            status=400,
-        )
-    on = raw
+    on = require_bool(body, "on")
     updated = store.set_autopilot(cid, on)
     if updated is None:
         return web.json_response({"error": "Not found"}, status=404)

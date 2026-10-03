@@ -816,16 +816,17 @@ class TestLayeredKillSwitches:
         )
         assert AppConfig.load().external_access.enabled is True
 
-    @pytest.mark.parametrize("raw", [False, "false", "no", "off", "garbage", "", None, 2, {}, [1]])
-    def test_no_falsy_or_garbage_value_opens_a_PER_SURFACE_switch(self, tmp_path, raw):
-        """The per-surface flags are THREE-part paths (`external_access.mcp.enabled`).
+    @pytest.mark.parametrize(
+        "raw", [False, "false", "no", "off", "garbage", "", None, 2, {}, [1], "true", "on", 1]
+    )
+    def test_no_non_boolean_opens_a_PER_SURFACE_switch(self, tmp_path, raw):
+        """The per-surface flags are THREE-part paths (`external_access.mcp.enabled`), and they
+        read like the master switch: only a real JSON `true` opens one.
 
-        🔎 `_apply_field_default` documents itself as handling "top-level and one-level
-        nested paths" only, so a three-part path is NOT popped by the schema pass and
-        `_expose_flag` is what actually decides. That makes these flags accept the
-        truthy STRING spellings the master switch rejects — a legibility divergence, not
-        a hole: every falsy and unparseable value still reads CLOSED, which is the
-        property that matters, and the master switch gates them all regardless.
+        🔎 The schema pass strips a non-boolean at any depth now. It used to stop at two keys, so
+        a three-part path was left to `_expose_flag`, which took the truthy STRING spellings the
+        master switch refused. A text spelling of false is read as false; anything else that is
+        not a boolean is the default, closed.
         """
         from personalclaw.config.loader import AppConfig, config_path
 
@@ -837,7 +838,7 @@ class TestLayeredKillSwitches:
         assert ea.mcp.enabled is False
         assert ea.mcp.allow_remote is False
 
-    @pytest.mark.parametrize("raw", [True, "true", "on", 1])
+    @pytest.mark.parametrize("raw", [True])
     def test_an_explicit_true_spelling_opens_a_per_surface_switch(self, tmp_path, raw):
         """Vacuity floor for the per-surface rail — the other side of the boundary."""
         from personalclaw.config.loader import AppConfig, config_path

@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.safety_flags import strict_bool
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -107,9 +108,11 @@ class Intent:
         return cls(
             id=intent_id,
             goal=goal,
-            enabled=bool(d.get("enabled", True)),
+            enabled=strict_bool(d.get("enabled"), field="intent enabled", default=True),
             enabled_for=[str(t) for t in d.get("enabled_for", []) if isinstance(t, str)],
-            propose_skill=bool(d.get("propose_skill")),
+            propose_skill=strict_bool(
+                d.get("propose_skill"), field="intent propose_skill", default=False
+            ),
         )
 
 

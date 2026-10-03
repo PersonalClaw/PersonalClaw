@@ -48,6 +48,7 @@ from personalclaw.mcp_status import (
     did_not_answer,
     exited,
     still_starting,
+    switched_off,
 )
 from personalclaw.mcp_stdio import CommandNotFound, StdioRun, stop_finishing, stop_finishing_soon
 
@@ -827,7 +828,7 @@ class McpClientRegistry:
         demand by :meth:`get`. Removed servers — AND servers whose spec content
         changed (new content hash) — have their stale connections dropped."""
         self._specs = {
-            n: s for n, s in specs.items() if isinstance(s, dict) and not s.get("disabled")
+            n: s for n, s in specs.items() if isinstance(s, dict) and not switched_off(s, n)
         }
         # The set of keys that SHOULD exist for the current specs (canonical scope).
         want_canonical = {self._canonical_key(n) for n in self._specs}

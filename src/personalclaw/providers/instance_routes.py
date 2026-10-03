@@ -56,6 +56,7 @@ from personalclaw.config.secret_refs import ForeignSecretReference
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.providers import mcp_instances as _mcp
 from personalclaw.providers.failure_copy import connectivity_guidance
+from personalclaw.request_validation import MISSING, bool_field, optional_bool
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import MaskConflict, redact_for_display
 from personalclaw.stale_write import revision_of, stale_write_refusal
@@ -384,6 +385,9 @@ async def handle_update_instance(request: web.Request) -> web.Response:
 
     schema = ext.provider_config.settingsSchema
     is_mcp = name == _mcp.MCP_TOOLS_EXTENSION
+    # Left out, the instance stays as it is; sent, the JSON true or false — the store keeps what it
+    # is given, and `bool("false")` is True.
+    enabled = bool_field(body, "enabled", default=None)
 
     # Validate config if provided
     config = body.get("config")
@@ -442,7 +446,7 @@ async def handle_update_instance(request: web.Request) -> web.Response:
                         mcp_grants.consent(server, saving=True),
                         title=mcp_grants.title(server),
                     )
-            inst = _mcp.update_instance(instance_id, config=config, enabled=body.get("enabled"))
+            inst = _mcp.update_instance(instance_id, config=config, enabled=enabled)
         except MaskConflict as exc:
             # A masked argument or address whose surroundings changed: nothing is saved.
             return json_error("mask_conflict", message=str(exc), status=409)
@@ -451,7 +455,7 @@ async def handle_update_instance(request: web.Request) -> web.Response:
         if server is not None:
             _allow_as_saved(server)
         _rebuild_agent_config_safe()
-        _mcp_changed(request, instance_id, config=config, enabled=body.get("enabled"))
+        _mcp_changed(request, instance_id, config=config, enabled=enabled)
         return web.json_response({"instance": _revisioned(mask_instance(inst, schema))})
 
     try:
@@ -460,7 +464,7 @@ async def handle_update_instance(request: web.Request) -> web.Response:
             instance_id,
             display_name=body.get("display_name"),
             config=config,
-            enabled=body.get("enabled"),
+            enabled=enabled,
         )
     except ForeignSecretReference as exc:
         return _secret_owned_elsewhere(exc)
@@ -649,6 +653,11 @@ async def handle_set_use_case_settings(request: web.Request) -> web.Response:
         return json_error(
             "invalid_body", message="The request body must be a JSON object.", status=400
         )
+    # Its switches are JSON booleans: the body is saved as sent, and `bool("false")` is True, so
+    # text there switched speech on when it was switched off.
+    for switch in ("enabled", "auto_speak"):
+        if (value := optional_bool(body, switch)) is not MISSING:
+            body[switch] = value
 
     # 🔴 THE FILE IS WRITTEN ONLY OVER THE COPY THE BODY WAS BUILT FROM. Settings → Voice sends
     # `{...settings, <the one it changed>}` from the copy it read, and this same file is written

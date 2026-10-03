@@ -82,6 +82,7 @@ from personalclaw.config.safety import (
     SecurityConfig,
 )
 from personalclaw.config.validation import config_fingerprint, validate_config_data_cached
+from personalclaw.safety_flags import yes_or_no
 from personalclaw.voice.duplex import (
     DEFAULT_CONFIRMATION_PHRASES,
     DEFAULT_EXIT_PHRASES,
@@ -481,7 +482,8 @@ def _vault_mode(memory_data: dict) -> str:
     raw = str(memory_data.get("vault_mode", "") or "").strip().lower()
     if raw in MEMORY_VAULT_MODES:
         return raw
-    return "mirror" if bool(memory_data.get("vault_enabled", False)) else "off"
+    # Only a yes keeps the mirror on: `bool("false")` is True, and a mirror writes memory to files.
+    return "mirror" if yes_or_no(memory_data.get("vault_enabled")) is True else "off"
 
 
 _BOT_NAME_MAX = 50

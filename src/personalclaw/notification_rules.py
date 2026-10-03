@@ -49,6 +49,7 @@ from personalclaw import bounded_log, notification_addressing
 from personalclaw import notification_kinds as nk
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
+from personalclaw.safety_flags import strict_bool
 
 
 def config_dir() -> Path:
@@ -255,7 +256,12 @@ def _coerce_conditions(raw: Any) -> Conditions:
         if isinstance(kws_raw, list)
         else ()
     )
-    return Conditions(keywords=keywords, name_mention=bool(raw.get("name_mention")))
+    return Conditions(
+        keywords=keywords,
+        name_mention=strict_bool(
+            raw.get("name_mention"), field="notification rule name_mention", default=False
+        ),
+    )
 
 
 def _coerce_sound(raw: Any) -> str | None:
@@ -301,7 +307,8 @@ def _coerce_rule(registered: nk.NotificationKind, raw: Any) -> Rule:
         mode=mode,
         targets=_coerce_targets(raw.get("targets")),
         conditions=_coerce_conditions(raw.get("conditions")),
-        verify=registered.verifiable and bool(raw.get("verify")),
+        verify=registered.verifiable
+        and strict_bool(raw.get("verify"), field="notification rule verify", default=False),
         sound=_coerce_sound(raw.get("sound")),
     )
 
@@ -380,7 +387,9 @@ def _backfill_inbox_alerts() -> None:
         logger.debug("inbox alert backfill: legacy read failed", exc_info=True)
         return
     keywords = [str(k).strip() for k in (legacy.get("alert_keywords") or []) if str(k).strip()]
-    name_mention = bool(legacy.get("alert_on_name_mention"))
+    name_mention = strict_bool(
+        legacy.get("alert_on_name_mention"), field="inbox.alert_on_name_mention", default=False
+    )
     if not keywords and not name_mention:
         return
 

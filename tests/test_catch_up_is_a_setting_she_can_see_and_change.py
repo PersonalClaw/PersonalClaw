@@ -44,15 +44,23 @@ def home(tmp_path, monkeypatch):
 
 async def _create(body: dict) -> tuple[int, dict]:
     from personalclaw.dashboard.handlers import triggers as handlers
+    from personalclaw.request_validation import RequestValidationError
 
-    resp = await handlers._create_schedule(_State(), body, _Req(body))  # type: ignore[arg-type]
+    try:
+        resp = await handlers._create_schedule(_State(), body, _Req(body))  # type: ignore[arg-type]
+    except RequestValidationError as exc:
+        resp = exc.response  # what the request boundary answers, for every `/api` route
     return resp.status, json.loads(resp.body.decode())
 
 
 def _update(raw: str, body: dict) -> tuple[int, dict]:
     from personalclaw.dashboard.handlers import triggers as handlers
+    from personalclaw.request_validation import RequestValidationError
 
-    resp = handlers._update_schedule(_State(), raw, body)  # type: ignore[arg-type]
+    try:
+        resp = handlers._update_schedule(_State(), raw, body)  # type: ignore[arg-type]
+    except RequestValidationError as exc:
+        resp = exc.response
     return resp.status, json.loads(resp.body.decode())
 
 
@@ -99,13 +107,14 @@ async def test_a_catch_up_that_is_not_true_or_false_is_refused_and_changes_nothi
         {"name": "Backup", "cron": "0 3 * * *", "catch_up": "false", "action": _NOTIFY}
     )
     assert status == 400
-    assert payload["error"]["code"] == "invalid_request"
+    assert payload["error"]["code"] == "field_not_a_boolean"
+    assert "catch_up" in payload["error"]["message"]
     assert TriggerStore(base_dir=home).load() == []
 
     status, payload = await _create({"name": "Backup", "cron": "0 3 * * *", "action": _NOTIFY})
     raw = payload["trigger"]["raw_id"]
     status, payload = _update(raw, {"catch_up": "yes"})
-    assert status == 400 and payload["error"]["code"] == "invalid_request"
+    assert status == 400 and payload["error"]["code"] == "field_not_a_boolean"
     assert _stored(home, raw) is False
 
 

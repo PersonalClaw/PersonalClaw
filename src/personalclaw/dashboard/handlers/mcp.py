@@ -13,8 +13,9 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_json_write
 from personalclaw.http_errors import consent_required, json_error
+from personalclaw.mcp_status import switched_off
 from personalclaw.providers.failure_copy import relayed_failure_copy
-from personalclaw.request_validation import json_object_body, require_string
+from personalclaw.request_validation import json_object_body, require_bool, require_string
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import MaskConflict, redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -162,7 +163,7 @@ def _server_row(server: Any, specs: dict[str, Any]) -> dict[str, Any]:
 
     row = server.to_dict()
     spec = specs.get(server.name, {})
-    disabled = server.disabled or (isinstance(spec, dict) and bool(spec.get("disabled")))
+    disabled = server.disabled or (isinstance(spec, dict) and switched_off(spec, server.name))
     row["enabled"] = not disabled
     if disabled:
         row["status"] = "disabled"
@@ -582,7 +583,7 @@ async def api_mcp_toggle(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     name = require_string(body, "name")
-    enabled = body.get("enabled", True)
+    enabled = require_bool(body, "enabled")
 
     async with _get_mcp_lock():
         # 1. Update mcp.json
@@ -666,7 +667,7 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
         return web.json_response({"error": "JSON body must be an object"}, status=400)
     server = body.get("server", "").strip()
     tool = body.get("tool", "").strip()
-    enabled = body.get("enabled", True)
+    enabled = require_bool(body, "enabled")
     if not server or not tool:
         return web.json_response({"error": "server and tool are required"}, status=400)
     if tool.startswith(f"mcp/{server}/"):
@@ -746,7 +747,7 @@ async def api_mcp_toggle_all(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    enabled = body.get("enabled", True)
+    enabled = require_bool(body, "enabled")
 
     async with _get_mcp_lock():
         try:
@@ -1421,7 +1422,7 @@ async def api_mcp_server_allow(request: web.Request) -> web.Response:
         # Allowing it switches it on: an import that arrived switched off is the one to allow.
         data = _load_json_for_update(_canonical_mcp_json())
         entry = data.get("mcpServers", {}).get(name)
-        if isinstance(entry, dict) and entry.get("disabled"):
+        if isinstance(entry, dict) and switched_off(entry, name):
             entry.pop("disabled", None)
             _atomic_write(_canonical_mcp_json(), data)
 
@@ -1843,7 +1844,7 @@ def _set_personalclaw_entry(name: str, *, enabled: bool, spec: dict | None = Non
             action = "added"
         else:
             # Remove disabled flag if set; otherwise no change needed.
-            if existing.get("disabled") is True:
+            if switched_off(existing, name):
                 existing.pop("disabled", None)
                 action = "enabled"
             else:
@@ -1856,6 +1857,7 @@ def _set_personalclaw_entry(name: str, *, enabled: bool, spec: dict | None = Non
             servers[name] = entry
             action = "disabled"
         elif existing.get("disabled") is True:
+            # Already the real `true`; a switch written in words is rewritten as one below.
             return "noop"
         else:
             existing["disabled"] = True
@@ -1896,7 +1898,7 @@ def _set_scope_entry(path: Path, name: str, *, enabled: bool, spec: dict | None 
         if present:
             # Already enabled; if the entry had disabled:true, clear it.
             s = servers[name]
-            if isinstance(s, dict) and s.get("disabled") is True:
+            if isinstance(s, dict) and switched_off(s, name):
                 s.pop("disabled", None)
                 _atomic_write(path, data)
                 return "enabled"

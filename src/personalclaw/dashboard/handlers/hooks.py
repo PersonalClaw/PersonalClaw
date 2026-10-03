@@ -13,6 +13,7 @@ from personalclaw import notification_kinds
 from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.guardrails.failure import BudgetExceededError
+from personalclaw.request_validation import bool_field
 
 if TYPE_CHECKING:
     from personalclaw.webhook_callbacks import Callback
@@ -350,7 +351,7 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
 
     name = body.get("name", "Webhook")
     agent = body.get("agent", "") or None
-    deliver = body.get("deliver", True)
+    deliver = bool_field(body, "deliver", default=True)
     try:
         timeout_secs = max(
             60,

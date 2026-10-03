@@ -37,7 +37,7 @@ from personalclaw.dashboard.token_auth import (
     parse_duration,
 )
 from personalclaw.http_errors import consent_required, json_error
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import bool_field, json_object_body, require_bool
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
@@ -447,7 +447,7 @@ async def api_sel_rotate(request: web.Request) -> web.Response:
     started" when nothing had changed.
     """
     body = await json_object_body(request)
-    archive = body.get("archive") is not False
+    archive = bool_field(body, "archive", default=True)
     result = _sel().rotate(archive=archive)
     if not result.get("rotated"):
         return json_error("sel_archive_failed", status=500)
@@ -1258,9 +1258,7 @@ async def api_project_trust(request: web.Request) -> web.Response:
     directory = str(body.get("dir", "") or "").strip()
     if not directory:
         return web.json_response({"error": "dir is required"}, status=400)
-    trusted = body.get("trusted")
-    if not isinstance(trusted, bool):
-        return web.json_response({"error": "trusted must be a boolean"}, status=400)
+    trusted = require_bool(body, "trusted")
     record = _pt.record_project_trust(directory, trusted=trusted)
     return web.json_response({"dir": _pt.resolve_dir(directory), **record})
 

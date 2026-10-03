@@ -19,7 +19,9 @@ from aiohttp import web
 from personalclaw.lexicon import current_lexicon, get_lexicon_service
 from personalclaw.request_validation import (
     RequestValidationError,
+    bool_field,
     json_object_body,
+    require_bool,
     require_string,
 )
 from personalclaw.safety_flags import confirm_granted
@@ -95,7 +97,7 @@ async def api_lexicon_update_term(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     svc = get_lexicon_service()
     if "enabled" in body:
-        if not svc.store.set_enabled(term_id, bool(body["enabled"])):
+        if not svc.store.set_enabled(term_id, require_bool(body, "enabled")):
             return web.json_response({"error": "term not found"}, status=404)
     return web.json_response({"ok": True})
 
@@ -157,7 +159,8 @@ async def api_lexicon_add_correction(request: web.Request) -> web.Response:
     if not heard or not meant:
         return web.json_response({"error": "heard and meant are required"}, status=400)
     svc = get_lexicon_service()
-    svc.learn_correction(heard, meant, always=bool(body.get("always")))
+    always = bool_field(body, "always", default=False)
+    svc.learn_correction(heard, meant, always=always)
     return web.json_response({"ok": True})
 
 
@@ -170,7 +173,7 @@ async def api_lexicon_update_correction(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     svc = get_lexicon_service()
     if "auto_apply" in body:
-        if not svc.store.set_correction_auto_apply(corr_id, bool(body["auto_apply"])):
+        if not svc.store.set_correction_auto_apply(corr_id, require_bool(body, "auto_apply")):
             return web.json_response({"error": "correction not found"}, status=404)
     return web.json_response({"ok": True})
 

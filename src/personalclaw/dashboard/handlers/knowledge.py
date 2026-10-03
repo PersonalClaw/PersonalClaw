@@ -26,8 +26,12 @@ from personalclaw.knowledge.retrieval import HybridRetriever, _bytes_to_floats
 from personalclaw.knowledge.semantics import DEFAULT_LIST_EXCLUDED_KINDS
 from personalclaw.knowledge.staleness import is_synthesized, staleness_for
 from personalclaw.request_validation import (
+    MISSING,
     RequestValidationError,
+    bool_field,
     json_object_body,
+    optional_bool,
+    require_bool,
     require_string,
     string_field,
 )
@@ -858,10 +862,15 @@ async def update_item(request: web.Request) -> web.Response:
                 {"error": "cannot change to 'bookmark': that type requires a url"},
                 status=400,
             )
-    # Booleans persist as 0/1.
-    for b in ("is_pinned", "is_archived"):
-        if b in fields:
-            fields[b] = 1 if fields[b] else 0
+    # Booleans persist as 0/1, read from a JSON true or false and refused as anything else, before
+    # anything is written.
+    if "is_pinned" in fields:
+        fields["is_pinned"] = 1 if require_bool(body, "is_pinned") else 0
+    if "is_archived" in fields:
+        fields["is_archived"] = 1 if require_bool(body, "is_archived") else 0
+    # The client may opt OUT of re-running the ingestion graph on a content/url edit with
+    # reingest=false (a quick typo-fix that should not burn a model pass).
+    reingest_requested = bool_field(body, "reingest", default=True)
     if not fields and not tag_edits:
         return web.json_response({"error": "no valid fields"}, status=400)
     # A title set here is a person's — typed, kept in the create form, or the suggestion she
@@ -896,10 +905,8 @@ async def update_item(request: web.Request) -> web.Response:
     # Editing the text/url re-runs the ingestion node-graph so insights, entities, the
     # embedding, and intent outcomes stay consistent with the new content — matching
     # the agent knowledge_update tool and the create→enrich contract. Curation-only
-    # edits (tags/pin/archive/title) don't need re-extraction. The client may opt OUT
-    # via reingest=false (e.g. a quick content typo-fix that shouldn't burn a model
-    # pass); default is to re-enrich on a content/url change.
-    reingest_requested = body.get("reingest", True) is not False
+    # edits (tags/pin/archive/title) don't need re-extraction, and a client that sent
+    # reingest=false (read above, before the write) opted out.
     reenrich = reingest_requested and ("content" in fields or "url" in fields)
     if reenrich:
         # The user edit above already touched updated_at; this is just the status flip.
@@ -2872,7 +2879,7 @@ async def set_item_favorited(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         body = {}
     store = _store(request)
-    if not store.set_favorited(iid, bool(body.get("value", True))):
+    if not store.set_favorited(iid, bool_field(body, "value", default=True)):
         return web.json_response({"error": "item not found"}, status=404)
     return web.json_response({"ok": True, "favorited": store.get_item(iid)["favorited"]})
 
@@ -3296,6 +3303,9 @@ async def bulk_items(request: web.Request) -> web.Response:
         )
 
     args = {k: v for k, v in body.items() if k not in ("op", "item_ids")}
+    # A body's `value` is a JSON true or false; the store reads words only for the agent's tool.
+    if "value" in args:
+        args["value"] = require_bool(body, "value")
     try:
         result = store.bulk_apply(op, [str(i) for i in raw], **args)
     except ValueError as exc:
@@ -3719,13 +3729,14 @@ async def update_watched_source(request: web.Request) -> web.Response:
         return web.json_response({"error": exc.message}, status=exc.status)
 
     fields: dict = {}
-    if "name" in body:
-        try:
+    try:
+        if "name" in body:
             fields["name"] = require_string(body, "name")
-        except RequestValidationError as exc:
-            return web.json_response({"error": exc.message}, status=exc.status)
-    if "enabled" in body:
-        fields["enabled"] = bool(body["enabled"])
+        enabled = optional_bool(body, "enabled")
+    except RequestValidationError as exc:
+        return web.json_response({"error": exc.message}, status=exc.status)
+    if enabled is not MISSING:
+        fields["enabled"] = enabled
     if "enrichment" in body:
         enrichment = str(body.get("enrichment") or "")
         if enrichment not in ENRICHMENTS:
@@ -3962,7 +3973,7 @@ async def restructure_item(request: web.Request) -> web.Response:
             item_id,
             params,
             token=str(body.get("token") or ""),
-            relink=body.get("relink", True) is not False,
+            relink=bool_field(body, "relink", default=True),
         )
     except restructure.RestructureError as exc:
         _sel_log("restructure", verb=verb, item_id=item_id, outcome="denied")

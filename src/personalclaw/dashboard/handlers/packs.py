@@ -52,7 +52,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import bool_field, json_object_body
 from personalclaw.safety_flags import confirm_granted
 
 logger = logging.getLogger(__name__)
@@ -231,7 +231,7 @@ async def api_pack_one_link(request: web.Request) -> web.Response:
     try:
         plan = import_onelink(
             doc,
-            consent=bool(body.get("consent", False)),
+            consent=bool_field(body, "consent", default=False),
             connector_choices=_connector_choices(body),
         )
     except OneLinkError as exc:

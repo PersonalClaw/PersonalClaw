@@ -1,4 +1,4 @@
-"""The ONE request-body reader and the ONE string-field check on the write path.
+"""The ONE request-body reader and the ONE string- and boolean-field checks on the write path.
 
 `AGENTS.md` §"Shared conventions" → **Error envelope (HTTP)** owns the shape a
 refusal travels in; :mod:`personalclaw.http_errors` owns the emitter. This module
@@ -64,7 +64,7 @@ had (``"{'a': 'b'}"`` is a perfectly non-empty string by the time it arrives).
 
 from __future__ import annotations
 
-from typing import Any, Final
+from typing import Any, Final, overload
 
 from aiohttp import web
 
@@ -73,8 +73,11 @@ from personalclaw.http_errors import json_error
 __all__ = [
     "MISSING",
     "RequestValidationError",
+    "bool_field",
     "json_object_body",
+    "optional_bool",
     "optional_string",
+    "require_bool",
     "require_string",
     "string_field",
 ]
@@ -261,6 +264,78 @@ def optional_string(body: dict[str, Any], field: str, *, strip: bool = True) -> 
     if field not in body:
         return MISSING
     return require_string(body, field, strip=strip)
+
+
+# ── Booleans ─────────────────────────────────────────────────────────────────────
+#
+# A boolean in a request body is the JSON literal ``true`` or ``false``, and nothing else:
+# ``bool("false")`` is True, so a door that read its switch by truthiness turned on what the
+# caller turned off, and a consent sent as the text ``"false"`` was a yes. A JSON body can
+# always carry a real boolean and every first-party client sends one, so a value of any other
+# type is a broken caller, and the honest answer is a refusal that names the field. Reading
+# the word instead (``safety_flags.yes_or_no``, the right reader for a model's tool arguments,
+# which arrive as text as often as not) would have to fall back to a default for a value that
+# spells neither, and a switch has no default that is true to what was asked: a refusal applies
+# nothing. ``"true"`` is refused too, as ``safety_flags.confirm_granted`` refuses it for consent.
+#
+# The same three shapes as the string readers above. ``null`` is not a boolean either, and is
+# read as an omitted field only where the door decides nothing (``bool_field(..., default=None)``).
+
+
+@overload
+def bool_field(body: dict[str, Any], field: str, *, default: bool) -> bool: ...
+
+
+@overload
+def bool_field(body: dict[str, Any], field: str, *, default: None) -> bool | None: ...
+
+
+def bool_field(body: dict[str, Any], field: str, *, default: bool | None) -> bool | None:
+    """An OPTIONAL boolean: absent is *default*, ``true``/``false`` is itself.
+
+    *default* is keyword-only and has no default of its own, so every door states the value an
+    omitted field takes, which must be its SAFE one: a consent or an opt-in is ``False``.
+    ``None`` is for a field the door does not decide (a message's link previews follow the
+    channel's own setting unless the caller says), and there ``null`` is omitted too. A door
+    with a default of its own refuses ``null``: ``bool(None)`` read it as no where an omitted
+    field read as yes, so the two were never one request, and taking either would guess.
+
+    :raises RequestValidationError: ``field_not_a_boolean`` for any other value.
+    """
+    if field not in body or (default is None and body[field] is None):
+        return default
+    return _boolean(field, body[field])
+
+
+def require_bool(body: dict[str, Any], field: str) -> bool:
+    """A REQUIRED boolean: present, and the JSON ``true`` or ``false``.
+
+    :raises RequestValidationError: ``field_required`` when absent, ``field_not_a_boolean`` for
+        any other value, ``null`` included.
+    """
+    if field not in body:
+        raise RequestValidationError("field_required", f"{field} is required (true or false).")
+    return _boolean(field, body[field])
+
+
+def optional_bool(body: dict[str, Any], field: str) -> bool | _Missing:
+    """An update door's boolean: :data:`MISSING` when absent (leave it as it is), else required.
+
+    ``null`` is refused rather than read as absent: a switch has no cleared state, so a caller
+    that sends one has a bug the 400 tells it about.
+    """
+    if field not in body:
+        return MISSING
+    return require_bool(body, field)
+
+
+def _boolean(field: str, value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise RequestValidationError(
+        "field_not_a_boolean",
+        f"{field} must be true or false (a JSON boolean), not {_type_name(value)}.",
+    )
 
 
 def _type_name(value: Any) -> str:

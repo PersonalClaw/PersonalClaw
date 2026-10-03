@@ -37,13 +37,8 @@ from personalclaw.config.edit_spec import LOOSEN_TITLE
 from personalclaw.dashboard.handlers._shared import _is_restricted_session
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import consent_required
-from personalclaw.request_validation import json_object_body, require_string
-from personalclaw.safety_flags import (
-    confirm_granted,
-    confirm_granted_query,
-    strict_bool,
-    yes_or_no,
-)
+from personalclaw.request_validation import bool_field, json_object_body, require_string
+from personalclaw.safety_flags import confirm_granted, confirm_granted_query
 from personalclaw.sel import sel
 from personalclaw.stale_write import (
     claimed_revision,
@@ -363,7 +358,9 @@ async def _save_def(
     (`service._write_definition`, every door's one writer), and here, at her own editor, her yes
     is the ``confirm`` the consent dialog sends, asked on the wire like `agent.approval_mode`. A
     dry run (`save: false`) writes nothing, so it is never asked."""
-    if bool(body.get("save", True)):
+    save = bool_field(body, "save", default=True)
+    strict = bool_field(body, "strict", default=True)
+    if save:
         stored = await service.get_def(name)
         # 🔴 A DEFINITION OF YOURS IS SAVED ONLY OVER THE COPY THE EDIT WAS BUILT FROM. The editor
         # sends the whole definition it read, so a save from a page opened before another tab — or
@@ -391,11 +388,11 @@ async def _save_def(
         inputs=body.get("inputs") if isinstance(body.get("inputs"), dict) else None,
         tags=[str(t) for t in (body.get("tags") or [])],
         metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
-        save=bool(body.get("save", True)),
+        save=save,
         # A def saved through the API is the USER acting, not an agent — so it skips the
         # agent-provenance dry run, which exists for specs a model generated.
         provenance="user",
-        strict=bool(body.get("strict", True)),
+        strict=strict,
         # The `workspace:` block. Threaded so a caller that declares isolation actually gets
         # it: without this the key is dropped before the save and the run-start applier finds
         # nothing to provision.
@@ -448,7 +445,7 @@ async def api_def_a2a_publish(request: web.Request) -> web.Response:
     # Under the definition save lock like every write to a stored definition here, so it never
     # lands between a save's revision check and that save's write.
     async with _get_def_save_lock():
-        result = await service.set_a2a_published(name, body.get("published") is True)
+        result = await service.set_a2a_published(name, bool_field(body, "published", default=False))
     _audit(request, "workflow_def_a2a_publish", "success" if result.get("ok") else "failure", name)
     return _reply(result)
 
@@ -923,7 +920,7 @@ async def api_run_start(request: web.Request) -> web.Response:
         project_id=str(body.get("project_id", "") or ""),
         idempotency_key=str(body.get("idempotency_key", "") or ""),
         blocking_timeout=float(body.get("blocking_timeout", 0) or 0),
-        skip_preflight=strict_bool(body.get("skip_preflight"), field="skip_preflight"),
+        skip_preflight=bool_field(body, "skip_preflight", default=False),
     )
     _audit(
         request,
@@ -1336,7 +1333,7 @@ async def api_run_edit(request: web.Request) -> web.Response:
             {"error": {"code": "invalid_request", "message": "'ops' must be a non-empty array"}},
             status=400,
         )
-    if bool(body.get("preview_only")):
+    if bool_field(body, "preview_only", default=False):
         # A preview is a READ — no guard needed for its own sake, but it is cheap to keep
         # the same path so a client can preview then apply with one shape.
         return _reply(service.preview_edit(run_id, ops))
@@ -1502,7 +1499,7 @@ async def api_run_review_triage(request: web.Request) -> web.Response:
     result = await apply_triage(
         run_id,
         body.get("decisions"),
-        dispatch=not strict_bool(body.get("dry_run"), field="dry_run", default=False),
+        dispatch=not bool_field(body, "dry_run", default=False),
     )
     _audit(
         request,
@@ -1547,7 +1544,7 @@ async def api_run_resume(request: web.Request) -> web.Response:
         supervisor=_supervisor(request),
         token=str(body.get("resume_token", "") or ""),
         answer=body.get("answer"),
-        always_allow=strict_bool(body.get("always_allow"), field="always_allow"),
+        always_allow=bool_field(body, "always_allow", default=False),
     )
     _audit(request, "workflow_run_resume", "success" if result.get("ok") else "failure", run_id)
     return _reply(result)
@@ -1606,8 +1603,8 @@ async def _reentry(request: web.Request, operation: str, fn: Any) -> web.Respons
         "confirm_cascade": confirm_granted(body, "confirm_cascade"),
     }
     if fn is service.rewind_run:
-        kwargs["redo_effects"] = yes_or_no(body.get("redo_effects")) is True
-        kwargs["force"] = yes_or_no(body.get("force")) is True
+        kwargs["redo_effects"] = bool_field(body, "redo_effects", default=False)
+        kwargs["force"] = bool_field(body, "force", default=False)
     result = fn(run_id, node_id, **kwargs)
     _audit(request, operation, "success" if result.get("ok") else "failure", run_id)
     return _reply(result)

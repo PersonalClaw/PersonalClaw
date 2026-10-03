@@ -353,20 +353,23 @@ def test_a_token_that_is_not_the_questions_answers_nothing(home, browse):
 
 
 def test_an_answer_that_is_not_a_yes_or_no_is_refused(home, browse):
+    from personalclaw.request_validation import RequestValidationError
+
     _trigger(home)
     _run()
 
-    resp = asyncio.run(
-        trigger_runs.api_trigger_answer(
-            _req(
-                f"/api/triggers/store:{TID}/answer",
-                body={"resume_token": _token(), "answer": "I have signed in"},
-                match_info={"id": f"store:{TID}"},
+    with pytest.raises(RequestValidationError) as refused:
+        asyncio.run(
+            trigger_runs.api_trigger_answer(
+                _req(
+                    f"/api/triggers/store:{TID}/answer",
+                    body={"resume_token": _token(), "answer": "I have signed in"},
+                    match_info={"id": f"store:{TID}"},
+                )
             )
         )
-    )
 
-    assert resp.status == 400
+    assert refused.value.status == 400 and refused.value.code == "field_not_a_boolean"
     assert len(_park_rows()) == 1 and browse.seen == [None]
 
 

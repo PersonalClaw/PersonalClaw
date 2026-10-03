@@ -26,7 +26,7 @@ from personalclaw.inbox import (
     validate_updatable_fields,
 )
 from personalclaw.inbox_service import DRAFT_INSTRUCTIONS_MAX_CHARS
-from personalclaw.request_validation import json_object_body, string_field
+from personalclaw.request_validation import bool_field, json_object_body, string_field
 from personalclaw.security import MaskConflict, keep_masked_spans
 from personalclaw.sel import sel
 
@@ -525,6 +525,7 @@ async def api_inbox_update(request: web.Request) -> web.Response:
     except InboxFieldTypeError as exc:
         logger.info("inbox update refused for %s: %s", item_id, exc)
         return json_error("invalid_field_type", message=str(exc), status=400)
+    mute_thread = bool_field(body, "mute_thread", default=False)
     # The draft editor is seeded from `redact_item`, so a saved draft carries our marker wherever
     # the stored draft holds a credential. Restored before anything below mutates the row.
     if isinstance(updates.get("draft"), str):
@@ -542,7 +543,7 @@ async def api_inbox_update(request: web.Request) -> web.Response:
 
     # 4. Mutate.
     status_before = item.status
-    if body.get("mute_thread"):
+    if mute_thread:
         inbox_state.muted_threads.add(item.thread_key)
         inbox_state.save()
 
@@ -553,7 +554,7 @@ async def api_inbox_update(request: web.Request) -> web.Response:
 
     # A favorite toggled ON is a strong positive signal (off is not a negative — the user
     # is just un-starring, not disengaging).
-    if body.get("favorited") is True:
+    if updates.get("favorited") is True:
         _record_signal(state, item, "favorite")
 
     # The fields first, then the move: a status is the one transition (`set_item_status`), and
@@ -1099,7 +1100,7 @@ async def api_inbox_favorite(request: web.Request) -> web.Response:
     _, inbox = _get_inbox(state)
     item_id = request.match_info["id"]
     body = await json_object_body(request)
-    favorited = bool(body.get("favorited", True))
+    favorited = bool_field(body, "favorited", default=True)
     item = inbox.items.get(item_id)
     if item is None:
         return web.json_response({"error": "not found"}, status=404)
@@ -1452,7 +1453,7 @@ async def api_inbox_proposal_create(request: web.Request) -> web.Response:
         preview_kind=str(body.get("preview_kind") or "text"),
         provenance=pc.app_source(app_name),
         expires_at=str(body["expires_at"]) if body.get("expires_at") else None,
-        editable=bool(body.get("editable", False)),
+        editable=bool_field(body, "editable", default=False),
         apply=apply,
     )
     # A payload whose apply case cannot be named is refused HERE rather than surfaced as a

@@ -20,6 +20,7 @@ from personalclaw import tmux_substrate
 from personalclaw.config import loader as config_loader
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body, string_field
+from personalclaw.safety_flags import strict_bool
 
 
 def config_path():
@@ -206,7 +207,10 @@ def _persist_enabled(request: web.Request) -> bool:
     two copies of a tmux fact cost. It is also what makes the gate and the `persist_available`
     the client reads provably the SAME fact — a test can no longer move one without the other.
     """
-    return bool(_get_config(request).get("persist", False)) and tmux_substrate.tmux_available()
+    persist = strict_bool(
+        _get_config(request).get("persist"), field="dashboard.terminal.persist", default=False
+    )
+    return persist and tmux_substrate.tmux_available()
 
 
 def _tmux_session_name(session_id: str) -> str:
@@ -232,7 +236,10 @@ def _is_enabled(request: web.Request) -> bool:
     now = time.monotonic()
     if now - _enabled_cache[1] < 30:
         return _enabled_cache[0]
-    result = bool(_get_config(request).get("enabled", True))
+    # The word written, not its truthiness: `"enabled": "false"` is the opt-out, spelled in quotes.
+    result = strict_bool(
+        _get_config(request).get("enabled"), field="dashboard.terminal.enabled", default=True
+    )
     _enabled_cache[0] = result
     _enabled_cache[1] = now
     return result

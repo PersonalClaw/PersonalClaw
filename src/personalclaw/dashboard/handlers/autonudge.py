@@ -11,6 +11,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import workspace_root
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
+from personalclaw.request_validation import bool_field
 from personalclaw.security import is_sensitive_path
 from personalclaw.sel import sel
 from personalclaw.triggers.nudge import get_instance as _autonudge_get
@@ -158,7 +159,8 @@ async def api_autonudge_update(request: web.Request) -> web.Response:
         message=body.get("message"),
         idle_secs=body.get("idle_secs"),
         max_cycles=body.get("max_cycles"),
-        active=body.get("active"),
+        # Left out, the loop stays as it is; sent, the JSON true or false (`bool("false")` is True).
+        active=bool_field(body, "active", default=None),
     )
     if loop is None:
         return web.json_response({"error": "loop not found"}, status=404)

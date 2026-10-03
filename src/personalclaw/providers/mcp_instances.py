@@ -33,6 +33,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.mcp_status import switched_off
 from personalclaw.providers.instances import ExtensionInstance
 
 if TYPE_CHECKING:
@@ -92,7 +93,7 @@ def _spec_to_instance(name: str, spec: dict[str, Any]) -> ExtensionInstance:
         extension_name=MCP_TOOLS_EXTENSION,
         display_name=name,
         config=config,
-        enabled=spec.get("disabled") is not True,
+        enabled=not switched_off(spec, name),
     )
 
 
@@ -116,7 +117,7 @@ def _config_to_spec(config: dict[str, Any], existing: dict[str, Any] | None) -> 
     for k in ("env", "headers", MCP_PLAIN_ENV):
         if stored.get(k):
             spec[k] = stored[k]
-    if stored.get("disabled") is True:
+    if switched_off(stored):
         spec["disabled"] = True
 
     transport = config.get("transport") or ("sse" if config.get("endpoint") else "stdio")

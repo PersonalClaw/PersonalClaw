@@ -9,7 +9,7 @@ from aiohttp import web
 
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
-from personalclaw.request_validation import require_string
+from personalclaw.request_validation import bool_field, require_bool, require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 if TYPE_CHECKING:
@@ -463,7 +463,9 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "arguments must be an object"}, status=400)
     # A check (`dry_run`) says so in every refusal it gets, so whoever asked can tell the route's
     # answer to the check from a request that never reached it.
-    checked: dict[str, Any] = {"dry_run": True} if body.get("dry_run") is True else {}
+    checked: dict[str, Any] = (
+        {"dry_run": True} if bool_field(body, "dry_run", default=False) else {}
+    )
 
     # Untrusted-app sandbox (P3): an app-identified caller may invoke a tool only if
     # it declares it in permissions.mcpTools. Owner/internal callers (no app identity)
@@ -756,11 +758,7 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "body must be a JSON object"}, status=400)
     provider = str(body.get("provider", "")).strip()
     name = require_string(body, "name")
-    enabled = body.get("enabled", True)
-    if not isinstance(enabled, bool):
-        # A non-bool ``enabled`` (e.g. the JSON string "false", which is truthy)
-        # would silently INVERT the toggle under bool() coercion — reject it.
-        return web.json_response({"ok": False, "error": "enabled must be a boolean"}, status=400)
+    enabled = require_bool(body, "enabled")
     # Refuse to persist junk: the name must be a tool some registered provider
     # actually exposes, else the toggle writes a dead key to tool_prefs.json.
     if name not in {t.name for t in await list_all_tools()}:
@@ -798,11 +796,7 @@ async def api_providers_toggle(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"ok": False, "error": "body must be a JSON object"}, status=400)
     provider = str(body.get("provider", "")).strip()
-    enabled = body.get("enabled", True)
-    if not isinstance(enabled, bool):
-        # Same coercion trap as the per-tool toggle: reject a non-bool rather
-        # than let bool("false") silently enable the provider.
-        return web.json_response({"ok": False, "error": "enabled must be a boolean"}, status=400)
+    enabled = require_bool(body, "enabled")
     if not provider:
         return web.json_response({"ok": False, "error": "provider is required"}, status=400)
     result = tool_prefs.set_provider_enabled(provider, enabled)

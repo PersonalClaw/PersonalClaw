@@ -120,6 +120,12 @@ routes all refuse it outright. A route that refuses an app token says so in its 
   predate that convention and return their own shapes; the honest rule is to branch on
   `code` where it is present and on the HTTP status otherwise, and not to assume a single
   envelope across the whole surface.
+- **A boolean is the JSON `true` or `false`.** A request field that is a switch or a consent
+  takes the real boolean and nothing else: the text `"false"`, a number, `null` or any other
+  value is refused with `400 field_not_a_boolean`, whose message names the field, and nothing is
+  changed. A field left out takes the route's own default, which is never a yes to a consent.
+  Where a route has no default of its own (a message's link previews follow the channel's
+  setting unless you say), `null` is the same as leaving the field out.
 - **A switched-off feature is an answer, not an error.** While a feature's switch is off,
   the reads a page loads to render it answer `200 {"enabled": false}`: the flag alone, with
   no empty collection beside it that a client could misread as "none". That covers the eval

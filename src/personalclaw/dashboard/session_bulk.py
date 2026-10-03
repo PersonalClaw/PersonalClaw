@@ -33,7 +33,7 @@ from personalclaw.dashboard.session_lifecycle import (
 )
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import MISSING, bool_field, json_object_body, optional_bool
 from personalclaw.sel import sel
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ async def api_chat_sessions_bulk(request: web.Request) -> web.Response:
     if op in ("tag", "untag") and not tag_id:
         return web.json_response({"error": f"{op} requires tag_id"}, status=400)
     folder_id = str(body.get("folder_id") or "")
-    never_value = bool(body.get("value", True))
+    never_value = bool_field(body, "value", default=True)
 
     # 🔴 Validate the REFERENCED ids, which this path did not while both single-session paths
     # did (#771): `session.tags.append(tag_id)` took any truthy string and `session.folder_id =
@@ -198,7 +198,7 @@ async def api_chat_sessions_auto_archive(request: web.Request) -> web.Response:
     body = await json_object_body(request)
     if not isinstance(body, dict):
         body = {}
-    dry_run = bool(body.get("dry_run", False))
+    dry_run = bool_field(body, "dry_run", default=False)
     active_session = str(body.get("active_session") or "")
 
     days = int(AppConfig.load().session.auto_archive_days)
@@ -266,13 +266,15 @@ async def api_chat_session_lifecycle(request: web.Request) -> web.Response:
             status=400,
         )
 
+    # Read before the lifecycle is set, so a refused value leaves the session as it was.
+    never_archive = optional_bool(body, "never_archive")
     if "lifecycle" in body:
         try:
             set_lifecycle(session, str(body["lifecycle"]))
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-    if "never_archive" in body:
-        session.never_archive = bool(body["never_archive"])
+    if never_archive is not MISSING:
+        session.never_archive = never_archive
         session._dirty = True
 
     save_session_to_history(state, session, force=True)

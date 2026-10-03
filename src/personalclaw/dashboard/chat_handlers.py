@@ -51,7 +51,7 @@ from personalclaw.dashboard.state import CREATED_BY_APP_META_KEY, DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
 from personalclaw.own_words import OWN_WORDS, RAN_PROMPT, pasted_blocks, typed_text
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import bool_field, json_object_body
 
 # The `room:` session-key prefix, imported rather than spelled out: the filter below and the
 # key the room turn path mints must be the same string, and a literal here could drift from it.
@@ -1172,7 +1172,7 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
             model=model,
             mode=body.get("mode", ""),
             memory_mode=memory_mode,
-            ephemeral=body.get("ephemeral"),
+            ephemeral=bool_field(body, "ephemeral", default=False),
             created_by_app=request.get("app", ""),
             project_id=project_id,
         )
@@ -1873,7 +1873,7 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         pass
     active_session = body.get("active_session", "")
-    dry_run = body.get("dry_run", False)
+    dry_run = bool_field(body, "dry_run", default=False)
     request_app = request.get("app", "")
     cutoff = time.time() - max_days * 86400
     stale_keys: list[str] = []
@@ -3053,7 +3053,7 @@ async def api_chat_session_context(request: web.Request) -> web.Response:
     entry: dict[str, object] = {
         "content": content,
         "source": body.get("source", ""),
-        "ephemeral": body.get("ephemeral", True),
+        "ephemeral": bool_field(body, "ephemeral", default=True),
         "injectedAt": time.time(),
     }
     max_age = body.get("maxAge")
