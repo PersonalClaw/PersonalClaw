@@ -1031,6 +1031,14 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
 
     _log_sel("success", f"{path_key}={value}")
 
+    # An open chat reads `voice.*` once and keeps it, so it is told (the ``refresh`` frame naming
+    # ``voice``) and reads again: a hands-free phrase removed here must stop firing in a chat that
+    # is already listening, and one added must start.
+    if path_key.startswith("voice."):
+        state = request.app.get("state")
+        if state is not None:
+            state.push_refresh("voice")
+
     # Log level carries a live side effect — the same one POST /api/logs/level
     # applies — so set every logger + handler now. Without this, the Agent-defaults
     # row only persisted the key and the change took effect at the next restart,

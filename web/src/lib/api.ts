@@ -8698,7 +8698,9 @@ export const api = {
   // history + the retained tail into a fresh session (restore = fork, never swap).
   forkRewound: (session: string, index: number, snapshot_index?: number) =>
     post<{ ok: boolean; key: string; title: string; messages: number }>(`/api/chat/sessions/${session}/fork-rewound`, { index, ...(snapshot_index != null ? { snapshot_index } : {}) }),
-  voiceSynthesize: (text: string, session = '') => post<{ ok: boolean; chunks: number }>('/api/voice/synthesize', { text, session }),
+  /** Read `text` aloud. `request` is this page's own name for the reading: the audio streams to every page
+   *  with the chat open, and only the page whose name its frames carry plays it. */
+  voiceSynthesize: (text: string, session: string, request: string) => post<{ ok: boolean; chunks: number }>('/api/voice/synthesize', { text, session, request }),
 
   // ── Voice profiles + bindings ──────────────────────────────────────────────
   /** Every profile plus the binding map, in one read. */

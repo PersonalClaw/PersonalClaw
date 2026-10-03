@@ -1,9 +1,53 @@
 import { describe, it, expect } from 'vitest'
-import { accumulateTranscript, isConfirmation, isExit, stripTrailingPhrase } from './duplex'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { DEFAULT_PHRASES, accumulateTranscript, isConfirmation, isExit, stripTrailingPhrase } from './duplex'
+import phraseCases from './duplexPhraseCases.json'
 
 const CONFIRM = ['do it', 'go ahead', 'send it', 'execute']
 const EXIT = ['cancel', 'never mind', 'forget it']
 const PHRASES = { confirmation: CONFIRM, exit: EXIT }
+
+interface PhraseCase {
+  name: string
+  why: string
+  text: string
+  phrases?: { confirmation?: string[]; exit?: string[] }
+  confirmation: boolean
+  exit: boolean
+}
+const CASES = phraseCases.cases as PhraseCase[]
+
+// vitest runs from web/, so the shared table is one level up.
+const PHRASE_TABLE = join(process.cwd(), '..', 'src', 'personalclaw', 'voice', 'phrases.json')
+
+describe('the shipped phrase lists', () => {
+  it('come from the table the backend reads, not from a literal here', () => {
+    const table = JSON.parse(readFileSync(PHRASE_TABLE, 'utf8')) as { confirmation: string[]; exit: string[] }
+    expect(table.confirmation.length, 'no confirmation phrases shipped').toBeGreaterThan(0)
+    expect(table.exit.length, 'no exit phrases shipped').toBeGreaterThan(0)
+    expect(DEFAULT_PHRASES).toEqual({ confirmation: table.confirmation, exit: table.exit })
+  })
+})
+
+describe('the shared phrase cases (tests/test_voice_duplex.py runs the same file)', () => {
+  it('carry both answers for both matchers, so neither side can pass vacuously', () => {
+    expect(CASES.length).toBeGreaterThanOrEqual(20)
+    expect(CASES.filter((c) => c.exit).length).toBeGreaterThanOrEqual(5)
+    expect(CASES.filter((c) => !c.exit).length).toBeGreaterThanOrEqual(5)
+    expect(CASES.filter((c) => c.confirmation).length).toBeGreaterThanOrEqual(3)
+    expect(CASES.filter((c) => !c.confirmation).length).toBeGreaterThanOrEqual(5)
+  })
+
+  for (const c of CASES) {
+    it(`${c.name}: ${c.why}`, () => {
+      const confirmation = c.phrases?.confirmation ?? DEFAULT_PHRASES.confirmation
+      const exit = c.phrases?.exit ?? DEFAULT_PHRASES.exit
+      expect(isConfirmation(c.text, confirmation), `isConfirmation(${JSON.stringify(c.text)})`).toBe(c.confirmation)
+      expect(isExit(c.text, exit), `isExit(${JSON.stringify(c.text)})`).toBe(c.exit)
+    })
+  }
+})
 
 describe('isConfirmation / isExit', () => {
   it('matches a trailing phrase, case- and punctuation-insensitively', () => {
@@ -50,6 +94,10 @@ describe('stripTrailingPhrase', () => {
   it('reduces a bare confirmation to nothing', () => {
     expect(stripTrailingPhrase('go ahead', CONFIRM)).toBe('')
   })
+
+  it('removes a trigger speech-to-text ran together', () => {
+    expect(stripTrailingPhrase('Book the Tuesday ferry. Sendit.', CONFIRM)).toBe('Book the Tuesday ferry')
+  })
 })
 
 describe('accumulateTranscript', () => {
@@ -88,5 +136,26 @@ describe('accumulateTranscript', () => {
 
   it('treats a stray confirmation with an empty buffer as a clear, not a turn', () => {
     expect(accumulateTranscript('', 'go ahead', PHRASES)).toEqual({ buffer: '', action: 'clear' })
+  })
+
+  it('discards "send it, never mind" when speech-to-text writes the retraction as one word', () => {
+    // Recorded: a spoken "Never mind." came back from transcription as "Nevermind".
+    expect(accumulateTranscript('book the Tuesday ferry', 'Send it. Nevermind.', PHRASES)).toEqual({
+      buffer: '',
+      action: 'clear',
+    })
+    expect(accumulateTranscript('book the Tuesday ferry', 'Nevermind', PHRASES)).toEqual({
+      buffer: '',
+      action: 'clear',
+    })
+  })
+
+  it('keeps ordinary dictation that says "mind" or "never"', () => {
+    for (const chunk of ['remind me whenever it is late', 'mind the gap by the café', 'I never said Monday']) {
+      expect(accumulateTranscript('book the ferry', chunk, PHRASES)).toEqual({
+        buffer: `book the ferry ${chunk}`,
+        action: 'accumulate',
+      })
+    }
   })
 })

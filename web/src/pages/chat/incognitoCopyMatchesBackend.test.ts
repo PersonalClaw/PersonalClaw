@@ -86,7 +86,7 @@ describe('incognito copy matches the backend contract', () => {
     const client = readFileSync(join(__dirname, '..', '..', 'lib', 'api.ts'), 'utf8')
     expect(client).toMatch(/const SK = \{ 'X-Session-Key': 'dashboard:ui'/)
     expect(client).toMatch(/fetch\(url, \{ method: 'POST', headers: \{ \.\.\.SK \}, body: fd \}\)/)
-    expect(client).toMatch(/voiceSynthesize: \(text: string, session = ''\) => post</)
+    expect(client).toMatch(/voiceSynthesize: \(text: string, session: string, request: string\) => post</)
   })
 
   it('says no background model reads the chat, and each such chore asks the one answer first', () => {

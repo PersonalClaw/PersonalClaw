@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   voiceSynthesize: vi.fn(),
   stopChat: vi.fn(),
   tts: { enabled: true, auto_speak: true } as Record<string, unknown>,
+  ttsReads: 0,
 }))
 
 vi.mock('../../lib/api', async (orig) => {
@@ -29,7 +30,10 @@ vi.mock('../../lib/api', async (orig) => {
     voiceSynthesize: h.voiceSynthesize,
     stopChat: h.stopChat,
     // The settings read carries the revision a save names (`lib/staleWrite.ts`).
-    useCaseSettings: (uc: string) => Promise.resolve({ value: uc === 'tts' ? h.tts : {}, revision: 'r1' }),
+    useCaseSettings: (uc: string) => {
+      if (uc === 'tts') h.ttsReads++
+      return Promise.resolve({ value: uc === 'tts' ? h.tts : {}, revision: 'r1' })
+    },
     personalclawConfig: () => Promise.resolve({ voice: {} }),
     chatSessions: () => Promise.resolve([]),
     agents: () => Promise.resolve({ agents: [] }),
@@ -63,20 +67,36 @@ class FakeSocket {
   close(): void { this.readyState = 3 }
 }
 
-/** An AudioContext jsdom lacks: enough for the page to prime and resume one. */
+/** One scheduled piece of audio: what the page plays, and whether it stopped it. */
+class FakeSource {
+  buffer: unknown = null
+  onended: (() => void) | null = null
+  stopped = false
+  connect(): void {}
+  start(): void { FakeAudioContext.scheduled.push(this) }
+  stop(): void { this.stopped = true }
+}
+
+/** An AudioContext jsdom lacks: enough for the page to prime and resume one, decode a chunk and
+ *  schedule it, so a test can see what this tab plays. */
 class FakeAudioContext {
   static made = 0
+  static scheduled: FakeSource[] = []
   state = 'suspended'
   currentTime = 0
   destination = {}
   constructor() { FakeAudioContext.made++ }
   resume() { this.state = 'running'; return Promise.resolve() }
+  decodeAudioData() { return Promise.resolve({ duration: 1 }) }
+  createBufferSource() { return new FakeSource() }
 }
 
 const SESSION = 'chat-9-x'
 type Frame = [type: string, data: Record<string, unknown>]
 const deliver = ([type, data]: Frame) =>
   FakeSocket.last?.onmessage?.({ data: JSON.stringify({ type, data: { session: SESSION, ...data } }) })
+/** One sentence of a reading, as the gateway streams it to every page with the chat open. */
+const chunkOf = (request: string) => deliver(['voice_chunk', { request, index: 0, sentence: ANSWER, audio: btoa('RIFF') }])
 
 let rafQueue: FrameRequestCallback[] = []
 let rafClock = 0
@@ -90,6 +110,7 @@ function paintFrames(n = 30) {
 
 let ChatPage: typeof import('../ChatPage')['ChatPage']
 let AppearanceProvider: typeof import('../../app/appearance')['AppearanceProvider']
+let resetDataStore: typeof import('../../lib/data/store')['resetDataStore']
 
 beforeEach(async () => {
   vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket)
@@ -106,10 +127,14 @@ beforeEach(async () => {
       takeRecords(): [] { return [] }
     })
   }
+  ;({ resetDataStore } = await import('../../lib/data/store'))
+  resetDataStore()  // a setting one test cached must not be the first paint of the next
   sessionStorage.clear()
   FakeSocket.last = null
   FakeAudioContext.made = 0
+  FakeAudioContext.scheduled = []
   h.tts = { enabled: true, auto_speak: true }
+  h.ttsReads = 0
   h.detailCalls.length = 0
   h.sendChat.mockReset().mockResolvedValue({ ok: true, session: SESSION })
   h.voiceSynthesize.mockReset().mockResolvedValue({ ok: true, chunks: 1 })
@@ -159,7 +184,7 @@ describe('Speak replies aloud', () => {
     await sendSeeded()
     streamTheReply()
     await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledTimes(1))
-    expect(h.voiceSynthesize).toHaveBeenCalledWith(ANSWER, SESSION)
+    expect(h.voiceSynthesize).toHaveBeenCalledWith(ANSWER, SESSION, expect.any(String))
     expect(FakeAudioContext.made, 'the send primed audio, so the reply can play when it lands').toBeGreaterThan(0)
   })
 
@@ -220,7 +245,116 @@ describe('Speak replies aloud', () => {
       messages: [...earlier, { role: 'assistant', content: 'An earlier answer.' }, { role: 'user', content: 'And then this.', ts }],
     })
     streamTheReply()
-    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledWith(ANSWER, SESSION))
+    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledWith(ANSWER, SESSION, expect.any(String)))
+  })
+})
+
+/** Change "Speak replies aloud" the way Settings does, and deliver the frame the gateway sends to
+ *  every page after any save of text-to-speech's settings. Returns once the open chat re-read them. */
+async function switchSpeakReplies(on: boolean) {
+  const reads = h.ttsReads
+  h.tts = { enabled: true, auto_speak: on }
+  act(() => { FakeSocket.last?.onmessage?.({ data: JSON.stringify({ type: 'refresh', data: { kinds: ['voice'] } }) }) })
+  await waitFor(() => expect(h.ttsReads).toBeGreaterThan(reads))
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+}
+
+describe('Speak replies aloud, changed while the chat is open', () => {
+  it('switched on: the next reply is read out', async () => {
+    h.tts = { enabled: true, auto_speak: false }
+    await openWith({ seed: 'Read me the reply.' })
+    await switchSpeakReplies(true)
+    await sendSeeded()
+    streamTheReply()
+    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledWith(ANSWER, SESSION, expect.any(String)))
+  })
+
+  it('switched off: the next reply is not read out', async () => {
+    await openWith({ seed: 'Stay quiet now.' })
+    await switchSpeakReplies(false)
+    await sendSeeded()
+    streamTheReply()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(h.voiceSynthesize).not.toHaveBeenCalled()
+  })
+
+  it('switched off after the message was sent: its reply is not read out', async () => {
+    await openWith({ seed: 'Never mind reading this one.' })
+    await sendSeeded()
+    await switchSpeakReplies(false)
+    streamTheReply()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(h.voiceSynthesize).not.toHaveBeenCalled()
+  })
+
+  it('switched on after the message was sent: its reply is read out', async () => {
+    h.tts = { enabled: true, auto_speak: false }
+    await openWith({ seed: 'Read this one after all.' })
+    await sendSeeded()
+    await switchSpeakReplies(true)
+    streamTheReply()
+    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledWith(ANSWER, SESSION, expect.any(String)))
+  })
+
+  it('switched off while a reply is being read out: it stops at once', async () => {
+    await openWith({ seed: 'Read me the reply.' })
+    await sendSeeded()
+    streamTheReply()
+    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledTimes(1))
+    act(() => { chunkOf(String(h.voiceSynthesize.mock.calls[0][2])) })
+    await waitFor(() => expect(FakeAudioContext.scheduled).toHaveLength(1))
+    expect(await screen.findByRole('button', { name: 'Stop' })).toBeTruthy()
+    await switchSpeakReplies(false)
+    expect(FakeAudioContext.scheduled[0].stopped).toBe(true)
+    expect(await screen.findByRole('button', { name: 'Speak' })).toBeTruthy()
+  })
+
+  it('switched off while you are playing a reply with Speak: that one keeps playing', async () => {
+    await openWith({}, { messages: [{ role: 'user', content: 'hi', ts: 't1' }, { role: 'assistant', content: ANSWER, ts: 't2' }] })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Speak' }))
+    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledTimes(1))
+    act(() => { chunkOf(String(h.voiceSynthesize.mock.calls[0][2])) })
+    await waitFor(() => expect(FakeAudioContext.scheduled).toHaveLength(1))
+    await switchSpeakReplies(false)
+    expect(FakeAudioContext.scheduled[0].stopped).toBe(false)
+  })
+})
+
+describe('A reading plays in the one tab that asked for it', () => {
+  const answered = { messages: [{ role: 'user', content: 'hi', ts: 't1' }, { role: 'assistant', content: ANSWER, ts: 't2' }] }
+
+  it('plays the reading this tab asked for', async () => {
+    await openWith({}, answered)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Speak' }))
+    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledTimes(1))
+    const request = String(h.voiceSynthesize.mock.calls[0][2])
+    expect(request, 'the reading is named, so its frames can be told apart').toMatch(/\S/)
+    act(() => { chunkOf(request) })
+    await waitFor(() => expect(FakeAudioContext.scheduled).toHaveLength(1))
+  })
+
+  it('does not play a reading another tab asked for, of the same chat', async () => {
+    await openWith({}, answered)
+    act(() => { chunkOf('read-in-another-tab') })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(FakeAudioContext.scheduled).toHaveLength(0)
+  })
+
+  it('does not play what is still arriving of a reading you stopped', async () => {
+    await openWith({}, answered)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Speak' }))
+    await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledTimes(1))
+    const request = String(h.voiceSynthesize.mock.calls[0][2])
+    act(() => { chunkOf(request) })
+    await waitFor(() => expect(FakeAudioContext.scheduled).toHaveLength(1))
+    await user.click(await screen.findByRole('button', { name: 'Stop' }))
+    act(() => { chunkOf(request) })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(FakeAudioContext.scheduled).toHaveLength(1)
+    expect(FakeAudioContext.scheduled[0].stopped).toBe(true)
   })
 })
 

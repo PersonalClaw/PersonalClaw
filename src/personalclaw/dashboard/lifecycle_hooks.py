@@ -367,6 +367,28 @@ def register_lifecycle_hooks(app: web.Application) -> None:
 
     app.on_cleanup.append(_provider_availability_shutdown)
 
+    def _relay_voice_settings(use_case: str) -> None:
+        """Text-to-speech's settings were saved, whoever saved them: every open chat re-reads its
+        voice settings on the ``refresh`` frame naming ``voice``, so "Speak replies aloud" reaches a
+        chat that is already open, in both directions."""
+        if use_case == "tts":
+            app["state"].push_refresh("voice")
+
+    async def _voice_settings_relay_startup(app_: web.Application) -> None:
+        from personalclaw.providers import use_cases
+
+        use_cases.subscribe_settings_saved(_relay_voice_settings)
+
+    app.on_startup.append(_voice_settings_relay_startup)
+
+    async def _voice_settings_relay_shutdown(app_: web.Application) -> None:
+        """Stop relaying when this gateway stops, so a later one in the same process is told."""
+        from personalclaw.providers import use_cases
+
+        use_cases.unsubscribe_settings_saved(_relay_voice_settings)
+
+    app.on_cleanup.append(_voice_settings_relay_shutdown)
+
     def _relay_mcp_status(_server: str) -> None:
         """What an MCP server's card says may have changed (`mcp_status.announce`): every open page
         that shows servers re-reads them on the ``refresh`` frame naming ``mcp``, instead of

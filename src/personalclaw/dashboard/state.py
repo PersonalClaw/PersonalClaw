@@ -2529,7 +2529,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         ``artifacts`` (an artifact was written or removed — :meth:`announce_artifact_change`),
         ``mcp`` (what an MCP server's card says may have changed — ``mcp_status.announce``),
         ``suggestions`` / ``attachments`` (a suggestions refresh landed, an attachment was read),
-        and the self-update's ``update_available`` / ``updating`` / ``update_failed``.
+        ``voice`` (a voice setting an open chat reads changed: ``voice.*`` or text-to-speech's
+        settings, whoever saved them), and the self-update's ``update_available`` / ``updating`` /
+        ``update_failed``.
         """
         self._broadcast({"_type": "refresh", "kinds": ",".join(kinds)})
 

@@ -24,7 +24,7 @@ language for stt) live separately in
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from personalclaw.atomic_write import atomic_write
 
@@ -408,12 +408,36 @@ def load_use_case_settings(use_case: str) -> dict[str, Any]:
 
 
 def save_use_case_settings(use_case: str, settings: dict[str, Any]) -> None:
-    """Save provider-agnostic settings for a use case."""
+    """Save provider-agnostic settings for a use case, then tell :func:`subscribe_settings_saved`'s
+    listeners which one changed."""
     if use_case not in VALID_USE_CASES:
         raise ValueError(f"Invalid use case: {use_case!r}")
     _settings_dir().mkdir(parents=True, exist_ok=True)
     path = _settings_dir() / f"{use_case}.json"
     atomic_write(path, json.dumps(settings, indent=2) + "\n")
+    for listener in list(_settings_listeners):
+        try:
+            listener(use_case)
+        except Exception:  # noqa: BLE001 — the save has happened; a listener cannot undo it
+            logger.warning("use-case settings listener failed for %s", use_case, exc_info=True)
+
+
+#: ``(use case) -> None`` callbacks, told after a use case's settings are saved, whoever saved them:
+#: Settings, a routing lever, or a channel app through the SDK.
+_settings_listeners: list[Callable[[str], None]] = []
+
+
+def subscribe_settings_saved(listener: Callable[[str], None]) -> None:
+    """Be told, with its name, each time a use case's settings are saved (idempotent). The
+    dashboard subscribes at start and tells the open pages, so a chat that is already open
+    follows a change such as "Speak replies aloud" instead of keeping the value it opened with."""
+    if listener not in _settings_listeners:
+        _settings_listeners.append(listener)
+
+
+def unsubscribe_settings_saved(listener: Callable[[str], None]) -> None:
+    if listener in _settings_listeners:
+        _settings_listeners.remove(listener)
 
 
 # ── One-shot migration off the legacy binding store ──────────────────────────

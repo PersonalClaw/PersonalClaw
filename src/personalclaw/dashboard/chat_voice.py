@@ -24,6 +24,10 @@ from personalclaw.voice_reply import stitch_wavs, streaming_voice_reply
 
 logger = logging.getLogger(__name__)
 
+#: The longest page-chosen reading name echoed back. A page names a reading with a few dozen
+#: characters; the cap keeps a caller from making every chunk frame, sent to every page, large.
+_READING_ID_MAX = 64
+
 
 def _record_generation(params: dict, wav_path: str, text: str) -> None:
     """Append this generation to the resolved profile's bounded history (§1.2).
@@ -56,6 +60,10 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
     Synthesizes each sentence sequentially, broadcasts ``voice_chunk``
     WS events with base64 WAV data for immediate playback, then stitches
     all chunks into a single WAV and broadcasts ``voice_complete``.
+
+    Both frames carry the ``request`` the body named. Every page with the chat open receives
+    them, and only the page that asked plays them: a chat open in two tabs, or on a second
+    device, is read out once.
     """
 
     state: DashboardState = request.app["state"]
@@ -73,6 +81,11 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
     session_name = body.get("session", "")
     if not isinstance(session_name, str):
         session_name = ""
+    # The asking page's own name for this reading, echoed so it can tell its frames from another
+    # page's. Not trusted for anything else; one that is not a short string is not echoed.
+    reading = body.get("request", "")
+    if not isinstance(reading, str) or len(reading) > _READING_ID_MAX:
+        reading = ""
     if not text:
         return web.json_response({"error": "text required"}, status=400)
 
@@ -169,6 +182,7 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
                 "voice_chunk",
                 {
                     "session": session_name,
+                    "request": reading,
                     "index": idx,
                     "sentence": sentence,
                     "audio": base64.b64encode(wav_bytes).decode(),
@@ -186,6 +200,7 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
                     "voice_complete",
                     {
                         "session": session_name,
+                        "request": reading,
                         "audio": base64.b64encode(final_bytes).decode(),
                         "chunks": len(chunk_paths),
                     },

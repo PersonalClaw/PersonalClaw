@@ -380,7 +380,9 @@ Around the engine:
   `ChannelDelivery` only (see [inbox-channels.md](inbox-channels.md)).
 - **`dashboard/chat_voice.py`** — `POST /api/voice/synthesize`, sentence-
   chunked TTS through `tts.registry.active_voice_params` (whatever TTS
-  provider is bound).
+  provider is bound). Its `voice_chunk` frames go to every page with the chat
+  open and carry the asking page's name for the reading (`request`), so only
+  that page plays them.
 
 ## Variant branching (regenerate)
 

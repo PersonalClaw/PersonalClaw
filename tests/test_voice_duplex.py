@@ -4,10 +4,19 @@ Every rule these functions implement is a decision the voice loop makes without
 asking a model, so each is pinned here: tail-anchored phrase gating, the
 three-consecutive-word echo threshold at/below/above the line, and each
 individual reduction ``clean_for_speech`` performs.
+
+The phrase matchers have a browser twin (``web/src/ui/composer/duplex.ts``, the one the
+live loop runs), so their behaviour is also pinned by the case file both languages'
+tests read, and the shipped phrase lists by the one table both sides load.
 """
+
+import json
+import re
+from pathlib import Path
 
 import pytest
 
+import personalclaw.voice.duplex as duplex
 from personalclaw.voice.duplex import (
     DEFAULT_CONFIRMATION_PHRASES,
     DEFAULT_EXIT_PHRASES,
@@ -17,6 +26,17 @@ from personalclaw.voice.duplex import (
     is_echo,
     is_exit,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_PHRASE_TABLE = Path(duplex.__file__).with_name("phrases.json")
+_PHRASE_CASES = _REPO_ROOT / "web" / "src" / "ui" / "composer" / "duplexPhraseCases.json"
+_DUPLEX_TS = _REPO_ROOT / "web" / "src" / "ui" / "composer" / "duplex.ts"
+_CHAT_PAGE = _REPO_ROOT / "web" / "src" / "pages" / "ChatPage.tsx"
+
+
+def _phrase_cases() -> list[dict]:
+    return list(json.loads(_PHRASE_CASES.read_text(encoding="utf-8"))["cases"])
+
 
 # ── confirmation gating ──
 
@@ -45,7 +65,9 @@ def test_is_confirmation_matches_trailing_phrase(text):
         "",
         "   ",
         "what do you think",
-        "doit",
+        # Whole words only: "do it" is inside these, but not at a word boundary.
+        "redo it",
+        "undo it",
         "execution plan",
         # Tail-anchored: a confirmation buried at the head of a long dictation
         # is part of the thought, not the trigger.
@@ -94,14 +116,103 @@ def test_is_confirmation_rejects_non_string_input():
 # ── exit gating ──
 
 
-@pytest.mark.parametrize("text", ["cancel", "Cancel.", "never mind", "forget it", "oh never mind"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "cancel",
+        "Cancel.",
+        "never mind",
+        "forget it",
+        "oh never mind",
+        # How speech-to-text writes a spoken "Never mind." — a run of words is compared
+        # with the spaces between them taken out.
+        "Nevermind",
+        "Nevermind.",
+        "never-mind",
+    ],
+)
 def test_is_exit_matches(text):
     assert is_exit(text) is True
 
 
-@pytest.mark.parametrize("text", ["", "cancellation policy", "mind the gap", "do it"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "cancellation policy",
+        "mind the gap",
+        "do it",
+        "remind me later",
+        "whenever you can",
+        "I never said that",
+    ],
+)
 def test_is_exit_rejects(text):
     assert is_exit(text) is False
+
+
+def test_send_it_never_mind_is_heard_as_an_exit():
+    """Exit wins over confirmation within one chunk, so the chunk must be heard as both;
+    with the retraction written as one word it used to be heard only as "send it"."""
+    assert is_confirmation("Send it. Nevermind.") is True
+    assert is_exit("Send it. Nevermind.") is True
+
+
+def test_a_confirmation_never_assembles_one_of_its_words_from_two():
+    """The asymmetry between the two matchers: a false confirmation sends a half-finished
+    thought, a false exit only discards one."""
+    assert is_confirmation("Go ahead.", ["goahead"]) is False
+    assert is_exit("Never mind.", ["nevermind"]) is True
+    assert is_confirmation("Email the Goa head office") is False
+
+
+# ── one behaviour for both matchers ──
+
+
+def test_the_shared_case_file_carries_both_answers_for_both_matchers():
+    """Vacuity floor: an empty or one-sided case file would let the parity test below pass
+    on a matcher that answers the same thing for everything."""
+    cases = _phrase_cases()
+    assert len(cases) >= 20, _PHRASE_CASES
+    assert sum(1 for c in cases if c["exit"]) >= 5
+    assert sum(1 for c in cases if not c["exit"]) >= 5
+    assert sum(1 for c in cases if c["confirmation"]) >= 3
+    assert sum(1 for c in cases if not c["confirmation"]) >= 5
+
+
+@pytest.mark.parametrize("case", _phrase_cases(), ids=lambda c: c["name"])
+def test_the_matchers_reach_the_shared_verdict(case):
+    """The Python half of the parity pin; ``duplex.test.ts`` runs the same cases against the
+    browser's matchers, which are the ones the live loop uses. A case that reds on one side
+    only is the two halves of the loop disagreeing about what was said."""
+    phrases = case.get("phrases", {})
+    confirmation = phrases.get("confirmation", DEFAULT_CONFIRMATION_PHRASES)
+    exit_phrases = phrases.get("exit", DEFAULT_EXIT_PHRASES)
+    assert is_confirmation(case["text"], confirmation) is case["confirmation"], case["why"]
+    assert is_exit(case["text"], exit_phrases) is case["exit"], case["why"]
+
+
+def test_the_shipped_phrases_come_from_the_shared_table():
+    table = json.loads(_PHRASE_TABLE.read_text(encoding="utf-8"))
+    assert DEFAULT_CONFIRMATION_PHRASES == tuple(table["confirmation"])
+    assert DEFAULT_EXIT_PHRASES == tuple(table["exit"])
+
+
+def test_the_browser_reads_the_same_table_rather_than_a_second_literal():
+    """The browser's fallback lists used to be a hand-copied literal in ChatPage.tsx."""
+    ts = _DUPLEX_TS.read_text(encoding="utf-8")
+    assert re.search(r"import \w+ from '(\.\./)+src/personalclaw/voice/phrases\.json'", ts)
+    page = _CHAT_PAGE.read_text(encoding="utf-8")
+    for phrase in (*DEFAULT_CONFIRMATION_PHRASES, *DEFAULT_EXIT_PHRASES):
+        assert f"'{phrase}'" not in page, f"ChatPage.tsx carries its own copy of {phrase!r}"
+
+
+@pytest.mark.parametrize("table", [{}, {"confirmation": []}, {"confirmation": ["do it", " "]}])
+def test_a_table_that_lost_a_list_is_a_hard_error(table):
+    """An empty exit list would leave hands-free voice no way to discard a dictated turn, so
+    a damaged table fails the import instead of loading as "no phrases"."""
+    with pytest.raises(RuntimeError, match="has no confirmation phrases"):
+        duplex._shipped_phrases(table, "confirmation")
 
 
 def test_confirmation_and_exit_vocabularies_are_disjoint():
@@ -148,6 +259,12 @@ def test_is_echo_is_direction_symmetric():
 
 def test_is_echo_ignores_case_and_punctuation():
     assert is_echo("THE BUILD, IS GREEN!", "the build is green") is True
+
+
+def test_is_echo_reads_either_apostrophe_as_one_word():
+    """A reply written with a typographic apostrophe comes back from speech-to-text with a
+    straight one; the two are the same three words."""
+    assert is_echo("I don't know that", "Well, I don’t know that one.") is True
 
 
 @pytest.mark.parametrize(

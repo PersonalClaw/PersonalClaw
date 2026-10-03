@@ -3,16 +3,6 @@ import { ResultAnnouncement } from '../ui/ListControls'
 import { failureSentence, reportActionFailure, reportingWrite } from '../app/reportingWrite'
 import { unavailableWhen, BUSY_REASON } from '../ui/unavailable'
 
-/** Hands-free voice knobs the composer needs (`voice.*`). */
-interface VoiceLoopConfig {
-  confirmation_phrases: string[]
-  exit_phrases: string[]
-  duplex_mute_enabled: boolean
-}
-// Mirrors DEFAULT_CONFIRMATION_PHRASES / DEFAULT_EXIT_PHRASES in
-// src/personalclaw/voice/duplex.py — only used when the config read fails.
-const DEFAULT_CONFIRMATION_PHRASES = ['do it', 'go ahead', 'send it', 'execute']
-const DEFAULT_EXIT_PHRASES = ['cancel', 'never mind', 'forget it']
 import { fvs, withWeight } from '../design/fontWeight'
 import { playCue } from '../design/soundCues'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
@@ -38,6 +28,7 @@ import { PromptPalette } from './chat/PromptPalette'
 import { SessionSkillsReview } from './chat/SessionSkillsReview'
 import { RoutingChip, type RoutingSuggestion } from './chat/RoutingChip'
 import { ComposerNoticeLine, useComposerNotice } from '../ui/composer/ComposerNotice'
+import { useVoiceConfig } from './chat/voiceConfig'
 import { deliverableToOpenSession } from './chat/sessionDelivery'
 import { ModelWaits } from '../ui/ModelWaitNotice'
 import { joinsATurnStartedElsewhere } from './chat/joinTurn'
@@ -662,10 +653,11 @@ function RoomsRedirect({ navigate }: { navigate: (p: string, opts?: { replace?: 
   return null
 }
 
-/** How many of each chat's replies this tab still owes a reading, under Settings → Speech &
- *  Transcription → "Speak replies aloud". A reply is owed when THIS tab sent the message it
- *  answers, so a chat open in two tabs is read out once. Module scope, not a ref: a new chat's
- *  first send remounts the session view under the created id, and its reply finishes there. */
+/** How many of each chat's replies answer a message THIS tab sent. Settings → Speech &
+ *  Transcription → "Speak replies aloud" reads such a reply out here, if it is on when the reply
+ *  finishes, and in no other tab, so a chat open in two tabs is read out once. Module scope, not a
+ *  ref: a new chat's first send remounts the session view under the created id, and its reply
+ *  finishes there. */
 const repliesToSpeak = new Map<string, number>()
 
 function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialProjectId = '', seed = '', agent: initialAgent = '', routing: pendingRouting, setRouting: setRoutingSuggestion, liveRun, setLiveRun }: { sessionId: string | null; navigate: (p: string, opts?: { replace?: boolean }) => void; query: Record<string, string>; setQuery: RouteProps['setQuery']; projectId?: string; seed?: string; agent?: string; routing: RoutingSuggestion | null; setRouting: (s: RoutingSuggestion | null) => void; liveRun: string; setLiveRun: (s: string) => void }) {
@@ -1817,8 +1809,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         break
       }
       // Speak (stage 4): the backend streams base64 WAV per sentence for
-      // immediate playback. Queue them so sentences play in order.
-      case 'voice_chunk': if (d.audio) enqueueAudio(String(d.audio)); break
+      // immediate playback. Queue them so sentences play in order. Every tab with this chat open
+      // receives them; only the tab whose reading they are plays them.
+      case 'voice_chunk':
+        if (d.audio && d.request && d.request === readingRef.current?.request) enqueueAudio(String(d.audio))
+        break
       // Side chat (stage 6): deltas stream by run_id. Match the entry by runId,
       // but fall back to the last not-yet-done entry — frames can arrive before
       // the sideTurn POST resolves and stamps the runId onto the entry.
@@ -2822,23 +2817,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // Which assistant turn is currently being spoken (drives the play/stop button).
   // Set when Speak is clicked, cleared when the last scheduled chunk finishes or
   // the user stops. Generation counter ignores stale chunks after a stop/restart.
-  // Hands-free voice knobs. Cached + persisted like the other
-  // config reads: a failed read falls back to the shipped phrase defaults so the
-  // toggle still works rather than becoming deaf to every confirmation.
-  // "Speak replies aloud" rides the same read: it is a text-to-speech setting (`auto_speak`), and
-  // only counts while text-to-speech itself is on. A failed read leaves it off, like the phrases.
-  const { data: voiceCfgRaw } = useQuery('chat:voice-config', async () => {
-    const [cfg, tts] = await Promise.all([api.personalclawConfig(), api.useCaseSettings('tts')])
-    return { ...(cfg.voice as VoiceLoopConfig), speak_replies: !!tts.value.enabled && !!tts.value.auto_speak }
-  }, { persist: true })
-  const voiceCfg: VoiceLoopConfig = {
-    confirmation_phrases: voiceCfgRaw?.confirmation_phrases?.length ? voiceCfgRaw.confirmation_phrases : DEFAULT_CONFIRMATION_PHRASES,
-    exit_phrases: voiceCfgRaw?.exit_phrases?.length ? voiceCfgRaw.exit_phrases : DEFAULT_EXIT_PHRASES,
-    duplex_mute_enabled: voiceCfgRaw?.duplex_mute_enabled ?? true,
-  }
-  const speakReplies = !!voiceCfgRaw?.speak_replies
+  // The voice settings follow Settings while this chat is open (`chat/voiceConfig`). Read through
+  // a ref where a socket frame decides: the frame handler is created once.
+  const { voiceCfg, speakReplies } = useVoiceConfig()
+  const speakRepliesRef = useRef(speakReplies)
+  speakRepliesRef.current = speakReplies
   const [speakingTurn, setSpeakingTurn] = useState<number | null>(null)
   const speakGenRef = useRef(0)
+  // The reading this tab asked for, by the name it gave it, and whether "Speak replies aloud"
+  // started it. The audio streams to every tab with this chat open; only the one that asked plays
+  // it, so a chat open in two tabs (or on a second device) is read out once.
+  const readingRef = useRef<{ request: string; auto: boolean } | null>(null)
 
   function getAudioCtx(): AudioContext | null {
     if (!audioCtxRef.current) {
@@ -2851,13 +2840,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   function stopSpeak() {
     speakGenRef.current++  // invalidate in-flight chunks from the stopped run
+    readingRef.current = null  // and the frames still on their way
     for (const src of audioSourcesRef.current) { try { src.stop() } catch { /* already ended */ } }
     audioSourcesRef.current = []
     audioPlayHeadRef.current = 0
     setSpeakingTurn(null)
   }
 
-  function speak(text: string, turnIndex: number) {
+  function speak(text: string, turnIndex: number, auto = false) {
     // Toggle: clicking Speak on the turn that's already playing stops it.
     if (speakingTurn === turnIndex) { stopSpeak(); return }
     stopSpeak()  // stop any other turn first — only one plays at a time
@@ -2866,21 +2856,25 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const ctx = getAudioCtx()
     if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {})
     speakGenRef.current++
+    const request = `read-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    readingRef.current = { request, auto }
     setSpeakingTurn(turnIndex)
     // Surface TTS failures instead of silently doing nothing after the Speak button's brief
     // spinner. The two refusals are the server's own sentences, and each names its fix: no
     // text-to-speech model set up (`tts_unbound`), or text-to-speech switched off (`tts_disabled`).
     // A Speak that works takes such a line down: once the reply is playing, "switched off" is false.
-    return api.voiceSynthesize(text, s ?? '').then(() => notice.clear('speak'), (e: Error) => {
+    return api.voiceSynthesize(text, s ?? '', request).then(() => notice.clear('speak'), (e: Error) => {
+      if (readingRef.current?.request === request) readingRef.current = null
       setSpeakingTurn((cur) => (cur === turnIndex ? null : cur))
       const refused = hasApiCode(e, 'tts_unbound') || hasApiCode(e, 'tts_disabled')
       notice.showError(refused ? e.message : `Couldn’t play audio: ${e.message}`, 'speak')
     })
   }
 
-  // "Speak replies aloud": a reply this tab is owed a reading of is spoken once it has
-  // rendered, through the same path as its Speak button. `replyFinished` asks for it from a
-  // socket handler, where the finished text has not rendered yet; the effect runs after it has.
+  // "Speak replies aloud": a reply to a message this tab sent is spoken once it has rendered,
+  // through the same path as its Speak button, if the setting is on when the reply finishes.
+  // `replyFinished` asks for it from a socket handler, where the finished text has not rendered
+  // yet; the effect runs after it has.
   const [spokenReplyDue, setSpokenReplyDue] = useState(0)
   const lastSpokenReply = useRef<number | null>(null)
   function replyFinished(sid: string | null, { last }: { last: boolean }) {
@@ -2889,7 +2883,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (last) repliesToSpeak.delete(sid)
     else if (owed > 1) repliesToSpeak.set(sid, owed - 1)
     else repliesToSpeak.delete(sid)
-    if (owed > 0) setSpokenReplyDue((n) => n + 1)
+    if (owed > 0 && speakRepliesRef.current) setSpokenReplyDue((n) => n + 1)
   }
   useEffect(() => {
     if (!spokenReplyDue) return
@@ -2897,17 +2891,24 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const text = i >= 0 ? turnText(turns[i]) : ''
     if (!text || lastSpokenReply.current === i) return
     lastSpokenReply.current = i
-    void speak(text, i)
+    void speak(text, i, true)
     // Keyed on the request alone: `turns` changing afterwards must not read a reply twice.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spokenReplyDue])
-  // Priming inside the send gesture lets the reply's audio start when it arrives, seconds later.
+  // Counted whatever the setting says now, which may change before the reply finishes. Priming
+  // inside the send gesture lets the reply's audio start when it arrives, seconds later.
   function oweSpokenReply(sid: string) {
+    repliesToSpeak.set(sid, (repliesToSpeak.get(sid) ?? 0) + 1)
     if (!speakReplies) return
     const ctx = getAudioCtx()
     if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {})
-    repliesToSpeak.set(sid, (repliesToSpeak.get(sid) ?? 0) + 1)
   }
+  // Switched off while a reply is being read out on its own: it stops at once. A Speak you
+  // pressed is yours, and keeps playing.
+  useEffect(() => {
+    if (!speakReplies && readingRef.current?.auto) stopSpeak()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speakReplies])
   // voice_chunk WAV stream → decode + schedule on the AudioContext timeline so
   // sentences play back-to-back without gaps or overlap. decodeAudioData is
   // async, so guard ordering with a per-chunk schedule against a running cursor.

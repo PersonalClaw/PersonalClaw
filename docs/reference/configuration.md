@@ -277,7 +277,12 @@ makes the voice loop noisier, never less safe.
 Two text-to-speech switches are not keys here: **Enable text-to-speech** (any speech at all,
 including the Speak button on a reply) and **Speak replies aloud** (each reply read out as soon
 as it finishes, in the tab the message was sent from). Both are the Text-to-speech use case's
-own settings (`enabled` and `auto_speak`), set in Settings → Speech & Transcription.
+own settings (`enabled` and `auto_speak`), set in Settings → Speech & Transcription. A change
+reaches a chat that is already open, in any tab or on another device: a reply that finishes after
+**Speak replies aloud** is switched on is read out, and switching it off stops one being read.
+A reading plays only in the tab that asked for it, the tab that sent the message or the one where
+Speak was pressed, so a chat open twice is read out once. The `voice.*` keys below reach an open
+chat the same way.
 
 ffmpeg is not a key either. PersonalClaw runs it to cut a recording longer than the segment
 threshold into parts before it is transcribed, to take the sound and frames out of a video, and
@@ -290,8 +295,8 @@ Transcription shows the one it found, or where it looked when there is none.
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
 | `voice.push_to_talk_chord` | string | `CommandOrControl+Shift+Space` | Settings → Speech & Transcription | The global shortcut the **desktop app** binds for push-to-talk: press to start capturing the microphone, press again to stop and transcribe into the composer at your cursor. An Electron accelerator string; needs at least one modifier, since a bare key would be taken from every other app on the machine. The desktop shell binds it and refuses an unusable or already-taken chord with a reason. Ignored in a browser tab (no global shortcuts). See [the desktop guide](../guides/desktop.md). |
-| `voice.confirmation_phrases` | list of strings | `["do it", "go ahead", "send it", "execute"]` | Settings → Speech & Transcription | In hands-free mode a transcript accumulates and is only sent once one of these phrases ends what you just said, so a half-finished thought never becomes an executed instruction. Push-to-talk and typed input ignore this. An empty list falls back to these defaults. |
-| `voice.exit_phrases` | list of strings | `["cancel", "never mind", "forget it"]` | Settings → Speech & Transcription | Saying one of these in hands-free mode discards the accumulated transcript without sending it. |
+| `voice.confirmation_phrases` | list of strings | `["do it", "go ahead", "send it", "execute"]` | Settings → Speech & Transcription | In hands-free mode a transcript accumulates and is only sent once one of these phrases ends what you just said, so a half-finished thought never becomes an executed instruction. A phrase is matched however speech-to-text writes it: capitals, punctuation, hyphens, apostrophes and the spaces between its words make no difference, so "Sendit." is "send it". Only whole words count, and a confirmation is never assembled from two words you said ("Goa head" is not "go ahead"), so write each of its words as a word. Push-to-talk and typed input ignore this. An empty list falls back to these defaults. |
+| `voice.exit_phrases` | list of strings | `["cancel", "never mind", "forget it"]` | Settings → Speech & Transcription | Saying one of these in hands-free mode discards the accumulated transcript without sending it, and it wins over a confirmation said in the same breath ("send it, never mind" sends nothing). Matched like the confirmation phrases, and also when speech-to-text splits one of its words in two, so "Nevermind", "never-mind" and "never mind" all match either spelling of the phrase. |
 | `voice.duplex_mute_enabled` | boolean | `true` | Settings → Speech & Transcription | Suspend the microphone and discard queued audio while a spoken reply plays. This is what stops the assistant hearing itself. |
 | `voice.echo_filter_enabled` | boolean | `true` | Settings → Speech & Transcription | Drop a transcription sharing three consecutive words with what the assistant just spoke — the backstop for speaker bleed. Hands-free requests only; the dashboard shows the drop instead of looking deaf. |
 | `voice.clean_for_speech_enabled` | boolean | `true` | Settings → Speech & Transcription | Strip code blocks, reduce URLs to their domain and paths to their filename, and drop CLI flags before synthesis. The chat transcript always keeps the full text — only the audio is cleaned. |

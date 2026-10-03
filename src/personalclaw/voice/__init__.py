@@ -2,7 +2,7 @@
 
 ``duplex`` holds the pure decision functions for the hands-free (duplex) loop:
 confirmation/exit gating, TTS-echo detection, and pre-speech text cleaning.
-Nothing in here performs I/O or touches a model — the endpoints in
+None of them performs I/O or touches a model — the endpoints in
 ``dashboard/`` own that and call these to decide.
 """
 

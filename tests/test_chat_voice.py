@@ -96,6 +96,79 @@ class TestVoiceSynthesize:
         state.broadcast_ws.assert_called()
 
 
+class TestEachFrameNamesItsReading:
+    """Every page with the chat open receives a reading's frames, and only the page that asked
+    plays them. It can tell its own only because each frame carries the name it gave the reading:
+    a chat open in two tabs used to be read out twice, out of step."""
+
+    @staticmethod
+    def _speakable(monkeypatch, tmp_path):
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        monkeypatch.setattr(
+            "personalclaw.dashboard.chat_voice.active_voice_params",
+            lambda **_kw: {
+                "provider": MagicMock(can_synthesize=AsyncMock(return_value=True)),
+                "voice": "en_US-lessac-medium",
+                "speed": 1.0,
+                "speech_voice": "",
+                "enabled": True,
+                "auto_speak": False,
+            },
+        )
+
+        async def two_sentences(*_a, **_kw):
+            yield 0, "Hello.", b"\x00\x01"
+            yield 1, "Again.", b"\x02\x03"
+
+        monkeypatch.setattr(
+            "personalclaw.dashboard.chat_voice.streaming_voice_reply", two_sentences
+        )
+        stitched = tmp_path / "stitched.wav"
+
+        async def stitch(_paths):
+            stitched.write_bytes(b"\x00\x01\x02\x03")
+            return str(stitched)
+
+        monkeypatch.setattr("personalclaw.dashboard.chat_voice.stitch_wavs", stitch)
+
+    @staticmethod
+    async def _frames(tmp_path, body) -> list[tuple[str, dict]]:
+        state = _make_state(tmp_path)
+        state.broadcast_ws = MagicMock()
+        async with TestClient(TestServer(_make_voice_app(state))) as client:
+            resp = await client.post("/api/voice/synthesize", json=body)
+            assert resp.status == 200
+        return [(c.args[0], c.args[1]) for c in state.broadcast_ws.call_args_list]
+
+    @pytest.mark.asyncio
+    async def test_each_frame_carries_the_name_the_page_gave_the_reading(
+        self, tmp_path, monkeypatch
+    ):
+        self._speakable(monkeypatch, tmp_path)
+        frames = await self._frames(
+            tmp_path, {"text": "Hello. Again.", "session": "s1", "request": "read-abc"}
+        )
+        assert [kind for kind, _ in frames] == ["voice_chunk", "voice_chunk", "voice_complete"]
+        assert {data["request"] for _, data in frames} == {"read-abc"}
+        assert {data["session"] for _, data in frames} == {"s1"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", [7, None, ["read-abc"], "r" * 65])
+    async def test_a_name_that_is_not_a_short_string_is_not_echoed(
+        self, tmp_path, monkeypatch, name
+    ):
+        self._speakable(monkeypatch, tmp_path)
+        frames = await self._frames(tmp_path, {"text": "Hello.", "session": "s1", "request": name})
+        assert frames, "the reading is still spoken"
+        assert {data["request"] for _, data in frames} == {""}
+
+    @pytest.mark.asyncio
+    async def test_a_reading_with_no_name_is_spoken_and_names_none(self, tmp_path, monkeypatch):
+        self._speakable(monkeypatch, tmp_path)
+        frames = await self._frames(tmp_path, {"text": "Hello.", "session": "s1"})
+        assert {data["request"] for _, data in frames} == {""}
+
+
 class TestTheEnabledToggleIsHonored:
     """`active_voice_params` has always published `enabled` and nothing read it (#651).
 
