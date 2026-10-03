@@ -20,7 +20,6 @@ from personalclaw.tasks.models import (
     TASK_FIELD_COERCERS,
     Task,
     TaskComment,
-    TaskDependency,
     TaskPriority,
     TaskStatus,
     WorkflowTaskBinding,
@@ -310,27 +309,6 @@ class NativeTaskProvider(TaskProvider):
             cache[task_list_id] = label
         return label
 
-    @staticmethod
-    def _coerce_dependencies(value: Any) -> list[TaskDependency]:
-        """Accept either a list of edge dicts or a flat list of prerequisite ids (treated as
-        BLOCKS edges) from older / simpler callers.
-        """
-        # A bare scalar (a single id dict/string, e.g. an LLM passing depends_on:
-        # "task-123" instead of ["task-123"]) must be wrapped — iterating it would
-        # treat a string's CHARACTERS as separate prerequisite ids, fabricating
-        # garbage edges that block the task on nonexistent tasks forever.
-        if isinstance(value, (str, dict, TaskDependency)):
-            value = [value]
-        out: list[TaskDependency] = []
-        for item in value or []:
-            if isinstance(item, TaskDependency):
-                out.append(item)
-            elif isinstance(item, dict):
-                out.append(TaskDependency.from_dict(item))
-            elif isinstance(item, str) and item.strip():
-                out.append(TaskDependency(depends_on_task_id=item.strip()))
-        return out
-
     async def list_tasks(
         self,
         status: str | None = None,
@@ -515,7 +493,9 @@ class NativeTaskProvider(TaskProvider):
                             + ", ".join(s.value for s in TaskStatus)
                         ) from None
                 elif key in ("dependencies", "depends_on"):
-                    task.dependencies = self._coerce_dependencies(val)
+                    # `depends_on` is the legacy KEY for the `dependencies` field, so the edge
+                    # coercer `create_task` uses is named here rather than reached by key below.
+                    task.dependencies = models_coerce("dependencies", val, strict=True)
                     status_or_deps_changed = True
                 elif key == "priority":
                     task.priority = TaskPriority.normalize(val)

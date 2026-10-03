@@ -16,6 +16,7 @@ from personalclaw.tasks.models import (
     TaskDependency,
     TaskPriority,
     TaskStatus,
+    coerce_task_field,
 )
 
 
@@ -71,12 +72,29 @@ class TestTaskModel:
     def test_coerce_dependencies_wraps_bare_scalar(self):
         # An LLM passing depends_on as a bare "task-123" (not ["task-123"]) must yield
         # ONE edge — not 8 garbage single-char edges from iterating the string, which
-        # would block the task on nonexistent tasks "t","a","s",… forever.
-        coerce = nat.NativeTaskProvider._coerce_dependencies
+        # would block the task on nonexistent tasks "t","a","s",… forever. Create and
+        # update share this one coercer.
+        def coerce(value):
+            return coerce_task_field("dependencies", value)
+
         assert [d.depends_on_task_id for d in coerce("task-123")] == ["task-123"]
         assert [d.depends_on_task_id for d in coerce({"depends_on_task_id": "t-9"})] == ["t-9"]
         assert [d.depends_on_task_id for d in coerce(["a", "b"])] == ["a", "b"]
+        assert [d.depends_on_task_id for d in coerce([" t-7 "])] == ["t-7"]
+        assert [d.depends_on_task_id for d in coerce(TaskDependency("t-8"))] == ["t-8"]
         assert coerce(None) == []
+
+    def test_update_coerces_dependencies_the_way_create_does(self, provider):
+        prereq = _run(provider.create_task(title="prereq"))
+        made = _run(provider.create_task(title="made", depends_on=[f" {prereq.id} "]))
+        assert made.prerequisite_ids() == [prereq.id]
+        edited = _run(provider.create_task(title="edited"))
+        edited = _run(provider.update_task(edited.id, depends_on=[f" {prereq.id} "]))
+        assert edited.prerequisite_ids() == [prereq.id]
+        with pytest.raises(ValueError):
+            _run(provider.create_task(title="bad", depends_on=[3]))
+        with pytest.raises(ValueError):
+            _run(provider.update_task(edited.id, depends_on=[3]))
 
     def test_to_dict_has_no_depends_on(self):
         t = Task(id="t1", title="x", dependencies=[TaskDependency("a")])

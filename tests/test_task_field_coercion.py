@@ -240,6 +240,115 @@ class TestBothEndsAgree:
         assert _ISO_Z.match(stored[0]["timestamp"])
 
 
+class TestAListSentAsItsJsonText:
+    """A model sometimes sends an array argument as the TEXT of its JSON. `exit_criteria` arrived as
+    ``'[{"description": "tests pass", "met": true}]'``, was wrapped as one item, and became ONE
+    criterion whose description was its own JSON: never met, so the task could never close.
+
+    The text of a JSON list is that list, each element taken exactly as an element of a real list
+    is. Every other string stays the one item it always was."""
+
+    def test_the_text_of_a_list_of_criteria_is_that_many_criteria(self):
+        criteria = coerce_task_field("exit_criteria", '["tests pass", "README updated"]')
+        assert [c["description"] for c in criteria] == ["tests pass", "README updated"]
+        assert [c["met"] for c in criteria] == [False, False]
+
+    def test_it_is_read_by_the_decoder_every_json_text_argument_uses(self):
+        """The fence a model puts around JSON it writes as text is read here as it is for every
+        tool argument declared as JSON text (`validation.decode_json_text`)."""
+        fenced = '```json\n["tests pass", "README updated"]\n```'
+        assert [c["description"] for c in coerce_task_field("exit_criteria", fenced)] == [
+            "tests pass",
+            "README updated",
+        ]
+
+    def test_the_text_of_a_list_of_criterion_objects_keeps_each_ones_state(self):
+        sent = '[{"description": "tests pass", "met": true}, {"description": "README updated"}]'
+        criteria = coerce_task_field("exit_criteria", sent)
+        assert [(c["description"], c["met"]) for c in criteria] == [
+            ("tests pass", True),
+            ("README updated", False),
+        ]
+
+    @pytest.mark.parametrize(
+        "field, items",
+        [
+            ("exit_criteria", [{"description": "a", "met": True}, "b"]),
+            ("action_plan", [{"content": "step one", "completed": True}, "step two"]),
+            ("labels", ["work", 7]),
+            ("notes", ["first", {"content": "second", "timestamp": "2026-01-01T00:00:00Z"}]),
+            ("dependencies", ["t-1", {"depends_on_task_id": "t-2"}]),
+            ("evidence", [{"kind": "gate", "node": "check"}]),
+        ],
+    )
+    def test_each_element_is_taken_as_an_element_of_the_real_list_is(self, field, items):
+        assert coerce_task_field(field, json.dumps(items)) == coerce_task_field(field, items)
+        assert coerce_task_field(field, json.dumps(items), strict=False) == coerce_task_field(
+            field, items, strict=False
+        )
+
+    @pytest.mark.parametrize(
+        "field, items",
+        [("labels", [{"a": 1}]), ("evidence", ["not-an-object"]), ("dependencies", [3])],
+    )
+    def test_an_element_a_real_list_may_not_hold_is_refused_the_same_way(self, field, items):
+        with pytest.raises(ValueError):
+            coerce_task_field(field, items)
+        with pytest.raises(ValueError):
+            coerce_task_field(field, json.dumps(items))
+
+    def test_a_sentence_stays_one_criterion(self):
+        criteria = coerce_task_field("exit_criteria", "tests pass")
+        assert [c["description"] for c in criteria] == ["tests pass"]
+
+    @pytest.mark.parametrize(
+        "text", ['{"description": "tests pass", "met": true}', '"tests pass"', "42", "null"]
+    )
+    def test_json_text_that_is_not_a_list_stays_one_item(self, text):
+        assert [c["description"] for c in coerce_task_field("exit_criteria", text)] == [text]
+        assert coerce_task_field("labels", text) == [text]
+
+    @pytest.mark.parametrize(
+        "text",
+        ['["tests pass", "README updated"', "[x] tests pass", "[tests pass]", "[" * 5000],
+        ids=["unclosed", "checkbox", "bare-words", "nested-past-the-parser"],
+    )
+    def test_malformed_list_text_stays_one_item(self, text):
+        assert [c["description"] for c in coerce_task_field("exit_criteria", text)] == [text]
+        assert coerce_task_field("labels", text) == [text]
+
+    def test_a_stored_record_reads_the_same_way(self):
+        task = Task.from_dict(
+            {"id": "t1", "title": "T", "exit_criteria": '["tests pass", "README updated"]'}
+        )
+        assert [c["description"] for c in task.exit_criteria] == ["tests pass", "README updated"]
+
+    @pytest.mark.asyncio
+    async def test_create_and_update_both_read_it_and_the_task_closes(self, provider, tmp_path):
+        created = await provider.create_task(
+            title="t", exit_criteria='["tests pass", "README updated"]'
+        )
+        stored = _stored(tmp_path, created.id)["exit_criteria"]
+        assert [c["description"] for c in stored] == ["tests pass", "README updated"]
+        met = json.dumps(
+            [
+                {"description": "tests pass", "met": True},
+                {"description": "README updated", "met": True},
+            ]
+        )
+        done = await provider.update_task(created.id, exit_criteria=met, status="done")
+        assert done is not None and done.status is TaskStatus.DONE
+        assert [c["met"] for c in _stored(tmp_path, created.id)["exit_criteria"]] == [True, True]
+
+    @pytest.mark.asyncio
+    async def test_dependencies_sent_as_text_on_update_name_the_real_tasks(self, provider):
+        first = await provider.create_task(title="first")
+        second = await provider.create_task(title="second")
+        updated = await provider.update_task(second.id, depends_on=json.dumps([first.id]))
+        assert updated is not None
+        assert updated.prerequisite_ids() == [first.id]
+
+
 class TestShapesThisModuleDoesNotOwn:
     """`evidence` and `attempts` carry whatever the ENGINE records, so they get list-ification and
     nothing more.

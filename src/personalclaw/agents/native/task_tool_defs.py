@@ -7,7 +7,8 @@ the shape :mod:`personalclaw.agents.native.decision_tool_defs` already establish
 lines held the controlling position with only 33 usable lines left — so an unrelated +34
 reddened the rail. The band is NOT the thing to move; the file is.
 
-Nothing about the tools changed. This module owns their SCHEMAS only: the category mapping
+Nothing about the tools changed. This module owns their SCHEMAS, and the one reading of the
+arguments the two write tools' schemas declare (:func:`task_write_fields`): the category mapping
 (``_CATEGORY_OF``), the ``_t_*`` dispatch methods and the call-site rails all stay in
 ``builtin_tools``, and ``_all_tool_defs`` splices these definitions back in at the same
 position, so the advertised order is unchanged.
@@ -59,6 +60,61 @@ def _action_plan() -> dict[str, Any]:
     }
 
 
+def _create_properties() -> dict[str, Any]:
+    """``task_create``'s arguments, as its schema declares them and :func:`task_write_fields`
+    reads them."""
+    return {
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "priority": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "trivial"],
+        },
+        "task_list_id": {"type": "string"},
+        "labels": {"type": "array", "items": {"type": "string"}},
+        "due": {"type": "string"},
+        "exit_criteria": _exit_criteria(),
+        "action_plan": _action_plan(),
+        "depends_on": {"type": "array", "items": {"type": "string"}},
+    }
+
+
+def _update_properties() -> dict[str, Any]:
+    """``task_update``'s arguments, as its schema declares them and :func:`task_write_fields`
+    reads them."""
+    return {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "status": {"type": "string"},
+        "priority": {"type": "string"},
+        "task_list_id": {"type": "string"},
+        "labels": {"type": "array", "items": {"type": "string"}},
+        "due": {"type": "string"},
+        "exit_criteria": _exit_criteria(),
+        "action_plan": _action_plan(),
+        "depends_on": {"type": "array", "items": {"type": "string"}},
+    }
+
+
+def task_write_fields(tool: str, a: dict[str, Any]) -> dict[str, Any]:
+    """The fields a ``task_create`` or ``task_update`` call sets: each argument its schema declares
+    beside the one naming the task (``title``, ``id``), and each one it declares an ARRAY read as
+    the list it holds when a model sends the text of one
+    (:func:`personalclaw.tasks.models.decode_list_text`). Read here, before ``task_update``
+    restores the hidden values it was shown, because only a list carries those back."""
+    from personalclaw.tasks.models import decode_list_text
+
+    declared, naming = (
+        (_create_properties(), "title") if tool == "task_create" else (_update_properties(), "id")
+    )
+    return {
+        name: decode_list_text(a[name]) if spec["type"] == "array" else a[name]
+        for name, spec in declared.items()
+        if name != naming and name in a
+    }
+
+
 def task_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDefinition]:
     """The nine Project -> TaskList -> Task container tools, in ``builtin_tools``' order."""
     return [
@@ -76,24 +132,7 @@ def task_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDefiniti
                 "action_plan (list of {content, completed?} in order), depends_on (list of "
                 "task ids that must finish first). Cycles are rejected."
             ),
-            parameters={
-                **s,
-                "properties": {
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
-                    "priority": {
-                        "type": "string",
-                        "enum": ["critical", "high", "medium", "low", "trivial"],
-                    },
-                    "task_list_id": {"type": "string"},
-                    "labels": {"type": "array", "items": {"type": "string"}},
-                    "due": {"type": "string"},
-                    "exit_criteria": _exit_criteria(),
-                    "action_plan": _action_plan(),
-                    "depends_on": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["title"],
-            },
+            parameters={**s, "properties": _create_properties(), "required": ["title"]},
         ),
         ToolDefinition(
             name="task_list",
@@ -143,23 +182,7 @@ def task_tool_definitions(provider: str, s: dict[str, Any]) -> list[ToolDefiniti
                 "labels, due, exit_criteria, action_plan, depends_on. The 'project' label "
                 "is derived from the task list and cannot be set directly."
             ),
-            parameters={
-                **s,
-                "properties": {
-                    "id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
-                    "status": {"type": "string"},
-                    "priority": {"type": "string"},
-                    "task_list_id": {"type": "string"},
-                    "labels": {"type": "array", "items": {"type": "string"}},
-                    "due": {"type": "string"},
-                    "exit_criteria": _exit_criteria(),
-                    "action_plan": _action_plan(),
-                    "depends_on": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["id"],
-            },
+            parameters={**s, "properties": _update_properties(), "required": ["id"]},
         ),
         ToolDefinition(
             name="task_ready",

@@ -11,6 +11,7 @@ The unified loop store is redirected to a tmp config dir per test.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -140,6 +141,66 @@ def test_goal_create_makes_a_ready_draft():
     lid = [g.id for g in store.list_all() if g.kind == "goal"][0]
     assert store.get(lid).status == "ready"
     assert lid in r.output
+
+
+def test_goal_create_reads_its_lists_sent_as_text():
+    """A model that sends a list argument as one string, or as the text of its JSON list, means
+    that list. Iterating the string made one sub-goal per character."""
+    r = _run(
+        sdlc_tools.goal_loop_create(
+            {
+                "goal": "Research and summarize the top 5 vector databases",
+                "sub_goals": '["survey options", "benchmark"]',
+                "deliverables": "a one-page summary",
+                "scope": json.dumps(["open-source only"]),
+                "rubric": ["cites sources", {"not": "text"}],
+            }
+        )
+    )
+    assert r.success, r.error
+    from personalclaw.loop import store
+
+    kc = store.get([g.id for g in store.list_all() if g.kind == "goal"][0]).kind_config
+    assert kc["sub_goals"] == ["survey options", "benchmark"]
+    assert kc["deliverables"] == ["a one-page summary"]
+    assert kc["scope"] == ["open-source only"]
+    assert kc["rubric"] == ["cites sources"]
+
+
+def test_code_create_reads_a_stage_plan_sent_as_json_text():
+    """`stage_plan` is the deepest array a model fills in, and a string was dropped whole: the
+    project was created with none of the plan the user agreed to."""
+    plan = [
+        {
+            "stage": "implementation",
+            "title": "Impl",
+            "objective": "add it",
+            "exit_criteria": '["the endpoint answers 200"]',
+            "tasks": [
+                {
+                    "title": "Add the route",
+                    "action_plan": "write the handler",
+                    "exit_criteria": '["the route is registered", "its test passes"]',
+                },
+                {"title": "Document it", "depends_on": "[0]"},
+            ],
+        }
+    ]
+    r = _run(
+        sdlc_tools.code_project_create(
+            {"task": "Add a /healthz endpoint to the Flask service", "stage_plan": json.dumps(plan)}
+        )
+    )
+    assert r.success, r.error
+    from personalclaw.loop import store
+
+    stage = store.get([p.id for p in store.list_all() if p.kind == "code"][0]).plan[0]
+    assert stage["stage"] == "implementation"
+    assert stage["exit_criteria"] == ["the endpoint answers 200"]
+    first, second = stage["tasks"]
+    assert first["action_plan"] == ["write the handler"]
+    assert first["exit_criteria"] == ["the route is registered", "its test passes"]
+    assert second["depends_on"] == [0]
 
 
 def test_goal_create_rejects_vague_goal():

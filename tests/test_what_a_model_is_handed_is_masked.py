@@ -747,6 +747,39 @@ def test_a_task_update_keeps_a_value_task_get_showed_masked(monkeypatch):
     assert captured["description"] == f"use {KEY} on staging, then prod"
 
 
+def test_criteria_sent_back_as_json_text_keep_a_value_task_get_showed_masked(monkeypatch):
+    """A model that sends `exit_criteria` as the text of its JSON list is read as that list, and
+    its hidden values are restored on the list: as a string it passed the mask step untouched, so
+    the marker would have been stored in place of the real value."""
+    from personalclaw.tasks import registry
+
+    criterion = f"rotate {KEY} on staging"
+    stored = types.SimpleNamespace(
+        id="t1",
+        to_dict=lambda: {
+            "title": "Deploy",
+            "exit_criteria": [
+                {"description": criterion, "status": "incomplete", "comment": "", "met": False}
+            ],
+        },
+    )
+    captured: dict[str, Any] = {}
+
+    async def update_task(item_id: str, **fields: Any) -> Any:
+        captured.update(fields)
+        return types.SimpleNamespace(id=item_id)
+
+    monkeypatch.setattr(registry, "get_task", AsyncMock(return_value=stored))
+    monkeypatch.setattr(registry, "engine_owned_refusal", AsyncMock(return_value=""))
+    monkeypatch.setattr(registry, "update_task", update_task)
+    tools = NativeBuiltinToolProvider(Path("."))
+    monkeypatch.setattr(tools, "_task_line", lambda task: "t1", raising=False)
+    sent = json.dumps([{"description": redact_for_display(criterion), "met": True}])
+    done = _call(tools, "task_update", {"id": "t1", "exit_criteria": sent})
+    assert done.success, done.error
+    assert captured["exit_criteria"] == [{"description": criterion, "met": True}]
+
+
 def test_an_automation_update_keeps_the_value_its_dry_run_showed_masked(tmp_path):
     """🔴 Live on `main` since the automation reads were masked (#3722): `automation_update` set
     the patch as sent, so the marker the agent was shown replaced the credential."""

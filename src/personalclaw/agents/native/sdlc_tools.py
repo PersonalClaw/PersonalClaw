@@ -275,6 +275,7 @@ async def goal_loop_create(a: dict) -> ToolResult:
     Does NOT start it."""
     from personalclaw.dashboard.handlers.loop_routes import _build_loop_from_body
     from personalclaw.loop import store, validation
+    from personalclaw.tasks.models import text_list
 
     goal = str(a.get("goal", "")).strip()
     if len(goal) < 12:
@@ -303,10 +304,12 @@ async def goal_loop_create(a: dict) -> ToolResult:
         # Kind-config fields the goal strategy owns (ignored by general/design defaults
         # when not applicable — _build_loop_from_body layers them over the kind defaults).
         "goal_type": str(a.get("goal_type", "open_ended")) or "open_ended",
-        "sub_goals": [str(s) for s in (a.get("sub_goals") or []) if str(s).strip()],
-        "deliverables": [str(s) for s in (a.get("deliverables") or []) if str(s).strip()],
-        "scope": [str(s) for s in (a.get("scope") or []) if str(s).strip()],
-        "rubric": [str(c) for c in (a.get("rubric") or []) if str(c).strip()],
+        # Each list as a model may send it: one string is one item (iterated, it was one item
+        # per character), and the text of a JSON list is that list.
+        "sub_goals": text_list(a.get("sub_goals")),
+        "deliverables": text_list(a.get("deliverables")),
+        "scope": text_list(a.get("scope")),
+        "rubric": text_list(a.get("rubric")),
     }
     # A chat-created loop skips the LLM classify pass (the agent already shaped the plan
     # in conversation), so a Design loop would have NO phased breakdown — violating the

@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from personalclaw.loop.sdlc_meta import ENTRY_STAGES, PROJECT_KINDS, SDLC_STAGES
+from personalclaw.tasks.models import decode_list_text
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +265,9 @@ def _clean_str_list(raw, *, item_cap: int, count_cap: int) -> list[str]:
     # "do the thing" instead of a one-element list — a common LLM shape) must be WRAPPED:
     # `for x in "all tests pass"` walks CHARACTERS, and each char passes the isinstance
     # str check → the criterion is shredded into single letters ['a','l','t','e','s','p'].
-    # This runs on EVERY classify (the primary path), so guard at the top.
+    # This runs on EVERY classify (the primary path), so guard at the top. The TEXT of a JSON
+    # list is that list (`decode_list_text`): a model sends an array that way too.
+    raw = decode_list_text(raw)
     if isinstance(raw, str):
         raw = [raw]
     elif not isinstance(raw, list):
@@ -297,8 +300,10 @@ def _normalize_plan(
     a known SDLC stage (else the row is dropped — no inventing stages); per-stage
     capability ids are validated against the installed catalog; ``agent_name`` is
     cleared unless it's a known installed agent (when a catalog is given). A stage
-    with neither a known stage id nor an objective is dropped. Capped at 12.
+    with neither a known stage id nor an objective is dropped. Capped at 12. The text of a JSON
+    list is that list, as in every list this module reads (`decode_list_text`).
     """
+    raw = decode_list_text(raw)
     if not isinstance(raw, list):
         return []
     out: list[dict] = []
@@ -389,6 +394,7 @@ def _normalize_tasks(raw) -> list[dict]:
 
     Capped at 12 tasks/stage; sub-lists capped to keep the plan tight.
     """
+    raw = decode_list_text(raw)
     if not isinstance(raw, list):
         return []
     out: list[dict] = []
@@ -421,7 +427,7 @@ def _normalize_tasks(raw) -> list[dict]:
         # must be wrapped: `for d in 2` raises TypeError (crashing normalization), and a
         # bare string "2" would char-iterate. Accept a digit-string too ("2" → 2) so a
         # string-encoded index isn't silently dropped.
-        raw_deps = t.get("depends_on")
+        raw_deps = decode_list_text(t.get("depends_on"))
         if isinstance(raw_deps, (int, float, str)):
             raw_deps = [raw_deps]
         elif not isinstance(raw_deps, list):
@@ -450,6 +456,7 @@ def _normalize_tasks(raw) -> list[dict]:
 
 def _filter_ids(raw, allowed: set[str]) -> list[str]:
     """Keep only string ids present in ``allowed`` (dedup, order-stable)."""
+    raw = decode_list_text(raw)
     if not isinstance(raw, list):
         return []
     out: list[str] = []

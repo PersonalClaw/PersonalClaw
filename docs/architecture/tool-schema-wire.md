@@ -166,6 +166,13 @@ Built-in parameters carried this way: `workflow_author.root`/`inputs` (and `work
 shape IS known it is declared instead (`project_run_create.stage_plan`, `deck_create.slides`,
 the task tools' `exit_criteria`/`action_plan`, `reset_tools.groups`).
 
+A model sometimes sends even a declared array as the text of its JSON. The task tools and
+`project_run_create` read that text as the list, through `tasks.models.decode_list_text`, which
+takes what `decode_json_text` decodes only when it is a list: their list arguments, the task
+store's list fields behind every task write (`tasks.models.TASK_FIELD_COERCERS`), and the run
+planner's lists (`loop.code_classify`). Text that is not a JSON list stays the one item it is,
+and each element of the list is checked as an element of a real list is.
+
 ## For an app author
 
 Write the schema the profile accepts and nothing is repaired or excluded: give every array

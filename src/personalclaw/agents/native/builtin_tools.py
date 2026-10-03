@@ -37,7 +37,7 @@ from personalclaw.agents.native.inbox_tool_defs import (
 from personalclaw.agents.native.knowledge_tool_defs import knowledge_tool_definitions
 from personalclaw.agents.native.project_run_tool_defs import project_run_tool_definitions
 from personalclaw.agents.native.smart_case import LineQuery, glob_case_sensitive
-from personalclaw.agents.native.task_tool_defs import task_tool_definitions
+from personalclaw.agents.native.task_tool_defs import task_tool_definitions, task_write_fields
 from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text
 from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal
 from personalclaw.file_scope import refusal as scope_refusal
@@ -2368,20 +2368,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         title = str(a.get("title", "")).strip()
         if not title:
             return ToolResult(success=False, error="task_create requires 'title'")
-        fields = {
-            k: a[k]
-            for k in (
-                "description",
-                "priority",
-                "task_list_id",
-                "labels",
-                "due",
-                "exit_criteria",
-                "action_plan",
-                "depends_on",
-            )
-            if k in a
-        }
+        fields = task_write_fields("task_create", a)
         try:
             task = await registry.create_task(title=title, **fields)
         except reconcile.DependencyCycleError as e:
@@ -2450,22 +2437,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         item_id = str(a.get("id", "")).strip()
         if not item_id:
             return ToolResult(success=False, error="task_update requires 'id'")
-        fields = {
-            k: a[k]
-            for k in (
-                "title",
-                "description",
-                "status",
-                "priority",
-                "task_list_id",
-                "labels",
-                "due",
-                "exit_criteria",
-                "action_plan",
-                "depends_on",
-            )
-            if k in a
-        }
+        fields = task_write_fields("task_update", a)
         if not fields:
             return ToolResult(success=False, error="task_update: nothing to change")
         # Normalize the status BEFORE update_task — an LLM commonly emits a synonym
@@ -2557,7 +2529,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         )
 
     async def _t_task_search(self, a: dict) -> ToolResult:
-        from personalclaw.tasks import registry
+        from personalclaw.tasks import models, registry
 
         try:
             limit = int(a.get("limit", 25) or 25)
@@ -2565,9 +2537,11 @@ class NativeBuiltinToolProvider(ToolProvider):
             limit = 25
         tasks, total = await registry.search_tasks(
             query=str(a.get("query", "")),
-            statuses=a.get("status") if isinstance(a.get("status"), list) else None,
-            priorities=a.get("priority") if isinstance(a.get("priority"), list) else None,
-            tags=a.get("tags") if isinstance(a.get("tags"), list) else None,
+            # A filter sent as one value, or as the text of a JSON list, was dropped whole: the
+            # search then answered as if unfiltered. Each is read as a stored task's labels are.
+            statuses=models.text_list(a.get("status")),
+            priorities=models.text_list(a.get("priority")),
+            tags=models.text_list(a.get("tags")),
             project=a.get("project") or None,
             sort_by=str(a.get("sort_by", "relevance")),
             limit=limit,

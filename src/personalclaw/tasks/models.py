@@ -13,6 +13,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from personalclaw.validation import decode_json_text
+
 
 def _now_iso() -> str:
     """The same spelling `native.py` stamps `created_at`/`updated_at` with, so a note's time
@@ -168,14 +170,41 @@ def normalize_action_plan_item(item: Any, index: int) -> dict:
     return {"sequence": seq, "content": content, "description": content, "completed": completed}
 
 
+def decode_list_text(value: Any) -> Any:
+    """``value``, or the list it carries when it is the JSON TEXT of one, read by the one decoder
+    of JSON sent as text (:func:`personalclaw.validation.decode_json_text`).
+
+    A model sometimes sends an array argument serialized as a string: ``exit_criteria`` as
+    ``'[{"description": "tests pass", "met": true}]'`` where the tool's schema declares the array
+    itself. Wrapped as one item, that string became ONE criterion whose description was its own
+    JSON, which no update could meet, so the task could never close. Read as the list it carries,
+    each element is then taken exactly as an element of a real list is.
+
+    Only a list is taken. Any other string (a sentence, the text of a JSON object or scalar, a
+    malformed fragment) comes back unchanged, and each field's coercer keeps it as the one item it
+    always was. Each list a task field holds is read through here, and so is each list argument of
+    the task and project-run tools.
+    """
+    decoded = decode_json_text(value)
+    return decoded if isinstance(decoded, list) else value
+
+
+def text_list(value: Any) -> list[str]:
+    """A list of text as a caller sent it, salvaging rather than refusing: the text of a JSON list
+    is that list, a lone value is one item, and an element that is not text, or is blank, is
+    dropped. For a tool argument that is not a stored task field: a search filter, a run's goals."""
+    return [item for item in _as_text_list(value, strict=False) if item.strip()]
+
+
 def _as_item_list(value: Any) -> list:
     """Coerce exit_criteria / action_plan input to a LIST before per-item normalize. A bare
     scalar (a single criterion/step passed as a string or dict — a plausible caller/LLM
     mistake, e.g. exit_criteria="tests pass" instead of ["tests pass"]) must be wrapped:
     iterating a bare string would treat its CHARACTERS as separate items, fabricating ~N
     single-char criteria that can never be 'met' → the task is permanently un-completable.
-    None/non-iterable → empty.
+    The text of a JSON list is that list (`decode_list_text`). None/non-iterable → empty.
     """
+    value = decode_list_text(value)
     if value is None:
         return []
     if isinstance(value, (str, dict)):
@@ -545,6 +574,10 @@ BUILTIN_PROJECTS = (PERSONAL_PROJECT, REPEATABLE_PROJECT)
 #   * `PUT {"exit_criteria": "via put"}` iterated the string CHARACTER BY CHARACTER, fabricating
 #     one criterion per letter — each un-meetable, so the task became permanently
 #     un-completable. `__post_init__` guards exactly this, and only at construction (#818).
+#   * a model's `task_update` sent `exit_criteria` as the TEXT of its JSON list; wrapped as one
+#     item it became one criterion whose description was that JSON, so no later update could
+#     meet it and the task never closed. Every list coercer reads that text as the list
+#     (`decode_list_text`).
 #
 # So the coercion is a TABLE, exhaustive over `Task`'s fields, and both paths go through it.
 # `tests/test_task_field_coercion.py` asserts the exhaustiveness, which is what makes this
@@ -623,9 +656,10 @@ def _as_text_list(value: Any, *, strict: bool) -> list[str]:
 
     Wrapping matches `_as_item_list`'s rule for the planning fields and for the same reason: a
     caller passing one label as a string means one label, and iterating it would produce one entry
-    per character. Elements are coerced individually, so `[{"a": 1}, 42]` cannot reach a renderer
-    that expects strings.
+    per character. The text of a JSON list is that list (`decode_list_text`). Elements are coerced
+    individually, so `[{"a": 1}, 42]` cannot reach a renderer that expects strings.
     """
+    value = decode_list_text(value)
     if value is None:
         return []
     if isinstance(value, (str, int, float, bool)):
@@ -703,9 +737,13 @@ def _as_open_dict_list(value: Any, *, strict: bool) -> list[dict]:
 
 
 def _as_dependencies(value: Any, *, strict: bool) -> list["TaskDependency"]:
+    """Typed prerequisite edges, for create and update alike. The text of a JSON list is that list
+    (`decode_list_text`); a lone id, edge dict or edge is wrapped, never iterated (a string's
+    characters would be prerequisites on tasks that do not exist, blocking it forever)."""
+    value = decode_list_text(value)
     if value is None:
         return []
-    if isinstance(value, (str, dict)):
+    if isinstance(value, (str, dict, TaskDependency)):
         value = [value]
     out: list[TaskDependency] = []
     try:
@@ -722,7 +760,9 @@ def _as_dependencies(value: Any, *, strict: bool) -> list["TaskDependency"]:
         elif isinstance(item, str) and item.strip():
             # The legacy flat `depends_on` spelling: a bare id means a BLOCKS edge.
             out.append(
-                TaskDependency(depends_on_task_id=item, dependency_type=DependencyType.BLOCKS)
+                TaskDependency(
+                    depends_on_task_id=item.strip(), dependency_type=DependencyType.BLOCKS
+                )
             )
         elif strict:
             raise ValueError(f"not a dependency: {item!r}")

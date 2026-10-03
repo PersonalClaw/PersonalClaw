@@ -3,12 +3,14 @@ task_list_create) on the builtin tool provider."""
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
 
 from personalclaw.agents.native.builtin_tools import NativeBuiltinToolProvider
 from personalclaw.tasks import registry
+from personalclaw.tasks.models import coerce_task_field
 
 
 @pytest.fixture
@@ -82,6 +84,97 @@ async def test_task_update_status_and_complete_gate(provider):
     )
     ok = await provider.invoke("task_update", {"id": tid, "status": "done"})
     assert ok.success and "[done]" in ok.output
+
+
+@pytest.mark.asyncio
+async def test_task_update_reads_criteria_sent_as_json_text_and_the_task_closes(provider):
+    """A model sent `exit_criteria` as the TEXT of its JSON list, twice, once right after reading
+    the tool's schema. It was stored as one criterion whose description was that JSON, which no
+    update could meet, so the task stayed open and the worker told the user to close it by hand."""
+    r = await provider.invoke(
+        "task_create",
+        {"title": "Review the README", "exit_criteria": [{"description": "Storage is documented"}]},
+    )
+    tid = r.output.split("created task ")[1].split(":")[0]
+    refused = await provider.invoke("task_update", {"id": tid, "status": "done"})
+    assert not refused.success and "Storage is documented" in refused.error
+    sent = json.dumps([{"description": "Storage is documented", "met": True}])
+    done = await provider.invoke(
+        "task_update", {"id": tid, "exit_criteria": sent, "status": "done"}
+    )
+    assert done.success, done.error
+    assert "[done]" in done.output and "1/1 criteria" in done.output
+    got = await provider.invoke("task_get", {"id": tid})
+    assert "[x] Storage is documented" in got.output and "description" not in got.output
+
+
+@pytest.mark.asyncio
+async def test_task_create_reads_each_list_sent_as_json_text(provider):
+    a = await provider.invoke("task_create", {"title": "Draft"})
+    aid = a.output.split("created task ")[1].split(":")[0]
+    b = await provider.invoke(
+        "task_create",
+        {
+            "title": "Publish",
+            "labels": '["docs", "release"]',
+            "exit_criteria": '["tests pass", "README updated"]',
+            "action_plan": '["build", "upload"]',
+            "depends_on": json.dumps([aid]),
+        },
+    )
+    assert b.success, b.error
+    assert "0/2 criteria" in b.output
+    bid = b.output.split("created task ")[1].split(":")[0]
+    task = await registry.get_task(bid)
+    assert task.labels == ["docs", "release"]
+    assert [c["description"] for c in task.exit_criteria] == ["tests pass", "README updated"]
+    assert [s["content"] for s in task.action_plan] == ["build", "upload"]
+    assert task.prerequisite_ids() == [aid]
+    # A sentence is still the one criterion it always was.
+    c = await provider.invoke("task_create", {"title": "Tidy", "exit_criteria": "desk is clear"})
+    assert "0/1 criteria" in c.output
+
+
+@pytest.mark.asyncio
+async def test_task_search_reads_its_filters_sent_as_text(provider):
+    await provider.invoke("task_create", {"title": "Open errand"})
+    d = await provider.invoke("task_create", {"title": "Done errand"})
+    did = d.output.split("created task ")[1].split(":")[0]
+    await provider.invoke("task_update", {"id": did, "status": "done"})
+    for status in ('["done"]', "done", ["done"]):
+        found = await provider.invoke("task_search", {"query": "errand", "status": status})
+        assert "Done errand" in found.output and "Open errand" not in found.output, status
+    tagged = await provider.invoke("task_create", {"title": "Tagged errand", "labels": ["home"]})
+    assert tagged.success
+    found = await provider.invoke("task_search", {"query": "errand", "tags": '["home"]'})
+    assert "Tagged errand" in found.output and "Open errand" not in found.output
+
+
+@pytest.mark.asyncio
+async def test_every_list_a_task_tool_takes_is_declared_an_array(provider):
+    """A model reads the schema, not the handler: each argument the store keeps as a list is
+    declared an ARRAY with its items, so the model is told to send the list itself."""
+    defs = {d.name: d for d in await provider.list_tools()}
+    for tool in ("task_create", "task_update"):
+        props = defs[tool].parameters["properties"]
+        lists = {
+            name
+            for name in props
+            if name not in ("id", "title")
+            and isinstance(
+                coerce_task_field(
+                    "dependencies" if name == "depends_on" else name, None, strict=False
+                ),
+                list,
+            )
+        }
+        assert lists == {"labels", "exit_criteria", "action_plan", "depends_on"}, tool
+        for name in lists:
+            assert props[name]["type"] == "array", (tool, name)
+            assert props[name]["items"]["type"] in ("string", "object"), (tool, name)
+    search = defs["task_search"].parameters["properties"]
+    for name in ("status", "priority", "tags"):
+        assert search[name] == {"type": "array", "items": {"type": "string"}}, name
 
 
 @pytest.mark.asyncio
