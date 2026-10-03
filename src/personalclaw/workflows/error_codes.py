@@ -531,6 +531,11 @@ WF_ERROR_CODES: dict[str, str] = {
         "ask); the message names what its tasks may do and why."
     ),
     "WF_BATCH_NOT_FOUND": "No batch with that name is waiting, started or recorded as ended.",
+    "WF_BATCH_BEYOND_APP_TIER": (
+        "An app's batch asks for more than the agent tier the app holds now allows, so none of "
+        "its tasks started; the message names the app, the tier and the tasks that may change "
+        "things."
+    ),
     # ── workflows/definition_ask.py — an agent's save that needs the owner's Allow ──
     "WF_DEF_NOBODY_TO_ASK": (
         "An agent's save would let a step do more, which only its owner's own Allow saves, and "
