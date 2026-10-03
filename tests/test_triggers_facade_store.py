@@ -596,7 +596,8 @@ def test_an_unresolvable_action_is_ok_FALSE_not_a_success_shaped_200(home, state
 
     assert resp.status == 200
     assert _body(resp)["ok"] is False
-    assert "unknown action provider" in _body(resp)["result"]
+    # The refusal's own sentence (`triggers.cannot_run`), naming the action nothing provides.
+    assert "No app running here provides its “no-such-provider” action" in _body(resp)["result"]
 
 
 def test_an_actionless_trigger_is_ok_FALSE(home, state):
@@ -623,7 +624,7 @@ def test_an_actionless_trigger_is_ok_FALSE(home, state):
     )
 
     assert _body(resp)["ok"] is False
-    assert _body(resp)["result"].startswith("no action provider configured")
+    assert _body(resp)["result"].startswith("It has no action.")
 
 
 # ── 🔴 #308: a manual run executed but recorded NOTHING, so the pill stuck forever ──

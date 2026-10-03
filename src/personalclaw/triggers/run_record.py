@@ -32,6 +32,10 @@ A run whose action never returned, because a stop or a restart cut it off or it 
 deadline, has nothing to hand this recorder: `triggers.reaper` closes it, and moves the same stamps
 (:func:`stamp_run`), so its row is the trigger's last run too.
 
+A run refused before its action ran because something the action needs is gone — its app, a secret
+it uses, an action at all (`triggers.cannot_run`) — is recorded by :func:`record_refusal`: a
+``refused`` row saying why, and the same stamps, so the trigger's last run says it too.
+
 The fire METERS, ``run_count`` (what ``max_fires`` spends) and ``last_fired_at`` (what spacing
 measures from), move where a fire is DECIDED, before its action runs (:func:`count_fire`):
 `service.admit_fire` for the clock and events, and :func:`note_fire` for the fires no admission
@@ -360,6 +364,89 @@ async def _record(
     )
     retire_after_run(store, live, status=status, from_review=by_hand and bool(late))
     return run_id
+
+
+async def record_refusal(
+    trigger: Any,
+    *,
+    why: str,
+    by_hand: bool = False,
+    store: Any = None,
+    runs: Any = None,
+) -> bool:
+    """Record a run of *trigger* refused before its action ran, because something the action needs
+    is gone (`triggers.cannot_run`): no app running here provides it, a secret it uses does not
+    resolve, or the trigger names no action. *why* is the sentence that says which.
+
+    The row reads ``refused``, saying *why*, and the trigger's stamps move as they do for a run
+    that went wrong (:func:`stamp_run`), so its last run is this one, refused, with *why* as its
+    error: what the Triggers page shows. It takes no lifecycle decision, as no refusal does, and a
+    fire's row is tagged ``refused``, which the hourly cap passes over (it did no work), where a run
+    by hand's (*by_hand*) is tagged ``manual`` as every hand run's is. *store* and *runs* are as for
+    :func:`record_run`.
+
+    Returns whether this is news for the trigger's owner: True unless its last run was already
+    refused for *why*, with nothing since, run or failure, so each fire is recorded and only the
+    first of a stretch is told. Decided and stamped with nothing awaited in between, so of two
+    fires refused at once only one is told. Never raises; a record that could not be kept answers
+    True, so a broken store can never keep the owner from hearing of it.
+    """
+    try:
+        return await _record_refusal(trigger, why=why, by_hand=by_hand, store=store, runs=runs)
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.warning("could not record the refused run of %s", trigger, exc_info=True)
+        return True
+
+
+async def _record_refusal(trigger: Any, *, why: str, by_hand: bool, store: Any, runs: Any) -> bool:
+    from personalclaw.config.loader import config_dir
+    from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
+    from personalclaw.triggers.routing import routed
+    from personalclaw.triggers.store import TriggerStore
+
+    trigger_id = str(getattr(trigger, "id", "") or "")
+    if not trigger_id:
+        return True
+    now = time.time()
+    run = ScheduleRun(
+        run_id=f"refused-{int(now * 1000)}",
+        job_id=trigger_id,
+        job_name=str(getattr(trigger, "name", "") or ""),
+        trigger="manual" if by_hand else Outcome.REFUSED.value,
+        started_at=now,
+        finished_at=now,
+        # `Outcome.REFUSED`, spelled as the word it is so the status vocabulary rail can read it.
+        status="refused",
+        summary=why,
+        trace=why,
+        error=why[:ERROR_MAX],
+    )
+    runs = runs if runs is not None else ScheduleRunStore(config_dir())
+    await runs.append(run)
+    store = store if store is not None else routed(TriggerStore(base_dir=config_dir()))
+    loaded = store.get(trigger_id)
+    if loaded is None:
+        return True
+    live = loaded.trigger
+    told = _refused_for(live, why)
+    stamp_run(live, status=Outcome.REFUSED.value, why=why, run_id=run.run_id, at=now)
+    store.upsert(live)
+    return not told
+
+
+def _refused_for(trigger: Any, why: str) -> bool:
+    """Whether *trigger*'s last run was refused for *why*: its newest stamp is a failure's, and
+    the error it keeps is *why*. A run since (`last_success_at`, `last_waiting_at`) or a failure
+    of another kind ends that."""
+    from personalclaw.triggers.service import to_epoch
+
+    failed = to_epoch(getattr(trigger, "last_failure_at", ""))
+    return (
+        failed > 0
+        and failed >= to_epoch(getattr(trigger, "last_success_at", ""))
+        and failed >= to_epoch(getattr(trigger, "last_waiting_at", ""))
+        and str(getattr(trigger, "last_error_summary", "") or "") == why[:ERROR_MAX]
+    )
 
 
 def record_ending(

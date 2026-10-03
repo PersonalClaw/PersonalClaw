@@ -1,5 +1,6 @@
 """In-process registry of action providers."""
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -10,8 +11,40 @@ if TYPE_CHECKING:
 _providers: "dict[str, ActionProvider]" = {}
 
 
-def register_action_provider(provider: "ActionProvider") -> None:
-    _providers[provider.name] = provider
+@dataclass(frozen=True)
+class ActionOrigin:
+    """The app that registered an action in this process, as its owner reads them both."""
+
+    app: str
+    app_label: str
+    label: str
+
+
+#: Action name → the app that registered it in this process, KEPT after the app's provider goes
+#: (a disable, a removal, an update that no longer provides it): the one place the app is known
+#: is its registration, and a fire that finds the action gone names the app it came from
+#: (`triggers.cannot_run`). A core provider registering the name clears it.
+_origins: dict[str, ActionOrigin] = {}
+
+
+def register_action_provider(
+    provider: "ActionProvider", *, app: str = "", app_label: str = ""
+) -> None:
+    """Register *provider* under its name; *app* (shown as *app_label*) is the installed app it
+    comes from, "" for core's own."""
+    name = provider.name
+    _providers[name] = provider
+    if app:
+        label = str(getattr(provider, "display_name", "") or "") or name
+        _origins[name] = ActionOrigin(app=app, app_label=app_label or app, label=label)
+    else:
+        _origins.pop(name, None)
+
+
+def action_origin(name: str) -> ActionOrigin | None:
+    """The app that registered the action *name* in this process, or None: a core action, or one
+    no app registered since this process started."""
+    return _origins.get(name)
 
 
 def get_action_provider(name: str) -> "ActionProvider | None":

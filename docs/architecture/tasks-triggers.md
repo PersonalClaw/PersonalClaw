@@ -123,7 +123,15 @@ relative to `PersonalClaw/src/personalclaw/`.
   unattended one (`gateway._fire_store_trigger`: clock, event, file,
   web_watch, chained) — and a refusal names the missing action and how the
   owner allows it; an unattended refusal is a `skipped_gate` row in the
-  trigger's Runs history. A grant is for the action as the owner allowed it:
+  trigger's Runs history. Both also resolve what the trigger runs, the
+  provider before the grant and its `{{secret:…}}` references after it
+  (`secrets.resolve_for`), and a run with nothing to run (no app running here
+  provides its action, a secret in it does not resolve, or it names no
+  action) is a `refused` run (`triggers/cannot_run.py`): its row and its last
+  run on the Triggers page say which, naming the app or the secret and never
+  a value, and its owner hears of it once on its failure route, until a run
+  gets through or it is refused for another reason. The unattended dispatch
+  waits for the apps to start before it decides an app's action is missing. A grant is for the action as the owner allowed it:
   an edit that changes what a granted action runs (another command, URL,
   prompt, agent or workflow) keeps no grant for the change, and neither does a
   provider the edited action stopped using (`grants.narrow`); the step keys

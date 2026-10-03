@@ -114,7 +114,9 @@ class ScheduleRun:
     # "declined": the work a launched run started asked its owner to start and they declined it
     #   (`ScheduleRunStore.settle_sync`). Their own decision, not a failure.
     # "refused": the agent a launched run started had calls refused by its own limits
-    #   (`triggers.settle`): not a success, and not a failure either.
+    #   (`triggers.settle`): not a success, and not a failure either. Also a run refused before
+    #   its action ran, because something the action needs is gone: its app, a secret it uses, an
+    #   action at all (`triggers.run_record.record_refusal`), its `error` saying which.
     # "stopped": someone stopped the work a launched or queued run started before it finished:
     #   its owner stopped the agent, or cancelled the workflow run (`triggers.settle`). Their own
     #   decision, not a failure.
@@ -558,6 +560,11 @@ class ScheduleRunStore:
             # Keyed on `INERT_OUTCOMES`, the same set `history.is_inert` uses, rather than a local
             # list of `skipped_*` strings: one definition of "this did nothing" for both surfaces.
             if str(row.get("status") or "") in INERT_OUTCOMES:
+                continue
+            # Nor is a fire refused before its action ran, because something it needs is gone
+            # (`run_record.record_refusal`, tagged `refused`): it did no work, and counted it would
+            # hold the automation's first runs once what it needs is back.
+            if str(row.get("trigger") or "") == "refused":
                 continue
             total += 1
         return total

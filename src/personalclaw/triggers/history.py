@@ -98,7 +98,9 @@ SCHEDULE_STATUS_TO_OUTCOME: dict[str, str] = {
     # what its Allow said it may not do, or an approval nobody was there to give. `REFUSED`, a
     # policy refusal with its reason on the row: not a success, since it has not done all it was
     # asked, and not `FAILED`, since its limits held as allowed, so it never counts toward
-    # autopause.
+    # autopause. The same word for a run refused before its action ran because something it needs
+    # is gone (`run_record.record_refusal`): the app that provides its action, a secret it uses, an
+    # action at all. Its row says which.
     "refused": Outcome.REFUSED.value,
     # `on_overlap: queue` held the start behind a run already in flight. DEFERRED's
     # "parked / resource-busy" half, and `LEDGER` weight follows for the same reason

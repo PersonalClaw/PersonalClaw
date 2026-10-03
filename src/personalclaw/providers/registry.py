@@ -508,7 +508,9 @@ class ActionTypeHandler(_TypeHandler):
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.action_providers.registry import register_action_provider
 
-        register_action_provider(instance)
+        register_action_provider(
+            instance, app=ext.name, app_label=ext.manifest.displayName or ext.name
+        )
         _register_app_action_type(ext, instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:

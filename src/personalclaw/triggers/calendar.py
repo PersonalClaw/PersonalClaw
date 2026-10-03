@@ -936,7 +936,7 @@ def diagnose(
                         trigger_id=tid,
                         code="unknown_action_provider",
                         detail=f"runs the action {action!r}, which no installed provider "
-                        "answers to — every fire of this automation fails",
+                        "answers to — every fire of this automation is refused",
                         fix="point it at an installed action, or install the app that provides "
                         f"{action!r}",
                     )

@@ -572,23 +572,35 @@ async def _dispatch_store_action(
 
     from personalclaw.action_providers import ActionContext, get_action_provider
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
-    from personalclaw.triggers import grants
+    from personalclaw.triggers import cannot_run, grants
+    from personalclaw.triggers import secrets as trigger_secrets
 
     workflow = trigger.workflow or {}
     inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
     action = inline or workflow
     provider_name = str(action.get("provider") or "")
-    if not provider_name:
-        return False, "no action provider configured"
-    _ensure_default_providers_registered()
-    provider = get_action_provider(provider_name)
+    # A run with nothing it can run is refused as a fire with nothing is (`triggers.cannot_run`):
+    # its row, its last run, and its owner told once. Returned and nothing more, a webhook's fire
+    # and a view's refresh, which start this fire-and-forget, left no trace of it at all.
+    provider = None
+    if provider_name:
+        _ensure_default_providers_registered()
+        provider = get_action_provider(provider_name)
     if provider is None:
-        return False, f"unknown action provider {provider_name!r}"
+        why = cannot_run.missing_action(provider_name) if provider_name else cannot_run.NO_ACTION
+        return await _refused(trigger, why, state=state)
     missing = grants.missing(trigger)
     if missing:
         refusal = grants.refusal(trigger, missing)
         logger.info("trigger %s not run (%s): %s", getattr(trigger, "id", ""), event, refusal)
         return False, refusal
+    # `{{secret:KEY}}` filled here as a fire fills it (`secrets.resolve_for`): this path handed the
+    # provider the placeholder itself, so a Run now sent `{{secret:KEY}}` where the fire sent the
+    # value, and a secret that is not stored is refused as the fire refuses it.
+    try:
+        config = trigger_secrets.resolve_for(provider, action.get("config") or {})
+    except trigger_secrets.UnresolvedSecret as exc:
+        return await _refused(trigger, cannot_run.missing_secret(exc), state=state)
     # 🔴 RECORD THE RUN (#308). #702 made this path resolve and dispatch the nested action, but it
     # recorded NOTHING — no `ScheduleRunStore` row, no `last_run_ts` stamp. So the action ran while
     # `GET .../history` gained no row and the trigger's last-run stamp never moved, and the UI's
@@ -633,9 +645,7 @@ async def _dispatch_store_action(
     try:
         # The same floor a scheduled fire gets (`firepath.action_timeout`): this passed none, so a
         # `bash` Run now was cut off at 30s where its scheduled fire had 300s.
-        result = await provider.execute(
-            action.get("config") or {}, ctx, timeout=action_timeout(provider_name)
-        )
+        result = await provider.execute(config, ctx, timeout=action_timeout(provider_name))
     except asyncio.CancelledError:
         # A stop or a restart cut it off. A cancellation is not an `Exception`, so the branch below
         # never saw it and the run was recorded nowhere; recorded now, before it goes on its way.
@@ -669,6 +679,18 @@ async def _dispatch_store_action(
         # the restart review's Run now — and "ran" read as done, so it is the row's own line.
         return True, parks.waiting_line(result)
     return True, "ran"
+
+
+async def _refused(trigger: Any, why: str, *, state: Any) -> tuple[bool, str]:
+    """A run by hand with nothing it can run, refused as a fire is (`triggers.cannot_run`), in the
+    home the handlers read. The dispatch's answer for it: not run, and *why*."""
+    from personalclaw.dashboard.handlers.triggers import _runs_store, _trigger_store
+    from personalclaw.triggers import cannot_run
+
+    await cannot_run.refuse(
+        trigger, why, state=state, by_hand=True, store=_trigger_store(), runs=_runs_store()
+    )
+    return False, why
 
 
 def _hold_claim(trigger_id: str, *, holder: str, now: float) -> Any:

@@ -274,10 +274,13 @@ def build_delivery(
     duration_secs: float = 0.0,
     scheduled: bool = False,
     inbox: bool = False,
+    title: str = "",
 ) -> Delivery:
     """Assemble one run-completion delivery. Pure.
 
     *inbox* says the outcome is a failure its trigger files in the Inbox (:func:`files_in_inbox`).
+    *title* is the headline when the outcome's own ("<name> finished", "<name> failed") would not
+    be true: a run refused before its action ran did not fail, it did not run.
 
     The notification KIND is chosen per outcome, not per emitter: a failure has to be able to
     escalate past a "digest" rule while a success should not, and that is a property of what
@@ -310,7 +313,7 @@ def build_delivery(
     else:
         kind = notification_kinds.INFO if ok else notification_kinds.ERROR
     verb = "finished" if ok else "failed"
-    title = _redact(f"{name} {verb}")
+    title = _redact(title or f"{name} {verb}")
     # Masked whole, then sized for each surface: a cut made first could leave half of something the
     # masker would have recognised whole.
     result = _redact(summary or "")
@@ -950,13 +953,15 @@ def report_run(
     error: str = "",
     summary: str = "",
     run_id: str = "",
+    title: str = "",
 ) -> bool:
     """Tell the trigger's route how a run went, with a deep link (§R18 / crit 10 — S140).
 
     ``summary`` is what the work produced (a command's output, an agent task's reply, a workflow
     run's summary), and ``run_id`` the workflow run the note links to; a failure's ``error`` is its
-    summary. *state* is the dashboard state whose `notify` every note goes through; with none,
-    nothing is sent.
+    summary, and ``title`` the headline when the outcome's own is not true (`build_delivery`).
+    *state* is the dashboard state whose `notify` every note goes through; with none, nothing is
+    sent.
 
     Returns whether the trigger has spoken for this outcome: a note went out now; a failure it
     collapses as a repeat went out within the reminder window; or its route says nothing of it —
@@ -1013,6 +1018,7 @@ def report_run(
             # `cron/*` rows the matrix offers. Read off the trigger because this substrate also
             # carries webhook, event, file and web_watch outcomes, and those are not scheduled jobs.
             scheduled=is_scheduled(trigger),
+            title=title,
         )
         # 🔴 A ROUTE OF `none` HAS SAID ALL IT WILL. `deliver` sends nothing on it, and answering
         # that as "not told" handed the outcome to the agent's own completion note, so a silent

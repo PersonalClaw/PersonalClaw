@@ -160,3 +160,15 @@ def resolve(config: Any, *, resolver: Callable[[str], str] | None = None) -> Any
         return node
 
     return _sub(config)
+
+
+def resolve_for(provider: Any, config: Any) -> Any:
+    """*config* as the action *provider* is handed it, by either dispatch (a fire, and a run by
+    hand or from outside): every `{{secret:KEY}}` filled (:func:`resolve`, which raises
+    `UnresolvedSecret`), except in an action that IS a model turn
+    (`ActionProvider.hands_config_to_a_model`). Its config is what an agent's model is handed, so a
+    reference there stays the name and the agent's tools fill it when they run; resolved here, it
+    would put the value in the model's context."""
+    if getattr(provider, "hands_config_to_a_model", False):
+        return config
+    return resolve(config)

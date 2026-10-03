@@ -71,6 +71,26 @@ with a warning, and says it is not firing, until a check reads something it can 
 - `src/personalclaw/triggers/web_poll.py` — `report_checks` reports the stretch through
   `report_run`; `last_check` is the record the page and `automation_list` read.
 
+An automation can also be **refused before it runs**, because something its action needs is gone:
+the app that provides the action is deactivated, was removed or did not start, a `{{secret:…}}` the
+action uses is not in Settings → Secrets, or it has no action at all. Each such fire is recorded as
+`refused` in its run history, in a sentence that names the app and its action, or the secret by its
+name (never a value), and says what to do; the Triggers page shows it as the automation's last run,
+refused, with the same sentence. It is reported on the same failure route ("<name> did not run")
+the first time, and not again at every fire: the next report waits for a run that gets through, or
+a refusal for another reason. A refusal is not a failure, so it never pauses the automation, and it
+spends none of its hourly cap. **Run now**, a webhook's call and a view's refresh are refused the
+same way, in the same words. A fire that comes while PersonalClaw is still starting its apps waits
+for them rather than being refused.
+
+- `src/personalclaw/triggers/cannot_run.py` — the sentences, and `refuse`, which both dispatches
+  call: `gateway._fire_store_trigger` for a fire, `trigger_runs._dispatch_store_action` for a run
+  by hand or from outside.
+- `src/personalclaw/triggers/run_record.py` — `record_refusal`: the `refused` row, the automation's
+  last run, and whether its owner has heard of this refusal yet.
+- `src/personalclaw/action_providers/registry.py` — `action_origin`, the app that registered an
+  action in this gateway, kept after the app goes so the sentence can name it.
+
 **An automation that keeps failing pauses itself.** After 5 failed runs in a row (or the number
 its `failure_policy.autopause_after` sets), it stops firing and says so: the bell reads
 "<name> paused itself" with "paused after 5 failed runs: <why the last one failed>", and the

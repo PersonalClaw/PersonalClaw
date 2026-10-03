@@ -63,11 +63,11 @@ class Question(NamedTuple):
 def missing(trigger: Any) -> list[str]:
     """The providers `trigger`'s action runs that it is not allowed to. `[]` when it may run.
 
-    A provider nothing dispatches is left out: a run of it fails on the unknown name first (both
-    dispatches resolve the provider before they check the grant), and that name is what the owner
-    has to fix, since allowing it would change nothing. The fence itself still refuses it
-    (`screen.ungranted_providers` fails closed), and it needs a grant the moment an app providing
-    it is installed.
+    A provider nothing dispatches is left out: a run of it is refused first, for the app it needs
+    (both dispatches resolve the provider before they check the grant, `triggers.cannot_run`), and
+    that app is what the owner has to fix, since allowing it would change nothing. The fence itself
+    still refuses it (`screen.ungranted_providers` fails closed), and it needs a grant the moment an
+    app providing it is installed.
     """
     from personalclaw.triggers.screen import ungranted_providers
 

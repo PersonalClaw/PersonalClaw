@@ -139,8 +139,9 @@ class Outcome(str, Enum):
     #: Parked / yielded / resource-busy. ONE row per episode, not per attempt — escalating backoff
     #: would otherwise write a row a second.
     DEFERRED = "deferred"
-    #: A policy refusal. Distinct from failed and from skipped, with a mandatory human-readable
-    #: reason posted back to the triggering surface.
+    #: A policy refusal, or a run refused before its action ran because something it needs is gone
+    #: (its app, a secret, an action: `triggers.cannot_run`). Distinct from failed and from skipped,
+    #: with a mandatory human-readable reason posted back to the triggering surface.
     REFUSED = "refused"
     #: A pre-LLM injection-screen match. NEVER auto-retried, and it names the matched pattern.
     BLOCKED_INJECTION = "blocked_injection"

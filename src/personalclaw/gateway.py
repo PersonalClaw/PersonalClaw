@@ -218,6 +218,11 @@ _REFUSAL_STATUSES: tuple[str, ...] = (
     "needs_input",
 )
 
+#: How long a fire that needs an app's action waits for the apps to start (`_action_provider`).
+#: They load with the dashboard, after the clock and the event router are running, in seconds
+#: that are usually few; past this the fire is refused, saying no app running here provides it.
+APPS_START_WAIT_SECS = 120.0
+
 
 def mint_startup_token(issuer: str, auth_cfg: Any) -> MintedSession:
     """The token the gateway hands out at startup: the dashboard link it prints (and opens),
@@ -1411,21 +1416,27 @@ class GatewayOrchestrator:
         `event` labels the source to the provider (`file.changed`, `memory.create`, …) and `context`
         is the free-form `$CONTEXT` line a template renders; only an event fire has one to give.
         """
-        from personalclaw.action_providers import ActionContext, get_action_provider
+        from personalclaw.action_providers import ActionContext
         from personalclaw.action_providers.registry import _ensure_default_providers_registered
+        from personalclaw.triggers import cannot_run
         from personalclaw.triggers import secrets as _trigger_secrets
 
         workflow = trigger.workflow or {}
         inline = workflow.get("inline") if isinstance(workflow.get("inline"), dict) else None
         provider_name = str((inline or workflow).get("provider") or "")
         config = (inline or workflow).get("config") or {}
+        # 🔴 NOTHING TO RUN IS A REFUSED RUN, not a log line. A trigger naming no action, or an
+        # action no app running here provides (its app switched off, removed or failed to start),
+        # used to return here with a warning: no row, no notice, and a Triggers page that showed a
+        # healthy automation which never ran. Refused like the gates below it, with a sentence
+        # naming what is missing, and its owner told once (`triggers.cannot_run`).
         if not provider_name:
-            logger.debug("trigger %s has no action provider", trigger.id)
+            await self._refuse_unrunnable(trigger, cannot_run.NO_ACTION)
             return
         _ensure_default_providers_registered()
-        provider = get_action_provider(provider_name)
+        provider = await self._action_provider(provider_name)
         if provider is None:
-            logger.warning("trigger %s: unknown action provider %r", trigger.id, provider_name)
+            await self._refuse_unrunnable(trigger, cannot_run.missing_action(provider_name))
             return
 
         # 🔴 THE GRANT, at the dispatch every unattended fire shares (`triggers.grants`). A clock or
@@ -1514,15 +1525,15 @@ class GatewayOrchestrator:
         # on disk. An unresolved key REFUSES rather than substituting "" — an empty Authorization
         # header produces a remote 401 nobody can trace back to a missing credential.
         #
-        # Except in an action that IS a model turn (`hands_config_to_a_model`): its config is what
-        # an agent's model is handed, so a reference there stays the name and the agent's tools
-        # fill it when they run. Resolved here it would put the value in the model's context.
+        # Except in an action that IS a model turn, whose references stay names for its agent's
+        # tools to fill: `secrets.resolve_for` keeps that rule for both dispatches.
+        #
+        # The refusal is a refused run naming the secret, never its value (`triggers.cannot_run`):
+        # it used to be a log line, so the automation read healthy and never ran.
         try:
-            if not getattr(provider, "hands_config_to_a_model", False):
-                config = _trigger_secrets.resolve(config)
+            config = _trigger_secrets.resolve_for(provider, config)
         except _trigger_secrets.UnresolvedSecret as exc:
-            logger.warning("trigger %s: %s", trigger.id, exc)
-            self._push_trigger_refresh()
+            await self._refuse_unrunnable(trigger, cannot_run.missing_secret(exc))
             return
 
         # The context the provider will receive, built HERE rather than at the `execute` call so
@@ -2177,6 +2188,38 @@ class GatewayOrchestrator:
             status="blocked_injection",
             error=f"payload blocked by the injection screen ({groups}); never retried",
         )
+
+    async def _action_provider(self, name: str) -> Any:
+        """The action provider *name* resolves to, or None.
+
+        Waits first for this gateway's apps to start, while they have not: the clock and the event
+        router start before the dashboard loads the apps (`run`), so a fire in that window found an
+        app's action missing and was dropped. At most `APPS_START_WAIT_SECS`; an orchestrator that
+        is not running (`run` never set the event up) waits for nothing.
+        """
+        from personalclaw.action_providers import get_action_provider
+
+        provider = get_action_provider(name)
+        started = getattr(self, "_apps_started", None)
+        if provider is None and started is not None and not started.is_set():
+            try:
+                await asyncio.wait_for(started.wait(), timeout=APPS_START_WAIT_SECS)
+            except TimeoutError:
+                logger.warning(
+                    "the apps had not started %.0fs after a fire needing the %r action",
+                    APPS_START_WAIT_SECS,
+                    name,
+                )
+            provider = get_action_provider(name)
+        return provider
+
+    async def _refuse_unrunnable(self, trigger: Any, why: str) -> None:
+        """Refuse a fire with nothing it can run (`triggers.cannot_run`): its refused row, its last
+        run on the Triggers page and, the first time for *why*, one notice. Never raises."""
+        from personalclaw.triggers import cannot_run
+
+        await cannot_run.refuse(trigger, why, state=getattr(self, "dashboard_state", None))
+        self._push_trigger_refresh()
 
     async def _record_refused_fire(self, trigger: Any, *, status: str, error: str) -> None:
         """Write ONE ledger row for a fire a gate refused before the provider was called.
@@ -5067,6 +5110,10 @@ class GatewayOrchestrator:
         await asyncio.to_thread(run_processes.end_what_no_run_holds)
 
         # ── Initialise all services ──
+        # Set once the apps have started, with the dashboard below: the clock and the event router
+        # start first (`_init_cron`), and a fire before then waits for its action's app rather than
+        # finding the action missing (`_action_provider`).
+        self._apps_started = asyncio.Event()
         self._init_services()
 
         await self._init_cron()
@@ -5080,10 +5127,13 @@ class GatewayOrchestrator:
             logger.exception("Inbox init failed")
         self._init_mcp_discovery()
         self._init_subagents()
-        if not self._no_dashboard:
-            await self._init_dashboard()
-        else:
-            await self._init_api_server()
+        try:
+            if not self._no_dashboard:
+                await self._init_dashboard()
+            else:
+                await self._init_api_server()
+        finally:
+            self._apps_started.set()
         # What the boot passes found while the dashboard did not exist yet: one notice, now that
         # it can be delivered.
         self._surface_held_boot_review()

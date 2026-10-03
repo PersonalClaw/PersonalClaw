@@ -127,7 +127,9 @@ WRITERS: tuple[Writer, ...] = (
     Writer(
         # Every run that reached its action, a fire's and a hand run's: a failure, what
         # `status_for_result` reads off the result (the closed `RESULT_STATUSES`, `degraded`
-        # included), and `ran_late` for a late run that did its work.
+        # included), and `ran_late` for a late run that did its work. And `refused` for a run
+        # refused before its action ran because something it needs is gone (`record_refusal`),
+        # which the writer GREW by: a second site, and a ninth value.
         label="triggers/run_record.py records a run's ScheduleRun",
         path="triggers/run_record.py",
         table=H.SCHEDULE_STATUS_TO_OUTCOME,
@@ -135,8 +137,8 @@ WRITERS: tuple[Writer, ...] = (
         kind="kwarg",
         name="status",
         call="ScheduleRun",
-        min_sites=1,
-        min_values=8,
+        min_sites=2,
+        min_values=9,
     ),
     Writer(
         # The ending of the agent a launched run started, written onto that run's row: `success`,
