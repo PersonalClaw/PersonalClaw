@@ -4,7 +4,7 @@
 // *workspace* and the *model*, not a product plan.
 //
 // DESIGN DOCTRINE for this rebuild: do NOT transcribe PersonalClaw's original
-// layouts or pixel-copy Gemini. Design each surface from its actual purpose
+// layouts or copy another product's screens. Design each surface from its actual purpose
 // (a self-hosted personal agent) under NE principles — thoughtful layout,
 // interaction, motion, and information hierarchy per page.
 

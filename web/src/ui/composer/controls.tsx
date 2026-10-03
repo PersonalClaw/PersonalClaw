@@ -313,8 +313,8 @@ export function effortsForAgent(data: ComposerData | undefined, agent: string): 
   return NATIVE_EFFORTS
 }
 
-/** The "+" toolbar menu — the single entry point for composer add-ons, like the
- *  "+" in Claude.ai / ChatGPT. Always offers Attach; offers Saved prompts when the
+/** The "+" toolbar menu — the single entry point for composer add-ons, the one
+ *  place a composer keeps its extras. Always offers Attach; offers Saved prompts when the
  *  host wires `onOpenPrompts`; and renders any host `extra` items (e.g. Auto-nudge)
  *  at the bottom. Replaces the old attach-only button + the floating "Prompts" and
  *  auto-nudge chips that overlapped the composer's edge. Collapses to a plain
