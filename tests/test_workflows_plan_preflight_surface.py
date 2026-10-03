@@ -192,7 +192,8 @@ class TestTemplatePathWiring:
             return {"ok": True, "definition": DEF_WITH_PROVIDER}
 
         monkeypatch.setattr(mw.service, "get_def", fake_get_def)
-        return _body(mw._plan_from_template("ship the thing", "shipper"))
+        body, summary = mw._plan_from_template("ship the thing", "shipper")
+        return _body(mw._fmt(body, summary=summary))
 
     def test_the_response_carries_a_preflight_report(self, planned: dict[str, Any]) -> None:
         assert planned["planner"] == "template-v1"
