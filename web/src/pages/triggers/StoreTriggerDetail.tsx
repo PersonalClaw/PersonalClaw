@@ -300,14 +300,14 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
           </ul>
         )}
         {/* Which page: the panel said only "When a watched web page changes". */}
-        {watchUrl && <div className="mt-xs font-mono text-on-surface-low text-[0.8125rem] break-all">{watchUrl}</div>}
+        {watchUrl && <div data-type="body-s" className="mt-xs font-mono text-on-surface-low break-all">{watchUrl}</div>}
       </Section>
 
       {isWatch && (
         <Section label="Last check">
           {check
             ? <WatchCheckLine check={check} saidAbove={warnings.includes(check.said)} />
-            : <div className="text-on-surface-low text-[0.8125rem]">Not checked yet. Its first check records what is on the page and fires nothing.</div>}
+            : <div data-type="body-s" className="text-on-surface-low">Not checked yet. Its first check records what is on the page and fires nothing.</div>}
         </Section>
       )}
 
@@ -369,17 +369,17 @@ function WatchCheckLine({ check, saidAbove }: { check: TriggerCheck; saidAbove: 
   const meta = watchCheckMeta(check.outcome)
   return (
     <div className="flex flex-col gap-xs">
-      <div className="flex flex-wrap items-center gap-x-s gap-y-xs text-[0.8125rem]">
+      <div data-type="body-s" className="flex flex-wrap items-center gap-x-s gap-y-xs">
         <span className="inline-flex items-center gap-s">
           <meta.icon size={14} style={{ color: meta.tone }} className="shrink-0" aria-hidden="true" />
           <span className="text-on-surface">{meta.label}</span>
         </span>
-        <span className="text-on-surface-low text-[0.75rem]">{relPast(check.at)}</span>
+        <span data-type="caption" className="text-on-surface-low">{relPast(check.at)}</span>
       </div>
       {check.checks > 1 && (
-        <div className="text-on-surface-low text-[0.75rem]">{check.checks} checks in a row since {absTime(check.since)}</div>
+        <div data-type="caption" className="text-on-surface-low">{check.checks} checks in a row since {absTime(check.since)}</div>
       )}
-      {!saidAbove && <p className="text-on-surface-var text-[0.8125rem] break-words">{check.said}</p>}
+      {!saidAbove && <p data-type="body-s" className="text-on-surface-var break-words">{check.said}</p>}
     </div>
   )
 }

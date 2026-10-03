@@ -340,7 +340,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               says so: it waits for a Resume, not for a switch the owner flipped. */}
                           {t.restoreHold
                             ? <span data-type="caption" className="shrink-0 text-warn">· paused by the restore</span>
-                            : !t.enabled && t.kind !== 'callback' && <span className="shrink-0 text-on-surface-low text-[0.75rem]">· disabled</span>}
+                            : !t.enabled && t.kind !== 'callback' && <span data-type="caption" className="shrink-0 text-on-surface-low">· disabled</span>}
                           {t.kind === 'schedule' && t.schedule?.is_running && <span className="shrink-0 inline-flex items-center gap-1 text-primary text-[0.75rem]"><span className="relative flex size-1.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-pill bg-primary opacity-60" /><span className="relative inline-flex size-1.5 rounded-pill bg-primary" /></span>running</span>}
                           {/* A BLOCKING hook that no agent binds still fires — on the
                               informational path, whose results are discarded — so its run count

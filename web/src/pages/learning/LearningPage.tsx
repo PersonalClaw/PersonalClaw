@@ -447,7 +447,7 @@ function ProposalRow({ row, busy, onAccept, onReject }: {
           {/* What the proposal rests on, as the text it is and line by line: the fence that tells a
               model the excerpt is data is not for a person to read. */}
           {row.source_excerpt && (
-            <p className="mt-s whitespace-pre-line rounded-md bg-surface-high px-m py-s text-on-surface-var text-[0.75rem] break-words">
+            <p data-type="caption" className="mt-s whitespace-pre-line rounded-md bg-surface-high px-m py-s text-on-surface-var break-words">
               {withoutFence(row.source_excerpt)}
             </p>
           )}

@@ -377,7 +377,7 @@ function ApprovalMeta({ ap }: { ap: PendingApproval }) {
       {rows.length > 0 && (
         <dl className="mt-s flex flex-col gap-xs">
           {rows.map(([k, v]) => (
-            <div key={k} className="flex gap-s text-[0.75rem]">
+            <div key={k} data-type="caption" className="flex gap-s">
               <dt className="shrink-0 text-on-surface-low">{k}</dt>
               <dd className="min-w-0 break-all text-on-surface-var">{v}</dd>
             </div>
