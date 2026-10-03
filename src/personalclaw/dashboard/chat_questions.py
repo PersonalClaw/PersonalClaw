@@ -25,7 +25,7 @@ from personalclaw.acp.elicitation import CANCEL, form_response, questions_from_f
 from personalclaw.dashboard import turn_endings
 from personalclaw.http_errors import json_error
 from personalclaw.owner_questions import ASK_USER_TOOL, QuestionRefused, normalize
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import bool_field, json_object_body
 from personalclaw.tool_providers.base import names_interactive_tool
 from personalclaw.validation import ValidationError
 
@@ -128,9 +128,7 @@ async def api_chat_question_answer(request: web.Request) -> web.Response:
     if state.get_session(name) is None:
         return json_error("session_not_found", status=404)
     body = await json_object_body(request)
-    skip = body.get("skip", False)
-    if not isinstance(skip, bool):
-        return json_error("invalid_request", message="skip is true or false.", status=400)
+    skip = bool_field(body, "skip", default=False)
     try:
         outcome = state.owner_questions.answer(
             name, request.match_info["question"], answers=body.get("answers"), skip=skip
