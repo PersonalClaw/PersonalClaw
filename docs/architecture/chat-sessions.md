@@ -460,7 +460,15 @@ chat, channel thread, loop worker, webhook, subagent).
    (`one_shot_completion(attempt_timeout=…)`, which knowledge enrichment uses), so a
    slow first model hands over instead of spending the whole wait, and a chain that
    only timed out is reported as a timeout (`llm_helpers.ChainExhausted`), not as
-   no model being available.
+   no model being available. The chores whose answer she sends as her own words, the
+   follow-up chips and the suggestions, may say for her only what they were written
+   from says. Each prompt has rules added after whatever template is bound (a seeded
+   prompt is never rewritten on an existing install); the chips' rules also say a chip
+   never answers what the reply asked her. The answer is then checked
+   (`given_details.keep_given`): one that states a time, number, name, path or file
+   its source does not give is left out. A prompt rewrite is checked the same way
+   (`given_details.ungiven`) and is not used when it adds such a detail;
+   `/api/optimizer/optimize` names it in `added`.
 5. **Streaming + persistence** — chunks stream over the dashboard WebSocket;
    the finished turn is saved by rewriting the session JSONL from the buffer.
    Every exit from a turn, an error included, first settles the answer

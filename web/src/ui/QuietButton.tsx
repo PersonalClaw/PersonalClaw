@@ -22,11 +22,10 @@ import { spring, expr } from '../design/motion'
  *  (expressiveness-scaled, yielding to reduced motion), matching the rest of
  *  the button family. */
 export function QuietButton({
-  children, onClick, onDoubleClick, title, ariaExpanded, disabled, disabledReason, className,
+  children, onClick, title, ariaExpanded, disabled, disabledReason, className,
 }: {
   children: ReactNode
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
-  onDoubleClick?: (e: React.MouseEvent<HTMLButtonElement>) => void
   title?: string
   /** When this quiet action is a DISCLOSURE, its open state — same prop name `Button` already uses, so
    *  the two siblings answer the question the same way rather than each inventing a spelling.
@@ -37,7 +36,7 @@ export function QuietButton({
    *  click does — but not whether the panel is open right now, which is what `aria-expanded` carries.
    *  Omit it for a plain quiet action (Download, Source file) and no state is claimed. */
   ariaExpanded?: boolean
-  /** Action currently unavailable: 40% opacity, not-allowed, onClick/onDoubleClick suppressed,
+  /** Action currently unavailable: 40% opacity, not-allowed, onClick suppressed,
    *  press feedback dropped.
    *
    *  This tier had NO disabled state at all, and the sharp consequence was measured on
@@ -71,7 +70,6 @@ export function QuietButton({
     <motion.button
       type="button"
       onClick={disabled ? undefined : onClick}
-      onDoubleClick={disabled ? undefined : onDoubleClick}
       title={disabled && disabledReason ? [title, disabledReason].filter(Boolean).join(' — ') : title}
       aria-disabled={disabled || undefined}
       aria-expanded={ariaExpanded}

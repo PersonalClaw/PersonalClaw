@@ -1,4 +1,10 @@
-"""Contextual prompt suggestions — pre-computed via background LLM."""
+"""Contextual prompt suggestions — pre-computed via background LLM.
+
+A suggestion is put in her message box to send as her own words, so it may say for her only what
+the context it was written from says: each is written under :data:`_SUGGESTION_RULES`, whatever
+prompt is bound, and one stating a detail the context does not give is left out
+(``given_details.keep_given``).
+"""
 
 import asyncio
 import logging
@@ -11,6 +17,7 @@ from aiohttp import web
 
 from personalclaw import chores, memory_writes
 from personalclaw.context import ContextBuilder
+from personalclaw.given_details import keep_given
 from personalclaw.llm_helpers import failure_clause, is_model_call_failure, parse_llm_json_list
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
@@ -68,6 +75,14 @@ _FALLBACK_SUGGESTIONS = [
     "What can you help me with?",
     "Set up a daily briefing",
 ]
+
+#: What every suggestion is written under, after whatever prompt is bound for them.
+_SUGGESTION_RULES = (
+    "Rules for these suggestions, whatever is above:\n"
+    "- The user sends a suggestion as their own words. So a suggestion never states a fact, time, "
+    "date, name, number, place or decision for them that the context above does not give: "
+    "suggest what they might ask or do, never what they have not said."
+)
 
 
 @dataclass
@@ -237,7 +252,11 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
 
     try:
         text = await asyncio.wait_for(
-            chores.run_chore(prompt, usage=chores.chore_usage(), validate=_suggestions_problem),
+            chores.run_chore(
+                f"{prompt}\n\n{_SUGGESTION_RULES}",
+                usage=chores.chore_usage(),
+                validate=_suggestions_problem,
+            ),
             timeout=60,
         )
     except (_BridgeResolveErr, _LLMResolveErr):
@@ -250,7 +269,7 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
         logger.warning("Failed to parse suggestions response: %s", exc.raw[:200])
         return list(_FALLBACK_SUGGESTIONS)
 
-    suggestions = _parse_suggestions(text)
+    suggestions = keep_given(_parse_suggestions(text), context, what="Suggestions")
     if suggestions:
         suggestions = _redact_suggestions(suggestions)
         logger.info("Generated %d suggestions", len(suggestions))

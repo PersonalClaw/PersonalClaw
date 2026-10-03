@@ -102,15 +102,13 @@ describe('QuietButton has a disabled state at all — the tier had none', () => 
     expect(screen.getByRole('button', { name: 'Delete' }).getAttribute('title')).toBe('Only the owner can do this')
   })
 
-  it('does not fire onClick or onDoubleClick', () => {
+  it('does not fire onClick', () => {
     const onClick = vi.fn()
-    const onDoubleClick = vi.fn()
-    render(<QuietButton onClick={onClick} onDoubleClick={onDoubleClick} disabled disabledReason="Busy">Choose files</QuietButton>)
+    render(<QuietButton onClick={onClick} disabled disabledReason="Busy">Choose files</QuietButton>)
     const el = screen.getByRole('button', { name: 'Choose files' })
     el.click()
-    fireEvent.doubleClick(el)
+    fireEvent.click(el)
     expect(onClick, 'a lit button whose click does nothing is a dead click').not.toHaveBeenCalled()
-    expect(onDoubleClick).not.toHaveBeenCalled()
   })
 
   it('dims to the established 40 and shows the not-allowed cursor', () => {

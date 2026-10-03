@@ -59,6 +59,16 @@ describe('the optimizer verdict names all four answers, not just the rewrite', (
     expect(optimizeOutcome({}).kind).toBe('unchanged')
   })
 
+  it('a rewrite left unused because it added what you never said says so, naming what it added', () => {
+    // The endpoint keeps the draft when the rewrite states a detail neither the draft nor its
+    // context gives: `/optimize` would otherwise send that detail as her own words.
+    const out = optimizeOutcome({ changed: false, optimized: 'book the swim class', added: ['Saturday', '10:00 AM'] })
+    expect(out.kind, 'the draft stays as she wrote it').toBe('unchanged')
+    expect(out.kind !== 'rewritten' && out.message).toBe(
+      "The rewrite added what you didn't say (Saturday, 10:00 AM), so your draft is unchanged.")
+    expect(out.kind !== 'rewritten' && out.level).toBe('info')
+  })
+
   it('a thrown request is an ERROR, and keeps the reason the backend gave', () => {
     const out = optimizeFailure(new Error('no model is configured'))
     expect(out.kind).toBe('failed')

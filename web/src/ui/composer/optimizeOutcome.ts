@@ -31,8 +31,9 @@
 // hide a real outage behind a compliment, and the user's next action differs: nothing vs.
 // check the model binding.
 
-/** The API shape — `lib/api.ts`'s `optimizePrompt` return, structurally. */
-export interface OptimizeReply { optimized?: string; changed?: boolean }
+/** The API shape — `lib/api.ts`'s `optimizePrompt` return, structurally. `added` names what a
+ *  rewrite that was not used stated that neither the draft nor its context gives. */
+export interface OptimizeReply { optimized?: string; changed?: boolean; added?: string[] }
 
 export type OptimizeOutcome =
   /** The optimizer rewrote the draft. `optimized` is the text to put in the composer. */
@@ -56,6 +57,16 @@ export type OptimizeNotice = Extract<OptimizeOutcome, { message: string }>
 export function optimizeOutcome(r: OptimizeReply): OptimizeOutcome {
   const text = (r.optimized ?? '').trim()
   if (r.changed && text) return { kind: 'rewritten', optimized: r.optimized! }
+  // The optimizer DID rewrite it, and the rewrite said things the user never did, so it was not
+  // used. "Already reads well" would be false here, and naming what it added says why.
+  const added = (r.added ?? []).filter((d) => d.trim())
+  if (added.length) {
+    return {
+      kind: 'unchanged',
+      message: `The rewrite added what you didn't say (${added.join(', ')}), so your draft is unchanged.`,
+      level: 'info',
+    }
+  }
   return {
     kind: 'unchanged',
     // Second person and past tense, because the user just asked a question and this is

@@ -22,12 +22,16 @@ export function followupAnnouncement(count: number): string {
 }
 
 /** Follow-up chips — 2-3 suggested next messages rendered under the
- *  last assistant turn's actions after a reply completes. Click fills the composer;
- *  the small send glyph (or double-click) sends immediately. The host dismisses them
- *  on any user activity (typing 3+ chars, sending, switching session, a new stream),
- *  so they never block or shift the composer. Visual sibling of the hero
- *  SuggestionChips; each chip eases in on a small per-item delay (motion tiers).
- *  Built from primitives: a QuietButton label half + an IconButton send half. */
+ *  last assistant turn's actions after a reply completes. Click fills the composer to
+ *  edit; the small send glyph, which names what it sends, is the one way a chip is sent
+ *  as it stands. A double-click used to be promised as a send too, and it never could
+ *  be: the host took the chips away on the first click, so the second landed on whatever
+ *  the transcript moved under the pointer, the reply's Speak button among them. A pick
+ *  now leaves them in place. The host dismisses them when the user types 3+ chars,
+ *  sends, switches session or a new stream starts, so they never block or shift the
+ *  composer. Visual sibling of the hero SuggestionChips; each chip eases in on a small
+ *  per-item delay (motion tiers). Built from primitives: a QuietButton label half + an
+ *  IconButton send half. */
 export function FollowupChips({ items, onPick, onSend }: {
   items: string[]
   onPick: (text: string) => void
@@ -43,8 +47,8 @@ export function FollowupChips({ items, onPick, onSend }: {
         <motion.span key={`${i}-${s}`}
           initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialFast, delay: 0.04 * i }}
           className="inline-flex items-center overflow-hidden rounded-pill border border-outline-variant/50 bg-surface-container hover:border-primary/40">
-          <QuietButton onClick={() => onPick(s)} onDoubleClick={() => onSend(s)}
-            title="Click to edit · double-click to send" className="max-w-[22rem] truncate rounded-none hover:bg-surface-high">
+          <QuietButton onClick={() => onPick(s)}
+            title="Click to edit it before you send it" className="max-w-[22rem] truncate rounded-none hover:bg-surface-high">
             {s}
           </QuietButton>
           <IconButton icon={CornerDownLeft} label={`Send: ${s}`} onClick={() => onSend(s)} size={28} iconSize={13}

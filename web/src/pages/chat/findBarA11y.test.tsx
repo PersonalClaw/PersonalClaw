@@ -293,10 +293,10 @@ describe('followupAnnouncement — chips arrival is spoken, and dismissal clears
 // The block above proves the chips are NAMED and that four buttons exist by role — which
 // is a count, not a traversal: a role query finds an element `Tab` may never land on, and
 // says nothing about what activating it does. That distinction is load-bearing here for
-// one specific reason: the label half sends on `onDoubleClick`, and a double-click has no
-// keyboard equivalent at all. So the send glyph is the ONLY keyboard path to sending a
-// chip. If it ever lost its tab stop or its activation, sending a suggestion would
-// silently become mouse-only while every assertion above still passed.
+// one specific reason: the label half only fills the composer, so the send glyph is the
+// ONLY way to send a chip as it stands. If it ever lost its tab stop or its activation,
+// sending a suggestion from the keyboard would silently become impossible while every
+// assertion above still passed.
 describe('FollowupChips keyboard traversal is DRIVEN, not declared', () => {
   afterEach(() => { document.body.innerHTML = '' })
 
@@ -335,12 +335,12 @@ describe('FollowupChips keyboard traversal is DRIVEN, not declared', () => {
     expect(focused()).toBe('draft the summary')
     await user.keyboard('{Enter}')
     expect(onPick).toHaveBeenCalledWith('draft the summary')
-    // Picking is an EDIT affordance ("click to edit · double-click to send"). If Enter
+    // Picking is an EDIT affordance ("Click to edit it before you send it"). If Enter
     // also sent, a keyboard user could never edit a suggestion before dispatching it.
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('Enter on the send glyph sends, so double-click is not the only way', async () => {
+  it('Enter on the send glyph sends: the glyph is the one way a chip is sent', async () => {
     const user = userEvent.setup()
     const onPick = vi.fn()
     const onSend = vi.fn()

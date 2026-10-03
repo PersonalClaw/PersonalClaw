@@ -889,8 +889,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setFindParam('')
   }, [findParam]) // eslint-disable-line react-hooks/exhaustive-deps -- setFindParam is per-render; findParam drives it
   // Follow-up chips: 2-3 suggested next messages pushed over the
-  // chat_followups WS after a reply completes. Cleared on any user activity so they
-  // never block/shift the composer; reset per session.
+  // chat_followups WS after a reply completes. Cleared when the user types, sends or a new
+  // turn starts, and reset per session. A pick leaves them in place: taking them away on the
+  // first click moved the scrolled transcript under the pointer, so the second click of a
+  // double-click landed on the reply's own actions (measured: on Speak, then Stop).
   const [followups, setFollowups] = useState<string[]>([])
   useEffect(() => { setFollowups([]) }, [sessionId])
   // "Check this work" offer: pushed over chat_check_work_offer when
@@ -2530,6 +2532,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (optimized) await send(optimized, { original: raw })
     else await send(raw)
   }
+  // Put the caret in the composer once the text just set into it has rendered: a revert, a
+  // follow-up pick, a paste marker or a palette insert each leaves focus where the user is not.
+  function focusComposerSoon() {
+    requestAnimationFrame(() => composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus())
+  }
   // restore the pre-optimize draft (the optimize rewrite is otherwise lossy).
   function revertOptimize() {
     if (preOptimize === null) return
@@ -2537,7 +2544,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setPreOptimize(null)
     // Clearing preOptimize unmounts this button, so without this focus lands on <body>
     // and the next keystroke goes nowhere — you reverted in order to keep typing.
-    requestAnimationFrame(() => composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus())
+    focusComposerSoon()
   }
   // /undo [N] — roll back N conversation turns via the backend, then re-hydrate the
   // transcript from the truncated server state (so the UI matches disk) + append an
@@ -2636,7 +2643,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     const marker = markerFor(seq)
     setPasteBlocks((prev) => [...prev, block])
     setInput((prev) => prev + marker)
-    requestAnimationFrame(() => composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus())
+    focusComposerSoon()
     return true
   }
   function removePaste(seq: number) {
@@ -2955,7 +2962,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   function insertPrompt(text: string) {
     if (!text) return
     setInput((prev) => (prev ? `${prev}\n${text}` : text))
-    requestAnimationFrame(() => composerRef.current?.querySelector<HTMLElement>('.cm-content')?.focus())
+    focusComposerSoon()
   }
 
   // select-to-quote: insert the highlighted passage into the composer as an
@@ -3896,9 +3903,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                           </MessageAssistant>
                         )}
                         {/* Follow-up chips under the last assistant turn only,
-                            once the reply has settled — click fills, send-glyph sends. */}
+                            once the reply has settled — click fills the composer to edit,
+                            send-glyph sends. */}
                         {turn.role === 'assistant' && isLast && !streaming && followups.length > 0 && (
-                          <FollowupChips items={followups} onPick={(t) => { setInput(t); setFollowups([]) }} onSend={(t) => { setFollowups([]); void send(t) }} />
+                          <FollowupChips items={followups} onPick={(t) => { setInput(t); focusComposerSoon() }} onSend={(t) => { setFollowups([]); void send(t) }} />
                         )}
                         {/* "Check this work" offer — user-clicked only. */}
                         {turn.role === 'assistant' && isLast && !streaming && checkWorkOffer && (

@@ -1,4 +1,10 @@
-"""Prompt optimizer endpoint — rewrites vague prompts before sending to agent."""
+"""Prompt optimizer endpoint — rewrites vague prompts before sending to agent.
+
+A rewrite is sent as her own words (``/optimize`` sends it without showing it first), so it may
+add no detail she left open. Its prompt says so, and a model can ignore its rules: a rewrite
+stating a detail neither her draft nor its context gives is not used, and the answer names what it
+added (``added``) so the composer can say why her draft is unchanged.
+"""
 
 import asyncio
 import logging
@@ -8,6 +14,7 @@ from aiohttp import web
 
 from personalclaw.agents.defaults import LITE_AGENT_NAME
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.given_details import ungiven
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.llm.events import EVENT_SPENT
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -89,9 +96,10 @@ async def handle_optimize(request: web.Request) -> web.Response:
         return web.json_response({"optimized": prompt, "changed": False})
 
     # Build the user message with context
+    context = _clip_context(context)
     parts = []
     if context:
-        parts.append(f"<context>\n{_clip_context(context)}\n</context>\n")
+        parts.append(f"<context>\n{context}\n</context>\n")
     parts.append(f"<original_prompt>\n{prompt}\n</original_prompt>")
     user_msg = "\n".join(parts)
 
@@ -161,6 +169,15 @@ async def handle_optimize(request: web.Request) -> web.Response:
     # Redact any exfiltration URLs or credentials from LLM output
     optimized, _ = redact_exfiltration_urls(optimized)
     optimized, _ = redact_credentials(optimized)
+
+    added = ungiven(optimized, f"{prompt}\n{context}")
+    if added:
+        logger.warning(
+            "Optimizer: kept the draft; its rewrite states %d detail(s) neither the draft nor its "
+            "context gives",
+            len(added),
+        )
+        return web.json_response({"optimized": prompt, "changed": False, "added": added})
 
     changed = optimized.lower().strip() != prompt.lower().strip()
     if not changed:

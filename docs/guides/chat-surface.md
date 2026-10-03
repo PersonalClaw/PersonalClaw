@@ -208,9 +208,17 @@ is shorter than describing which paragraph you mean, and it removes the guess.
 **Where:** under the last reply, a second or two after it finishes.
 
 Two or three suggested next messages appear as chips. **Click** one to put it in the composer
-so you can edit it first; the small **send glyph** on the chip (or a double-click) sends it as
-it is. They disappear the moment you do anything else — start typing, send something, switch
-session — so they never move the composer under you.
+so you can edit it first; the small **send glyph** on the chip sends it as it is. They disappear
+the moment you do anything else — start typing, send something, switch session — so they never
+move the composer under you.
+
+A chip is sent as your own words, so it never says anything for you that the conversation
+doesn't. When the reply asks you for something (a time, a detail, a choice), the chips leave the
+answer to you and suggest what you might ask or do instead. A chip the model wrote with a time,
+number, name, path or file that neither your message nor the reply gives is not shown. The
+suggestions on a new chat follow the same rule, checked against what they were written from, and
+so does **Optimize**: a rewrite that adds a detail you left open is not used, and the composer
+says what it added.
 
 Each suggestion costs one small background model call per reply, using your fastest bound
 model, and it never blocks the answer. Turn it off in **Settings → Chat → Follow-up

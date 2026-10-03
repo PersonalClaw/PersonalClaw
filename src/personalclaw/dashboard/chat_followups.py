@@ -9,6 +9,12 @@ It NEVER blocks the turn: the task is fire-and-forget, stored on
 ``session._followups_task``, and the next ``run_chat`` dispatch cancels it. When no
 model is bound the call raises → caught here → no event fires (the degrade
 contract), so the turn completes normally and the FE simply renders no chips.
+
+A chip is sent with one click as her own words, so it may say for her only what the exchange
+says. Every chip is written under :data:`_FOLLOWUP_RULES`, whatever prompt is bound, and a chip
+stating a detail the exchange does not give is left out (``given_details.keep_given``). Measured
+before these: a reply asked her for a swim class's time, which nothing of hers held, and a chip
+under it read "Lina's swim class is Saturday at 10:00 AM".
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from typing import TYPE_CHECKING
 from personalclaw.agents.defaults import LITE_AGENT_NAME
 from personalclaw.dashboard.chat_title import chat_chore, keeps_to_its_own_model
 from personalclaw.dashboard.chat_utils import _history_key_for
+from personalclaw.given_details import keep_given
 from personalclaw.llm_helpers import parse_llm_json_list
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
@@ -35,6 +42,19 @@ _FOLLOWUPS_TIMEOUT_SECS = 20
 # How many trailing chars of the exchange to feed the prompt (recency beats breadth).
 _USER_CAP = 1000
 _REPLY_CAP = 2000
+
+#: What every follow-up is written under, after whatever prompt is bound for them: the bound
+#: prompt may be her own edit, or a copy seeded before these rules existed.
+_FOLLOWUP_RULES = (
+    "Rules for these follow-ups, whatever is above:\n"
+    "- The user sends a follow-up with one click, as their own words. So a follow-up never states "
+    "a fact, time, date, name, number, place or decision for them that neither their message nor "
+    "the reply above gives.\n"
+    "- When the reply asks the user for something (a time, a detail, a choice), a follow-up never "
+    "answers it for them, not even as a guess: suggest what they might ask or do next instead. "
+    'After "Tell me the time and I\'ll add it to your notes", "Where else might the time be '
+    'written down?" is a good follow-up, and "It\'s at 10:00 AM" never is.'
+)
 
 
 def _followups_enabled() -> bool:
@@ -165,11 +185,12 @@ def _redact(items: list[str]) -> list[str]:
 
 
 async def _generate_followups(session: "_ChatSession") -> list[str]:
-    """Ask for *session*'s follow-ups and return them parsed and redacted.
+    """Ask for *session*'s follow-ups and return them parsed, checked and redacted.
 
     A first model of the Background chain that fails, is paused or answers no list hands the
     call to the next one. No model bound, or none answering, raises; the caller catches
-    everything (the degrade contract).
+    everything (the degrade contract). A follow-up stating a detail the exchange it was written
+    from does not give is left out.
     """
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
@@ -180,9 +201,10 @@ async def _generate_followups(session: "_ChatSession") -> list[str]:
     if not prompt:
         return []
     text = await asyncio.wait_for(
-        chat_chore(session, prompt, validate=_followups_problem), timeout=_FOLLOWUPS_TIMEOUT_SECS
+        chat_chore(session, f"{prompt}\n\n{_FOLLOWUP_RULES}", validate=_followups_problem),
+        timeout=_FOLLOWUPS_TIMEOUT_SECS,
     )
-    return _redact(_parse_followups(text))
+    return _redact(keep_given(_parse_followups(text), exchange, what="Follow-ups"))
 
 
 async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> None:

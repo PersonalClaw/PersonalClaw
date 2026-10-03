@@ -8645,7 +8645,7 @@ export const api = {
 
   // composer tools: prompt optimizer + speech-to-text transcription.
   optimizePrompt: (prompt: string, context = '') =>
-    post<{ optimized?: string; changed?: boolean }>('/api/optimizer/optimize', { prompt, context }),
+    post<{ optimized?: string; changed?: boolean; added?: string[] }>('/api/optimizer/optimize', { prompt, context }),
   /** Transcribe a recording. `duplex` marks a hands-free capture: the backend then
    *  checks the transcript against what it last spoke and answers
    *  `{ text: '', filtered: 'echo' }` when the microphone heard the assistant
