@@ -56,7 +56,9 @@ def test_spawn_run_error():
 
         result = _call_tool("subagent_run", {"task": "failing task"})
 
-        assert "queued" in result or "Error" in result
+        assert "1 task(s) did not start" in result
+        assert "failing task: capacity reached" in result
+        assert "None of them started" in result
 
 
 def test_spawn_run_no_args():
