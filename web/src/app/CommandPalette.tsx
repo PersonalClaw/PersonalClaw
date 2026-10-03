@@ -8,6 +8,7 @@ import { spring } from '../design/motion'
 import { Eyebrow } from '../ui/Eyebrow'
 import { SearchField } from '../ui/SearchField'
 import { CONTENT_SOURCES, MIN_CONTENT_QUERY, SOURCE_LABEL, useContentSearch, type ContentHit, type ContentSource } from './paletteSearch'
+import { PALETTE_SEARCH_LABEL } from './paletteSearchLabel'
 
 export interface Command {
   id: string
@@ -149,7 +150,7 @@ export function CommandPalette({ commands, navigate }: { commands: Command[]; na
             <div className="flex items-center gap-s border-b border-outline-variant/40 px-l h-14">
               <SearchField variant="inline" inlineIconSize={17} clearable={false}
                 inputRef={inputRef} value={q} onChange={search} onKeyDown={onKeyDown}
-                placeholder="Search pages, actions and content…" ariaLabel="Search pages, actions and content"
+                placeholder={`${PALETTE_SEARCH_LABEL}…`} ariaLabel={PALETTE_SEARCH_LABEL}
                 ariaHasPopup="listbox" ariaControls={`${cpId}-list`}
                 ariaActiveDescendant={rows.length ? `${cpId}-opt-${Math.min(active, rows.length - 1)}` : undefined}
                 trailingSlot={<kbd className="rounded-md bg-surface-high px-1.5 py-0.5 font-mono text-on-surface-low text-[0.75rem]">esc</kbd>} />

@@ -609,9 +609,12 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
             // 🔴 The row whose detail is open was a 14% primary tint and a recoloured icon/title, with
             // nothing programmatic. Master-detail, not a listbox choice, so `aria-current` is the marker
             // — the same one `ui/NavRail` uses for the section you are on.
+            // `focus-visible:-outline-offset-2` draws the focus ring just inside the row. Tabbing to a
+            // row the list shows only in part scrolls it until its box meets the list's edge, so a ring
+            // drawn outside the box was cut off there, by the list and by the window.
             return (
               <button key={it.uid} type="button" aria-current={on ? 'true' : undefined} onClick={() => setSelUid(it.uid)}
-                className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors"
+                className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors focus-visible:-outline-offset-2"
                 style={on ? { background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' } : undefined}>
                 <Icon size={13} className="mt-0.5 shrink-0" style={{ color: on ? 'var(--color-primary)' : 'var(--color-on-surface-low)' }} />
                 <span className="min-w-0 flex-1">
@@ -658,32 +661,39 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
             zoom controls (bottom-3 right-3) — the canvas has four occupied corners already,
             so this strip takes the band between them. ONE nowrap line that scrolls rather
             than wrapping: the Selects are `w-full` by default, so a wrapping row stacked
-            them full-width and buried the counter. */}
-        <div className="absolute bottom-11 left-3 right-14 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
-          <div className="shrink-0 rounded-pill bg-surface-high/90 backdrop-blur">
-            <Segmented size="sm" ariaLabel="Which graph to draw" value={graphMode}
-              onChange={(k) => setGraphMode(k as 'records' | 'entities')}
-              options={[{ key: 'records', label: 'Records' }, { key: 'entities', label: 'Entities' }]} />
+            them full-width and buried the counter.
+            A box that scrolls clips on both axes, so a control's focus ring, drawn 4px outside
+            it, was cut wherever the control met the strip's edge: "Records" lost its top and left
+            edge. `p-s` is room for the ring at every density (the ring does not scale with it),
+            and the insets sit 8px further out so the controls stay where they were. The gap
+            lives on the row inside, so neither box mixes the spacing rungs with a half-step. */}
+        <div className="absolute bottom-10 left-1 right-12 overflow-x-auto p-s">
+          <div className="flex w-max flex-nowrap items-center gap-1.5">
+            <div className="shrink-0 rounded-pill bg-surface-high/90 backdrop-blur">
+              <Segmented size="sm" ariaLabel="Which graph to draw" value={graphMode}
+                onChange={(k) => setGraphMode(k as 'records' | 'entities')}
+                options={[{ key: 'records', label: 'Records' }, { key: 'entities', label: 'Entities' }]} />
+            </div>
+            {graphMode === 'entities' && (
+              <>
+                <div className="w-[7.5rem] shrink-0">
+                  <Select value={edgeFilters.linkType} onChange={(v) => setEdgeFilters((f) => ({ ...f, linkType: v }))}
+                    options={linkTypeOptions} ariaLabel="Filter links by type" />
+                </div>
+                <div className="w-[7.5rem] shrink-0">
+                  <Select value={edgeFilters.provenance} onChange={(v) => setEdgeFilters((f) => ({ ...f, provenance: v }))}
+                    options={provenanceOptions} ariaLabel="Filter links by provenance" />
+                </div>
+                <label data-type="caption" className="flex shrink-0 items-center gap-1.5 rounded-pill bg-surface-high/90 px-2.5 py-1 text-on-surface-low backdrop-blur">
+                  min conf
+                  <input type="range" min={0} max={1} step={0.05} value={edgeFilters.minConfidence}
+                    onChange={(e) => setEdgeFilters((f) => ({ ...f, minConfidence: Number(e.target.value) }))}
+                    aria-label="Minimum link confidence" className="w-16 accent-[var(--color-primary)]" />
+                  <span className="tabular-nums">{edgeFilters.minConfidence.toFixed(2)}</span>
+                </label>
+              </>
+            )}
           </div>
-          {graphMode === 'entities' && (
-            <>
-              <div className="w-[7.5rem] shrink-0">
-                <Select value={edgeFilters.linkType} onChange={(v) => setEdgeFilters((f) => ({ ...f, linkType: v }))}
-                  options={linkTypeOptions} ariaLabel="Filter links by type" />
-              </div>
-              <div className="w-[7.5rem] shrink-0">
-                <Select value={edgeFilters.provenance} onChange={(v) => setEdgeFilters((f) => ({ ...f, provenance: v }))}
-                  options={provenanceOptions} ariaLabel="Filter links by provenance" />
-              </div>
-              <label data-type="caption" className="flex shrink-0 items-center gap-1.5 rounded-pill bg-surface-high/90 px-2.5 py-1 text-on-surface-low backdrop-blur">
-                min conf
-                <input type="range" min={0} max={1} step={0.05} value={edgeFilters.minConfidence}
-                  onChange={(e) => setEdgeFilters((f) => ({ ...f, minConfidence: Number(e.target.value) }))}
-                  aria-label="Minimum link confidence" className="w-16 accent-[var(--color-primary)]" />
-                <span className="tabular-nums">{edgeFilters.minConfidence.toFixed(2)}</span>
-              </label>
-            </>
-          )}
         </div>
         {focusRef && (
           <div data-type="caption" className="absolute right-3 top-3 flex items-center gap-2 rounded-pill bg-surface-high/90 px-2 py-1 backdrop-blur">

@@ -381,7 +381,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
                         {detail ? (
                           <div data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{detail}</div>
                         ) : null}
-                        <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
+                        <div data-type="caption" className="mt-0.5 text-on-surface-low">
                           {viaLabel(s.via)} · added {addedLabel(s.added_at)}
                         </div>
                       </div>
@@ -442,7 +442,7 @@ function UnpairedSenders({ p, label }: { p: ChannelTrustProvider; label: string 
                   {detail ? (
                     <div data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{detail}</div>
                   ) : null}
-                  <div data-type="caption" className="mt-0.5 text-on-surface-low/80">{wroteLabel(s)}</div>
+                  <div data-type="caption" className="mt-0.5 text-on-surface-low">{wroteLabel(s)}</div>
                 </div>
               </div>
             </ListRow>
@@ -533,7 +533,7 @@ function GroupsBlock({ p, label, onChanged, onSaid }: {
                 <div className="flex items-center justify-between gap-l py-2">
                   <div className="min-w-0">
                     <div data-type="body-s" className="truncate text-on-surface">{g.name || g.channel_id}</div>
-                    <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
+                    <div data-type="caption" className="mt-0.5 text-on-surface-low">
                       {g.name ? `${g.channel_id} · ` : ''}tracked {addedLabel(g.added_at)}{groupsOff ? ' · groups are off, so it is not read' : ''}
                     </div>
                   </div>
@@ -556,7 +556,7 @@ function GroupsBlock({ p, label, onChanged, onSaid }: {
                 <div className="flex items-center justify-between gap-l py-2">
                   <div className="min-w-0">
                     <div data-type="body-s" className="truncate text-on-surface">{g.name || g.channel_id}</div>
-                    <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
+                    <div data-type="caption" className="mt-0.5 text-on-surface-low">
                       {g.name ? `${g.channel_id} · ` : ''}last message {addedLabel(g.last_seen)} · not read
                     </div>
                   </div>

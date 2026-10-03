@@ -348,7 +348,7 @@ export function DevicesPanel() {
               {' · '}
               <span>{issuerLabel(d)}</span>
             </div>
-            <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
+            <div data-type="caption" className="mt-0.5 text-on-surface-low">
               {signedInLine(d)}
               {d.expires_at > 0 ? ` · ${d.pool === 'token' ? 'stops working' : 'session expires'} ${absTime(d.expires_at)}` : ''}
             </div>
@@ -385,7 +385,7 @@ export function DevicesPanel() {
               {' · '}
               <span>Last used {r.last_seen > 0 ? relPast(r.last_seen) : 'never'}</span>
             </div>
-            <div data-type="caption" className="mt-0.5 text-on-surface-low/80">
+            <div data-type="caption" className="mt-0.5 text-on-surface-low">
               {integrationLine(r)}
               {r.kind === 'surface' && r.state !== 'live'
                 ? <>{' · a new one: '}<code className="font-mono">{r.renew}</code></>

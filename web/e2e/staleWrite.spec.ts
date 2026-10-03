@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { gotoRoute } from './helpers'
+import { gotoRoute, openHeaderOverflowIfNeeded } from './helpers'
 
 // ── Two tabs, one list: a save from the stale tab never overwrites the other tab's change ──────
 //
@@ -38,6 +38,28 @@ async function addRule(page: Page, name: string, regex: string) {
   await page.getByLabel('New rule name').fill(name)
   await page.getByLabel('Match regex for the new rule').fill(regex)
   await page.getByRole('button', { name: 'Add rule' }).click()
+}
+
+/** What the two MCP servers run: a path that resolves to nothing, so a server exists, is allowed,
+ *  and never starts — its row (and its grant switch) still renders. */
+const SERVER_COMMAND = '/nonexistent/e2e-mcp-server'
+
+/** Add an MCP server from the Tools page as a person does: the Add tool server form, then the
+ *  gateway's question about what the server will run, answered Allow. A new server runs only once
+ *  its owner says yes to what it runs, so the add asks before anything is saved. */
+async function addServer(page: Page, name: string) {
+  expect(await openHeaderOverflowIfNeeded(page, 'Add tool server'), 'the Tools page offers Add tool server').toBe(true)
+  await page.getByRole('button', { name: 'Add tool server', exact: true }).click()
+  const form = page.getByRole('dialog', { name: 'Add tool server' })
+  await form.getByLabel('Name', { exact: true }).fill(name)
+  await form.getByLabel('Command', { exact: true }).fill(SERVER_COMMAND)
+  await form.getByRole('button', { name: 'Add server' }).click()
+  const ask = page.getByRole('alertdialog', { name: 'Allow this MCP server to run?' })
+  await expect(ask, 'the question names the server and what it runs').toContainText(
+    `Saving “${name}” lets PersonalClaw run ${SERVER_COMMAND} as you`,
+  )
+  await ask.getByRole('button', { name: 'Allow', exact: true }).click()
+  await expect(form, 'the form closes once the server is saved').toHaveCount(0)
 }
 
 /** Remove an MCP server if a crashed earlier run left it behind; a missing one is fine. */
@@ -123,17 +145,13 @@ test.describe('a save from a stale tab', () => {
   test('two tabs granting different MCP servers keep both grants', async ({ context }) => {
     const a = await context.newPage()
     const b = await context.newPage()
-    // Seeded from another route: a second `goto` of the route a tab is already on is a same-document
-    // hash change, which keeps the server list that page painted before the servers existed.
+    // Removed first, from another route, if a crashed earlier run left them: adding a name that is
+    // already configured is refused, and the Tools page should first paint without them.
     await gotoRoute(a, 'settings')
+    for (const name of ['e2e-alpha', 'e2e-beta']) await removeServer(a, name)
     // Two servers that exist but never connect: their rows (and grant switches) still render.
-    // Removed first: a PUT with no revision only ADDS a server, and is refused (428) for a name
-    // that is already configured.
-    for (const name of ['e2e-alpha', 'e2e-beta']) {
-      await removeServer(a, name)
-      await inTab(a, `/api/mcp/servers/${name}`, { method: 'PUT', body: { transport: 'stdio', command: 'true', args: [] } })
-    }
     await gotoRoute(a, 'tools')
+    for (const name of ['e2e-alpha', 'e2e-beta']) await addServer(a, name)
     await gotoRoute(b, 'tools') // both tabs paint "nobody may ask"
 
     for (const [page, server] of [[a, 'e2e-alpha'], [b, 'e2e-beta']] as const) {

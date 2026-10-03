@@ -57,6 +57,18 @@ const MEASURED = new Set([
   // surface goes 1 blocking → 0 in every config. Its sibling legend members were already full-alpha
   // `text-warn` / `text-danger`; this was the only dimmed one.
   'pages/tasks/TaskGraph.tsx',
+  // Measured the same way. The caption under each signed-in device ("Signed in 2m ago · session
+  // expires …") carried `text-on-surface-low/80` on its row's `bg-surface-container`, and axe
+  // reported `[serious] color-contrast` on `#/settings/devices` in dark: **4.28:1** (#818283 on
+  // #1e1f20). The integration row's caption below it is the same class on the same row surface.
+  // Undimmed it measures 5.93:1 dark / 9.39:1 light.
+  'pages/settings/DevicesPanel.tsx',
+  // The same caption on the same `bg-surface-container` row, four times: a paired sender's, an
+  // unpaired person's, a tracked group's and a group that messaged. The e2e home has no channel, so
+  // these rows were measured with a scratch home whose sender-trust store held one of each: all four
+  // at 4.3:1 in dark, and axe flagged the two people rows as `[serious] color-contrast` at 4.28:1.
+  // Undimmed, 5.93:1 dark / 9.39:1 light, and the panel goes 1 blocking → 0.
+  'pages/settings/SenderTrustPanel.tsx',
 ])
 const DIMMED_LOW_INK = /\btext-on-surface-low\/\d+\b/
 // An ICON is not text: 1.4.3 governs text contrast, and a decorative glyph falls under 1.4.11

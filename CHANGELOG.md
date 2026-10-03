@@ -184,6 +184,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **In Settings → Memory a focused explorer row and the graph's Records and Entities switch show their whole focus ring: a row the list showed only in part lost the bottom of its ring when Tab reached it, and the switch lost its top and left edge.**
+- **The captions under each device in Settings → Devices, and under each sender and group in Settings → Sender trust, are readable in the dark theme: dimmed, they fell below the contrast text needs.**
 - **Subagents, batches and workflow steps run in Temporary and Incognito chats, on the chat's own model and no other: they were refused every model, the chat's own included, and an Incognito chat's workflow step resumed after a restart started unmarked and on another model.**
 - **An automation whose agent or workflow run fails every time pauses itself and says why ("paused after 5 failed runs: …"), its history and last run say how that work ended, a run you stopped reads as stopped rather than failed, and switching a paused automation back on makes it run again.**
 - **A workflow your agent starts from a chat runs to the end, as one you start does, and keeps that chat's Incognito or Temporary setting; a pause your agent lifts lets the run carry on; and a run left with nothing driving it is picked up again instead of reading "running" on its first step for good.**

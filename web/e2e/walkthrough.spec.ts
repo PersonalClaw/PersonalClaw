@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, THEMES, type Theme } from './routes'
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
+import { PALETTE_SEARCH_LABEL } from '../src/app/paletteSearchLabel'
 
 // ── V3: the full-app keyboard-only / reduced-motion / phone-viewport walkthrough ─────────────
 //
@@ -54,8 +55,13 @@ const SURFACES = [...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES, ...NON_NAV_ROUT
  *  the moment the fix lands this file goes red telling you to delete the entry. That is the opposite
  *  of a count baseline, which would quietly absorb the fix and leave permanent slack. It has already
  *  paid for itself once — it turned the merge of the focus-ring work red and named the five entries
- *  to delete, which a count baseline would have silently absorbed. */
-const KNOWN_UNANNOUNCED: { route?: string; opener?: string; match: string; why: string }[] = [
+ *  to delete, which a count baseline would have silently absorbed.
+ *
+ *  An entry names its stop by the stop's WHOLE accessible name, imported from the module the
+ *  control itself reads it from, never by a copy. A copy is stranded by the first rename: the
+ *  palette's field became "Search pages, actions and content", the entry still said "Search pages
+ *  and actions", and the walk failed on the one stop it had already accounted for. */
+const KNOWN_UNANNOUNCED: { route?: string; opener?: string; name: string; why: string }[] = [
   // ── The four pending-fix groups that used to live here are GONE, because the focus-ring PR they
   //    were waiting on landed in the same batch as this file: PathBar's container (`files` / "Go to
   //    path"), PromptsPanel's select (`settings/prompts` / "Prompt for"), SecurityPanel's denylist
@@ -73,7 +79,7 @@ const KNOWN_UNANNOUNCED: { route?: string; opener?: string; match: string; why: 
     // a credit rule so the decision stays VISIBLE — a credit for "inputs inside modals" would
     // silently excuse the next real one.
     opener: 'command palette',
-    match: 'Search pages and actions',
+    name: PALETTE_SEARCH_LABEL,
     why: "ui/SearchField's inline variant, deliberately unringed — see SearchField.tsx around the OVERLAY_FOCUS constant.",
   },
 ]
@@ -149,11 +155,16 @@ async function installProbes(page: import('@playwright/test').Page) {
       for (const k of kids) parts.push(effective(getComputedStyle(k)))
       return parts.join('||')
     }
+    // The stop's whole accessible name, which a KNOWN_UNANNOUNCED entry is matched against. The
+    // description below cuts it to 32 characters to keep a report line short, so a name longer than
+    // that can never be found inside one.
+    w.__name = (el: Element | null) =>
+      el ? (el.getAttribute('aria-label') || el.textContent || '').trim() : ''
     w.__desc = (el: Element | null) => {
       if (!el) return 'none'
       const e = el as HTMLElement
       const cls = typeof e.className === 'string' ? e.className.split(/\s+/).slice(0, 3).join('.') : ''
-      const name = (e.getAttribute('aria-label') || e.textContent || '').trim().slice(0, 32)
+      const name = (w.__name as (el: Element) => string)(el).slice(0, 32)
       return `<${el.tagName.toLowerCase()}${cls ? ' .' + cls : ''}>${name ? ` "${name}"` : ''}`
     }
     // CARET CREDIT — deliberately NARROW.
@@ -177,13 +188,17 @@ async function installProbes(page: import('@playwright/test').Page) {
 
 }
 
+/** A focus stop that changes nothing visible: how the report shows it, and the whole accessible
+ *  name a KNOWN_UNANNOUNCED entry names it by. */
+type Unannounced = { desc: string; name: string }
+
 /** Tab through the focus ring, reporting every stop that changes nothing visible.
  *
  *  Stops at the first repeat (the ring wrapped) or at TAB_CAP, and REPORTS which — a cap that is
  *  silent would imply coverage it did not have. */
 async function tabWalk(page: import('@playwright/test').Page) {
   const seen = new Set<string>()
-  const unannounced: string[] = []
+  const unannounced: Unannounced[] = []
   let presses = 0
   let cappedOut = false
 
@@ -194,7 +209,8 @@ async function tabWalk(page: import('@playwright/test').Page) {
       if (!el || el === document.body) return null
       const w = window as unknown as Record<string, (el: Element | null) => unknown>
       const desc = w.__desc(el) as string
-      if (w.__caretCredited(el)) return { desc, ok: true, credited: true }
+      const name = w.__name(el) as string
+      if (w.__caretCredited(el)) return { desc, name, ok: true, credited: true }
       const sig = () => w.__sig(el) as string
       const settle = () => new Promise((r) => setTimeout(r, 260))
 
@@ -203,7 +219,7 @@ async function tabWalk(page: import('@playwright/test').Page) {
       const resting = sig()
       if (focused !== resting) {
         ;(el as HTMLElement).focus()
-        return { desc, ok: true, credited: false }
+        return { desc, name, ok: true, credited: false }
       }
       // 🪤 A SETTLED re-check before flagging. Focus treatments in this codebase are routinely
       // painted through `transition-colors`, and `getComputedStyle` returns the CURRENT value
@@ -220,12 +236,12 @@ async function tabWalk(page: import('@playwright/test').Page) {
       await settle()
       const restingSettled = sig()
       ;(el as HTMLElement).focus()
-      return { desc, ok: focusedSettled !== restingSettled, credited: false }
+      return { desc, name, ok: focusedSettled !== restingSettled, credited: false }
     })
     if (!r) break
     if (seen.has(r.desc)) break // wrapped around the tab ring
     seen.add(r.desc)
-    if (!r.ok) unannounced.push(r.desc)
+    if (!r.ok) unannounced.push({ desc: r.desc, name: r.name })
   }
   cappedOut = presses >= TAB_CAP
   return { stops: seen.size, presses, capped: cappedOut, unannounced }
@@ -249,7 +265,7 @@ for (const theme of THEMES) {
 
         await testInfo.attach(`kbd-${route}-${theme}.txt`, {
           body: `stops=${seenSize} presses=${presses} cappedAtTabCap=${cappedOut}\n` +
-            `unannounced=${unannounced.length}\n${unannounced.map((u) => '  ' + u).join('\n')}`,
+            `unannounced=${unannounced.length}\n${unannounced.map((u) => '  ' + u.desc).join('\n')}`,
           contentType: 'text/plain',
         })
 
@@ -263,7 +279,7 @@ for (const theme of THEMES) {
         ).toBeGreaterThan(0)
 
         const allowed = KNOWN_UNANNOUNCED.filter((k) => k.route === route)
-        const unexpected = unannounced.filter((u) => !allowed.some((k) => u.includes(k.match)))
+        const unexpected = unannounced.filter((u) => !allowed.some((k) => u.name === k.name)).map((u) => u.desc)
 
         expect(
           unexpected,
@@ -279,8 +295,8 @@ for (const theme of THEMES) {
         // silently widening the gate — see KNOWN_UNANNOUNCED.
         for (const k of allowed) {
           expect(
-            unannounced.some((u) => u.includes(k.match)),
-            `KNOWN_UNANNOUNCED names "${k.match}" on #/${route}, but that stop now announces its ` +
+            unannounced.some((u) => u.name === k.name),
+            `KNOWN_UNANNOUNCED names "${k.name}" on #/${route}, but that stop now announces its ` +
               `focus. The gate is wider than the code needs: DELETE the entry.\n  ${k.why}`,
           ).toBe(true)
         }
@@ -311,7 +327,7 @@ for (const theme of THEMES) {
         const walk = await tabWalk(page)
         await testInfo.attach(`kbd-opened-${opener.label.replace(/\W+/g, '-')}-${theme}.txt`, {
           body: `stops=${walk.stops} presses=${walk.presses} cappedAtTabCap=${walk.capped}\n` +
-            `unannounced=${walk.unannounced.length}\n${walk.unannounced.map((u) => '  ' + u).join('\n')}`,
+            `unannounced=${walk.unannounced.length}\n${walk.unannounced.map((u) => '  ' + u.desc).join('\n')}`,
           contentType: 'text/plain',
         })
 
@@ -322,9 +338,9 @@ for (const theme of THEMES) {
         ).toBeGreaterThan(0)
 
         const allowedHere = KNOWN_UNANNOUNCED.filter((k) => k.opener === opener.label)
-        const unexpectedHere = walk.unannounced.filter(
-          (u) => !allowedHere.some((k) => u.includes(k.match)),
-        )
+        const unexpectedHere = walk.unannounced
+          .filter((u) => !allowedHere.some((k) => u.name === k.name))
+          .map((u) => u.desc)
 
         expect(
           unexpectedHere,
@@ -335,8 +351,8 @@ for (const theme of THEMES) {
 
         for (const k of allowedHere) {
           expect(
-            walk.unannounced.some((u) => u.includes(k.match)),
-            `KNOWN_UNANNOUNCED names "${k.match}" on ${opener.label}, but that stop now announces ` +
+            walk.unannounced.some((u) => u.name === k.name),
+            `KNOWN_UNANNOUNCED names "${k.name}" on ${opener.label}, but that stop now announces ` +
               `its focus. DELETE the entry.\n  ${k.why}`,
           ).toBe(true)
         }
