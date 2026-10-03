@@ -365,16 +365,39 @@ and however the approval ends, the channel's prompt is told how (`approved`, `re
 `cancelled`), so it says so and takes its buttons off (`ChannelDelivery.request_approval`).
 
 **What a channel's prompt offers.** The answers the chat's card offers, decided by core and handed
-over in the brief (`DashboardApprovalState.channel_answers`, the vocabulary in
-`channel_delivery`): Allow once and Deny, and Allow for this chat, the card's "This chat", when the
-prompt is asked in the chat that is asking (the chat's own channel, in that chat), the call may not
-destroy anything (`task_modes.MAY_DESTROY`, where the card withholds its standing answers too) and
-the operator ceiling lets a chat's Trust stand. Everywhere else, like Home and the Inbox, it answers
-the call alone. A press of Allow for this chat decides through `decide_session_approval` with
-`trust`, exactly as the card's does: that chat is trusted, its header shows it, its next calls run
-without asking, and no other chat changes (`answer_on_channel`). An answer the prompt did not offer
-decides nothing. The card's "This agent" stays the card's: it saves a setting that outlives the
-chat.
+over in the brief (`DashboardApprovalState.channel_answers`, the vocabulary and the rule in
+`channel_delivery.chat_answers`): Allow once and Deny, and Allow for this chat, the card's "This
+chat", when the prompt is asked in the chat that is asking (the chat's own channel, in that chat),
+the call may not destroy anything (`task_modes.MAY_DESTROY`, where the card withholds its standing
+answers too), it reaches no host off the allowed hosts, and the operator ceiling lets a chat's
+Trust stand. Everywhere else, like Home and the Inbox, it answers the call alone. A press of Allow
+for this chat decides through `decide_session_approval` with `trust`, exactly as the card's does:
+that chat is trusted, its header shows it, its next calls run without asking, and no other chat
+changes (`answer_on_channel`). An answer the prompt did not offer decides nothing. The card's "This
+agent" stays the card's: it saves a setting that outlives the chat.
+
+**A conversation a channel runs itself.** A channel that runs the turns of a conversation itself
+(Slack's threads) asks about its own calls on a prompt of its own, and keeps no trust of its own
+(`chat_trust`). Its prompt, asked in that conversation, offers the same answers by the same rule
+(`approval_brief_for(event, chat=<session key>)`), and only while a chat the owner sees can hold a
+Trust: a dashboard runs, the channel linked the conversation to its thread (`set_channel_link`, as
+it does before running a turn, which lists the chat under the channel, so a chat of the owner's no
+channel runs is never one), and the conversation is the owner's and keeps its transcript (an
+Incognito or Temporary one is never listed). Allow for this chat pressed there is handed to
+`chat_trust.answer_in_chat`, which trusts PersonalClaw's chat for the conversation
+(`DashboardApprovalState.trust_channel_chat`): the chat open for it, or the conversation loaded whole
+into one as opening it from the history does, archived or not, or a new one while its first turn
+still runs. The chat's Permission mode then shows Trust and switches it off, and the grant writes
+the `tool_approval:trust` row another channel's Allow for this chat writes, naming the channel. At
+each call the channel asks `chat_trust.chat_grant` which of the chat's grants answers it (YOLO, its
+Trust, Trust reads), held to the runner's rules (`approval_grants.stands_for_call`: no grant answers
+a call that reaches a host off the allowed hosts, and the operator ceiling bounds each), so a Trust
+switched off in the dashboard makes the next call ask. The turns the channel writes reach the chat
+open for the conversation (`save_conversation_turn` → `DashboardState.take_channel_turn`): the chat
+rewrites the conversation's file from what it holds, and a turn it lacked was lost at the next save.
+The name the channel gives the conversation (`ConversationLog.set_title`, a thread's title) reaches
+that chat as well (`DashboardState.take_conversation_title`, a listener of the log's): a chat opened
+before the conversation was named shows the name, and its saves keep it.
 
 **How long it waits, and what a denial without an answer leaves.** Every approval that waits
 waits one window, the owner's `agent.approval_timeout_minutes` (Settings → Agent defaults →

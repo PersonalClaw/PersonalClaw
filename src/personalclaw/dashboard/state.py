@@ -952,6 +952,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._inbox_restart: Any = None
         self.context_builder = context_builder
         self.conversation_log = conversation_log
+        listeners = getattr(conversation_log, "title_listeners", None)
+        if isinstance(listeners, list):  # the name a channel gives a conversation reaches its chat
+            listeners.append(self.take_conversation_title)
         self.consolidator = consolidator
         # `channel_delivery` is a PROPERTY over `channel_delivery`'s per-provider registry (see
         # below), not a slot. It was a slot here AND a second one on the gateway orchestrator —
@@ -2109,6 +2112,43 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         """The key every chat held here runs its turns under (``dashboard:<name>``), for the
         session sweep: a ``dashboard:`` runtime whose key is not among them belongs to no chat."""
         return frozenset(dashboard_history_key(name) for name in list(self._sessions))
+
+    def take_conversation_title(self, key: str, title: str) -> None:
+        """Show *title*, which the conversation *key* was just given in the log, in the chat open
+        for it. A channel that runs a conversation itself names it there (Slack's thread titles),
+        and may do so after the chat opened: a Trust given on its first turn opens one before the
+        conversation has a name. The chat shows the name the conversation was last given, wherever
+        it was given, so its own saves keep that name too."""
+        session = self._sessions.get(key.removeprefix(DASHBOARD_SESSION_PREFIX))
+        if session is None or not title or title == session.title:
+            return  # no chat open for it, or the chat's own title, which it wrote itself
+        shown, _ = redact_exfiltration_urls(title)
+        shown, _ = redact_credentials(shown)
+        session.title = shown
+        session._titled = True
+        self.push_session_title(session.key, shown)
+
+    def take_channel_turn(self, log: Any, session_key: str, user_text: str, reply: str) -> None:
+        """A turn a channel wrote to *log* for a conversation it runs itself, also into the chat
+        open here for that conversation, when one is (``llm_helpers.save_conversation_turn``).
+
+        The chat is the conversation as the dashboard shows it, and it rewrites the conversation's
+        whole file from what it holds (``save_session_to_history``). A turn written to the file
+        alone was missing from it: the dashboard went on showing the conversation as it was when
+        the chat was opened (or trusted, ``chat_trust``), and the save every gateway stop makes
+        wrote that over the turns since. Only for the log this dashboard reads its chats from."""
+        session = self._sessions.get(session_key.removeprefix(DASHBOARD_SESSION_PREFIX))
+        if session is None or log is not self.conversation_log:
+            return
+        lines = [("user", user_text, "msg msg-u")]
+        if reply:
+            lines.append(("assistant", reply, "msg msg-a"))
+        for role, content, cls in lines:
+            session.append(role, content, cls, broadcast=False)
+            self._broadcast_chat_message(
+                session.key, {"role": role, "content": content, "cls": cls}
+            )
+        self.push_sessions_update()
 
     def get_linked_session(self, thread_key: str) -> "_ChatSession | None":
         """The chat a message on the channel thread *thread_key* continues, or None

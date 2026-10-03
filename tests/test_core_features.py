@@ -16,23 +16,31 @@ import pytest
 
 from personalclaw.apps.core_features import FEATURE_NAME_RE
 from personalclaw.sdk import features
-from personalclaw.sdk.features import APPROVAL_ANSWERS, CORE_FEATURES, GUARDED_DOWNLOAD, core_has
+from personalclaw.sdk.features import (
+    APPROVAL_ANSWERS,
+    CHAT_TRUST,
+    CORE_FEATURES,
+    GUARDED_DOWNLOAD,
+    core_has,
+)
 
 #: Every name a core has offered. A name leaves this set only with a deliberate break of every app
 #: that declares it, so a removal from CORE_FEATURES fails here first.
-OFFERED_ONCE = {"approval-answers", "guarded-download"}
+OFFERED_ONCE = {"approval-answers", "chat-trust", "guarded-download"}
 
 
 def test_the_sdk_publishes_the_names_and_the_question():
     assert set(features.__all__) == {
         "APPROVAL_ANSWERS",
+        "CHAT_TRUST",
         "CORE_FEATURES",
         "GUARDED_DOWNLOAD",
         "core_has",
     }
     assert APPROVAL_ANSWERS == "approval-answers"
+    assert CHAT_TRUST == "chat-trust"
     assert GUARDED_DOWNLOAD == "guarded-download"
-    for name in (APPROVAL_ANSWERS, GUARDED_DOWNLOAD):
+    for name in (APPROVAL_ANSWERS, CHAT_TRUST, GUARDED_DOWNLOAD):
         assert name in CORE_FEATURES
         assert core_has(name) is True
 
@@ -136,8 +144,55 @@ def _guarded_download_holds() -> None:
         server.server_close()
 
 
+def _chat_trust_holds() -> None:
+    """A channel's own prompt in a conversation it runs itself offers that chat's Trust, the
+    pressed Allow for this chat trusts PersonalClaw's chat for it, the next call runs on that
+    Trust, and the chat switched back to Normal makes the next call ask."""
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+    from unittest.mock import MagicMock
+
+    from personalclaw.dashboard.state import DashboardState
+    from personalclaw.history import ConversationLog
+    from personalclaw.inbox_providers import native_source
+    from personalclaw.sdk.channel import answer_in_chat, approval_brief_for, chat_grant
+
+    with TemporaryDirectory() as scratch:
+        sessions = MagicMock()
+        # The channel linked the conversation to its thread, as it does before running a turn.
+        sessions.get_channel_link.side_effect = lambda key: (
+            (key, "D0CHAT") if key == "1700000000.000100" else (None, None)
+        )
+        state = DashboardState(
+            sessions=sessions,
+            start_time=0.0,
+            conversation_log=ConversationLog(base_dir=Path(scratch)),
+        )
+        state.push_sessions_update = MagicMock()
+        before = native_source.get_dashboard_state()
+        native_source.set_dashboard_state(state)
+        try:
+            event = SimpleNamespace(
+                title="write_file", tool_input='{"path": "notes.md"}', tool_purpose="", tool_meta={}
+            )
+            brief = approval_brief_for(event, chat="1700000000.000100")
+            assert brief is not None
+            assert [a["key"] for a in brief["answers"]] == ["approved", "trust", "rejected"]
+            assert chat_grant("1700000000.000100", event) == ""
+            assert answer_in_chat("1700000000.000100", "trust", channel="chatapp") is True
+            assert chat_grant("1700000000.000100", event) == "trust"
+            state._sessions["1700000000.000100"]._trust = False
+            assert chat_grant("1700000000.000100", event) == ""
+        finally:
+            native_source.set_dashboard_state(before)
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
-WITNESSES = {APPROVAL_ANSWERS: _approval_answers_hold, GUARDED_DOWNLOAD: _guarded_download_holds}
+WITNESSES = {
+    APPROVAL_ANSWERS: _approval_answers_hold,
+    CHAT_TRUST: _chat_trust_holds,
+    GUARDED_DOWNLOAD: _guarded_download_holds,
+}
 
 
 def test_every_offered_feature_has_a_witness():

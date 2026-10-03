@@ -107,6 +107,11 @@ _CREATES_BY_DESIGN: dict[str, str] = {
         "name=`task_session_key(loop.id, task.id)` — derived from the loop task"
     ),
     "planning/runner.py::run_planner_pass": "name=`skey` — derived from the planner pass",
+    "dashboard/approval_state.py::DashboardApprovalState._channel_chat": (
+        "name = a conversation a channel runs itself, linked to the channel's thread before its "
+        "turn runs (`holds_channel_chat`), and reached only when nothing of it is persisted: its "
+        "first turn is still running, and the channel writes that turn under the same key"
+    ),
     "inbound/openai_dialect.py::handle_chat_completions": (
         "name=`session_key_for(client_id, tag)` — namespaced by the AUTHENTICATED client "
         "id, and create-on-first-use is this dialect's whole contract (it has no delete "

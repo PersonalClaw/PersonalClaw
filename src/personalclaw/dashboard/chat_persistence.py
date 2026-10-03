@@ -863,6 +863,11 @@ def save_session_to_history(
         meta_line["memory_mode"] = session.memory_mode
         if session.title and session.title != session.key:
             meta_line["title"] = session.title
+        elif existing_meta.get("title"):
+            # A chat with no title of its own keeps the one its file has: a channel names the
+            # conversations it runs itself in the file (Slack's thread titles), and a chat opened
+            # for one before that name was given would otherwise drop it on its next save.
+            meta_line["title"] = existing_meta["title"]
         if session.agent:
             meta_line["agent"] = session.agent
         meta_line["model"] = session.model

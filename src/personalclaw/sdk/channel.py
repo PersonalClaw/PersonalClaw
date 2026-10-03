@@ -30,7 +30,8 @@ from personalclaw.acp.types import (  # noqa: F401
 # ── The approval prompt's content (what will run, masked) ──
 # A channel's `request_approval` renders from this alone: the tool, its arguments, the purpose,
 # the summary line and the reach line under it (a host off the allowed hosts), as the dashboard's
-# card shows them, every string already masked.
+# card shows them, every string already masked. `chat=` asks for the answers a channel's own turn
+# offers in a conversation the channel runs itself.
 from personalclaw.approval_brief import approval_brief_for
 
 # ── How long an approval waits for a person ──
@@ -79,6 +80,12 @@ from personalclaw.channel_trust import (
     trust_policies,
     untrack,
 )
+
+# ── The chat's Trust, for a conversation the channel runs itself ──
+# A channel that runs a conversation itself keeps no trust of its own: Allow for this chat on its
+# own prompt is that chat's Trust in PersonalClaw (`answer_in_chat`), shown and switched off there,
+# and each later call asks which of the chat's grants answers it (`chat_grant`).
+from personalclaw.chat_trust import answer_in_chat, chat_grant
 
 # ── A chore a channel asks a model for itself (a thread's title) ──
 # One fresh call on the Background chain, sent its own prompt and nothing else, metered and
@@ -358,12 +365,14 @@ __all__ = [
     "__version__",
     "active_voice_params",
     "allow_sender",
+    "answer_in_chat",
     "apply_trust_action",
     "approval_brief_for",
     "approval_window_secs",
     "assert_channel_contract",
     "atomic_write",
     "build_cancelled_turn_preamble",
+    "chat_grant",
     "chore_usage",
     "compress_thread_history",
     "compute_next_run_ts",

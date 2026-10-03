@@ -33,6 +33,7 @@ from personalclaw.textfmt import clip_words
 if TYPE_CHECKING:
     from personalclaw.channel_delivery import ApprovalAnswer
     from personalclaw.dashboard.state import _ChatSession
+    from personalclaw.history import ConversationLog
 
 logger = logging.getLogger(__name__)
 
@@ -263,10 +264,12 @@ class DashboardApprovalState:
     sessions: Any
     subagents: Any
     owner_questions: Any
+    conversation_log: ConversationLog | None
     broadcast_ws: Callable[..., None]
     enable_yolo: Callable[..., None]
     push_sessions_update: Callable[[], None]
     channel_provider_for: Callable[[str], str]
+    get_or_create_session: Callable[..., _ChatSession]
 
     def approval_window_secs(self) -> float:
         """How long an approval waits for an answer: ``agent.approval_timeout_minutes`` (F-33).
@@ -1217,48 +1220,24 @@ class DashboardApprovalState:
     ) -> tuple["ApprovalAnswer", ...]:
         """What a channel's prompt for *entry* offers: the dashboard card's answers, for that call.
 
-        Allow once and Deny always. "Allow for this chat" too, which is the card's "This chat"
-        (the chat's Trust), when all of these hold, and otherwise the prompt answers this call
-        alone:
-
-        * the approval is a chat's own, and the prompt is asked in that chat (*in_its_chat*: the
-          channel the chat started on, asking in it). Anywhere else "this chat" would name the
-          conversation the prompt is in rather than the one asking, and the surfaces outside a
-          chat (Home, the Inbox, the phone) offer Approve and Deny alone;
-        * the call may not destroy anything (``task_modes.MAY_DESTROY``): the card withholds its
-          standing answers on such a call until the owner unlocks them, and a prompt has no
-          unlock, so it offers what the card offers before one;
-        * the call reaches no host off the allowed hosts (the entry's ``reach``): such a call is
-          asked about whatever a grant says (``run_bounds``), so the card offers no standing
-          answer for it, and "Allow for this chat" would promise a "without asking" it never gets;
-        * the operator ceiling lets a chat's Trust stand, as the card's own route asks before it
-          grants it (``approval_grants.stands``): an answer that would be refused is not offered.
-
-        The card's "This agent" is not offered: it saves a setting on the agent that outlives the
-        chat, and the card says per agent whether it can, which is the card's to show.
+        Allow once and Deny alone unless the approval is a chat's own and the prompt is asked in
+        that chat (*in_its_chat*: the channel the chat started on, asking in it). Anywhere else
+        "this chat" would name the conversation the prompt is in rather than the one asking, and
+        the surfaces outside a chat (Home, the Inbox, the phone) offer Approve and Deny alone. In
+        its chat, the prompt offers what the card offers for the call: Allow for this chat too,
+        where the card would (``channel_delivery.chat_answers``: a call that may not destroy
+        anything, reaches no host off the allowed hosts, under a ceiling that lets a chat's Trust
+        stand).
         """
-        from personalclaw import approval_grants
-        from personalclaw.channel_delivery import (
-            ALLOW_FOR_THIS_CHAT,
-            ALLOW_ONCE,
-            DENY,
-            ONE_CALL_ANSWERS,
-        )
-        from personalclaw.task_modes import MAY_DESTROY
+        from personalclaw.channel_delivery import ONE_CALL_ANSWERS, chat_answers
 
         session = self._sessions.get(str(entry.get("session") or ""))
         its_own = session is not None and entry.get("id") == chat_approval_id(
             session.key, str(entry.get("request_id") or "")
         )
-        if (
-            not in_its_chat
-            or not its_own
-            or str(entry.get("risk") or "") in MAY_DESTROY
-            or entry.get("reach")
-            or not approval_grants.stands(approval_grants.TRUST, caller="channel", audit=False)
-        ):
+        if not in_its_chat or not its_own:
             return ONE_CALL_ANSWERS
-        return (ALLOW_ONCE, ALLOW_FOR_THIS_CHAT, DENY)
+        return chat_answers(risk=str(entry.get("risk") or ""), reach=str(entry.get("reach") or ""))
 
     def answer_on_channel(
         self,
@@ -1310,6 +1289,127 @@ class DashboardApprovalState:
             return False
         self.decide_session_approval(session, request_id, chosen.key, by=by)
         return True
+
+    # ── The chat of a conversation a channel runs itself (`personalclaw.chat_trust`) ──────────
+
+    def holds_channel_chat(self, session_key: str) -> bool:
+        """Whether this dashboard can hold the Trust of the conversation *session_key*, which a
+        channel runs itself, in a chat it lists under that channel: a conversation a channel
+        linked to one of its threads (``sessions.set_channel_link``, as a channel does before it
+        runs a turn of one), so never a chat of yours that no channel runs; one of yours (not one
+        an app started, which approves nothing on its own) that keeps its transcript (an Incognito
+        or Temporary chat is never listed, so a Trust on it could be neither seen nor switched
+        off). The chat is the conversation's own (``dashboard:<name>`` names the chat
+        ``<name>``), open here or not."""
+        from personalclaw import session_restrictions
+        from personalclaw.dashboard.chat_utils import resolve_history_key
+        from personalclaw.history import CREATED_BY_APP_META_KEY
+
+        name = session_key.removeprefix(DASHBOARD_SESSION_PREFIX)
+        if not name or session_restrictions.is_restricted(session_key):
+            return False
+        if not self._on_a_channel_thread(session_key, name):
+            return False
+        session = self._sessions.get(name)
+        if session is not None:
+            return session.memory_mode == "persistent" and not session.created_by_app
+        log = self.conversation_log
+        try:
+            key = resolve_history_key(log, name) if log is not None else None
+            meta = log.get_metadata(key) if key and log is not None else {}
+        except Exception:  # noqa: BLE001 - a record that cannot be read holds no Trust
+            self._log.warning("could not read the conversation %s", name, exc_info=True)
+            return False
+        return meta.get("memory_mode", "persistent") == "persistent" and not meta.get(
+            CREATED_BY_APP_META_KEY
+        )
+
+    def _on_a_channel_thread(self, session_key: str, name: str) -> bool:
+        """Whether a channel linked the conversation to one of its threads, under any key the
+        conversation is known by (the dashboard lists a chat so linked as that channel's)."""
+        for key in dict.fromkeys((session_key, f"{DASHBOARD_SESSION_PREFIX}{name}", name)):
+            try:
+                thread, _channel = self.sessions.get_channel_link(key)
+            except Exception:  # noqa: BLE001 - a link that cannot be read is none
+                continue
+            if thread:
+                return True
+        return False
+
+    def trust_channel_chat(self, session_key: str, *, by: Principal, request_id: str = "") -> bool:
+        """Trust the chat of the conversation *session_key*, which a channel runs itself, as the
+        card's "This chat" trusts a chat: Allow for this chat, pressed on the channel's own prompt
+        (``chat_trust.answer_in_chat``).
+
+        The chat is the one open here, or the conversation loaded into one as opening it from the
+        history does, or, while its first turn is still running and nothing of it is written yet,
+        a new one. Its Permission mode then shows Trust, the channel's next calls run without
+        asking (``chat_trust.chat_grant``), and the owner switches it off there, as for any chat.
+        The audit row is the one another channel's Allow for this chat writes, naming *by* and
+        the call it was given on (*request_id*). Only an answerer may give it
+        (``approval_answer``), and the operator ceiling must let a chat's Trust stand. Returns
+        whether the chat is trusted.
+        """
+        from personalclaw import approval_grants
+
+        name = session_key.removeprefix(DASHBOARD_SESSION_PREFIX)
+        if approval_answer.check(by, what=f"chat:{name}", asked_by=""):
+            return False
+        if not self.holds_channel_chat(session_key):
+            return False
+        if not approval_grants.stands(
+            approval_grants.TRUST, caller=by.label, subject=f"scope=trust,chat={name}"
+        ):
+            return False
+        session = self._channel_chat(name)
+        if session is None:
+            return False
+        session._trust = True
+        session._trust_from_floor = ""  # yours, not a floor's to withdraw
+        self.sessions.set_approval_policy(f"dashboard:{name}", "auto")
+        self.push_sessions_update()
+        try:
+            sel().log_api_access(
+                caller=f"dashboard:{name}",
+                operation="tool_approval:trust",
+                outcome="approved",
+                resources=request_id or name,
+                metadata={"decided_by": by.label},
+            )
+        except Exception:
+            self._log.warning("SEL audit failed for the Trust of %s", name, exc_info=True)
+        return True
+
+    def channel_chat_posture(self, session_key: str) -> str | None:
+        """The approval posture of the chat of the conversation *session_key*, which a channel
+        runs itself: ``trust``, ``trust_reads``, or ``""`` when it asks (no chat is open for it,
+        or its Permission mode is Normal). None for a conversation an app started, which approves
+        nothing on its own, whatever a switch says (``chat_runner.started_by_app``)."""
+        session = self._sessions.get(session_key.removeprefix(DASHBOARD_SESSION_PREFIX))
+        if session is None:
+            return ""
+        if session.created_by_app:
+            return None
+        if session._trust:
+            return "trust"
+        return "trust_reads" if session._trust_reads else ""
+
+    def _channel_chat(self, name: str) -> "_ChatSession | None":
+        """The chat that holds the conversation *name*: the one open here, else the conversation
+        loaded whole into one, archived or not (archival is not deletion), else a new one when
+        nothing of it is persisted yet. None when something is persisted that cannot be loaded:
+        a blank chat would be saved over its transcript."""
+        from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
+        from personalclaw.dashboard.chat_utils import resolve_history_key
+
+        session = self._sessions.get(name)
+        if session is not None:
+            return session
+        log = self.conversation_log
+        if log is not None and resolve_history_key(log, name):
+            state: Any = self  # the DashboardState this registry is mixed into
+            return _rehydrate_session_from_history(state, name, include_archived=True)
+        return self.get_or_create_session(name)
 
     async def _approval_link_on_a_channel(
         self, approval_id: str, entry: dict[str, Any], providers: list[str]

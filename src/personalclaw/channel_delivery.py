@@ -112,6 +112,41 @@ DENY = ApprovalAnswer("rejected", "Deny", "rejected", "DENY")
 ONE_CALL_ANSWERS: tuple[ApprovalAnswer, ...] = (ALLOW_ONCE, DENY)
 
 
+def chat_answers(*, risk: str, reach: str) -> tuple[ApprovalAnswer, ...]:
+    """What a prompt asked in the chat that is asking offers for one of its calls: what the chat's
+    approval card offers for it.
+
+    Allow once and Deny always, and Allow for this chat (the card's "This chat", the chat's Trust)
+    when all of these hold, and otherwise the prompt answers this call alone:
+
+    * the call may not destroy anything (its effective *risk* is not one of
+      ``task_modes.MAY_DESTROY``): the card withholds its standing answers on such a call until
+      the owner unlocks them, and a prompt has no unlock, so it offers what the card offers before
+      one;
+    * it has no *reach*, the line saying it reaches a host off the allowed hosts: such a call is
+      asked about whatever a grant says (``run_bounds``), so the card offers no standing answer
+      for it, and Allow for this chat would promise a "without asking" it never gets;
+    * the operator ceiling lets a chat's Trust stand, as the card's own route asks before it grants
+      it (``approval_grants.stands``): an answer that would be refused is not offered.
+
+    One rule for both prompts asked in a chat: the one core asks in the chat a channel started
+    (``DashboardApprovalState.channel_answers``), and the one a channel's own turn raises in a
+    conversation the channel runs itself (``approval_brief.approval_brief_for`` given its chat).
+    The card's "This agent" is never offered: it saves a setting on the agent that outlives the
+    chat, and the card says per agent whether it can, which is the card's to show.
+    """
+    from personalclaw import approval_grants
+    from personalclaw.task_modes import MAY_DESTROY
+
+    if (
+        risk in MAY_DESTROY
+        or reach
+        or not approval_grants.stands(approval_grants.TRUST, caller="channel", audit=False)
+    ):
+        return ONE_CALL_ANSWERS
+    return (ALLOW_ONCE, ALLOW_FOR_THIS_CHAT, DENY)
+
+
 @runtime_checkable
 class ChannelDelivery(Protocol):
     """Outbound delivery a channel provides to the gateway. All text is PLAIN

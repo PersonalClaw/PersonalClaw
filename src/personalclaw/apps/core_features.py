@@ -38,8 +38,16 @@ APPROVAL_ANSWERS = "approval-answers"
 #: it does not load.
 GUARDED_DOWNLOAD = "guarded-download"
 
+#: A channel that runs a conversation itself keeps no trust of its own: its approval prompt for a
+#: call of that conversation offers what the chat's card offers, Allow for this chat included
+#: (``approval_brief_for(event, chat=<session key>)``), ``answer_in_chat`` makes the pressed Allow
+#: for this chat that chat's Trust in PersonalClaw (shown in the chat, and switched off there), and
+#: ``chat_grant`` says which of the chat's grants answers a later call without asking. A core
+#: without it has neither function, so an app that imports them does not load.
+CHAT_TRUST = "chat-trust"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
-CORE_FEATURES: frozenset[str] = frozenset({APPROVAL_ANSWERS, GUARDED_DOWNLOAD})
+CORE_FEATURES: frozenset[str] = frozenset({APPROVAL_ANSWERS, CHAT_TRUST, GUARDED_DOWNLOAD})
 
 #: The shape of a feature name: lowercase words joined by hyphens.
 FEATURE_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")

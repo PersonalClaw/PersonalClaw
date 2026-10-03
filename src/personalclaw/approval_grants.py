@@ -237,6 +237,28 @@ def stands(
     return False
 
 
+def stands_for_call(
+    grant: str, *, session_key: str, event: object, level: str = LEVEL_AUTO
+) -> bool:
+    """Whether *grant* may approve one call, the one *event* asks about in the session
+    *session_key*, without asking anyone: :func:`stands`, for that call.
+
+    No grant answers a call that reaches a host off the allowed hosts (``run_bounds``): that one is
+    put to a person. A refusal by the ceiling is audited, naming the call. A refused grant falls
+    through to what comes next: the call asks, or on an unattended turn is declined because nobody
+    can answer it. What a chat's runner asks of its Trust, YOLO and Trust reads, and what a channel
+    running a conversation itself asks of that chat's (``chat_trust.chat_grant``).
+    """
+    from personalclaw.run_bounds import off_list
+    from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+    if off_list(event, session_key):
+        return False
+    title, _ = redact_exfiltration_urls(str(getattr(event, "title", "") or ""))
+    title, _ = redact_credentials(title)
+    return stands(grant, caller=session_key, subject=f"tool={title[:80]}", level=level)
+
+
 def refusal_sentence() -> str:
     """What a person is told when they ask for a standing grant the ceiling refuses.
 

@@ -541,10 +541,13 @@ def save_conversation_turn(
     source_thread: str | None = None,
     source_user: str | None = None,
 ) -> None:
-    """Save a user+assistant conversation turn to the history log.
+    """Save a user+assistant conversation turn to the history log, with its provenance, and to
+    the chat the dashboard has open for the conversation, if it has one.
 
-    Consolidates the repeated pattern of appending user and assistant
-    messages with provenance tracking.
+    A channel that runs a conversation itself records its turns here. The dashboard's chat for
+    that conversation rewrites the whole file from what it holds, so it is given the turn too
+    (``DashboardState.take_channel_turn``): left out, the chat showed the conversation as it was
+    when it was opened, and its next save wrote that over every turn since.
     """
     log.append(
         key,
@@ -561,6 +564,15 @@ def save_conversation_turn(
             source_thread=source_thread,
             source_user=source_user,
         )
+    from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+    state = get_dashboard_state()
+    if state is None:
+        return
+    try:
+        state.take_channel_turn(log, key, user_text, assistant_text)
+    except Exception:  # noqa: BLE001 - the turn is written; the channel's reply must not fail
+        logger.warning("could not give the open chat for %s its turn", key, exc_info=True)
 
 
 def _enforces_json_schema_natively(model_ref: str) -> bool:

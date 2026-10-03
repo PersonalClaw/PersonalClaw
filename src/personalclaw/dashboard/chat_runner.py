@@ -2113,26 +2113,6 @@ def auto_approval_reason(yolo_active: bool) -> str:
     return approval_grants.YOLO if yolo_active else approval_grants.TRUST
 
 
-def _grant_stands(
-    grant: str, *, session_key: str, event: Any, level: str = approval_grants.LEVEL_AUTO
-) -> bool:
-    """Whether *grant* may approve this call without asking (`approval_grants.stands`).
-
-    The operator ceiling bounds every grant a chat has — its Trust, YOLO, Trust reads, an agent's
-    "always allow", an app's grant, a hook pattern — and a refusal is audited, naming the call.
-    A refused grant falls through to what comes next: the call asks, or on an unattended turn
-    is declined because nobody can answer it. No grant answers a call that reaches a host off the
-    allowed hosts (`run_bounds`): that one is put to a person.
-    """
-    if run_bounds.off_list(event, session_key):
-        return False
-    title, _ = redact_exfiltration_urls(event.title or "")
-    title, _ = redact_credentials(title)
-    return approval_grants.stands(
-        grant, caller=session_key, subject=f"tool={title[:80]}", level=level
-    )
-
-
 def _settle_granted(
     state: DashboardState, session: _ChatSession, *, tool: str, tool_input: Any, grant: str
 ) -> None:
@@ -4205,7 +4185,7 @@ async def run_chat(
                         continue
                     # An operator's auto-approve pattern is a grant at the `hook_based` level:
                     # a `hook_based` ceiling lets it stand, an `ask` one sends the call on to ask.
-                    if tool_result.action == TOOL_AUTO_APPROVE and _grant_stands(
+                    if tool_result.action == TOOL_AUTO_APPROVE and approval_grants.stands_for_call(
                         approval_grants.HOOK_PATTERN,
                         session_key=session_key,
                         event=event,
@@ -4355,7 +4335,7 @@ async def run_chat(
                     and not session._trust
                     and not yolo_active
                     and effective_risk == "safe"
-                    and _grant_stands(
+                    and approval_grants.stands_for_call(
                         approval_grants.TRUST_READS, session_key=session_key, event=event
                     )
                 ):
@@ -4410,7 +4390,7 @@ async def run_chat(
                     continue
                 # Trust mode (per-session) or YOLO mode (global) — auto-approve, if the operator
                 # ceiling lets that grant stand.
-                if (session._trust or yolo_active) and _grant_stands(
+                if (session._trust or yolo_active) and approval_grants.stands_for_call(
                     auto_approval_reason(yolo_active),
                     session_key=session_key,
                     event=event,

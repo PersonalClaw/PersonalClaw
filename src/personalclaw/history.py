@@ -28,7 +28,7 @@ import os
 import re
 import threading
 import time as _time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -611,6 +611,11 @@ class ConversationLog:
         # mtime-based message cache: key → (mtime, messages). What a listing reads of each
         # transcript is process-wide instead (`_HEADS`), so a new log lists for free.
         self._msg_cache: dict[str, tuple[float, list[dict]]] = {}
+        #: Told ``(key, title)`` each time :meth:`set_title` names a conversation, once it is
+        #: written: the dashboard shows the name in the chat it has open for the conversation,
+        #: which a channel that runs it may name after that chat opened
+        #: (``DashboardState.take_conversation_title``).
+        self.title_listeners: list[Callable[[str, str], None]] = []
 
     def init(self) -> None:
         """Create sessions directory if missing."""
@@ -1146,8 +1151,13 @@ class ConversationLog:
             logger.debug("delete_session: FTS forget failed for %s", key, exc_info=True)
 
     def set_title(self, key: str, title: str) -> None:
-        """Persist a title into the session's metadata line."""
+        """Persist a title into the session's metadata line, and tell :attr:`title_listeners`."""
         self.update_metadata(key, {"title": title})
+        for listener in tuple(self.title_listeners):
+            try:
+                listener(key, title)
+            except Exception:  # noqa: BLE001 - the title is written; a listener must not fail it
+                logger.warning("could not show the new title of %s", key, exc_info=True)
 
     def update_metadata(self, key: str, fields: dict) -> None:
         """Merge *fields* into the session's metadata line and persist."""

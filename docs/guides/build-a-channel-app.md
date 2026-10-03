@@ -169,6 +169,44 @@ the owner's press. Nobody answering in that window is `expired`, and the turn st
 ended, the prompt says how and loses its buttons, and a press that arrives later is told how it
 ended and changes nothing.
 
+### A trust on your own prompt is the chat's
+
+A channel that runs a conversation itself keeps no trust of its own: a trust the owner gives on its
+prompt is the Trust of PersonalClaw's chat for that conversation, the chat the dashboard lists it as
+under your channel. That is where its Permission mode shows it, where the owner switches it off,
+and what the security log records, as for every other chat. A trust kept in your app is one the
+owner can neither see nor revoke.
+
+- **Link the conversation to its thread.** Before you run a turn, link the session key to the
+  thread it runs in (the session manager's `set_channel_link(key, thread, channel_id)`), which is
+  what lists the chat under your channel. Only a conversation so linked can hold a Trust from your
+  prompt: a chat of the owner's that no channel runs is never yours to trust.
+- **Offer the chat's answers.** Read the brief for your own turn's call with
+  `approval_brief_for(event, chat=<the session key the turn runs under>)` when the prompt is in that
+  conversation. It then offers what the chat's approval card offers for the call: `Allow for this
+  chat` (`key` `trust`) where the card would (never for a call that may destroy something or that
+  reaches a host off the allowed hosts, and only under a ceiling that lets a chat's Trust stand), and
+  only while a chat the owner sees can hold it. Offer it nowhere you would not want the owner to
+  trust the whole conversation, and add no trust answer of your own.
+- **Hand core the answer pressed.** Before you approve the call, pass the pressed answer's `key` to
+  `personalclaw.sdk.channel.answer_in_chat(session_key, key, channel=<your provider key>,
+  request_id=...)`. `trust` makes it the chat's Trust and writes the audit row; an answer for the
+  call alone changes nothing beyond it. When it returns `False` the press decides nothing: keep
+  the approval waiting.
+- **Ask at every call.** Before you prompt, ask `personalclaw.sdk.channel.chat_grant(session_key,
+  event)`. It names the grant that approves the call without asking (`yolo`, `trust`,
+  `trust_reads`) under the rules the chat's own runner applies, or `""` when the call must be
+  asked. Read it per call and remember nothing: the owner switching the chat to Normal makes your
+  next call ask.
+- **Write your turns through `save_conversation_turn`, and name the conversation with the log's
+  `set_title`.** The chat the dashboard opens for your conversation is given each turn you write
+  there and each name you give it, so it shows the conversation as it is and its own saves keep
+  your turns and its name.
+
+A channel that uses these declares the core feature in its `app.json`:
+`"requiresCoreFeatures": ["chat-trust"]` (`personalclaw.sdk.features.CHAT_TRUST`). A PersonalClaw
+without it has neither function, and refuses to install or update the app.
+
 ### A compaction the agent did on its own is said
 
 The agent can compact the conversation on its own in the middle of a turn: an

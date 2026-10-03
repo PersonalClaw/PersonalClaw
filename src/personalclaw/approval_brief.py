@@ -64,7 +64,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from personalclaw.channel_delivery import ONE_CALL_ANSWERS, ApprovalAnswer
+from personalclaw import chat_trust
+from personalclaw.channel_delivery import ONE_CALL_ANSWERS, ApprovalAnswer, chat_answers
 from personalclaw.command_effects import CommandEffects
 from personalclaw.run_bounds import reach_note
 from personalclaw.security import redact_field
@@ -399,8 +400,12 @@ def _brief(
     return brief
 
 
-def compose_approval_brief(event: Any) -> dict[str, Any] | None:
+def compose_approval_brief(event: Any, *, chat: str = "") -> dict[str, Any] | None:
     """Compose the brief for one approval event, or ``None`` when it has no identity.
+
+    *chat* is the conversation a channel's own turn raised it in, given when the prompt is shown
+    in that conversation (:func:`approval_brief_for`); without it the prompt answers this call
+    alone.
 
     Reads only fields the event already carries, and takes its classification from
     ``task_modes`` rather than re-deriving it: one :func:`~personalclaw.task_modes.read_call`
@@ -425,6 +430,7 @@ def compose_approval_brief(event: Any) -> dict[str, Any] | None:
     tool_kind = str(getattr(event, "tool_kind", "") or "")
     tool_input = getattr(event, "tool_input", "")
     reading = read_call(getattr(event, "risk_level", ""), tool, tool_kind, tool_input)
+    reach = reach_note(getattr(event, "risk_level", ""), tool, tool_kind, tool_input, chat)
     return _brief(
         radius=derive_blast_radius(
             tool,
@@ -437,12 +443,16 @@ def compose_approval_brief(event: Any) -> dict[str, Any] | None:
         shown_purpose=redact_field(str(getattr(event, "tool_purpose", "") or "")),
         risk=reading.risk,
         # An event alone is a call with no chat behind it that core knows of: a background
-        # origin's (the gateway's relay), or one a channel's own turn raised. Its prompt answers
-        # this call and nothing beyond it.
-        answers=ONE_CALL_ANSWERS,
-        reach=redact_field(
-            reach_note(getattr(event, "risk_level", ""), tool, tool_kind, tool_input)
+        # origin's (the gateway's relay), or one a channel's own turn raised where the prompt is
+        # not in its conversation. Its prompt answers this call and nothing beyond it. A channel's
+        # own turn asked in its conversation is offered what that chat's card offers, while a chat
+        # the owner sees can hold its Trust.
+        answers=(
+            chat_answers(risk=reading.risk, reach=reach)
+            if chat and chat_trust.can_trust(chat)
+            else ONE_CALL_ANSWERS
         ),
+        reach=redact_field(reach),
     )
 
 
@@ -474,7 +484,7 @@ def entry_approval_brief(
     )
 
 
-def approval_brief_for(event: Any) -> dict[str, Any] | None:
+def approval_brief_for(event: Any, *, chat: str = "") -> dict[str, Any] | None:
     """What a channel's approval prompt shows, for *event*: THE read a channel makes.
 
     The brief core stamped on the event (``tool_meta``) when core asked the channel; composed
@@ -484,6 +494,14 @@ def approval_brief_for(event: Any) -> dict[str, Any] | None:
     when the call reaches a host off the allowed hosts (a line of its own, under the summary). A
     channel prints those and masks nothing of its own, and offers the ``answers`` it carries
     (``ChannelDelivery.request_approval``). ``None`` when the event names no tool.
+
+    *chat* is for a channel that runs a conversation itself and asks about its own turn's call in
+    that conversation: the session key the turn runs under. The prompt then offers what that
+    chat's approval card offers for the call, Allow for this chat among them where the card would
+    (``channel_delivery.chat_answers``), while a chat the owner sees can hold its Trust
+    (``chat_trust.can_trust``); the channel hands the answer pressed to
+    ``chat_trust.answer_in_chat``. Without it, a prompt for the channel's own turn answers the
+    call alone. A brief core stamped is core's, and *chat* changes nothing in it.
 
     A stamped brief that lacks one of those four strings, or answers a prompt can offer, is not
     used: the prompt it made would show less than the call, or offer nothing to press, so the
@@ -497,7 +515,7 @@ def approval_brief_for(event: Any) -> dict[str, Any] | None:
         and _offers_answers(brief.get("answers"))
     ):
         return brief
-    return compose_approval_brief(event)
+    return compose_approval_brief(event, chat=chat)
 
 
 #: What a prompt shows, all of it in every brief :func:`_brief` makes.

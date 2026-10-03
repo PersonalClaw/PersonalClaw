@@ -15,15 +15,20 @@ app relies on, and a build offers the name exactly when it offers the contract.
 approval brief (``personalclaw.sdk.channel.approval_brief_for(event)["answers"]``). A channel app
 whose prompt offers them declares it.
 
+``CHAT_TRUST``: a channel that runs a conversation itself offers that chat's Trust on its own
+approval prompt and keeps none of its own (``personalclaw.sdk.channel.approval_brief_for(event,
+chat=...)``, ``answer_in_chat`` and ``chat_grant``). A channel app that uses them declares it.
+
 ``GUARDED_DOWNLOAD``: a download streams through the egress guard
 (``personalclaw.sdk.net.open_url``). An app that downloads with it declares it.
 """
 
 from personalclaw.apps.core_features import (
     APPROVAL_ANSWERS,
+    CHAT_TRUST,
     CORE_FEATURES,
     GUARDED_DOWNLOAD,
     core_has,
 )
 
-__all__ = ["APPROVAL_ANSWERS", "CORE_FEATURES", "GUARDED_DOWNLOAD", "core_has"]
+__all__ = ["APPROVAL_ANSWERS", "CHAT_TRUST", "CORE_FEATURES", "GUARDED_DOWNLOAD", "core_has"]
