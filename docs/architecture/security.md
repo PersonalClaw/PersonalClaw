@@ -436,6 +436,19 @@ with its reason and hint before anyone is asked to approve it. Each turn the nat
 model which folders it reaches beyond the workspace (the `[file places]` note), and when it has the
 knowledge tools, to search the library first.
 
+The calendars in those folders are part of the same scope, not a new one. When the session has
+`calendar_events` (the bundled Calendar Tools app), the note also names each calendar file in the
+allowed working directories and the knowledge sources, by its name (`X-WR-CALNAME`, else the file
+name), its kind and its `~` path, and sends a question about plans to that tool
+(`calendar_files.find`: a few folders deep, a bounded number of entries per folder, hidden and
+dependency folders left out, and only a file a read there may open, `FileScope.admits`). The tool
+reads those files, or one `.ics` file it names that `FileScope.resolve` admits, and nothing else;
+it only reads, so it asks nobody. It answers with the events between two days in the user's time
+zone (the zone the request's date line is written in): a repeating event expanded at its own
+wall-clock time across a clock change, its exceptions and moved repeats applied, and an all-day
+event shown through its last day, never the exclusive end the file stores. A repeat rule it does
+not expand is said, with the event's first start listed.
+
 Inside every place the check the Files view and `/api/file-read` make still holds
 (`file_roots.Admission`): symlinks and `..` resolved, so a link or a climb out of a place reaches
 nothing; the PersonalClaw home reached only through a place inside it (`file_roots.within`); no

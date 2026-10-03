@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **An answer longer than the word limit its agent's own instructions set is followed by a note giving its word count and quoting the instruction. The answer itself is never cut.**
+- **The agent reads the calendars in the folders you share: each turn names them, and `calendar_events` lists what is on a day, with repeating events expanded in your time zone and an all-day event through its last day.**
 - **A chat channel's approval offers what the chat's approval card offers: Allow once, Allow for this chat and Deny, from the answers core hands over in the approval brief (channel contract change, used by `*-channel`).**
 - **`SubagentInfo.held_back` and `SubagentManager.spawn(held_back=…)` say why an agent may do less than the step that started it asks (an SDK addition no app has to change for).**
 - **A working folder that holds an automation back can be trusted from that automation's panel, and from the request it raised in the Inbox, which asked you to trust the folder and offered no way to.**

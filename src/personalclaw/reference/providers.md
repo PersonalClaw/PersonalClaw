@@ -50,6 +50,7 @@ The extension-provider taxonomy (the capability types an app can contribute) and
 - **mcp-tools** — type `tool` / ``; capabilities: tool_execution, tool_discovery
 - **personalclaw-artifacts** — type `tool` / ``; capabilities: artifacts
 - **personalclaw-automation-tools** — type `tool` / ``; capabilities: automation_management
+- **personalclaw-calendar-tools** — type `tool` / ``; capabilities: calendar
 - **personalclaw-code-map** — type `tool` / ``; capabilities: code_map
 - **personalclaw-computer-use-tools** — type `tool` / ``; capabilities: desktop_automation
 - **personalclaw-inbox-tools** — type `tool` / ``; capabilities: inbox

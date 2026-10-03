@@ -599,6 +599,39 @@ Schedule YOURSELF to do something REPEATEDLY on a cadence — 'every weekday at 
 }
 ```
 
+## personalclaw-calendar-tools
+
+### `calendar_events`
+
+Read the user's calendars: the calendar (.ics) files in the folders they share, which the turn's [file places] note names. Lists the events between two days, each with its day, its start and end in the user's time zone, its title and its place, repeating events expanded and an all-day event shown through its last day. Use it for any question about plans or the schedule: what is on a day, when or where something is. Args: optional start and end (YYYY-MM-DD, both included; default today and the six days after), optional query (words that must all appear in an event's title, place or notes), optional calendar (one calendar's name, or the path of an .ics file the file tools reach).
+
+**Response type:** `calendar.events.result`
+
+**Parameters:**
+- `calendar` (string, optional) — One calendar's name, or an .ics file's path.
+- `end` (string, optional) — Last day, YYYY-MM-DD, included.
+- `query` (string, optional) — Words an event's title, place or notes must hold.
+- `start` (string, optional) — First day, YYYY-MM-DD, in the user's time zone.
+
+**Example — What is on the user's calendars on one day:**
+
+```json
+{
+  "end": "2026-10-03",
+  "start": "2026-10-03"
+}
+```
+
+**Example — When and where an appointment is this month:**
+
+```json
+{
+  "end": "2026-10-31",
+  "query": "dentist",
+  "start": "2026-10-01"
+}
+```
+
 ## personalclaw-computer-use
 
 ### `computer_click`

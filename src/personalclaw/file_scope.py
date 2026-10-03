@@ -457,13 +457,23 @@ def file_places_note(tool_index: Mapping[str, Any]) -> str:
     file_scope = getattr(tool_index.get("read_file"), "file_scope", None)
     if not callable(file_scope):
         return ""
-    return places_note(file_scope(), knowledge="knowledge_search" in tool_index)
+    return places_note(
+        file_scope(),
+        knowledge="knowledge_search" in tool_index,
+        calendars="calendar_events" in tool_index,
+    )
 
 
-def places_note(scope: FileScope, *, knowledge: bool = False) -> str:
+#: The calendars the note names at most; the tool reads every one.
+_CALENDARS_NAMED = 8
+
+
+def places_note(scope: FileScope, *, knowledge: bool = False, calendars: bool = False) -> str:
     """What the model is told, each turn, about the places beyond the workspace: ``""`` when
     there are none. *knowledge*: the session has the knowledge tools, which then come first, since
-    the library indexes every knowledge source's notes."""
+    the library indexes every knowledge source's notes. *calendars*: it has ``calendar_events``,
+    so the calendar files in these places are named, by name and kind, with the tool that reads
+    them: a question about plans otherwise searched the notes and missed the calendar."""
     beyond = [p for p in scope.places if p.kind != WORKSPACE]
     if not beyond:
         return ""
@@ -474,6 +484,26 @@ def places_note(scope: FileScope, *, knowledge: bool = False) -> str:
             "Their notes are in the knowledge library: to find one by what it says, call "
             "knowledge_search first, and knowledge_get returns a note's full text and its path."
         )
+    if calendars:
+        from personalclaw import calendar_files
+
+        # Fails open: the note is built for every model request, and a search that could not run
+        # leaves the calendars unnamed for this turn rather than costing the turn.
+        try:
+            found = calendar_files.find(scope)
+        except Exception:  # noqa: BLE001 - the folders are still named below
+            logger.warning("file places: the calendars could not be looked for", exc_info=True)
+            found = []
+        if found:
+            lines.append(
+                "Their calendars are files in the folders below: for a question about their plans "
+                "or schedule (what is on a day, when or where something is), call calendar_events, "
+                "which reads them, repeating events included, in the user's time zone."
+            )
+            for ref in found[:_CALENDARS_NAMED]:
+                lines.append(f"- {_plain(ref.name)!r}: {calendar_files.KIND}, {_plain(ref.shown)}")
+            if len(found) > _CALENDARS_NAMED:
+                lines.append(f"- and {len(found) - _CALENDARS_NAMED} more calendar files")
     lines.append(
         "read_file, list_dir, glob and grep reach these folders with no approval: name a file by "
         "its absolute or ~ path, and give glob or grep the folder as `path`."

@@ -830,6 +830,21 @@ TOOL_META: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    # ── personalclaw-calendar-tools ──────────────────────────────────────────
+    "calendar_events": {
+        "response_type": "calendar.events.result",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "What is on the user's calendars on one day",
+                "args": {"start": "2026-10-03", "end": "2026-10-03"},
+            },
+            {
+                "summary": "When and where an appointment is this month",
+                "args": {"start": "2026-10-01", "end": "2026-10-31", "query": "dentist"},
+            },
+        ],
+    },
     # ── personalclaw-knowledge-tools ─────────────────────────────────────────
     "knowledge_search": {
         "response_type": "knowledge.search.results",

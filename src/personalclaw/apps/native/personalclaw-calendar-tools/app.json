@@ -1,0 +1,20 @@
+{
+  "name": "personalclaw-calendar-tools",
+  "version": "1.0.0",
+  "displayName": "Calendar Tools",
+  "description": "Read the calendars in the folders you share with PersonalClaw (an .ics file in an allowed working directory, or in a knowledge source that takes .ics files in): what is on a day, and when or where something is, with repeating events expanded in your time zone. It only reads.",
+  "icon": "CalendarDays",
+  "author": "PersonalClaw",
+  "tags": [
+    "tool",
+    "bundled"
+  ],
+  "provider": {
+    "type": "tool",
+    "implementation": "personalclaw.tool_providers.calendar_events:create_calendar_tools_provider",
+    "capabilities": [
+      "calendar"
+    ]
+  },
+  "native": true
+}
