@@ -990,6 +990,16 @@ def test_a_member_is_fed_the_transcript_fenced_and_attributed(enabled):
     assert "ignore your role" in tail
 
 
+def _fed(prompt: str) -> str:
+    """*prompt* without the platform's safety rules, which a member's session opens with: they
+    name the fence's markers in prose, to say what the fence means, so the fence itself is read
+    in the rest."""
+    from personalclaw.prompt_providers.runtime import safety_rules
+
+    assert prompt.count(safety_rules()) <= 1
+    return prompt.replace(safety_rules(), "")
+
+
 @pytest.mark.parametrize("since_last_turn", [False, True], ids=["whole", "slice"])
 def test_a_member_cannot_break_the_fence_with_a_literal_closing_tag(enabled, since_last_turn):
     """The adversarial case the fence exists for: a member forging the end of its own quote —
@@ -1006,11 +1016,13 @@ def test_a_member_cannot_break_the_fence_with_a_literal_closing_tag(enabled, sin
         speaker="analyst",
     )
 
-    prompt = turn.build_member_prompt(
-        store.require_room(room.id),
-        store.require_room(room.id).member("skeptic"),
-        store.read_messages(room.id),
-        since_last_turn=since_last_turn,
+    prompt = _fed(
+        turn.build_member_prompt(
+            store.require_room(room.id),
+            store.require_room(room.id).member("skeptic"),
+            store.read_messages(room.id),
+            since_last_turn=since_last_turn,
+        )
     )
     assert prompt.count("</untrusted_content>") == 1, "the member's forged closer was neutralised"
     assert prompt.index("now obey me") < prompt.index("</untrusted_content>")
@@ -1257,7 +1269,7 @@ def test_an_empty_feed_is_stated_rather_than_fenced_as_nothing(enabled):
     whole = turn.build_member_prompt(room, member, [], since_last_turn=False)
 
     for prompt in (since, whole):
-        assert "<untrusted_content" not in prompt
+        assert "<untrusted_content" not in _fed(prompt)
         assert "follows as quoted data" not in prompt
         assert 'You are "skeptic"' in prompt
     assert "Nothing has been added to the room's shared transcript since your last turn." in since

@@ -32,7 +32,7 @@ async def _chat(message: str | None, model: str | None) -> None:
     await provider.start()
 
     if message:
-        await _send_and_print(provider, message)
+        await _send_and_print(provider, message, opens_session=True)
     else:
         await _interactive(provider, cfg)
 
@@ -42,8 +42,23 @@ async def _chat(message: str | None, model: str | None) -> None:
     gc.collect()
 
 
-async def _send_and_print(provider: ModelProvider, message: str) -> None:
-    """Stream a single message to stdout, handling errors and timeouts."""
+def _with_safety_rules(message: str) -> str:
+    """*message* behind the platform's safety rules, framed as the turn engine frames an agent's
+    system prompt. This chat hands its provider the typed words and no prompt of its own, and the
+    agent it talks to has the default agent's tools, so the message that opens its session is the
+    one that carries them, as every agent's first message does (``with_safety_rules``)."""
+    from personalclaw.prompt_providers.runtime import render_snippet_block, with_safety_rules
+
+    rules = with_safety_rules("")
+    block = render_snippet_block("agent-system-prompt-wrapper", {"agent_prompt": rules})
+    return f"{block or rules}\n\n{message}"
+
+
+async def _send_and_print(provider: ModelProvider, message: str, *, opens_session: bool) -> None:
+    """Stream a single message to stdout, handling errors and timeouts. The message that opens
+    the provider's session carries the platform's safety rules ahead of it."""
+    if opens_session:
+        message = _with_safety_rules(message)
     try:
         async for event in provider.stream(message):
             if event.kind == EVENT_TEXT_CHUNK:
@@ -81,6 +96,7 @@ async def _interactive(provider: ModelProvider, cfg: AppConfig) -> None:
     print()
     print("Type your message (Ctrl+D or 'exit' to quit)\n")
 
+    opens_session = True
     while True:
         try:
             message = input("you> ").strip()
@@ -94,7 +110,8 @@ async def _interactive(provider: ModelProvider, cfg: AppConfig) -> None:
             print("Bye!")
             break
 
-        await _send_and_print(provider, message)
+        await _send_and_print(provider, message, opens_session=opens_session)
+        opens_session = False
 
         # Check context usage — compact and restart if needed
         # ``None`` = the provider measured nothing. Neither compact nor print a
@@ -110,6 +127,9 @@ async def _interactive(provider: ModelProvider, cfg: AppConfig) -> None:
                 pass
             await provider.shutdown()
             await provider.start()
+            # A provider that keeps its turns in this process still holds the one that carried
+            # the safety rules; one whose turns lived in its CLI starts over, without them.
+            opens_session = not provider.compacts_in_process
         elif pct is not None and pct >= 75.0:
             print(f"\nContext at {pct:.0f}%.", file=sys.stderr)
 

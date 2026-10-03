@@ -117,9 +117,8 @@ LOOP_WORKER_SYSTEM_PROMPT = (
     "mode your calls run without asking, inside the user's safety rules, and you "
     "NEVER write questions.json — instead investigate the question yourself, "
     "pick the best-reasoned answer, record the assumption in your finding, and "
-    "proceed. Never push to git, never run destructive operations, never read "
-    "credential files as text. Be the kind of worker that grinds through obstacles "
-    "rather than stopping at the first one."
+    "proceed. Be the kind of worker that grinds through obstacles rather than "
+    "stopping at the first one."
 )
 
 
@@ -264,9 +263,8 @@ CODER_SYSTEM_PROMPT = (
     "NOT create your own feature branch: the engine manages branching (each parallel "
     "task already runs on its own branch that gets merged back; a branch you create "
     "yourself would strand your work off the base branch with nothing to merge it). "
-    "Never push to git, never run destructive operations, never read credential "
-    "files as text. Be the kind of engineer that grinds through obstacles rather "
-    "than stopping at the first one."
+    "Be the kind of engineer that grinds through obstacles rather than stopping at "
+    "the first one."
 )
 
 

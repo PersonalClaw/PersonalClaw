@@ -265,7 +265,12 @@ chat, channel thread, loop worker, webhook, subagent).
    Prompts for the turn's context (`chat`, or `background` for unattended runs).
    The agent's voice and the task-mode posture (`system_prompt_suffix`) are layered
    ON TOP of whichever prompt resolved — never a replacement (see `build_message`).
-   The resolved prompt opens the session's first message, verbatim, ahead of
+   So are the platform's safety rules, last and once: the `safety-rules` snippet the
+   Chat and Background prompts include, worded in that one place, which an agent's own
+   prompt adds to and cannot remove (`prompt_providers.runtime.with_safety_rules`). A
+   room member's first message and `personalclaw chat`'s carry them the same way, and
+   `tests/test_agent_safety_rules_census.py` fails for a new path that starts an agent
+   without them. The resolved prompt opens the session's first message, verbatim, ahead of
    memory, history and the request, and a compaction keeps that message. A word
    limit an agent's own instructions set for its answer ("Keep the answer under 200
    words") is checked when the turn ends (`answer_rules`): an answer past it is

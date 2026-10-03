@@ -1846,6 +1846,8 @@ class ContextBuilder:
 
         # Session context on first message only
         if is_new_session:
+            # The values every system prompt of this turn is rendered with, the rules' included.
+            _prompt_values = self._runtime_prompt_values(session_key or "", window=_window)
             # Agent prompt goes BEFORE session context wrapper
             # so the LLM treats it as its identity, not background info.
             # An Agent Definition's system_prompt (edited in the Agents UI) wins
@@ -1860,9 +1862,7 @@ class ContextBuilder:
                 # session_key when not set explicitly). Falls back to the shipped
                 # prompt file when the provider can't resolve it.
                 _uc = _prompt_use_case_for(session_key, prompt_use_case)
-                agent_prompt = _resolve_use_case_prompt(
-                    _uc, self._runtime_prompt_values(session_key or "", window=_window)
-                )
+                agent_prompt = _resolve_use_case_prompt(_uc, _prompt_values)
                 if not agent_prompt:
                     try:
                         agent_prompt = _shipped_prompt().read_text(encoding="utf-8")
@@ -1886,16 +1886,20 @@ class ContextBuilder:
                 agent_prompt = self._apply_runtime_vars(
                     agent_prompt, session_key or "", window=_window
                 )
-                from personalclaw.prompt_providers.runtime import render_snippet_block
+            # The platform's safety rules LAYER on whatever resolved, last, and are never left
+            # out: they lived only in the prompt bound for Chat, which an agent's own prompt
+            # replaces, so a routed agent's request went without them (`with_safety_rules`). A
+            # wrapper the prompt store cannot render leaves the prompt bare, never dropped.
+            from personalclaw.prompt_providers.runtime import (
+                render_snippet_block,
+                with_safety_rules,
+            )
 
-                parts.add(
-                    render_snippet_block(
-                        "agent-system-prompt-wrapper", {"agent_prompt": agent_prompt}
-                    )
-                    + "\n\n",
-                    name="system prompt",
-                    compressible=False,
-                )
+            agent_prompt = with_safety_rules(agent_prompt, _prompt_values)
+            wrapped = render_snippet_block(
+                "agent-system-prompt-wrapper", {"agent_prompt": agent_prompt}
+            )
+            parts.add((wrapped or agent_prompt) + "\n\n", name="system prompt", compressible=False)
             session_ctx = self.build_session_context(
                 session_key,
                 agent=agent,
@@ -1911,8 +1915,6 @@ class ContextBuilder:
                 citations_out=citations_out,
             )
             if session_ctx:
-                from personalclaw.prompt_providers.runtime import render_snippet_block
-
                 parts.add(
                     render_snippet_block(
                         "session-context-wrapper", {"session_context": session_ctx}

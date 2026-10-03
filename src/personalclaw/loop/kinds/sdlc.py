@@ -795,8 +795,7 @@ class CodeKind(LoopKindStrategy):
         lines += workspace_rules_lines()
         lines += [
             "",
-            "Never push to git, never run destructive operations, never read credential "
-            "files as text. Grind through obstacles rather than stopping at the first one.",
+            "Grind through obstacles rather than stopping at the first one.",
         ]
         return "\n".join(lines)
 

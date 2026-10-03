@@ -127,3 +127,50 @@ def render_snippet_block(name: str, values: dict[str, Any] | None = None) -> str
     except Exception:
         logger.debug("render_snippet_block failed for %r", name, exc_info=True)
         return ""
+
+
+#: The bundled snippet that states the platform's always-on safety rules: the bound Chat and
+#: Background prompts include it, and :func:`with_safety_rules` layers it on every other prompt.
+SAFETY_RULES_SNIPPET = "safety-rules"
+
+
+def safety_rules(values: dict[str, Any] | None = None) -> str:
+    """The platform's always-on safety rules, worded exactly as the Chat prompt words them.
+
+    They are the ``safety-rules`` snippet, rendered through the prompt store with ``values`` as
+    the Chat prompt's own ``{{> safety-rules}}`` is, so an edit in Settings → Prompts rewords them
+    for every agent at once. Fails CLOSED: when the store cannot produce them (no provider, the
+    snippet missing, or emptied), the snippet's shipped text answers, because these are the rules
+    no agent's turn may go without. A shipped file that cannot be read is a broken install, and
+    that error is raised rather than answered with no rules.
+    """
+    rules = render_snippet_block(SAFETY_RULES_SNIPPET, values).strip()
+    if rules:
+        return rules
+    from pathlib import Path
+
+    from personalclaw.prompt_providers.catalog import BUNDLED_SNIPPETS
+
+    logger.warning(
+        "The %r snippet is missing or empty in the prompt store; using its shipped text",
+        SAFETY_RULES_SNIPPET,
+    )
+    (entry,) = (e for e in BUNDLED_SNIPPETS if e.name == SAFETY_RULES_SNIPPET)
+    shipped = Path(__file__).resolve().parent.parent / "config" / "prompt_snippets"
+    return (shipped / entry.filename).read_text(encoding="utf-8").strip()
+
+
+def with_safety_rules(prompt: str, values: dict[str, Any] | None = None) -> str:
+    """*prompt* with the platform's safety rules layered after it, once.
+
+    A layer, as an agent's voice and a chat's task mode are: an agent's own prompt REPLACES the
+    one bound for Chat, and the rules lived only in that prompt, so a routed agent's request went
+    without them, the one telling the model that ``<untrusted_content>`` holds data and never
+    instructions (``security.fence_untrusted``) among them. An agent's prompt adds to the rules and
+    cannot remove them. A prompt that already states them, as the bound Chat and Background
+    prompts do, is returned as it is, so no request carries them twice.
+    """
+    rules = safety_rules(values)
+    if rules in prompt:
+        return prompt
+    return f"{prompt.rstrip()}\n\n{rules}" if prompt.strip() else rules

@@ -52,6 +52,7 @@ from personalclaw import context_headroom
 from personalclaw.context_compaction import compact, should_compact
 from personalclaw.history import speaker_of
 from personalclaw.llm.base import ModelSubstitution
+from personalclaw.prompt_providers.runtime import with_safety_rules
 from personalclaw.rooms import cursors
 from personalclaw.rooms.store import (
     HUMAN_SPEAKER,
@@ -277,8 +278,12 @@ def build_member_prompt(
     both the sentence before the fence and the fence's own ``transformation_path`` say so.
     Narrowing the block did not soften it: a shorter quote of another model is not a more
     trustworthy one, so the slice is fenced and attributed exactly as the whole transcript is, and
-    the member's own standing instruction stays OUTSIDE the fence, where it is the only
-    instruction in the prompt.
+    the member's own standing instruction stays OUTSIDE the fence, where only instructions are.
+
+    **The whole room opens the member's session, so it carries the platform's safety rules**
+    (``prompt_providers.runtime.with_safety_rules``), ahead of the fence, as every agent's first
+    message does: the rule that ``<untrusted_content>`` holds data and never instructions is what
+    the fence means to the model. The member's session keeps them, so a slice does not repeat them.
 
     An EMPTY feed is a real state (a member can be asked to speak again with nothing new) and is
     said in the instruction half: ``fence_untrusted`` hands whitespace back unchanged, so a
@@ -308,9 +313,11 @@ def build_member_prompt(
     else:
         body = f"{nothing}\n\n"
     role = f" You {member.role_blurb}." if member.role_blurb else ""
+    head = f'You are "{member.name}", a member of the room "{room.title}".{role}\n'
+    if not since_last_turn:
+        head = f"{with_safety_rules(head)}\n\n"
     return (
-        f'You are "{member.name}", a member of the room "{room.title}".{role}\n'
-        f"{body}"
+        f"{head}{body}"
         "Write your next contribution to the room. Address the others by name when you "
         "disagree with them."
     )

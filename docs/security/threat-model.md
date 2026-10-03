@@ -262,7 +262,10 @@ Content and requests arriving from outside the owner's trust boundary:
 - **Untrusted-content fencing** (`security.py::fence_untrusted`) wraps
   third-party text in `<untrusted_content>` markers with a data-not-instructions
   system note; applied to web-search results, inbox content, and third-party
-  payloads.
+  payloads. The note is one of the platform's safety rules (the `safety-rules`
+  snippet), which every agent is handed whatever its own prompt says
+  (`prompt_providers/runtime.py::with_safety_rules`; a path that starts an agent
+  without them fails `tests/test_agent_safety_rules_census.py`).
 - **Webhook auth** (`dashboard/handlers/hooks.py::_verify_hook_token`): a
   constant-time (`hmac.compare_digest`) token check; no configured token means
   every request is refused, and denials log to the Security Event Log.
