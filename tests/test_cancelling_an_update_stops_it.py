@@ -354,11 +354,13 @@ def test_ctrl_c_during_personalclaw_update_puts_the_checkout_back_and_says_so(
         signal.signal(signal.SIGINT, previous)
         pressing.join(timeout=5)
         pid = int(ran.pid_file.read_text()) if ran.pid_file.exists() else 0
+        # Read before the stand-in is stopped here, so it is the update's own stop.
+        stopped = bool(pid) and _gone(pid)
         _stop_stand_in(ran.pid_file)
     err = capsys.readouterr().err
 
     assert code == 130, f"exited {code!r}: {err}"
-    assert pid and _gone(pid), "the install was left running"
+    assert stopped, "the install was left running"
     assert _git(clone, "rev-parse", "HEAD") == old, "the checkout stayed on the new release"
     assert _detached(clone) and _git(clone, "status", "--porcelain") == ""
     assert f"The update was stopped before it finished. {_PUT_BACK}" in " ".join(err.split())
@@ -399,11 +401,13 @@ def test_ctrl_c_during_a_wheel_upgrade_says_what_it_left(
         signal.signal(signal.SIGINT, previous)
         pressing.join(timeout=5)
         pid = int(ran.pid_file.read_text()) if ran.pid_file.exists() else 0
+        # Read before the stand-in is stopped here, so it is the update's own stop.
+        stopped = bool(pid) and _gone(pid)
         _stop_stand_in(ran.pid_file)
     err = " ".join(capsys.readouterr().err.split())
 
     assert code == 130, f"exited {code!r}: {err}"
-    assert pid and _gone(pid), "the upgrade was left running"
+    assert stopped, "the upgrade was left running"
     if does == "hangs":
         said = (
             "The update was stopped before it finished. Nothing was changed: PersonalClaw is "

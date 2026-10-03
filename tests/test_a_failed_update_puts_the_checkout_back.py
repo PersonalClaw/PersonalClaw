@@ -290,12 +290,29 @@ async def _until_started(pid_file: Path) -> int:
     raise AssertionError("the install never started")
 
 
+def _running(pid: int) -> bool:
+    """Whether *pid* still runs. A stopped process nobody has waited for yet (a zombie) still
+    answers ``kill(pid, 0)``, and a loaded machine can leave one for seconds: it runs nothing."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        # Linux: the state is the field after the parenthesised command name.
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        if sys.platform.startswith("linux"):
+            return False  # it ended between the two reads
+        state = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False
+        ).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
 def _gone(pid: int) -> bool:
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+        if not _running(pid):
             return True
         time.sleep(0.05)
     return False
