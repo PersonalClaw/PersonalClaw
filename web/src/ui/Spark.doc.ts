@@ -8,14 +8,14 @@ const docs: UiDoc[] = [
     name: 'Spark',
     keywords: ['spark', 'brand', 'claw', 'ai', 'motif', 'thinking', 'indicator', 'gradient'],
     description:
-      'The PersonalClaw brand mark used as the AI motif throughout the app — the thinking indicator, loop cycle nodes, empty states. Renders the claw logo (via ClawMark) painted with the ACTIVE scheme gradient, NOT the Gemini sparkle. Each instance gets a unique gradient id so multiple Sparks on a page never collide.',
+      'The PersonalClaw brand mark used as the AI motif throughout the app — the thinking indicator, loop cycle nodes, empty states. Renders the claw logo (via ClawMark) painted with the ACTIVE scheme gradient. Each instance gets a unique gradient id so multiple Sparks on a page never collide.',
     props: [
       { name: 'animated', description: 'Adds the ambient claw wobble (default true); suppressed under prefers-reduced-motion.' },
       { name: 'size', description: 'Pixel size of the mark (default 24).' },
     ],
     bestPractices: [
       { guidance: true, description: 'Reach for Spark as the AI motif (thinking / loop nodes / empty states) — it is deliberately kept named "Spark" so all call sites get the scheme-tinted claw without renaming churn.' },
-      { guidance: false, description: 'Do not expect a Gemini-style sparkle — Spark paints the claw silhouette with the active scheme gradient, not a hardcoded icon.' },
+      { guidance: false, description: 'Do not expect a sparkle icon — despite its name, Spark paints the claw silhouette with the active scheme gradient, not a hardcoded icon.' },
     ],
     anatomy: ['ClawMark (unique per-instance gradient id, scheme-tinted)'],
   },

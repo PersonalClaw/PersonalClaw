@@ -128,7 +128,7 @@ function scheme(id: string, label: string, s: {
  * carry no text — so darkening is monotone for every ink site. Verified by census, not assumed.
  */
 export const SCHEMES: Scheme[] = [
-  // DEFAULT — PersonalClaw coral/terracotta. Warm, energetic, off-Gemini; the
+  // DEFAULT — PersonalClaw coral/terracotta. Warm and energetic; the
   // ownable accent. Neutral surfaces stay from tokens.css; this drives only the
   // accent identity (primary/focus/loaders/glow), so the whole app re-tints warm.
   // Light primary/emphasis/info mirror tokenRegistry's AA-verified shades — keep in sync
@@ -157,7 +157,7 @@ export const SCHEMES: Scheme[] = [
     gradient: ['#2a9e90', '#2dd4bf', '#7fe8da', '#4e9ff8'],
     glowA: ['#2dd4bf', '#0d9488'], glowB: ['#7fe8da', '#3aa898'],
   }),
-  // Ember — near-monochrome + a single warm spark (max restraint, ChatGPT-quiet).
+  // Ember — near-monochrome + a single warm spark (max restraint).
   scheme('ember', 'Ember (mono + spark)', {
     primary: ['#ff7a5c', '#af3218'], primaryEmphasis: ['#ffa98f', '#9a2e17'],
     onPrimary: ['#2a0f08', '#ffffff'], primaryContainer: ['#3a2018', '#f0ddd6'],

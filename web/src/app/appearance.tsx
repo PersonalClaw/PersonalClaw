@@ -100,10 +100,29 @@ function themeBaseOf(r: ThemeRecord & { revision: string }): ThemeBase {
   return { id: `custom:${r.slug}`, value: themeToWrite(r), revision: r.revision }
 }
 
+/** The stored select picks the registry still offers. A pick naming an option that no longer exists
+ *  (a dot shape that was removed, say) is dropped, so it reads as ABSENT everywhere downstream, and
+ *  absent is how this store says "the token's default": the canvas, the CSS var and the picker all
+ *  show the default rather than a value nothing draws and no pill matches. Fail-open on purpose: a
+ *  select is a look, not a control, so an unknown pick resolves to the default and is not kept. */
+function offeredSelects(stored: unknown): Record<string, string> {
+  const offered: Record<string, string> = {}
+  if (!stored || typeof stored !== 'object') return offered
+  for (const t of TOKENS) {
+    if (t.kind !== 'select') continue
+    const v = (stored as Record<string, unknown>)[t.varName]
+    if (typeof v === 'string' && t.options.includes(v)) offered[t.varName] = v
+  }
+  return offered
+}
+
 function load(): Overrides {
   try {
     const raw = localStorage.getItem(KEY)
-    if (raw) return { ...empty, ...JSON.parse(raw) }
+    if (raw) {
+      const stored = { ...empty, ...JSON.parse(raw) }
+      return { ...stored, selects: offeredSelects(stored.selects) }
+    }
   } catch { /* ignore */ }
   return structuredClone(empty)
 }

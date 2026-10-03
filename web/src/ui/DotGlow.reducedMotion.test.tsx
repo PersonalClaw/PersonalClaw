@@ -40,7 +40,7 @@ vi.mock('../app/appearance', () => ({
 
 /** The 2D context is the instrument. jsdom implements no canvas, so this records the
  *  drawing calls — which is also how the sparkle's own path is identified: it is the
- *  only glyph in `drawDot` built from quadratic curves. */
+ *  only glyph in `DOT_GLYPHS` built from quadratic curves. */
 const RECORDED = [
   'setTransform', 'clearRect', 'beginPath', 'closePath', 'fill', 'moveTo', 'lineTo',
   'arc', 'quadraticCurveTo', 'fillRect', 'save', 'restore', 'translate', 'rotate',
@@ -140,7 +140,7 @@ describe('the arcade sparkle field is a single static frame under reduced motion
     paintOnce()
     expect(instrument.calls.clearRect, 'nothing was drawn at all').toBeGreaterThan(0)
     expect(instrument.calls.fill, 'no dot was filled').toBeGreaterThan(0)
-    // `quadraticCurveTo` is unique to the sparkle path in `drawDot`, so this pins the
+    // `quadraticCurveTo` is unique to the sparkle path in `DOT_GLYPHS`, so this pins the
     // glyph rather than merely "some field was drawn".
     expect(ARCADE_SHAPE).toBe('sparkle')
     expect(instrument.calls.quadraticCurveTo, 'the sparkle glyph never ran').toBeGreaterThan(0)

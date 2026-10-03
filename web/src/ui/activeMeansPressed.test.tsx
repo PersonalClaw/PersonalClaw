@@ -51,7 +51,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //   the 3 personality cards  identical to each other          ✓ glyph + border, no state
 //   the token select pills   **"dm-sans, button"**            coral fill, no state, and no group name
 //
-// The pills were two defects at once: the name was the bare VALUE, so "waves" / "hex" / "claude" gave no
+// The pills were two defects at once: the name was the bare VALUE, so "waves" / "hex" / "claw" gave no
 // hint of Background / Arrangement / Dot shape. `bento`'s `SegToggle` already solves both, one screen
 // over: `aria-label={`${ariaLabel}: ${o.label}`} aria-pressed={o.key === value}`.
 //

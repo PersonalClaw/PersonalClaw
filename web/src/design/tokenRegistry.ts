@@ -153,7 +153,7 @@ export const TOKENS: Token[] = [
   s('--surface-distance', 'View distance', '3D surface', 1, 0.4, 2.2, 0.05, '', 'surfaceDistance'),
   s('--dot-size', 'Dot size', '3D surface', 1, 0.3, 9, 0.1, '', 'dotSize'),
   s('--dot-density', 'Dot density', '3D surface', 1, 0.3, 2, 0.05, '', 'dotDensity'),
-  sel('--dot-shape', 'Dot shape', '3D surface', 'claude', ['circle', 'square', 'diamond', 'star', 'sparkle', 'burst', 'claude'], 'dotShape'),
+  sel('--dot-shape', 'Dot shape', '3D surface', 'claw', ['circle', 'square', 'diamond', 'star', 'sparkle', 'burst', 'claw'], 'dotShape'),
   sel('--dot-pattern', 'Arrangement', '3D surface', 'hex', ['grid', 'diamond', 'hex', 'brick'], 'dotPattern'),
 
   // ── Motion ──

@@ -66,6 +66,30 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
   })
 }
 
+// Nor `Path2D`, and the backdrop's default dot glyph (`ui/DotGlow`'s claw) fills the mark's outline
+// as one, so a test that paints the default backdrop through a stubbed 2D context throws without it.
+// The stand-in remembers only the path data it was built from: a stubbed context never rasterizes,
+// so that is all there is to read back (`DotGlow.glyphs.test.tsx` does). Its path methods are
+// no-ops, so a library that sees `Path2D` and builds paths with it (mermaid's graph renderer checks
+// for it) behaves as in a browser that draws nowhere. Installed only when absent.
+if (typeof globalThis.Path2D === 'undefined') {
+  globalThis.Path2D = class {
+    d: unknown
+    constructor(d?: unknown) { this.d = d }
+    addPath(): void {}
+    arc(): void {}
+    arcTo(): void {}
+    bezierCurveTo(): void {}
+    closePath(): void {}
+    ellipse(): void {}
+    lineTo(): void {}
+    moveTo(): void {}
+    quadraticCurveTo(): void {}
+    rect(): void {}
+    roundRect(): void {}
+  } as unknown as typeof Path2D
+}
+
 // The data layer's cache is a module singleton, so it OUTLIVES a test. That was already true
 // of the helper it replaced, but harmless there because that hook re-fetched on every mount:
 // a leaked entry only ever changed the first frame. This layer honours declared staleness, so

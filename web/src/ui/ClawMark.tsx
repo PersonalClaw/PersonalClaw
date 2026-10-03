@@ -1,5 +1,12 @@
 import { motion, useReducedMotion } from 'framer-motion'
 
+/** The mark's outline in its 512-unit box: two talons. One declaration, drawn both by the SVG below
+ *  and by the backdrop's `claw` dot glyph (`ui/DotGlow`). */
+export const CLAW_MARK_PATH =
+  'M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z'
+/** The outline's bounds in the same units, which is what centres the dot glyph on its point. */
+export const CLAW_MARK_BOX = { x: 46, y: 16, width: 420, height: 480 } as const
+
 /** PersonalClaw brand mark — the claw silhouette painted with the ACTIVE scheme's
  *  gradient (reads --grad-1..4, which the appearance store re-tints per scheme),
  *  so the logo tracks Coral/Jade/Lavender/etc. + any custom fork automatically.
@@ -32,10 +39,7 @@ export function ClawMark({ size = 24, animated = false, idGradient = 'claw-grad'
           <stop offset="1" stopColor="var(--grad-4)" />
         </linearGradient>
       </defs>
-      <path
-        fill={`url(#${idGradient})`}
-        d="M256 16C106 76 46 226 46 226c0 45 60 90 90 90 90 0 180-195 135-285l-15-15zm45 15c30 60 0 135 0 135 120 30 120 180 75 330 75-75 90-150 90-210 0-90-15-225-165-255z"
-      />
+      <path fill={`url(#${idGradient})`} d={CLAW_MARK_PATH} />
     </motion.svg>
   )
   if (!blob) return svg

@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { prefersReducedMotion } from '../design/motion'
-import { runtime } from '../design/runtime'
+import { runtime, type DotShape } from '../design/runtime'
 import { useAppearance } from '../app/appearance'
 import { TOKENS } from '../design/tokenRegistry'
+import { CLAW_MARK_BOX, CLAW_MARK_PATH } from './ClawMark'
 
 // The master backdrop switch (design/tokenRegistry '--bg-style'):
 //   'waves' — the animated 3D dot-wave surface (default)
@@ -104,66 +105,71 @@ function maskAxis(dir: 'right' | 'bottom', start: string, end: string): string {
  *  other axis is opaque.) */
 export const HALO_MASK = `${maskAxis('right', HALO_FADE_VARS.l, HALO_FADE_VARS.r)}, ${maskAxis('bottom', HALO_FADE_VARS.t, HALO_FADE_VARS.b)}`
 
-/** Draw one dot of the given shape at (x,y) with radius r. */
-function drawDot(g: CanvasRenderingContext2D, shape: string, x: number, y: number, r: number) {
-  switch (shape) {
-    case 'square':
-      g.fillRect(x - r, y - r, r * 2, r * 2)
-      return
-    case 'diamond':
-      g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r, y); g.lineTo(x, y + r); g.lineTo(x - r, y); g.closePath(); g.fill()
-      return
-    case 'star': {
-      // 5-point star
-      g.beginPath()
-      for (let k = 0; k < 10; k++) {
-        const rad = k % 2 === 0 ? r : r * 0.45
-        const a = -Math.PI / 2 + (k * Math.PI) / 5
-        const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad
-        k === 0 ? g.moveTo(px, py) : g.lineTo(px, py)
-      }
-      g.closePath(); g.fill()
-      return
+/** Paints one dot's glyph centred on (x, y), for a dot of radius r, in the context's current fill. */
+type Glyph = (g: CanvasRenderingContext2D, x: number, y: number, r: number) => void
+
+/** How far the claw glyph reaches from its centre, in dot radii. The mark is two slim talons and
+ *  mostly air: drawn at the dot's own radius it lays down under half the light of a solid dot (0.42
+ *  of a circle, measured over the default field in both themes), the dimmest glyph in the set. At
+ *  1.3 radii it lays down about 0.7, between the diamond and the burst, so the field keeps its
+ *  presence. */
+export const CLAW_GLYPH_REACH = 1.3
+
+/** The claw outline, built on first use: a `Path2D` is how a canvas fills an SVG path, and building
+ *  it once keeps the per-dot cost to one fill. */
+let clawOutline: Path2D | null = null
+
+/** Every dot shape the backdrop paints, by name. A total record over `DotShape`, so a shape without
+ *  a glyph, or a glyph for a shape that no longer exists, does not compile; the Settings picker's
+ *  options are held to the same set by `DotGlow.glyphs.test.tsx`. */
+export const DOT_GLYPHS: Record<DotShape, Glyph> = {
+  circle: (g, x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill() },
+  square: (g, x, y, r) => { g.fillRect(x - r, y - r, r * 2, r * 2) },
+  diamond: (g, x, y, r) => {
+    g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r, y); g.lineTo(x, y + r); g.lineTo(x - r, y); g.closePath(); g.fill()
+  },
+  // A five-point star.
+  star: (g, x, y, r) => {
+    g.beginPath()
+    for (let k = 0; k < 10; k++) {
+      const rad = k % 2 === 0 ? r : r * 0.45
+      const a = -Math.PI / 2 + (k * Math.PI) / 5
+      const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad
+      k === 0 ? g.moveTo(px, py) : g.lineTo(px, py)
     }
-    case 'sparkle': {
-      // 4-point concave spark (the Gemini/AI-magic star)
-      const o = r, iN = r * 0.32
-      g.beginPath()
-      g.moveTo(x, y - o)
-      g.quadraticCurveTo(x + iN, y - iN, x + o, y)
-      g.quadraticCurveTo(x + iN, y + iN, x, y + o)
-      g.quadraticCurveTo(x - iN, y + iN, x - o, y)
-      g.quadraticCurveTo(x - iN, y - iN, x, y - o)
-      g.closePath(); g.fill()
-      return
+    g.closePath(); g.fill()
+  },
+  // A four-point star with concave sides.
+  sparkle: (g, x, y, r) => {
+    const o = r, iN = r * 0.32
+    g.beginPath()
+    g.moveTo(x, y - o)
+    g.quadraticCurveTo(x + iN, y - iN, x + o, y)
+    g.quadraticCurveTo(x + iN, y + iN, x, y + o)
+    g.quadraticCurveTo(x - iN, y + iN, x - o, y)
+    g.quadraticCurveTo(x - iN, y - iN, x, y - o)
+    g.closePath(); g.fill()
+  },
+  // A six-point asterisk of thin rays.
+  burst: (g, x, y, r) => {
+    const lw = Math.max(0.6, r * 0.5)
+    for (let k = 0; k < 3; k++) {
+      const a = (k * Math.PI) / 3
+      g.save(); g.translate(x, y); g.rotate(a)
+      g.fillRect(-lw / 2, -r, lw, r * 2)
+      g.restore()
     }
-    case 'burst': {
-      // 6-point asterisk/burst (thin rays)
-      const lw = Math.max(0.6, r * 0.5)
-      for (let k = 0; k < 3; k++) {
-        const a = (k * Math.PI) / 3
-        g.save(); g.translate(x, y); g.rotate(a)
-        g.fillRect(-lw / 2, -r, lw, r * 2)
-        g.restore()
-      }
-      return
-    }
-    case 'claude': {
-      // Anthropic Claude "sunburst" mark — radiating tapered spokes
-      const spokes = 11
-      for (let k = 0; k < spokes; k++) {
-        const a = (k * 2 * Math.PI) / spokes
-        const lw = Math.max(0.5, r * 0.22)
-        g.save(); g.translate(x, y); g.rotate(a)
-        g.beginPath()
-        g.moveTo(-lw, 0); g.lineTo(lw, 0); g.lineTo(0, -r * 1.15); g.closePath(); g.fill()
-        g.restore()
-      }
-      return
-    }
-    default: // circle
-      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill()
-  }
+  },
+  // PersonalClaw's own mark (`ClawMark`), upright, its box centred on the dot.
+  claw: (g, x, y, r) => {
+    clawOutline ??= new Path2D(CLAW_MARK_PATH)
+    const s = (r * CLAW_GLYPH_REACH) / (CLAW_MARK_BOX.height / 2)
+    g.save()
+    g.translate(x, y); g.scale(s, s)
+    g.translate(-(CLAW_MARK_BOX.x + CLAW_MARK_BOX.width / 2), -(CLAW_MARK_BOX.y + CLAW_MARK_BOX.height / 2))
+    g.fill(clawOutline)
+    g.restore()
+  },
 }
 
 export function DotGlow({
@@ -300,7 +306,7 @@ export function DotGlow({
       const COLS = Math.round(COLS_BASE * density)
       const ROWS = Math.round(ROWS_BASE * density)
       const dotSizeMul = runtime.dotSize
-      const dotShape = runtime.dotShape
+      const glyph = DOT_GLYPHS[runtime.dotShape]
       const pattern = runtime.dotPattern
       const colStep = (2 * PLANE_W) / COLS
       const glowMul = runtime.glow
@@ -434,7 +440,7 @@ export function DotGlow({
           const cb = Math.round(COLOR.b * (1 - mix) + COLOR2.b * mix)
           g.fillStyle = `rgba(${cr},${cg},${cb},${Math.min(0.95, alpha)})`
 
-          drawDot(g, dotShape, sx, sy, r)
+          glyph(g, sx, sy, r)
         }
       }
 

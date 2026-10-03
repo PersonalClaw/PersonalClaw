@@ -168,6 +168,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Settings → Updates lists each change as one plain line, shows what an available update brings, and links the upgrade notes.**
 - **`GET /api/notifications` lists the notification log newest first, the order the bell, the Notifications page and the phone show it in.**
+- **The backdrop's default dot shape is PersonalClaw's own claw mark, and a saved appearance choice that is no longer offered falls back to its default.**
 
 ### Removed
 

@@ -8,9 +8,9 @@ const SCHEME_GRADIENT =
   'linear-gradient(135deg, var(--grad-1), var(--grad-2), var(--grad-3), var(--grad-4))'
 
 /** The PersonalClaw brand mark used as the AI motif throughout the app. Renders
- *  the claw logo painted with the ACTIVE scheme gradient — NOT the Gemini sparkle.
- *  Kept named `Spark` so all call sites (thinking indicator, loop cycle nodes,
- *  empty states) get the claw without churn. */
+ *  the claw logo painted with the ACTIVE scheme gradient. Kept named `Spark` so all
+ *  call sites (thinking indicator, loop cycle nodes, empty states) get the claw
+ *  without churn. */
 export function Spark({ size = 24, animated = true }: { size?: number; animated?: boolean }) {
   const id = useId().replace(/:/g, '') // unique gradient id per instance
   return <ClawMark size={size} animated={animated} idGradient={`spark-${id}`} />
