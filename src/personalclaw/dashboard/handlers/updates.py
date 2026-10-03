@@ -426,6 +426,15 @@ async def api_changelog(request: web.Request) -> web.Response:
 # check, instead of a second pull/install/build/restart pipeline against the same working tree.
 _apply_in_flight = False
 
+#: The wheel upgrade resolving or installing its release now, which Cancel stops
+#: (:func:`_cancel_wheel_upgrade`). Cleared once the release is installed: the restart after it is
+#: not stopped.
+_wheel_upgrade: "asyncio.Task[None] | None" = None
+
+#: How long Cancel waits for a wheel's upgrade to stop: its installer is killed and reaped
+#: (``kill_timed_out``), and what is installed read again.
+_WHEEL_STOP_TIMEOUT = 15.0
+
 
 def _busy_reason() -> str:
     """Why an update must not start now, or ``""`` when one may.
@@ -479,7 +488,8 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
     installs a version that declares one, and pip for one pip or pipx made. When that
     tool is not there the apply refuses with a 409 before it starts, naming what to run.
     No web build: the wheel already carries the SPA. The 409 concurrent-apply guard is
-    shared with the git path.
+    shared with the git path. Until the release is installed, Cancel stops the upgrade
+    (:func:`_upgrade_wheel`); the restart after it is not stopped.
     """
     global _apply_in_flight
 
@@ -495,74 +505,16 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
     auth_mode = _live_auth_mode(request)
 
     async def _apply() -> None:
-        global _apply_in_flight
+        global _apply_in_flight, _wheel_upgrade
+        _wheel_upgrade = asyncio.current_task()
         try:
-            # Ride the resolved release, not a blind `releases/latest`: the `updates`
-            # channel/pin decides the target tag. resolve_wheel_target never
-            # raises and maps the wheel-less `nightly` channel onto `stable`.
-            cfg = AppConfig.load()
             try:
-                target = await self_update.resolve_wheel_target(
-                    cfg.updates.channel, cfg.updates.pin
-                )
-            except Exception:
-                logger.debug(
-                    "resolve_target failed; treating as no release resolved", exc_info=True
-                )
-                target = ""
-            if cfg.updates.pin and not target:
-                # A pin naming no release must NEVER silently upgrade to latest.
-                state.push_update_progress(
-                    "error", "No release matches the pinned version — check updates.pin."
-                )
+                installed = await _upgrade_wheel(state)
+            finally:
+                # From here it restarts into the release it installed, which nothing stops.
+                _wheel_upgrade = None
+            if not installed:
                 return
-            if target and not self_update.moves_to(target, _local_version, cfg.updates.pin):
-                # Nothing to install. `-U personalclaw==<target>` for a release that is not
-                # newer is a DOWNGRADE carried out under the name "update". No restart either:
-                # unlike a checkout, a wheel has no local change for a restart to pick up.
-                sentence = self_update.up_to_date_sentence(target, _local_version, cfg.updates.pin)
-                state.push_update_progress("done", f"{sentence}.")
-                state.clear_update_progress()
-                return
-            spec = self_update.upgrade_spec(target)
-
-            # The tool that made the environment, found there before this started.
-            from personalclaw._installer import install_argv, installer_env
-
-            argv = install_argv(["-U", spec, "--quiet"])
-            state.push_update_progress("installing", f"Upgrading {spec}…")
-            pip_up = await asyncio.create_subprocess_exec(
-                *argv,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=installer_env(),
-                # Own group: pip forks build backends / compilers / `git clone` for VCS
-                # specs, all inheriting these pipes. See kill_timed_out.
-                start_new_session=True,
-            )
-            try:
-                _, pip_err = await asyncio.wait_for(pip_up.communicate(), timeout=400)
-            except asyncio.TimeoutError:
-                await kill_timed_out(pip_up)
-                state.push_update_progress("error", "Upgrade timed out")
-                return
-            if pip_up.returncode != 0:
-                detail = mask_child_output(pip_err, limit=None, one_line=False)
-                logger.error(
-                    "self-update failed (rc=%d): %s",
-                    pip_up.returncode,
-                    mask_child_output(pip_err, limit=500),
-                )
-                # Surface the REAL error, not just a static label. The cause was
-                # captured and logged but never sent to the UI, so the panel said
-                # only "pip upgrade failed" and the user had to read gateway.log
-                # to learn anything actionable (issue #51).
-                summary = self_update.installer_error_summary(detail)
-                state.push_update_progress(
-                    "error", f"Upgrade failed: {summary}" if summary else "Upgrade failed"
-                )
-                return
-            # No frontend build — assets ship in the wheel.
             state.push_update_progress("restarting", "Restarting server…")
             await _graceful_reexec(state, auth_mode=auth_mode)
         except Exception:
@@ -578,6 +530,112 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
     return web.json_response({"ok": True, "status": "updating", "kind": "pip"})
 
 
+async def _upgrade_wheel(state: DashboardState) -> bool:
+    """Install the release the ``updates`` channel/pin selects into PersonalClaw's environment, with
+    the tool that made it: ``True`` once it is installed, ``False`` when there was nothing to
+    install or it failed, which it says on the update progress.
+
+    A cancel (:func:`_cancel_wheel_upgrade`) stops the installer and says what that left: a wheel
+    has nothing to put back, so nothing was changed only when the environment's distributions are
+    as they were before the install began (``_installer.changed_distributions``).
+    """
+    from personalclaw._installer import (
+        changed_distributions,
+        install_argv,
+        installed_distributions,
+        installer_env,
+    )
+
+    environment: frozenset[str] | None = None
+    try:
+        # Ride the resolved release, not a blind `releases/latest`: the `updates`
+        # channel/pin decides the target tag. resolve_wheel_target never
+        # raises and maps the wheel-less `nightly` channel onto `stable`.
+        cfg = AppConfig.load()
+        try:
+            target = await self_update.resolve_wheel_target(cfg.updates.channel, cfg.updates.pin)
+        except Exception:
+            logger.debug("resolve_target failed; treating as no release resolved", exc_info=True)
+            target = ""
+        if cfg.updates.pin and not target:
+            # A pin naming no release must NEVER silently upgrade to latest.
+            state.push_update_progress(
+                "error", "No release matches the pinned version — check updates.pin."
+            )
+            return False
+        if target and not self_update.moves_to(target, _local_version, cfg.updates.pin):
+            # Nothing to install. `-U personalclaw==<target>` for a release that is not
+            # newer is a DOWNGRADE carried out under the name "update". No restart either:
+            # unlike a checkout, a wheel has no local change for a restart to pick up.
+            sentence = self_update.up_to_date_sentence(target, _local_version, cfg.updates.pin)
+            state.push_update_progress("done", f"{sentence}.")
+            state.clear_update_progress()
+            return False
+        spec = self_update.upgrade_spec(target)
+
+        # The tool that made the environment, found there before this started.
+        argv = install_argv(["-U", spec, "--quiet"])
+        state.push_update_progress("installing", f"Upgrading {spec}…")
+        environment = await asyncio.to_thread(installed_distributions)
+        pip_up = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=installer_env(),
+            # Own group: pip forks build backends / compilers / `git clone` for VCS
+            # specs, all inheriting these pipes. See kill_timed_out.
+            start_new_session=True,
+        )
+        try:
+            _, pip_err = await asyncio.wait_for(pip_up.communicate(), timeout=400)
+        except asyncio.TimeoutError:
+            await kill_timed_out(pip_up)
+            state.push_update_progress("error", "Upgrade timed out")
+            return False
+        except asyncio.CancelledError:
+            await kill_timed_out(pip_up)
+            raise
+    except asyncio.CancelledError:
+        changed = changed_distributions(environment) if environment is not None else ""
+        said, as_it_was = self_update.stopped_upgrade_sentence(
+            self_update.UPDATE_CANCELLED, changed, _local_version
+        )
+        logger.warning("%s", said)
+        state.push_update_progress("cancelled" if as_it_was else "error", said)
+        raise
+    if pip_up.returncode != 0:
+        detail = mask_child_output(pip_err, limit=None, one_line=False)
+        logger.error(
+            "self-update failed (rc=%d): %s",
+            pip_up.returncode,
+            mask_child_output(pip_err, limit=500),
+        )
+        # Surface the REAL error, not just a static label. The cause was
+        # captured and logged but never sent to the UI, so the panel said
+        # only "pip upgrade failed" and the user had to read gateway.log
+        # to learn anything actionable (issue #51).
+        summary = self_update.installer_error_summary(detail)
+        state.push_update_progress(
+            "error", f"Upgrade failed: {summary}" if summary else "Upgrade failed"
+        )
+        return False
+    # No frontend build — assets ship in the wheel.
+    return True
+
+
+async def _cancel_wheel_upgrade() -> str:
+    """Stop the wheel upgrade resolving or installing its release, if one is, and wait while it
+    stops its installer: ``"stopped"`` once it has, ``"stopping"`` when it has not within
+    :data:`_WHEEL_STOP_TIMEOUT`, ``""`` when there is none to stop."""
+    running = _wheel_upgrade
+    if running is None or running.done():
+        return ""
+    if not running.cancelling():  # a second Cancel waits for the first
+        running.cancel()
+    await asyncio.wait({running}, timeout=_WHEEL_STOP_TIMEOUT)
+    return "stopped" if running.done() else "stopping"
+
+
 async def api_update_apply(request: web.Request) -> web.Response:
     """POST /api/update — move this install to its release, the way it was installed.
 
@@ -585,7 +643,8 @@ async def api_update_apply(request: web.Request) -> web.Response:
     in place (:func:`_apply_pip_update`); a source checkout is updated by
     :func:`start_checkout_update`, the one update the staged auto-update runs as well. Progress is
     broadcast as ``update_progress`` WS events with steps ``pulling`` → ``installing`` →
-    ``building`` → ``restarting`` (→ ``error``/``failed``).
+    ``building`` → ``restarting`` (→ ``error``/``failed``, or ``cancelled`` when Cancel stopped it,
+    :func:`api_update_cancel`).
     """
     state: DashboardState = request.app["state"]
 
@@ -838,13 +897,21 @@ async def _advance_checkout(
     environment with missing or stale dependencies could leave the gateway unable to start, so a
     failed update keeps running the code that runs now."""
     global _apply_in_flight
+    ended: list[str] = []
 
     def progress(step: str, detail: str) -> None:
+        if step in {"cancelled", "error"}:
+            ended[:] = [detail]
         if state is not None:
             state.push_update_progress(step, detail)
 
     try:
-        failed = await checkout_update.update_checkout(proj, target_tag, progress)
+        try:
+            failed = await checkout_update.update_checkout(proj, target_tag, progress)
+        except asyncio.CancelledError:
+            # Stopped half-way (Cancel, or the gateway stopping): what that left, for the log.
+            logger.warning("%s", ended[-1] if ended else "The update was stopped")
+            raise
         if failed:
             logger.error("Update failed: %s", failed)
             progress("error", failed)
@@ -939,13 +1006,74 @@ async def api_restart(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "status": "restarting"})
 
 
+#: What Cancel answers once the update has installed the new release: the frontend build and the
+#: restart after it are not stopped (``checkout_update``).
+_INSTALLED_FINISHES = (
+    "The new release is installed, so the update can no longer be cancelled: it builds the "
+    "dashboard, then restarts PersonalClaw into it."
+)
+_RESTART_FINISHES = "PersonalClaw is restarting, and a restart cannot be cancelled."
+
+
 async def api_update_cancel(request: web.Request) -> web.Response:
-    """POST /api/update/cancel — dismiss a stuck/failed update overlay."""
+    """POST /api/update/cancel — stop the update in progress, and say what that left.
+
+    A source checkout's update (``checkout_update.cancel``) or a wheel's upgrade
+    (:func:`_cancel_wheel_upgrade`) that has not finished installing is stopped: its installer is
+    stopped, the checkout put back, and it says what that left on the update progress (``cancelled``
+    when nothing was changed, ``error`` when something is not as it was). The answer waits for that
+    and carries it. Once the new release is installed the update builds and restarts, which
+    nothing stops: that is a 409 ``update_not_cancellable`` saying the update will finish, and
+    nothing is claimed. With no update running it says so and changes nothing.
+    """
+    from personalclaw.restart_request import pending
+
     state: DashboardState = request.app["state"]
-    state.clear_update_progress()
-    state.push_update_progress("failed", "Update cancelled by user")
-    # Give clients a moment to receive the failed event, then clear
-    await asyncio.sleep(0.2)
+    stopped = await checkout_update.cancel() or await _cancel_wheel_upgrade()
+    if stopped == "stopping":
+        return web.json_response(
+            {
+                "ok": True,
+                "status": "stopping",
+                "update_progress": state.update_progress(),
+                "detail": "The update is still stopping. What it left shows here once it has.",
+            }
+        )
+    if stopped:
+        return web.json_response(
+            {"ok": True, "status": "stopped", "update_progress": state.update_progress()}
+        )
+    if _apply_in_flight or pending() is not None:
+        step = (state.update_progress() or {}).get("step", "")
+        if step in {"building", "warning"}:
+            message = _INSTALLED_FINISHES
+        elif step == "restarting" or pending() is not None:
+            message = _RESTART_FINISHES
+        else:
+            message = "The update cannot be cancelled at this step."
+        return json_error("update_not_cancellable", message=message, status=409)
+    return web.json_response(
+        {
+            "ok": True,
+            "status": "not_running",
+            "detail": "No update is running, so there was nothing to cancel.",
+        }
+    )
+
+
+async def api_update_dismiss(request: web.Request) -> web.Response:
+    """POST /api/update/dismiss — close what the update progress says an update ended with.
+
+    The overlay's Dismiss, so a reload does not show a failed or cancelled update again. It never
+    stops anything: an update still running is refused (409 ``update_in_progress``) and goes on.
+    """
+    state: DashboardState = request.app["state"]
+    if _apply_in_flight:
+        return json_error(
+            "update_in_progress",
+            message="An update is running, so there is nothing to dismiss yet. Cancel stops it.",
+            status=409,
+        )
     state.clear_update_progress()
     return web.json_response({"ok": True})
 

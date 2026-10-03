@@ -319,6 +319,31 @@ def up_to_date_sentence(target: str, current: str, pin: str = "") -> str:
     return f"You're on v{current}, newer than the newest release (v{target})"
 
 
+#: How an update stopped before it finished begins to say what that left: the owner pressed Cancel
+#: (``POST /api/update/cancel``), or something else stopped it (a stopping gateway, a Ctrl-C of
+#: ``personalclaw update``). What follows is what it left, in the words a failure uses.
+UPDATE_CANCELLED = "The update was cancelled"
+UPDATE_STOPPED = "The update was stopped before it finished"
+
+
+def stopped_upgrade_sentence(lead: str, changed: str, current: str) -> tuple[str, bool]:
+    """What a wheel's upgrade stopped before it finished left, after *lead*, and whether everything
+    is as it was.
+
+    A wheel has nothing to put back: what stopping its installer left is what the environment
+    holds. Nothing was changed when its distributions are as they were before the install began
+    (*changed* is ``""``, ``_installer.changed_distributions``); otherwise the sentence names the
+    ones the installer had already replaced, and updating again finishes the upgrade.
+    """
+    if not changed:
+        still = f"PersonalClaw is still on v{normalize_version(current)}"
+        return f"{lead}. Nothing was changed: {still}.", True
+    return (
+        f"{lead}, but the upgrade had already changed {changed} in PersonalClaw's environment; "
+        "update again to finish it."
+    ), False
+
+
 # ── Rollback: who writes `updates.last_version`, and how a pin is set ──
 #
 # A rollback needs exactly one fact the product did not previously keep: *which

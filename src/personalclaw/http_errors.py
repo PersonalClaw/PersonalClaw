@@ -1286,6 +1286,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The tool that installs PersonalClaw's updates into its environment is not there, so "
         "nothing was changed."
     ),
+    # ── stopping an update (POST /api/update/cancel, /api/update/dismiss) ──
+    # 409 `update_not_cancellable`: the update has installed the new release and is building or
+    # restarting, which nothing puts back, so it finishes; the message says which. Nothing was
+    # stopped. 409 `update_in_progress`: Dismiss closes what an update ended with, and one is still
+    # running; nothing was stopped or cleared.
+    "update_not_cancellable": "The update can no longer be cancelled, so it will finish.",
+    "update_in_progress": "An update is running, so there is nothing to dismiss yet.",
 }
 
 

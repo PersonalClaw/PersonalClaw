@@ -47,6 +47,7 @@ import importlib.util
 import logging
 import shutil
 import sys
+import sysconfig
 import tomllib
 from pathlib import Path
 from types import MappingProxyType
@@ -405,3 +406,39 @@ def env_install_argv(python: str | Path, args: list[str]) -> list[str]:
         NoInstallerError: this environment has no ``pip`` module (see :func:`missing_pip`).
     """
     return [*_pip(), "--python", str(python), "install", *args]
+
+
+# ── What an install changed ──────────────────────────────────────────────────
+
+
+def _site_dirs() -> list[str]:
+    """Where PersonalClaw's environment keeps what is installed in it: the running interpreter's
+    ``site-packages``."""
+    paths = sysconfig.get_paths()
+    return sorted({paths["purelib"], paths["platlib"]})
+
+
+def installed_distributions() -> frozenset[str]:
+    """What is installed in PersonalClaw's environment, as an install changes it: the metadata
+    folder of each distribution (``name-version.dist-info``), which an install adds, removes or
+    renames. Read before an update's install, so an install that failed or was stopped can say
+    whether the environment is as it was (:func:`changed_distributions`)."""
+    found: set[str] = set()
+    for folder in _site_dirs():
+        try:
+            found.update(p.name[: -len(".dist-info")] for p in Path(folder).glob("*.dist-info"))
+        except OSError:
+            continue
+    return frozenset(found)
+
+
+def changed_distributions(before: frozenset[str]) -> str:
+    """The distributions an install added, removed or replaced in PersonalClaw's environment since
+    *before* (:func:`installed_distributions`), named for a sentence (``alpha, beta and 2 more``),
+    or ``""`` when the environment is as it was."""
+    names = sorted({name.rsplit("-", 1)[0] for name in before ^ installed_distributions()})
+    if len(names) > 3:
+        return f"{', '.join(names[:3])} and {len(names) - 3} more"
+    if len(names) > 1:
+        return f"{', '.join(names[:-1])} and {names[-1]}"
+    return names[0] if names else ""

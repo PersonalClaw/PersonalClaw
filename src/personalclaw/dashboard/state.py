@@ -2571,8 +2571,12 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         )
 
     def clear_update_progress(self) -> None:
-        """Reset update progress (e.g. after cancel or completion)."""
+        """Reset update progress (e.g. after a dismiss or completion)."""
         self._update_progress = None
+
+    def update_progress(self) -> dict[str, str] | None:
+        """The update progress last broadcast, ``{step, detail}``, or ``None`` once cleared."""
+        return self._update_progress
 
 
 # ── Notification persistence ──

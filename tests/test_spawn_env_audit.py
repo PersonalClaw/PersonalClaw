@@ -159,7 +159,7 @@ _GATEWAY_ENV: dict[str, str] = {
     # Installs and updates of PersonalClaw itself (`_installer.installer_env`, held to that by
     # tests/test_installer_resolution.py), and the git of its own checkout.
     "cli_server.py::_install::subprocess.run": "self-update package install",
-    "dashboard/handlers/updates.py::_apply_pip_update._apply::asyncio.create_subprocess_exec": (
+    "dashboard/handlers/updates.py::_upgrade_wheel::asyncio.create_subprocess_exec": (
         "self pip update"
     ),
     "checkout_update.py::_install::asyncio.create_subprocess_exec": (

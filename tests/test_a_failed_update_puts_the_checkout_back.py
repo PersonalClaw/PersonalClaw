@@ -33,7 +33,7 @@ import pytest
 from aiohttp import web
 
 import personalclaw
-from personalclaw import checkout_update, cli_server
+from personalclaw import _installer, checkout_update, cli_server
 from personalclaw import self_update as su
 from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.handlers import updates as upd
@@ -114,10 +114,11 @@ def installer(tmp_path, monkeypatch, environment_made_by):
     After its line the stand-in ``uv``: ``ok`` exits 0; ``fails`` says uv's resolver conflict and
     exits 1; ``locks`` first takes the repository's index lock, as a git still running would;
     ``changes`` first adds a package to the environment; ``hangs`` writes its pid and sleeps until
-    it is stopped. ``node`` and ``npm`` are stand-ins that only write their line, and so is the
+    it is stopped; ``locks-hangs`` and ``changes-hangs`` take the lock or add the package, then
+    hang. ``node`` and ``npm`` are stand-ins that only write their line, and so is the
     interpreter, for the CLI's agent-config refresh. PATH holds them and the system's own folders,
     where git is and uv is not. The environment an update compares before and after the install
-    (``checkout_update._site_dirs``) is a folder of the test's.
+    (``_installer._site_dirs``) is a folder of the test's.
     """
     environment_made_by("uv")
     bin_dir = tmp_path / "bin"
@@ -125,15 +126,20 @@ def installer(tmp_path, monkeypatch, environment_made_by):
     log = tmp_path / "ran.log"
     environment = tmp_path / "environment"
     (environment / "personalclaw-0.0.1.dist-info").mkdir(parents=True)
-    monkeypatch.setattr(checkout_update, "_site_dirs", lambda: [str(environment)])
+    monkeypatch.setattr(_installer, "_site_dirs", lambda: [str(environment)])
     pid_file = tmp_path / "uv.pid"
     fails = f"printf '%s' '{_UV_SAYS}' >&2\nexit 1\n"
+    locks = ": > .git/index.lock\n"
+    changes = f'mkdir "{environment}/alpha-1.0.dist-info"\n'
+    hangs = f'echo $$ > "{pid_file}"\nexec /bin/sleep 30\n'
     then = {
         "ok": "exit 0\n",
         "fails": fails,
-        "locks": ": > .git/index.lock\n" + fails,
-        "changes": f'mkdir "{environment}/alpha-1.0.dist-info"\n' + fails,
-        "hangs": f'echo $$ > "{pid_file}"\nexec /bin/sleep 30\n',
+        "locks": locks + fails,
+        "changes": changes + fails,
+        "hangs": hangs,
+        "locks-hangs": locks + hangs,
+        "changes-hangs": changes + hangs,
     }
 
     def _stand_in(name: str, body: str) -> None:
@@ -196,6 +202,12 @@ class _State:
 
     def clear_update_progress(self) -> None:
         self.progress.append(("cleared", ""))
+
+    def update_progress(self) -> dict[str, str] | None:
+        if not self.progress or self.progress[-1][0] == "cleared":
+            return None
+        step, detail = self.progress[-1]
+        return {"step": step, "detail": detail}
 
     def push_refresh(self, *kinds: str) -> None:
         self.refreshes.extend(kinds)
@@ -413,8 +425,8 @@ def test_the_environment_an_update_compares_is_where_the_installer_puts_packages
     """The folders read before and after an install are the running interpreter's own, where pip
     and uv install: the folder pytest is installed in is one."""
     site = Path(importlib.metadata.distribution("pytest").locate_file("")).resolve()
-    assert str(site) in {str(Path(folder).resolve()) for folder in checkout_update._site_dirs()}
-    assert any(name.startswith("pytest-") for name in checkout_update._environment())
+    assert str(site) in {str(Path(folder).resolve()) for folder in _installer._site_dirs()}
+    assert any(name.startswith("pytest-") for name in _installer.installed_distributions())
 
 
 # ── a checkout that cannot be put back: where it is, and the one command that puts it back ──
@@ -499,7 +511,11 @@ async def test_a_gateway_that_stops_mid_install_puts_the_checkout_back_first(
     assert _gone(pid), "the install outlived the gateway"
     assert _git(clone, "rev-parse", "HEAD") == old
     assert _git(clone, "status", "--porcelain") == ""
-    assert state.last_error() == f"The update was stopped before it finished. {_PUT_BACK}"
+    # Stopped with everything as it was: said as a cancel, not as a failure.
+    assert state.progress[-1] == (
+        "cancelled",
+        f"The update was stopped before it finished. {_PUT_BACK}",
+    )
     assert not release.restarts
     assert upd._apply_in_flight is False
 
@@ -523,4 +539,4 @@ async def test_an_update_cancelled_mid_install_puts_the_checkout_back(
 
     assert _gone(pid), "the install was left running"
     assert _git(clone, "rev-parse", "HEAD") == old
-    assert told[-1] == ("error", f"The update was stopped before it finished. {_PUT_BACK}")
+    assert told[-1] == ("cancelled", f"The update was stopped before it finished. {_PUT_BACK}")

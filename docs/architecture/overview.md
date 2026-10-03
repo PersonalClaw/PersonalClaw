@@ -273,6 +273,14 @@ naming what to run, and a commit git cannot read. An install that does not finis
 (it fails, runs out of time, or the gateway stops while it runs) puts the checkout
 back on the exact commit and branch it was on, never by force, and the update stops
 *before* the restart; when git cannot put it back, the failure names where the
-checkout is and the one command that does. Concurrent applies get a 409. A wheel
-install upgrades with the same rule. This covers the **core repo only** — apps
-update individually through the Store (`POST /api/apps/{name}/update`).
+checkout is and the one command that does. Cancel (`POST /api/update/cancel`, and a
+Ctrl-C of `personalclaw update`) stops an update that has not finished installing the
+same way, and answers once the checkout is back with what that left, in the words a
+failure uses (step `cancelled` when nothing was changed, `error` when something is not
+as it was). Once the new release is installed, the frontend build and the restart are
+not stopped: Cancel answers 409 `update_not_cancellable` and the update finishes.
+Dismiss (`POST /api/update/dismiss`) clears what a finished update said and never stops
+one. Concurrent applies get a 409. A wheel install upgrades with the same rule, and its
+Cancel stops the installer and names any distribution it had already replaced. This
+covers the **core repo only** — apps update individually through the Store
+(`POST /api/apps/{name}/update`).

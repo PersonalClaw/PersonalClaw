@@ -1171,6 +1171,7 @@ def register_dashboard_routes(app: web.Application) -> None:
     app.router.add_get("/api/changelog", handlers.api_changelog)
     app.router.add_post("/api/update", handlers.api_update_apply)
     app.router.add_post("/api/update/cancel", handlers.api_update_cancel)
+    app.router.add_post("/api/update/dismiss", handlers.api_update_dismiss)
     # Restart-only (no git advance) — apply committed backend changes. GET-less:
     # ?probe=1 returns the active-work snapshot for the confirm gate.
     app.router.add_post("/api/system/restart", handlers.api_restart)

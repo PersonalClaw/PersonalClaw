@@ -633,12 +633,14 @@ _STEP_MARKS = {
     "building": "🧱",
     "warning": "⚠️ ",
     "error": "❌",
+    "cancelled": "⏹ ",
 }
 
 
 def _say_step(step: str, detail: str) -> None:
-    """Print one step of a checkout's update; an error on stderr."""
-    print(f"  {_STEP_MARKS.get(step, '•')} {detail}", file=sys.stderr if step == "error" else None)
+    """Print one step of a checkout's update; how one that stopped ended, on stderr."""
+    ended = step in {"error", "cancelled"}
+    print(f"  {_STEP_MARKS.get(step, '•')} {detail}", file=sys.stderr if ended else None)
 
 
 def _finish_git_update(git_dir: str, target: str) -> None:
@@ -649,11 +651,15 @@ def _finish_git_update(git_dir: str, target: str) -> None:
     it moves the checkout, installs it with the tool that made the environment and builds its
     frontend, at the PACKAGE root, which is nested one level under the repo root (where git runs)
     in the monorepo layout. When the install fails it puts the checkout back on the commit it was
-    on, and this exits 1 with what it said.
+    on, and this exits 1 with what it said. A Ctrl-C stops it (:func:`_update_until_ctrl_c`), and
+    this exits 130 once it has said what that left.
     """
     import asyncio
 
-    failed = asyncio.run(checkout_update.update_checkout(git_dir, target, _say_step))
+    try:
+        failed = asyncio.run(_update_until_ctrl_c(git_dir, target))
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        sys.exit(130)
     if failed:
         print(f"  ❌ {failed}", file=sys.stderr)
         sys.exit(1)
@@ -662,6 +668,47 @@ def _finish_git_update(git_dir: str, target: str) -> None:
     print(f"\n{DATA_WARNING}\n")
     _refresh_agent_config(self_update.package_root(git_dir))
     print("\n  ↻ Restart the gateway to run the new code: personalclaw restart")
+
+
+async def _update_until_ctrl_c(git_dir: str, target: str) -> str:
+    """The checkout's update (``checkout_update.update_checkout``), which a Ctrl-C stops as the
+    dashboard's Cancel does: while it moves or installs the checkout, it stops the installer, puts
+    the checkout back and says what that left; once the install has finished, it says the update
+    will finish, and finishes.
+
+    The first Ctrl-C asks for the stop, and the ones after it are not answered: Python's own
+    Ctrl-C raised wherever the program was, and a second one while the checkout was going back
+    left it on the new release with nothing said.
+    """
+    import asyncio
+
+    loop = asyncio.get_running_loop()
+    asked: list[asyncio.Task[None] | None] = []
+
+    def _ctrl_c() -> None:
+        if asked:
+            return
+        if checkout_update.stoppable():
+            asked.append(loop.create_task(checkout_update.stop()))
+        else:
+            asked.append(None)
+            print(
+                "  ⏳ The new release is installed, so the update can no longer be stopped: it "
+                "builds the dashboard, then finishes.",
+                file=sys.stderr,
+            )
+
+    try:
+        loop.add_signal_handler(signal.SIGINT, _ctrl_c)
+        answering = True
+    except (NotImplementedError, RuntimeError):
+        # Not the main thread (or no signals here): nothing delivers a Ctrl-C to answer.
+        answering = False
+    try:
+        return await checkout_update.update_checkout(git_dir, target, _say_step)
+    finally:
+        if answering:
+            loop.remove_signal_handler(signal.SIGINT)
 
 
 def _update_pip() -> None:
@@ -820,7 +867,13 @@ def _move_line(target: str) -> str:
 def _install(args: list[str]) -> None:
     """Install *args* (a wheel's ``-U personalclaw==<tag>``) into PersonalClaw's own environment
     with the tool that made it, or exit 1 with a readable reason."""
-    from personalclaw._installer import NoInstallerError, install_argv, installer_env
+    from personalclaw._installer import (
+        NoInstallerError,
+        changed_distributions,
+        install_argv,
+        installed_distributions,
+        installer_env,
+    )
 
     try:
         argv = install_argv(args)
@@ -829,7 +882,18 @@ def _install(args: list[str]) -> None:
         sys.exit(1)
 
     print(f"  🔨 {shlex.join(argv)}")
-    result = subprocess.run(argv, capture_output=True, text=True, env=installer_env())
+    environment = installed_distributions()
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, env=installer_env())
+    except KeyboardInterrupt:
+        # Ctrl-C reached the installer too, and `subprocess.run` has stopped it. A wheel has
+        # nothing to put back: what is left is what the environment holds, said as the
+        # dashboard's Cancel says it.
+        said, _as_it_was = self_update.stopped_upgrade_sentence(
+            self_update.UPDATE_STOPPED, changed_distributions(environment), __version__
+        )
+        print(f"  {_STEP_MARKS['cancelled']} {said}", file=sys.stderr)
+        sys.exit(130)
     if result.returncode != 0:
         # Same one-line summary the dashboard shows: uv's stderr is ANSI-colored and
         # leads with the headline, so raw stderr reads as corrupted or as a fragment.

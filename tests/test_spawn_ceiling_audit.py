@@ -440,7 +440,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec": (
         "service: update check git"
     ),
-    "dashboard/handlers/updates.py::_apply_pip_update._apply::asyncio.create_subprocess_exec": (
+    "dashboard/handlers/updates.py::_upgrade_wheel::asyncio.create_subprocess_exec": (
         "service: self pip update"
     ),
     # The checkout's update (the owner's Update, the staged auto-update and `personalclaw

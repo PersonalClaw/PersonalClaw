@@ -96,9 +96,7 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "dashboard/handlers/terminal.py::api_terminal_ws::create_subprocess_limited": (
         "the owner's own terminal: an interactive shell with no command to judge before it runs"
     ),
-    "dashboard/handlers/updates.py::_apply_pip_update._apply::asyncio.create_subprocess_exec": (
-        _COMPOSED
-    ),
+    "dashboard/handlers/updates.py::_upgrade_wheel::asyncio.create_subprocess_exec": (_COMPOSED),
     "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec": _GIT,
     "dashboard/handlers_system.py::_collect_gpu_metrics::subprocess.check_output": _PROBE,
     "dashboard/handlers_system.py::_collect_system_metrics::subprocess.check_output": _PROBE,

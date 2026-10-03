@@ -405,6 +405,7 @@ from personalclaw.dashboard.handlers.updates import (  # noqa: E402, F401
     api_update_cancel,
     api_update_check,
     api_update_check_now,
+    api_update_dismiss,
     api_update_simulate,
     get_update_info,
     install_log_ring_handler,

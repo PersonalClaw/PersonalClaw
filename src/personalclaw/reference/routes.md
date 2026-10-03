@@ -832,9 +832,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/triggers/{id}/to-chat` — open a schedule trigger as a chat session.
 - `POST /api/triggers/{id}/toggle` — enable/disable.
 - `POST /api/update` — move this install to its release, the way it was installed.
-- `POST /api/update/cancel` — dismiss a stuck/failed update overlay.
+- `POST /api/update/cancel` — stop the update in progress, and say what that left.
 - `GET /api/update/check` — the update status, checking only when an automatic check is due.
 - `POST /api/update/check` — check for updates once, now, even with automatic checks off.
+- `POST /api/update/dismiss` — close what the update progress says an update ended with.
 - `POST /api/update/simulate` — walk through update steps with delays.
 - `POST /api/upload` — open native file picker and return selected paths.
 - `POST /api/upload/file` — cross-platform multipart file upload.

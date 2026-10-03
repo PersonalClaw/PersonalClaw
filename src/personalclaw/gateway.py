@@ -4990,7 +4990,9 @@ class GatewayOrchestrator:
         try:
             update = await start_checkout_update(self.dashboard_state, asked=False)
             if update.task is not None:
-                await update.task
+                # Waited for, not awaited: a Cancel that ends the update must not end what
+                # started it, the gateway's own start among them.
+                await asyncio.wait({update.task})
         except Exception:
             logger.warning("Auto-update failed", exc_info=True)
 

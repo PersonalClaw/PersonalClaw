@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **916 registrations** over **742 distinct paths** — 909 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **917 registrations** over **743 distinct paths** — 910 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -67,6 +67,7 @@ The 128 families the surface divides into, largest first.
 | `/api/spawn` | 6 | 3 |
 | `/api/task-lists` | 6 | 3 |
 | `/api/tools` | 6 | 6 |
+| `/api/update` | 6 | 5 |
 | `/api/uploads` | 6 | 5 |
 | `/api/autonudge` | 5 | 3 |
 | `/api/desktop` | 5 | 4 |
@@ -74,7 +75,6 @@ The 128 families the surface divides into, largest first.
 | `/api/feedback` | 5 | 5 |
 | `/api/push` | 5 | 5 |
 | `/api/themes` | 5 | 2 |
-| `/api/update` | 5 | 4 |
 | `/api/autonomy` | 4 | 4 |
 | `/api/search` | 4 | 4 |
 | `/api/usage` | 4 | 4 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 909 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 910 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -985,9 +985,10 @@ The 909 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/triggers/{id}/to-chat` | open a schedule trigger as a chat session. |
 | `POST` | `/api/triggers/{id}/toggle` | enable/disable. |
 | `POST` | `/api/update` | move this install to its release, the way it was installed. |
-| `POST` | `/api/update/cancel` | dismiss a stuck/failed update overlay. |
+| `POST` | `/api/update/cancel` | stop the update in progress, and say what that left. |
 | `GET` | `/api/update/check` | the update status, checking only when an automatic check is due. |
 | `POST` | `/api/update/check` | check for updates once, now, even with automatic checks off. |
+| `POST` | `/api/update/dismiss` | close what the update progress says an update ended with. |
 | `POST` | `/api/update/simulate` | walk through update steps with delays. |
 | `POST` | `/api/upload` | open native file picker and return selected paths. |
 | `POST` | `/api/upload/file` | cross-platform multipart file upload. |

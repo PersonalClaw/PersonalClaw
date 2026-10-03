@@ -402,9 +402,10 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // (b) "Best-effort active-work probe for the warning; a failure just omits the count." The restart
   // it guards reports separately, at this same call site.
   'ui/SystemWidget.tsx': 1,
-  // (b) "dismiss locally regardless" — the overlay is already gone by the time this fires, and what
+  // (b) Dismiss's server-side clear — the sheet is already closed by the time this fires, and what
   // it clears is server-side PROGRESS state. Telling a user who just dismissed an overlay that the
-  // dismissal's bookkeeping failed is noise about something they cannot act on.
+  // dismissal's bookkeeping failed is noise about something they cannot act on. (Cancel is not
+  // counted: what it answers, a refusal included, is shown in the sheet.)
   'ui/UpdateProgressOverlay.tsx': 1,
   // (b) A teardown signal on unmount/stop, to drop the server-side slot immediately rather than at
   // the next drain. The share is already stopped locally.

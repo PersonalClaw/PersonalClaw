@@ -528,7 +528,7 @@ def test_the_rail_sees_every_known_install_site():
         ("apps/app_python.py", "_pip_install"),
         ("cli_server.py", "_install"),
         ("gateway.py", "GatewayOrchestrator._check_missing_deps"),
-        ("dashboard/handlers/updates.py", "_apply_pip_update._apply"),
+        ("dashboard/handlers/updates.py", "_upgrade_wheel"),
         ("checkout_update.py", "_install"),
         ("frontend.py", "build_frontend_async"),
         ("acp/cli_resolve.py", "_npm_global_root"),

@@ -313,6 +313,13 @@ clone is and the one `git -C … checkout …` command that puts it back, to run
 PersonalClaw next starts. That is also why an update never starts on uncommitted changes to
 tracked files.
 
+**Cancel stops an update for real.** The update screen offers Cancel while the update fetches
+and installs the new release. It stops the installer, puts the clone back the same way, and
+the screen then says what that left: "Nothing was changed", or what is not as it was and how to
+put it right. Once the new release is installed, the update builds the dashboard and restarts
+on its own; it can no longer be cancelled, and the screen says so. A Ctrl-C of
+`personalclaw update` stops it the same way.
+
 **Channels** (`updates.channel`) — which release line you follow:
 
 | Channel | Follows | Use it when |

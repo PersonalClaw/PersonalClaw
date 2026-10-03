@@ -19,6 +19,13 @@ start), and the failure says what failed and that nothing changed. Putting it ba
 git will not overwrite a change in the tree, and when it does not go back the failure says where the
 checkout is and the one command that puts it back.
 
+**An update stopped before it has installed is put back the same way.** The owner's Cancel
+(:func:`cancel`), a stopping gateway (:func:`stop`) and a Ctrl-C of ``personalclaw update`` cancel
+the update while it moves or installs the checkout: it stops the installer, puts the checkout back
+and says what that left, in the words a failure uses. Once the install has finished, the update
+builds the frontend and the gateway restarts into the release it installed, which nothing puts
+back, so nothing stops it there: Cancel says the update will finish.
+
 The install comes before the frontend build: a build that ran first would leave the new release's
 dashboard behind a checkout put back on the old release.
 """
@@ -29,12 +36,11 @@ import asyncio
 import logging
 import shlex
 import subprocess
-import sysconfig
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, TypeVar
 
 from personalclaw import self_update
+from personalclaw._installer import changed_distributions, installed_distributions
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.frontend import build_frontend_async
 from personalclaw.security import mask_child_output
@@ -44,7 +50,8 @@ logger = logging.getLogger(__name__)
 
 #: How an update tells whoever started it what it is doing: ``progress(step, detail)``, where the
 #: steps are ``pulling``, ``installing``, ``building``, ``warning`` (a note from the frontend
-#: build) and ``error``.
+#: build), and how one that stopped half-way ended: ``cancelled`` when nothing was changed, and
+#: ``error`` when something is not as it was.
 Progress = Callable[[str, str], None]
 
 #: How long the install may run before it is stopped and reaped, named so a test can inject one
@@ -52,12 +59,19 @@ Progress = Callable[[str, str], None]
 #: the release changed may have to be downloaded.
 _INSTALL_TIMEOUT = 400.0
 
-#: How long a stopping gateway waits for an update to stop its install and put the checkout back
-#: (:func:`stop`). Both take a moment; the bound is for a git that hangs.
+#: How long a stop waits for an update to stop its install and put the checkout back
+#: (:func:`stop`, :func:`cancel`). Both take a moment; the bound is for a git that hangs.
 _STOP_TIMEOUT = 30.0
 
-#: The update moving or installing the checkout now, which :func:`stop` stops.
+#: The update moving or installing the checkout now, or putting it back after its install failed,
+#: which :func:`stop` and :func:`cancel` wait for.
 _running: "asyncio.Task[Any] | None" = None
+#: Whether that update has not finished installing: until it has, a stop cancels it, and it stops
+#: its install and puts the checkout back. Once its install has failed, it is putting the checkout
+#: back on its own, and a stop waits for that.
+_installing = False
+#: Whether the owner cancelled that update (:func:`cancel`), so it says she did.
+_cancelled = False
 
 _T = TypeVar("_T")
 
@@ -71,28 +85,33 @@ async def update_checkout(proj: str, target_tag: str, progress: Progress) -> str
     in one sentence for the owner to read: the checkout was put back, and nothing changed; or what
     is not as it was, and how to put it right.
 
-    Raises only a cancellation, which stops the install and puts the checkout back first.
+    Raises only a cancellation, which stops the install and puts the checkout back first, and says
+    on *progress* what that left.
     """
-    global _running
+    global _running, _installing, _cancelled
     from personalclaw._installer import NoInstallerError, require_own_installer
 
-    _running = asyncio.current_task()
+    _running, _installing, _cancelled = asyncio.current_task(), True, False
     try:
-        # Settled before anything moves: where to put the checkout back, and that the tool that
-        # installs it is there.
-        before = await _in_thread(self_update.git_position, proj)
-        if before is None:
-            return (
-                "Nothing was changed: git could not tell which commit the checkout is on, so the "
-                "update could not have put it back had the install failed."
-            )
         try:
-            tool = require_own_installer()
-        except NoInstallerError as exc:
-            return str(exc)
-        label = "uv sync" if tool == "uv" else "pip install"
-        pkg_root = self_update.package_root(proj)
-        environment = await _in_thread(_environment)
+            # Settled before anything moves: where to put the checkout back, and that the tool
+            # that installs it is there.
+            before = await _in_thread(self_update.git_position, proj)
+            if before is None:
+                return (
+                    "Nothing was changed: git could not tell which commit the checkout is on, so "
+                    "the update could not have put it back had the install failed."
+                )
+            try:
+                tool = require_own_installer()
+            except NoInstallerError as exc:
+                return str(exc)
+            label = "uv sync" if tool == "uv" else "pip install"
+            pkg_root = self_update.package_root(proj)
+            environment = await _in_thread(installed_distributions)
+        except asyncio.CancelledError:
+            _say_stopped(progress, "Nothing was changed.", as_it_was=True)
+            raise
 
         try:
             failed = await _move(proj, target_tag, progress)
@@ -102,36 +121,79 @@ async def update_checkout(proj: str, target_tag: str, progress: Progress) -> str
         except asyncio.CancelledError:
             # Stopped half-way: the install has been stopped (`_install`), and the checkout goes
             # back here, in this thread, where nothing can interrupt it.
-            where = _put_back(proj, before, environment)
-            logger.warning("Update stopped before it finished. %s", where)
-            progress("error", f"The update was stopped before it finished. {where}")
+            _say_stopped(progress, *_put_back(proj, before, environment))
             raise
         except Exception:
             logger.exception("Update failed")
             failed = "The update stopped on an unexpected error (see the log)"
+        _installing = False
         if failed:
-            where = await _in_thread(_put_back, proj, before, environment)
+            where, _as_it_was = await _in_thread(_put_back, proj, before, environment)
             return f"{failed.rstrip(' .:;,')}. {where}"
     finally:
-        _running = None
+        _running, _installing, _cancelled = None, False, False
 
     progress("building", "Building frontend…")
     await build_frontend_async(pkg_root, push_progress=progress)
     return ""
 
 
+def stoppable() -> bool:
+    """Whether an update is moving or installing the checkout, or putting it back after its install
+    failed: what :func:`stop` and :func:`cancel` stop or wait for. ``False`` when none is, and once
+    the install has finished: the update then builds the frontend and finishes, which nothing puts
+    back."""
+    return _running is not None and not _running.done()
+
+
 async def stop() -> None:
     """Stop the update moving or installing the checkout, if one is, and wait while it puts the
     checkout back: the gateway is stopping, and its next start must run the release its
-    environment has. ``GatewayOrchestrator._shutdown`` asks this; a stop of ``personalclaw
-    update`` (Ctrl-C) cancels the same update directly."""
+    environment has. ``GatewayOrchestrator._shutdown`` asks this; ``personalclaw update`` stops
+    the same update on a Ctrl-C (``cli_server``)."""
+    await _stop()
+
+
+async def cancel() -> str:
+    """The owner's Cancel of the update in progress: stop it and wait while it puts the checkout
+    back, as :func:`stop` does, and say that she cancelled it (``POST /api/update/cancel``).
+
+    Returns ``"stopped"`` once it has, and ``"stopping"`` when it has not within
+    :data:`_STOP_TIMEOUT` (it says what it left on its progress when it does). Returns ``""`` when
+    there is nothing to stop (:func:`stoppable`)."""
+    global _cancelled
+    if not stoppable():
+        return ""
+    _cancelled = True
+    return "stopped" if await _stop() else "stopping"
+
+
+async def _stop() -> bool:
+    """Stop the update in progress and wait for it, at most :data:`_STOP_TIMEOUT`: ``True`` once it
+    has ended, or when none is running. One that has not finished installing is cancelled, once:
+    a second stop (the gateway stopping just after a Cancel) waits for the first instead of
+    interrupting it while it reaps the installer. One whose install failed is already putting the
+    checkout back, and is only waited for, so what it says is the failure, and that nothing
+    changed."""
     running = _running
     if running is None or running.done() or running is asyncio.current_task():
-        return
-    running.cancel()
-    done, _ = await asyncio.wait({running}, timeout=_STOP_TIMEOUT)
-    if not done:
+        return True
+    if _installing and not running.cancelling():
+        running.cancel()
+    await asyncio.wait({running}, timeout=_STOP_TIMEOUT)
+    if not running.done():
         logger.warning("The update did not stop within %.0fs", _STOP_TIMEOUT)
+        return False
+    return True
+
+
+def _say_stopped(progress: Progress, where: str, as_it_was: bool) -> None:
+    """Say on *progress* what an update that stopped half-way left (*where*): ``cancelled`` when
+    everything is as it was, ``error`` when something is not and the owner has to put it right.
+    Each surface says it its own way, as it does a failure: the dashboard on the update progress
+    and in the gateway's log, the CLI on the terminal."""
+    lead = self_update.UPDATE_CANCELLED if _cancelled else self_update.UPDATE_STOPPED
+    progress("cancelled" if as_it_was else "error", f"{lead}. {where}")
 
 
 async def _move(proj: str, target_tag: str, progress: Progress) -> str:
@@ -196,25 +258,25 @@ async def _install(pkg_root: str, label: str) -> str:
     return ""
 
 
-def _put_back(proj: str, before: CheckoutPosition, environment: frozenset[str]) -> str:
+def _put_back(proj: str, before: CheckoutPosition, environment: frozenset[str]) -> tuple[str, bool]:
     """Put the checkout back on *before* if the update moved it, and say where that leaves things:
-    the half of a failure's sentence after what failed."""
+    the half of a failure's sentence after what failed, and whether everything is as it was."""
     moved = self_update.git_position(proj) != before
     restored = self_update.git_restore(proj, before) if moved else None
     now = self_update.git_position(proj)
     tracked = self_update.git_tracked_changes(proj)
     if now != before or tracked:
-        return _not_back(proj, before, now, tracked, restored)
-    changed = sorted({name.rsplit("-", 1)[0] for name in environment ^ _environment()})
+        return _not_back(proj, before, now, tracked, restored), False
+    changed = changed_distributions(environment)
     if changed:
         on = "back on" if moved else "on"
         return (
-            f"The checkout is {on} {before}, but the install had already changed "
-            f"{_listed(changed)} in PersonalClaw's environment; update again once that is fixed."
-        )
+            f"The checkout is {on} {before}, but the install had already changed {changed} in "
+            "PersonalClaw's environment; update again once that is fixed."
+        ), False
     if moved:
-        return f"Nothing was changed: the checkout is back on {before}."
-    return "Nothing was changed."
+        return f"Nothing was changed: the checkout is back on {before}.", True
+    return "Nothing was changed.", True
 
 
 def _not_back(
@@ -245,34 +307,6 @@ def _not_back(
         f"{here}. To put it back on {before} before PersonalClaw next starts{discarding}, "
         f"run: {command}"
     )
-
-
-def _site_dirs() -> list[str]:
-    """Where PersonalClaw's environment keeps what is installed in it: the running interpreter's
-    ``site-packages``."""
-    paths = sysconfig.get_paths()
-    return sorted({paths["purelib"], paths["platlib"]})
-
-
-def _environment() -> frozenset[str]:
-    """What is installed in PersonalClaw's environment, as an install changes it: the metadata
-    folder of each distribution (``name-version.dist-info``), which an install adds, removes or
-    renames. Read before the install, so a failure can say whether the environment is as it was."""
-    found: set[str] = set()
-    for folder in _site_dirs():
-        try:
-            found.update(p.name[: -len(".dist-info")] for p in Path(folder).glob("*.dist-info"))
-        except OSError:
-            continue
-    return frozenset(found)
-
-
-def _listed(names: list[str]) -> str:
-    if len(names) > 3:
-        return f"{', '.join(names[:3])} and {len(names) - 3} more"
-    if len(names) > 1:
-        return f"{', '.join(names[:-1])} and {names[-1]}"
-    return names[0]
 
 
 def _said(output: str | bytes | None) -> str:

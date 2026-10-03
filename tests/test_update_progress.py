@@ -197,15 +197,17 @@ class TestUpdateEndpoints:
         assert "uncommitted" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_cancel_clears_progress(self, monkeypatch, tmp_path) -> None:
-        """Cancel endpoint clears update progress."""
+    async def test_dismiss_clears_progress_and_cancel_with_nothing_running_does_not(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """Dismiss clears what a finished update said, so a reload does not show it again; Cancel
+        stops a running update, and with none running says so and leaves the progress alone."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
 
-        from personalclaw.dashboard.handlers import api_update_cancel
+        from personalclaw.dashboard.handlers import api_update_cancel, api_update_dismiss
 
         state = _make_state(monkeypatch, tmp_path)
-        state.push_update_progress("building", "Building…")
-        assert state._update_progress is not None
+        state.push_update_progress("error", "uv sync failed. Nothing was changed.")
 
         app = web.Application()
         app["state"] = state
@@ -214,8 +216,15 @@ class TestUpdateEndpoints:
 
         resp = await api_update_cancel(request)
         assert resp.status == 200
-        # Progress should be cleared after cancel
-        assert state._update_progress is None
+        assert json.loads(resp.body)["status"] == "not_running"
+        assert state.update_progress() == {
+            "step": "error",
+            "detail": "uv sync failed. Nothing was changed.",
+        }
+
+        resp = await api_update_dismiss(request)
+        assert resp.status == 200
+        assert state.update_progress() is None
 
     @pytest.mark.asyncio
     async def test_restart_probe_reports_active_work(self, monkeypatch, tmp_path) -> None:

@@ -59,11 +59,11 @@ describe('the update overlay honours the contract it declares', () => {
     // The hook's effect is `[]` and its capture happens on first render, so calling it in the
     // always-mounted shell would run it at app boot against a null ref. This is the part a
     // "just add the ref" fix would get wrong while still looking correct.
-    expect(src).toMatch(/function UpdateSheet\(\{ progress, cancel \}/)
+    expect(src).toMatch(/function UpdateSheet\(\{ progress, actions \}/)
     expect(src).toMatch(/const trapRef = useFocusTrap<HTMLDivElement>\(\)/)
     // The shell renders the sheet conditionally and does NOT call the hook itself.
     const shell = src.slice(src.indexOf('export function UpdateProgressOverlay()'), src.indexOf('function UpdateSheet'))
-    expect(shell).toMatch(/\{progress && <UpdateSheet progress=\{progress\} cancel=\{cancel\} \/>\}/)
+    expect(shell).toMatch(/\{progress && <UpdateSheet progress=\{progress\} actions=\{actions\} \/>\}/)
     expect(/useFocusTrap/.test(shell), 'the always-mounted shell must not call the hook').toBe(false)
   })
 })
