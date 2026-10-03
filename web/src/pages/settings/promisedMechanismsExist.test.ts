@@ -120,7 +120,8 @@ describe('the daily-digest promise', () => {
     // its maintenance cadence.
     const consolidate = pyMethod(py('history.py'), '    async def _consolidate_locked')
     expect(consolidate, 'the method body must be found').toMatch(/single_flight|include_history/)
-    expect(consolidate, 'the cadence builds digests').toMatch(/self\._svc\.build_daily_digest\(\)/)
+    // The partition's own memory service builds them: `svc` is the one the chat's folder resolves to.
+    expect(consolidate, 'the cadence builds digests').toMatch(/\bsvc\.build_daily_digest\(\)/)
     // The button half: the endpoint forces a synchronous build.
     const h = py('dashboard/handlers/memory.py')
     expect(h, 'the rebuild query param drives the same builder').toMatch(
