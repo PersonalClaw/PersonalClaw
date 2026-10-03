@@ -455,6 +455,15 @@ MEMORY_RECALL_SCHEMA = ToolSchema(
     ],
 )
 
+CHAT_SEARCH_SCHEMA = ToolSchema(
+    tool_name="chat_search",
+    fields=[
+        FieldSpec("query", str, required=True, max_len=MAX_SHORT_STRING),
+        # The route's own bound (`chat_recall.MAX_CHATS`), offered so a call asks within it.
+        FieldSpec("limit", int, min_val=1, max_val=10),
+    ],
+)
+
 TRIAGE_RULES_LIST_SCHEMA = ToolSchema(tool_name="triage_rules_list")
 
 TRIAGE_RULES_SCHEMA = ToolSchema(
@@ -1217,6 +1226,7 @@ MCP_CORE_SCHEMAS: dict[str, ToolSchema] = {
     "memory_remember": LEARN_ADD_SCHEMA,
     "memory_forget": LEARN_REMOVE_SCHEMA,
     "memory_recall": MEMORY_RECALL_SCHEMA,
+    "chat_search": CHAT_SEARCH_SCHEMA,
     "triage_rules_list": TRIAGE_RULES_LIST_SCHEMA,
     "triage_rules": TRIAGE_RULES_SCHEMA,
     "notify": SEND_MESSAGE_SCHEMA,

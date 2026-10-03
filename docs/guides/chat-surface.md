@@ -178,6 +178,12 @@ knowledge and tasks, grouped under those headings below the pages and actions. A
 this find bar already holding what you typed. A source that could not be searched says so in the
 palette instead of showing nothing.
 
+Your agent can search your earlier chats too, with its `chat_search` tool: ask it what you
+discussed or decided before, and a handoff, a standup or a weekly review looks there as well as in
+your notes. It gets each matching chat's title, when it started and was last active, the turns that
+say it and where to open it. It never searches the chat you are in, an **Incognito** chat or a
+**Temporary** chat, and in a Temporary chat it searches nothing at all.
+
 On a phone-width screen the bar spans the column instead of sitting as a pill in the corner, so
 it shrinks with the page rather than hanging off the edge of a narrow one.
 

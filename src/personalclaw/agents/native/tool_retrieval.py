@@ -5,7 +5,7 @@ per-turn relevant projection: a small always-include CORE ∪ top-K by
 ``max(cosine(query, tool_embedding), keyword_overlap)`` ∪ structural hints
 (a URL in the turn → web/fetch tools; "remind me", "every Monday" → the schedule tools and
 ``automation_create``; "when a new file lands in …" → ``automation_create``; "my automations" →
-``automation_list``) ∪ the **sticky
+``automation_list``; a handoff, a standup, "this week" → ``chat_search``) ∪ the **sticky
 set** (tools already CALLED this session stay available). Does for tools what
 :mod:`skills.surfacing` does for skills.
 
@@ -103,6 +103,19 @@ _EVENT = (
     r"|\bautomat(e|es|ed|ion|ions|ically)\b|\b(each|every)\s+time\b"
 )
 
+#: Work over a stretch of recent time, or something said before: a handoff, a standup, a weekly
+#: review, "catch me up", "what did we decide". What only the user's earlier chats may hold, so
+#: such a request names ``chat_search``.
+_RECENT_WORK = (
+    r"\bhand[- ]?offs?\b|\bstand[- ]?ups?\b|\brecaps?\b|\bretro(spective)?s?\b"
+    r"|\bcatch\s+(me\s+)?up\b|\bstatus\s+(update|report)s?\b"
+    r"|\b(weekly|monthly|daily)\s+(review|report|summary|update)s?\b"
+    r"|\b(this|last|past|previous)\s+(week|month|sprint|quarter|shift)\b"
+    r"|\b(last|past|previous)\s+\d+\s+(days?|weeks?|months?)\b|\byesterday\b"
+    r"|\b(earlier|previous|past|other|last)\s+(chats?|conversations?|sessions?|threads?)\b"
+    r"|\bwe\s+(discuss|talk|decid|agree|settl)\w*|\bi\s+(told|asked|showed)\s+you\b"
+)
+
 # Structural hints: a regex over the user's request → the tools it plainly needs, named by the
 # words of their names (`_names_fragment`) or by a whole name. Cheap detectors for the obvious
 # "this turn clearly needs X".
@@ -129,7 +142,8 @@ _STRUCTURAL_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
         r"|\bgit\b|commit|diff|branch|stage|\btest|\bpytest|\bspec\b|assert|lint|build",
         ("shell", "exec", "command", "terminal", *sorted(SHELL_TOOL_NAMES)),
     ),
-    (r"\bremember|\brecall|\bmemor|\blesson", ("memory", "recall", "lesson")),
+    (r"\bremember|\brecall|\bmemor|\blesson", ("memory", "recall", "lesson", "chat_search")),
+    (_RECENT_WORK, ("chat_search",)),
     (r"\btask\b|\btodo\b|\bbacklog", ("task",)),
 )
 

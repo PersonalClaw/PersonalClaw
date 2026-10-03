@@ -32,6 +32,16 @@ chat, channel thread, loop worker, webhook, subagent).
   [knowledge-memory.md](knowledge-memory.md)). Restricted sessions never write
   lessons (`after_turn_review.py` checks `session.is_restricted`).
 
+  The agent's own search of your chats (`chat_search`, served by
+  `GET /api/sessions/recall` over `chat_recall.py`) runs the same
+  `session_search.search`, so it never finds a restricted chat either. It also
+  leaves out the chat the call is made for (and that chat's older files, one
+  `tab_id`), and from a Temporary chat it searches nothing, by the read gate
+  memory recall uses. A subagent's call is judged by the chat it works for, up
+  its parents; in a conversation an app started it finds only that app's
+  conversations. It hands back a few chats, a few turns of each and a window of
+  each turn, masked, and quoted as data (`fence_untrusted`).
+
   A channel's mark is recorded in the thread's transcript metadata
   (`ConversationLog.append`), so a restricted thread is still restricted after
   a restart, when the in-process registry is empty.

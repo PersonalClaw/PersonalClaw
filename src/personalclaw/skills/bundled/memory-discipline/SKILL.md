@@ -14,7 +14,7 @@ simple: **persist what's durable, recall before re-asking, and never store
 transient failures as lessons.**
 
 Tools: `memory_remember` (save), `memory_recall` / `memory_list` (retrieve),
-`memory_forget` (remove).
+`memory_forget` (remove), and `chat_search` (what was said in an earlier chat).
 
 ## What IS worth remembering
 
@@ -57,7 +57,8 @@ the **rule**, not the incident.)
 
 Before asking the user something they may have already told you — a preference, a
 default, a name, an environment detail — **check memory first** with
-`memory_recall` (semantic lookup) or `memory_list` (browse). If it's there, act
+`memory_recall` (semantic lookup) or `memory_list` (browse), and look for what
+they said in an earlier chat with `chat_search`. If it's there, act
 on it (or confirm — *"Last time you preferred X; still the case?"*) instead of
 re-asking. Re-asking something already on record is exactly the friction
 persistent memory exists to remove.

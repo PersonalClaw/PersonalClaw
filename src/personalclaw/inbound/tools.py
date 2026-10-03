@@ -282,28 +282,8 @@ async def _sessions_search(arguments: dict, state: Any) -> str:
     # A partial answer says so — the index is still being built, or holds only the beginning of
     # a long conversation, or there is none and only the newest conversations were read — so a
     # caller cannot take "no match" for "not there".
-    if answer.complete:
-        partial = ""
-    elif answer.index is None:
-        partial = (
-            f" Only the {answer.searched:,} most recent of {answer.of:,} conversations were "
-            "searched: there is no search index."
-        )
-    elif answer.index["indexed"] < answer.index["of"]:
-        partial = (
-            f" Only {answer.searched:,} of {answer.of:,} conversations were searched: the search "
-            "index is still being built, so matches in the others are not listed yet."
-        )
-    elif answer.of - answer.searched == 1:
-        partial = (
-            f" Only {answer.searched:,} of {answer.of:,} conversations were searched whole: the "
-            "other one is longer than the search index keeps, so only its beginning was searched."
-        )
-    else:
-        partial = (
-            f" Only {answer.searched:,} of {answer.of:,} conversations were searched whole: the "
-            "others are longer than the search index keeps, so only their beginnings were searched."
-        )
+    shortfall = answer.shortfall("conversations")
+    partial = f" {shortfall}" if shortfall else ""
     if not hits:
         return f"No conversations matched {query!r}.{partial}"
     from personalclaw.security import redact_credentials, redact_exfiltration_urls

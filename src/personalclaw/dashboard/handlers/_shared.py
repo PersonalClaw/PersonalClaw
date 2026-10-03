@@ -180,7 +180,11 @@ def _is_restricted_session(state: DashboardState, request: "Any") -> bool:
 
 def _blocks_reads_session(state: DashboardState, request: "Any") -> bool:
     """Check if request comes from a temporary session that blocks memory reads."""
-    sk = request.headers.get("X-Session-Key", "")
+    return blocks_reads(state, request.headers.get("X-Session-Key", ""))
+
+
+def blocks_reads(state: DashboardState, sk: str) -> bool:
+    """Whether the session *sk* is a temporary one, which reads no memory."""
     if not sk or sk == "dashboard:ui":
         return False
     session_name = sk.split(":", 1)[-1] if ":" in sk else sk

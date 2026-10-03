@@ -194,6 +194,101 @@ async def api_sessions_search(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+def _the_chat_asking(state: DashboardState, caller: str) -> tuple[list[str], str]:
+    """The sessions a call is made for: its own (*caller*, its ``X-Session-Key``) and, for a
+    subagent, each one it works for up to the chat it was started in. With the app whose work that
+    is: the app that started the chat, or whose agent a subagent runs for (``""`` for yours)."""
+    keys: list[str] = []
+    app = ""
+    key = "" if caller == "dashboard:ui" else caller.strip()
+    while key and key not in keys:
+        keys.append(key)
+        if not key.startswith("subagent:"):
+            name = key.split(":", 1)[-1]
+            app = app or state.session_creating_app(name) or state.session_creating_app(key)
+            break
+        info = state.subagents.get(key.removeprefix("subagent:")) if state.subagents else None
+        app = app or str(getattr(info, "app", "") or "")
+        key = str(getattr(info, "parent_session_key", "") or "")
+    return keys, app
+
+
+async def api_sessions_recall(request: web.Request) -> web.Response:
+    """GET /api/sessions/recall — what your earlier chats said, searched for your agent.
+
+    The search behind the agent's ``chat_search`` tool (:mod:`personalclaw.chat_recall`).
+
+    Query params:
+      - ``q``: what to look for (at least 2 characters)
+      - ``limit``: the most chats to return (1-10, default 5)
+
+    The chat the call is made for (``X-Session-Key``; for a subagent, the chat it works for) is
+    not searched, and neither is an Incognito or a Temporary chat. From a Temporary chat nothing
+    is: it starts blank. In a conversation an app started, only the conversations that app started
+    are searched, as the app's own content search is (:func:`api_sessions_search`).
+
+    Returns ``{result, query, chats, matched, searched, complete, index}``. ``result`` is what the
+    tool hands the agent. ``chats`` holds each chat found, best first: its ``key``, ``title``,
+    ``created``, ``modified``, ``route`` (``#/chat/<key>?find=<q>``), ``link`` (that route on the
+    dashboard's address when one is known, else ``""``), the ``turns`` that say it (``role``,
+    ``at``, ``text``), how many ``more`` of its turns use the words, and the ``snippet`` the search
+    found. Titles, turns and snippets are masked.
+    """
+    from personalclaw import chat_recall
+    from personalclaw.dashboard.handlers._shared import blocks_reads
+
+    state: DashboardState = request.app["state"]
+    q = " ".join(sanitize_string(request.query.get("q", "")).split())[:500]
+    if len(q) < SEARCH_MIN_CHARS:
+        return json_error(
+            "text_required",
+            message="Give at least two characters to search your chats for.",
+            status=400,
+        )
+    try:
+        limit = int(request.query.get("limit", ""))
+    except (TypeError, ValueError):
+        limit = chat_recall.DEFAULT_CHATS
+    asking, app = _the_chat_asking(state, request.headers.get("X-Session-Key", ""))
+    if any(blocks_reads(state, key) for key in asking):
+        _sel().log_api_access(
+            caller=asking[0],
+            operation="sessions.recall",
+            outcome="denied",
+            source="dashboard",
+            resources=asking[-1],
+        )
+        return web.json_response({"result": chat_recall.TEMPORARY, "query": q, "chats": []})
+    log = state.conversation_log
+    if not log:
+        return web.json_response(
+            {"result": f'No earlier chat says "{q}".', "query": q, "chats": []}
+        )
+
+    def _visible(key: str) -> bool:
+        return state.session_creating_app(key) == app
+
+    def _recall() -> tuple[str, dict]:
+        import functools
+
+        from personalclaw import session_search
+        from personalclaw.dashboard.channel_messages import dashboard_link
+        from personalclaw.timezones import resolve_zone
+
+        # The indexer gives way while a search is answered, as it does for the chat list.
+        with session_search.INDEXER.foreground():
+            exclude = frozenset().union(*(chat_recall.chats_of(log, key) for key in asking))
+            recall = chat_recall.search(
+                q, log=log, limit=limit, exclude=exclude, visible=_visible if app else None
+            )
+        link = functools.cache(dashboard_link)
+        text = chat_recall.render(recall, zone=resolve_zone(), link=link)
+        return text, chat_recall.to_dict(recall, link=link)
+
+    text, found = await asyncio.get_running_loop().run_in_executor(None, _recall)
+    return web.json_response({"result": text, **found})
+
+
 async def api_session_detail(request: web.Request) -> web.Response:
     """GET /api/sessions/{key} — return messages for a session."""
     state: DashboardState = request.app["state"]

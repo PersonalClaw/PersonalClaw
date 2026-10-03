@@ -50,6 +50,7 @@ _DECLARED_READS: frozenset[str] = frozenset(
         "automation_dry_run",
         "automation_history",
         "automation_list",
+        "chat_search",
         "computer_list_apps",
         "computer_snapshot",
         "document_formats",

@@ -536,6 +536,7 @@ INTERNAL_ROUTES: frozenset[str] = frozenset(
         "POST /api/session-keepalive",  # `wait`
         "GET /api/session-tool-policy",  # an MCP server's per-session tool policy
         "GET /api/chat/sessions/model-reach",  # whether an `mcp-core` tool's chat keeps nothing
+        "GET /api/sessions/recall",  # `chat_search`
         # A webhook, relayed on this computer (docs/architecture/security.md#webhook-auth); the
         # route then checks the webhook's own token.
         "POST /api/hooks/agent",

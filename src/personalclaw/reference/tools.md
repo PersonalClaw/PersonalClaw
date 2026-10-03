@@ -1497,6 +1497,25 @@ Record a decision the user is making, with the prediction they expect, and sched
 
 ## personalclaw-memory
 
+### `chat_search`
+
+Search what was said in the user's earlier chats with you. Returns each matching chat's title, when it started and was last active, the turns that say it, and where to open it. Use it whenever the answer may be in an earlier conversation: a handoff, a standup, a weekly review or any summary of recent work, or a question about something you and the user discussed, decided or worked through before. It never returns this chat, an Incognito chat or a Temporary chat, and from a Temporary chat it searches nothing.
+
+**Response type:** `chat.search.results`
+
+**Parameters:**
+- `limit` (integer, optional) — The most chats to return (default 5)
+- `query` (string, required) — Words said in the chat: a topic, a name, an error, a ticket id
+
+**Example — Find what earlier chats said about an incident, for a handoff:**
+
+```json
+{
+  "limit": 5,
+  "query": "p99 latency spike"
+}
+```
+
 ### `memory_forget`
 
 Remove lessons whose rule contains the given substring
@@ -1533,7 +1552,7 @@ List all saved lessons and corrections
 
 ### `memory_recall`
 
-Look up your persistent memory on demand — query-relevant facts and past conversation fragments. Your always-on context only carries a small manifest of your most-used facts; call this when you need to recall something specific the user told you before, or context from an earlier session. Set deep=true for a broader, deeper search.
+Look up your persistent memory on demand — query-relevant facts and past conversation fragments. Your always-on context only carries a small manifest of your most-used facts; call this when you need to recall something specific the user told you before, or context from an earlier session. Set deep=true for a broader, deeper search. For what was actually said in an earlier chat, use chat_search.
 
 **Response type:** `memory.recall.results`
 

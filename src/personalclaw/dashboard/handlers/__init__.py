@@ -377,6 +377,7 @@ from personalclaw.dashboard.handlers.sessions import (  # noqa: E402, F401
     api_sessions_clear,
     api_sessions_context,
     api_sessions_health,
+    api_sessions_recall,
     api_sessions_restart,
     api_sessions_search,
 )

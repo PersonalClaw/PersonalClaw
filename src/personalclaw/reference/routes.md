@@ -731,6 +731,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/sessions` — list conversation session files.
 - `GET /api/sessions/context` — context usage for all active sessions.
 - `GET /api/sessions/health` — sessions flagged as stalled from log scan.
+- `GET /api/sessions/recall` — what your earlier chats said, searched for your agent.
 - `POST /api/sessions/restart` — reset all ACP agent sessions.
 - `GET /api/sessions/retag-all` — the current/last job (for UI hydration).
 - `POST /api/sessions/retag-all` — start (or return) the batch re-tag job.

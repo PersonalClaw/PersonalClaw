@@ -758,6 +758,16 @@ TOOL_META: dict[str, dict[str, Any]] = {
             }
         ],
     },
+    "chat_search": {
+        "response_type": "chat.search.results",
+        "error_codes": [],
+        "examples": [
+            {
+                "summary": "Find what earlier chats said about an incident, for a handoff",
+                "args": {"query": "p99 latency spike", "limit": 5},
+            }
+        ],
+    },
     # ── personalclaw-subagents ───────────────────────────────────────────────
     "best_of_n": {
         "response_type": "sampling.best_of_n",

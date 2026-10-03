@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **910 registrations** over **737 distinct paths** — 903 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **911 registrations** over **738 distinct paths** — 904 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -38,8 +38,8 @@ The 128 families the surface divides into, largest first.
 | `/api/skills` | 19 | 15 |
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
+| `/api/sessions` | 15 | 12 |
 | `/api/projects` | 14 | 10 |
-| `/api/sessions` | 14 | 11 |
 | `/api/agents` | 13 | 9 |
 | `/api/dashboard` | 13 | 8 |
 | `/api/packs` | 13 | 13 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 903 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 904 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -884,6 +884,7 @@ The 903 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/sessions` | list conversation session files. |
 | `GET` | `/api/sessions/context` | context usage for all active sessions. |
 | `GET` | `/api/sessions/health` | sessions flagged as stalled from log scan. |
+| `GET` | `/api/sessions/recall` | what your earlier chats said, searched for your agent. |
 | `POST` | `/api/sessions/restart` | reset all ACP agent sessions. |
 | `GET` | `/api/sessions/retag-all` | the current/last job (for UI hydration). |
 | `POST` | `/api/sessions/retag-all` | start (or return) the batch re-tag job. |

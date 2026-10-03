@@ -1454,6 +1454,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "searches only the conversations the app started — the handler leaves out every other "
         "match"
     ),
+    "GET /api/sessions/recall": OwnerOnly("what was said in your chats, searched for your agent"),
     "GET /api/sessions/{key}": AppMay(_READS_OWN_CHAT, owns=(OwnedTarget("key"),)),
     "GET /api/sessions/{id}/agents": AppMay(_READS_OWN_AGENTS, owns=(OwnedTarget("id"),)),
     "GET /api/sessions/{id}/agents/{agent_id}": AppMay(

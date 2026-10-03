@@ -1,7 +1,8 @@
 """Memory tool category — persistent lessons + on-demand recall as a native tool group.
 
-One of the cohesive native tool-provider categories. Save/list/forget durable lessons and recall
-query-relevant facts from persistent memory.
+One of the cohesive native tool-provider categories. Save/list/forget durable lessons, recall
+query-relevant facts from persistent memory, and search what was said in the user's earlier chats
+(``chat_search``, :mod:`personalclaw.chat_recall`).
 
 Exposes ``_list_tools`` / ``_call_tool`` (the same shape as ``mcp_core`` / ``mcp_schedule``)
 so the in-process ``InProcessMcpToolProvider`` and the aggregating ``mcp-core`` MCP server
@@ -81,7 +82,8 @@ def _list_tools() -> list[dict[str, Any]]:
                 "carries a small manifest of your most-used facts; call this when "
                 "you need to recall something specific the user told you before, "
                 "or context from an earlier session. Set deep=true for a broader, "
-                "deeper search."
+                "deeper search. For what was actually said in an earlier chat, use "
+                "chat_search."
             ),
             "inputSchema": {
                 "type": "object",
@@ -93,6 +95,35 @@ def _list_tools() -> list[dict[str, Any]]:
                     "deep": {
                         "type": "boolean",
                         "description": "Broader/deeper search (default false)",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "chat_search",
+            "annotations": {"readOnlyHint": True},
+            "description": (
+                "Search what was said in the user's earlier chats with you. Returns each "
+                "matching chat's title, when it started and was last active, the turns that "
+                "say it, and where to open it. Use it whenever the answer may be in an earlier "
+                "conversation: a handoff, a standup, a weekly review or any summary of recent "
+                "work, or a question about something you and the user discussed, decided or "
+                "worked through before. It never returns this chat, an Incognito chat or a "
+                "Temporary chat, and from a Temporary chat it searches nothing."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Words said in the chat: a topic, a name, an error, a ticket id"
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "The most chats to return (default 5)",
                     },
                 },
                 "required": ["query"],
@@ -247,6 +278,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             return tool_failure(f"{d['error']}")
         return d.get("result", "No matching memory found.")
 
+    if name == "chat_search":
+        return _chat_search(args)
+
     if name == "triage_rules_list":
         return _triage_rules_list()
 
@@ -254,6 +288,27 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         return _triage_rules(args)
 
     return f"Unknown tool: {name}"
+
+
+def _chat_search(args: dict[str, Any]) -> str:
+    """What the user's earlier chats say about the query, as the gateway finds it for this chat
+    (``GET /api/sessions/recall``): the chat asking is not searched, nor an Incognito or a
+    Temporary chat."""
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return tool_failure("query is required")
+    qs = f"q={urllib.parse.quote(query)}"
+    if args.get("limit") is not None:
+        qs += f"&limit={int(args['limit'])}"
+    d = _get(f"/api/sessions/recall?{qs}")
+    if d.get("timed_out"):
+        return tool_failure(
+            f"chat search did not answer within {GATEWAY_READ_TIMEOUT_SECS:g} s, so nothing was "
+            "found this time. The chats are intact; ask again in a moment."
+        )
+    if d.get("error"):
+        return tool_failure(f"{d['error']}")
+    return str(d.get("result") or "")
 
 
 def _triage_rules_list() -> str:

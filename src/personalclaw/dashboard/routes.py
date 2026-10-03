@@ -1182,8 +1182,9 @@ def register_dashboard_routes(app: web.Application) -> None:
     app.router.add_get("/api/sessions/context", handlers.api_sessions_context)
     app.router.add_get("/api/sessions/health", handlers.api_sessions_health)
     app.router.add_post("/api/sessions/restart", handlers.api_sessions_restart)
-    # NOTE: /search must be registered before /{key} to avoid the path param catching "search"
+    # NOTE: /search and /recall must be registered before /{key}, or the path param catches them
     app.router.add_get("/api/sessions/search", handlers.api_sessions_search)
+    app.router.add_get("/api/sessions/recall", handlers.api_sessions_recall)
     app.router.add_get("/api/sessions/{key}", handlers.api_session_detail)
     app.router.add_delete("/api/sessions/{key}", handlers.api_session_delete)
     app.router.add_get("/api/logs", handlers.api_logs)

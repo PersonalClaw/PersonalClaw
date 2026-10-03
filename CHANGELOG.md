@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **Your agent can search what your earlier chats said (`chat_search`), and a handoff, a standup or a weekly review now looks there too. It never returns the chat you are in, an Incognito chat or a Temporary chat, and from a Temporary chat it searches nothing.**
 - **An answer longer than the word limit its agent's own instructions set is followed by a note giving its word count and quoting the instruction. The answer itself is never cut.**
 - **The agent reads the calendars in the folders you share: each turn names them, and `calendar_events` lists what is on a day, with repeating events expanded in your time zone and an all-day event through its last day.**
 - **A chat channel's approval offers what the chat's approval card offers: Allow once, Allow for this chat and Deny, from the answers core hands over in the approval brief (channel contract change, used by `*-channel`).**

@@ -1063,6 +1063,32 @@ class Answer:
     def complete(self) -> bool:
         return self.searched >= self.of
 
+    def shortfall(self, noun: str) -> str:
+        """The sentence that says how much of the history an incomplete answer looked at, naming
+        what it searched as *noun* ("conversations", "chats"); ``""`` for a complete one. What a
+        tool hands a model beside the matches, so "no match" is never read as "not there"."""
+        if self.complete:
+            return ""
+        if self.index is None:
+            return (
+                f"Only the {self.searched:,} most recent of {self.of:,} {noun} were searched: "
+                "there is no search index."
+            )
+        if self.index["indexed"] < self.index["of"]:
+            return (
+                f"Only {self.searched:,} of {self.of:,} {noun} were searched: the search index is "
+                "still being built, so matches in the others are not listed yet."
+            )
+        if self.of - self.searched == 1:
+            return (
+                f"Only {self.searched:,} of {self.of:,} {noun} were searched whole: the other one "
+                "is longer than the search index keeps, so only its beginning was searched."
+            )
+        return (
+            f"Only {self.searched:,} of {self.of:,} {noun} were searched whole: the others are "
+            "longer than the search index keeps, so only their beginnings were searched."
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "sessions": self.hits,

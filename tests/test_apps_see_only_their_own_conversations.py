@@ -348,6 +348,8 @@ OWNER_ONLY_READS: list[tuple[str, str]] = [
     ("GET", "/api/chat/image-input"),
     ("GET", "/api/sessions/context"),
     ("GET", "/api/sessions/health"),
+    # What your chats said, searched for your agent (`chat_search`), which calls it as itself.
+    ("GET", "/api/sessions/recall"),
     ("GET", "/api/sessions/retag-all"),
     ("GET", "/api/session/archive"),
     ("GET", "/api/session/archive/{name}"),
