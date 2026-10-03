@@ -773,6 +773,12 @@ _BLIND_BY_DESIGN: dict[str, tuple[frozenset[str], str]] = {
         "`onboarding_import.writers._rel_to_home`); only one inside the memory folder's "
         "`instructions/` is read",
     ),
+    "/path.name + suffix": (
+        frozenset({"personalclaw/memory.py"}),
+        "a file beside the home's keyword index (`memory._beside`): SQLite's own `-journal`, "
+        "`-wal` and `-shm`, and a damaged index moved aside as `memory_index.db.broken-<UTC "
+        "instant>`, which the inventory ignores (`*.broken-*`)",
+    ),
 }
 
 

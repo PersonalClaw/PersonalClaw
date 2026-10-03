@@ -8,15 +8,21 @@ Structure:
         └── 2026-02-16.md   # Daily conversation summaries
 
     ~/.personalclaw/memory_index.db  # FTS5 full-text search index
+
+A store given a working folder's partition keeps its index in that folder's ``memory_index.db``,
+where the partition's vector store keeps the folder's memories too. Nothing here ever deletes that
+file (see "The keyword index" below).
 """
 
 import logging
-from datetime import datetime, timedelta
+import threading
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn, TypeVar
 
 from personalclaw import memory_writes
-from personalclaw.atomic_write import atomic_write, make_private_dirs
+from personalclaw.atomic_write import SQLITE_SIDECARS, atomic_write, make_private_dirs
 from personalclaw.config import loader as config_loader
 from personalclaw.home_paths import from_home
 from personalclaw.sqlite_compat import FTS5_REMEDY, connect, probe, sqlite3
@@ -58,6 +64,252 @@ def memory_dir() -> Path:
     return workspace_dir() / MEMORY_DIR_NAME
 
 
+# ── The keyword index ──
+#
+# The keyword (full-text) index is DERIVED: each row is one memory file's text
+# (`MemoryStore._indexable_files`), so it can always be rebuilt from the files, and nothing in it is
+# kept nowhere else. The FILE it lives in is not always the index's alone: a working folder's
+# partition keeps its vector store's memories in the same database (`context._attach_vector_store`),
+# its facts and episodes, held nowhere else. So nothing here deletes that file, whatever fails. An
+# index that cannot be used is rebuilt in place from the files; a database SQLite reports damaged is
+# moved aside whole, never deleted, and a new one started; and what cannot be repaired is left as it
+# is and recorded as degraded keyword search with its reason, which the Doctor's memory check (and
+# the memory page, which shows that check) says.
+
+INDEX_FILE = "memory_index.db"
+#: What a damaged database is renamed to, beside where it was, the files SQLite kept beside it with
+#: it: ``<name>.broken-<UTC instant>``. Never deleted, never written over, never opened again.
+SET_ASIDE_MARK = ".broken-"
+
+_FTS_TABLE = "memory_fts"
+_CREATE_FTS = (
+    f"CREATE VIRTUAL TABLE IF NOT EXISTS {_FTS_TABLE} USING fts5("
+    "path, content, tokenize='porter unicode61')"
+)
+
+#: Each keyword index this process could not build or keep up to date with the memory files → why,
+#: in one clause. Cleared when the index is next rebuilt from the files. Keyed by the index's file,
+#: so every store on one index (the gateway's, a maintenance pass's) shares it; process-local like
+#: `config.loader.config_discard`, because it is what this process saw.
+_DEGRADED: dict[str, str] = {}
+_DEGRADED_LOCK = threading.Lock()
+#: One repair at a time: two stores mending one file must not each move it aside.
+_REPAIR_LOCK = threading.Lock()
+
+_T = TypeVar("_T")
+
+
+class KeywordIndexUnavailable(RuntimeError):
+    """The keyword index cannot be used now; :func:`degraded_keyword_indexes` says why."""
+
+
+def degraded_keyword_indexes() -> dict[str, str]:
+    """Each keyword index this process cannot use now → why, in one clause."""
+    with _DEGRADED_LOCK:
+        return dict(_DEGRADED)
+
+
+def set_aside_databases(home: Path) -> list[Path]:
+    """Each damaged memory database moved aside under *home*, oldest first: the home's own keyword
+    index, and each working folder partition's database. The files SQLite kept beside one moved
+    with it and are not listed."""
+    found = [
+        *home.glob(f"{INDEX_FILE}{SET_ASIDE_MARK}*"),
+        *(config_loader.memory_root(home) / "_ext").glob(f"*/{INDEX_FILE}{SET_ASIDE_MARK}*"),
+    ]
+    copies = [p for p in found if p.is_file() and not p.name.endswith(SQLITE_SIDECARS)]
+    return sorted(copies, key=lambda p: (p.name.split(SET_ASIDE_MARK, 1)[1], str(p)))
+
+
+def retry_degraded_keyword_indexes(home: Path) -> dict[Path, str]:
+    """Rebuild each keyword index of *home* this process recorded degraded, from its memory
+    files, and return those that still cannot be used → why.
+
+    So a report of degraded search says what is true now rather than what was true when the
+    index was last used: a partition whose vector store has since opened may not use its keyword
+    index again for a long time. The index is derived from the files, so rebuilding it changes
+    no memory, and it goes through the store's own repair (:meth:`MemoryStore._repair`), which
+    deletes nothing.
+    """
+    root = home.resolve()
+    left: dict[Path, str] = {}
+    for key, recorded in degraded_keyword_indexes().items():
+        index = Path(key)
+        where = index.resolve()
+        if not where.is_relative_to(root):
+            continue
+        # The home's own store keeps its index at the top of the home, and a folder's store in the
+        # folder; either is built on the path it was recorded under, so it reads its own record.
+        if where.parent != root:
+            store = MemoryStore(workspace=index.parent)
+        elif config_dir().resolve() == root:
+            store = MemoryStore()
+        else:  # another home's own index: this process cannot open its store
+            left[where] = recorded
+            continue
+        store.rebuild_index()
+        if why := store.search_degraded():
+            left[where] = why
+    return left
+
+
+#: SQLite's names for a failure no rebuild of the index can help with — the database is locked,
+#: read-only, missing or out of room, or the disk failed — each in the words the Doctor says it in.
+_ENVIRONMENT: dict[str, str] = {
+    "SQLITE_BUSY": "another connection held the database locked",
+    "SQLITE_LOCKED": "another connection held the database locked",
+    "SQLITE_READONLY": "the database file is read-only",
+    "SQLITE_FULL": "the disk is full",
+    "SQLITE_CANTOPEN": "the database file could not be opened",
+    "SQLITE_IOERR": "the disk failed to read or write the database",
+    "SQLITE_PERM": "permission to the database file was denied",
+}
+#: The message SQLite gives each of those, for a driver whose errors carry no name (``pysqlite3``).
+_ENVIRONMENT_MESSAGES: dict[str, str] = {
+    "database is locked": "SQLITE_BUSY",
+    "database table is locked": "SQLITE_LOCKED",
+    "attempt to write a readonly database": "SQLITE_READONLY",
+    "database or disk is full": "SQLITE_FULL",
+    "unable to open database file": "SQLITE_CANTOPEN",
+    "disk I/O error": "SQLITE_IOERR",
+    "access permission denied": "SQLITE_PERM",
+}
+
+
+def _sqlite_name(exc: BaseException) -> str:
+    """SQLite's name for what *exc* is (``SQLITE_READONLY``…), or "" when it gives none."""
+    name = str(getattr(exc, "sqlite_errorname", "") or "")
+    if name or not isinstance(exc, sqlite3.Error):
+        return name
+    text = str(exc)
+    return next((n for message, n in _ENVIRONMENT_MESSAGES.items() if message in text), "")
+
+
+def _environment(exc: BaseException) -> str:
+    """Why the index cannot be written when no rebuild can help — a lock, the file's mode, the
+    disk — in the Doctor's words, or "" when *exc* is something else."""
+    if isinstance(exc, OSError):
+        return f"a memory file or its folder could not be used ({exc.strerror or exc})"
+    name = _sqlite_name(exc)
+    return next(
+        (why for n, why in _ENVIRONMENT.items() if name == n or name.startswith(n + "_")), ""
+    )
+
+
+def _is_damage(exc: BaseException) -> bool:
+    """Whether *exc* is SQLite saying a database, or the index in it, is damaged — or that the file
+    is not a database at all."""
+    name = _sqlite_name(exc)
+    if name:
+        return name.startswith("SQLITE_CORRUPT") or name == "SQLITE_NOTADB"
+    # A driver without the names raises exactly DatabaseError for these, and a subclass of it
+    # (OperationalError, IntegrityError…) for every other failure.
+    return type(exc) is sqlite3.DatabaseError
+
+
+def _why(exc: BaseException) -> str:
+    """Why keyword search cannot use its index, in one clause."""
+    return _environment(exc) or f"SQLite could not build the index ({exc})"
+
+
+def _damage(db: Path) -> str:
+    """What SQLite finds wrong with the database *db* beyond the keyword index, or "" when it finds
+    the rest sound or cannot tell (a lock, an index it cannot open).
+
+    Read-only. Damage confined to the index is the index's own and is mended by rebuilding it, so a
+    problem SQLite names the index's tables in is not counted (FTS5's own check reports a corrupt
+    index that way). A database is only ever moved aside on SQLite's word that it is damaged.
+    """
+    if not db.is_file():
+        return ""
+    try:
+        # as_uri() percent-encodes the path (see `context._holds_memory`).
+        conn = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True, timeout=2.0)
+        try:
+            rows = conn.execute("PRAGMA quick_check").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return str(exc) if _is_damage(exc) else ""
+    found = [str(r[0]) for r in rows if str(r[0]) != "ok" and _FTS_TABLE not in str(r[0])]
+    return "; ".join(found[:3])
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return False
+
+
+def _beside(path: Path, suffix: str) -> Path:
+    """*path* with *suffix* on the end of its name: where SQLite keeps a database's journal, log and
+    shared memory (``-journal``, ``-wal``, ``-shm``), and where a damaged one is set aside."""
+    return path.with_name(path.name + suffix)
+
+
+def _move_aside(db: Path) -> Path:
+    """Rename *db*, and each file SQLite keeps beside it, to ``<name>.broken-<UTC instant>`` beside
+    where it was, and return the new path of *db*.
+
+    A name already taken gets a counter rather than being reused: a rename over a file replaces it,
+    and that file is a copy set aside before. The files beside the database move first, so a new
+    database made at its name can never find the old one's log and replay it.
+    """
+    stamp = SET_ASIDE_MARK + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = _beside(db, stamp)
+    counter = 2
+    while any(_beside(target, suffix).exists() for suffix in ("", *SQLITE_SIDECARS)):
+        target = _beside(db, f"{stamp}-{counter}")
+        counter += 1
+    for suffix in SQLITE_SIDECARS:
+        if _beside(db, suffix).exists():
+            _beside(db, suffix).rename(_beside(target, suffix))
+    db.rename(target)
+    return target
+
+
+def _announce_set_aside(
+    db: Path, moved: Path, damage: str, *, held_memories: bool, rebuilt: bool
+) -> None:
+    """Say that the damaged database *db* was moved aside to *moved*: one WARNING, and a notice to
+    the owner when a gateway is running. A folder's memories it held are in the moved file; the
+    home's own index held only what the memory files hold, *rebuilt* from them or not yet."""
+    if held_memories:
+        after = (
+            "The memories this folder kept in it are in that file: restore them from a snapshot "
+            "under Settings → Durability, or recover them from the file."
+        )
+    elif rebuilt:
+        after = "Keyword search was rebuilt from the memory files, so nothing is missing."
+    else:
+        after = (
+            "Nothing is missing: keyword search is rebuilt from the memory files once it can be, "
+            "and the Doctor says why it cannot yet."
+        )
+    logger.warning(
+        "The memory database %s is damaged (%s). It was moved aside to %s, not deleted, and a "
+        "new one started. %s",
+        from_home(db),
+        damage,
+        moved.name,
+        after,
+    )
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        state = get_dashboard_state()
+        if state is not None:
+            state.notify(
+                "warning",
+                "A damaged memory database was moved aside",
+                f"{from_home(db)} could not be read ({damage}). It was moved aside to "
+                f"{moved.name} beside it, not deleted, and a new one started. {after}",
+            )
+    except Exception:  # noqa: BLE001 — the notice is best-effort: the move is done and logged
+        logger.debug("memory: the notice for %s was not posted", moved, exc_info=True)
+
+
 # ── MemoryStore ──
 
 
@@ -81,7 +333,10 @@ class MemoryStore:
         self._history_dir = self._memory_dir / HISTORY_DIR_NAME
         self._preferences_file = self._memory_dir / PREFERENCES_FILE
         self._projects_file = self._memory_dir / PROJECTS_FILE
-        self._index_db = (workspace or config_dir()) / "memory_index.db"
+        self._index_db = (workspace or config_dir()) / INDEX_FILE
+        # The home's own index is a file of its own; a store given a folder keeps its index in that
+        # folder's database, where a vector store keeps the folder's memories too.
+        self._index_alone = workspace is None
         self._vector_store: "VectorMemoryStore | None" = None
         # DEGRADE (not raise): the markdown projection (preferences/projects/history) is
         # this class's real job and works without a search index — FTS5 only powers the
@@ -360,61 +615,217 @@ class MemoryStore:
         self._index_file(path, content)
 
     # ── FTS5 Full-Text Search ──
+    #
+    # See "The keyword index" above: every failure goes through `_repair`, which deletes nothing.
+
+    def search_degraded(self) -> str:
+        """Why keyword search cannot use this store's index now, or "" when it can."""
+        with _DEGRADED_LOCK:
+            return _DEGRADED.get(str(self._index_db), "")
 
     def _get_db(self) -> sqlite3.Connection:
-        """Get or create the FTS5 database connection."""
+        """The keyword index, open, with its table: caught up with the memory files first when it
+        is recorded degraded, and repaired when it cannot be opened (:meth:`_repair`). Raises
+        :class:`KeywordIndexUnavailable` when it cannot be used, having recorded why."""
         try:
-            return self._try_create_db()
-        except Exception as e:
-            # Self-healing: delete corrupted DB and retry
-            logger.warning("FTS index init failed (%s), deleting and retrying", e)
-            for suffix in ("", "-wal", "-shm"):
-                p = Path(str(self._index_db) + suffix)
-                p.unlink(missing_ok=True)
-            return self._try_create_db()
+            conn = self._try_create_db()
+            if self.search_degraded():
+                try:
+                    self._fill(conn)
+                except BaseException:
+                    conn.close()
+                    raise
+                self._recovered()
+            return conn
+        except (sqlite3.Error, OSError) as exc:
+            return self._repair(exc)
 
     def _try_create_db(self) -> sqlite3.Connection:
+        """The index, open, its table made when it is missing. The connection is closed again when
+        the table cannot be made, so a failure leaves nothing holding the file."""
         conn = connect(str(self._index_db))
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
-            "path, content, tokenize='porter unicode61')"
-        )
+        try:
+            conn.execute(_CREATE_FTS)
+        except BaseException:
+            conn.close()
+            raise
         return conn
+
+    def _fill(self, conn: sqlite3.Connection) -> int:
+        """Make the index hold exactly the memory files. Returns how many."""
+        files = self._indexable_files()
+        conn.execute(f"DELETE FROM {_FTS_TABLE}")
+        conn.executemany(f"INSERT INTO {_FTS_TABLE} (path, content) VALUES (?, ?)", files)
+        conn.commit()
+        return len(files)
+
+    def _with_index(self, op: Callable[[sqlite3.Connection], _T], *, query: bool = False) -> _T:
+        """Run *op* on the keyword index and return what it returns.
+
+        When *op* fails the index is repaired from the memory files (:meth:`_repair`; a file is
+        written before it is indexed, so the change *op* was making is in them) and *op* runs once
+        more on the repaired index. A *query*'s failure is mended only when SQLite says the index is
+        damaged: any other is the query's own (a search the index cannot parse), raised as it came.
+        Raises :class:`KeywordIndexUnavailable` when the index cannot be used.
+        """
+        conn = self._get_db()
+        try:
+            try:
+                return op(conn)
+            except (sqlite3.Error, OSError) as exc:
+                if query and not _is_damage(exc):
+                    raise
+                conn.close()
+                conn = self._repair(exc)
+            try:
+                return op(conn)
+            except (sqlite3.Error, OSError) as exc:
+                if query and not _is_damage(exc):
+                    raise
+                self._degrade(exc)
+        finally:
+            conn.close()
+
+    def _repair(self, failure: BaseException) -> sqlite3.Connection:
+        """Mend the keyword index after *failure*, and return it open, holding every memory file;
+        or record why it cannot be used and raise :class:`KeywordIndexUnavailable`. Nothing is
+        deleted, whatever failed:
+
+        * a lock, the file's mode or the disk (:func:`_environment`): left as it is, and recorded;
+        * a database SQLite reports damaged beyond the index (:func:`_damage`): moved aside whole,
+          and a new one started (:meth:`_start_again`);
+        * anything else: the index rebuilt in place, its table dropped and made again inside the
+          same database from the memory files. Whatever else that database holds is not touched.
+        """
+        if _environment(failure):
+            self._degrade(failure)
+        with _REPAIR_LOCK:
+            try:
+                damage = _damage(self._index_db) if _is_damage(failure) else ""
+                if damage:
+                    conn = self._start_again(damage)
+                else:
+                    try:
+                        conn = self._rebuild_in_place()
+                    except (sqlite3.Error, OSError) as again:
+                        damage = _damage(self._index_db) if _is_damage(again) else ""
+                        if not damage:
+                            raise
+                        conn = self._start_again(damage)
+            except (sqlite3.Error, OSError) as exc:
+                self._degrade(exc)
+        self._recovered()
+        return conn
+
+    def _rebuild_in_place(self) -> sqlite3.Connection:
+        """Drop the index's table and make it again in the same database, holding every memory
+        file. FTS5 drops the tables it keeps for the index with it, and nothing else."""
+        conn = connect(str(self._index_db))
+        try:
+            conn.execute(f"DROP TABLE IF EXISTS {_FTS_TABLE}")
+            conn.execute(_CREATE_FTS)
+            self._fill(conn)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    def _start_again(self, damage: str) -> sqlite3.Connection:
+        """Move the damaged database aside and start a new one, its index holding every memory
+        file.
+
+        In a working folder's partition the database is also where a vector store keeps the
+        folder's memories, so every one this process holds on it is closed and let go first — this
+        store's own, and the one kept for the folder (``context.forget_memory_store``): a
+        connection left open on a moved database goes on writing into it, and into the log beside
+        it, after the store has a new one. The next use opens a vector store on the new database
+        (``ContextBuilder.get_memory_for``).
+        """
+        vectors = self._vector_store
+        if vectors is not None and _same_file(vectors.db_path, self._index_db):
+            self._vector_store = None
+            try:
+                vectors.close()
+            except Exception:  # noqa: BLE001 — a store that will not close must not keep the file
+                logger.debug("memory: the vector store on %s did not close", self._index_db)
+        if not self._index_alone:
+            from personalclaw import context
+
+            context.forget_memory_store(self._workspace)
+        moved = _move_aside(self._index_db)
+        held = not self._index_alone
+        try:
+            conn = self._try_create_db()
+            try:
+                self._fill(conn)
+            except BaseException:
+                conn.close()
+                raise
+        except BaseException:
+            _announce_set_aside(self._index_db, moved, damage, held_memories=held, rebuilt=False)
+            raise
+        _announce_set_aside(self._index_db, moved, damage, held_memories=held, rebuilt=True)
+        return conn
+
+    def _degrade(self, failure: BaseException) -> NoReturn:
+        """Record that keyword search cannot use this store's index, and why; say so once (a
+        WARNING when the reason is new); and raise :class:`KeywordIndexUnavailable`."""
+        why = _why(failure)
+        key = str(self._index_db)
+        with _DEGRADED_LOCK:
+            new = _DEGRADED.get(key) != why
+            _DEGRADED[key] = why
+        if new:
+            logger.warning(
+                "Memory keyword search is degraded for %s: %s. Nothing was deleted, and every "
+                "memory is where it was; the index is rebuilt from the memory files once that is "
+                "fixed.",
+                from_home(self._index_db),
+                why,
+            )
+        raise KeywordIndexUnavailable(why) from failure
+
+    def _recovered(self) -> None:
+        """The index was rebuilt from the memory files: keyword search is no longer degraded."""
+        with _DEGRADED_LOCK:
+            was = _DEGRADED.pop(str(self._index_db), None)
+        if was is not None:
+            logger.info(
+                "Memory keyword search is back for %s: its index was rebuilt from the memory files",
+                from_home(self._index_db),
+            )
 
     def _index_file(self, path: Path, content: str) -> None:
         """Index a single file (incremental update). No-op without FTS5."""
         if not self._fts_available:
             return
-        conn = None
-        try:
-            conn = self._get_db()
+
+        def _upsert(conn: sqlite3.Connection) -> None:
             path_str = str(path)
-            conn.execute("DELETE FROM memory_fts WHERE path = ?", (path_str,))
+            conn.execute(f"DELETE FROM {_FTS_TABLE} WHERE path = ?", (path_str,))
             conn.execute(
-                "INSERT INTO memory_fts (path, content) VALUES (?, ?)",
-                (path_str, content),
+                f"INSERT INTO {_FTS_TABLE} (path, content) VALUES (?, ?)", (path_str, content)
             )
             conn.commit()
+
+        try:
+            self._with_index(_upsert)
         except Exception:
             logger.debug("FTS index update failed", exc_info=True)
-        finally:
-            if conn is not None:
-                conn.close()
 
     def _unindex_file(self, path: Path) -> None:
         """Drop a file's FTS row (used when the file itself is deleted). No-op without FTS5."""
         if not self._fts_available:
             return
-        conn = None
-        try:
-            conn = self._get_db()
-            conn.execute("DELETE FROM memory_fts WHERE path = ?", (str(path),))
+
+        def _drop(conn: sqlite3.Connection) -> None:
+            conn.execute(f"DELETE FROM {_FTS_TABLE} WHERE path = ?", (str(path),))
             conn.commit()
+
+        try:
+            self._with_index(_drop)
         except Exception:
             logger.debug("FTS index delete failed", exc_info=True)
-        finally:
-            if conn is not None:
-                conn.close()
 
     def _indexable_files(self) -> list[tuple[str, str]]:
         """``(path, content)`` for every file that BELONGS in the FTS index. One listing
@@ -437,72 +848,60 @@ class MemoryStore:
         arrived or vanished out-of-band: a hand-edited memory file, a history file written
         by another path, or a row left behind by ``prune_history`` (which deletes files
         without touching the index). Those are exactly what a full rebuild reconciles.
-        Returns 0 without FTS5 — there is no index to be out of sync.
+        Returns 0 without FTS5 — there is no index to be out of sync — and for an index that
+        cannot be used, which the Doctor's memory check reports with its reason instead.
         """
         if not self._fts_available:
             return 0
         on_disk = dict(self._indexable_files())
-        conn = None
-        try:
-            conn = self._get_db()
-            indexed = {
+
+        def _rows(conn: sqlite3.Connection) -> dict[str, str]:
+            return {
                 str(row[0]): str(row[1])
-                for row in conn.execute("SELECT path, content FROM memory_fts")
+                for row in conn.execute(f"SELECT path, content FROM {_FTS_TABLE}")
             }
+
+        try:
+            indexed = self._with_index(_rows)
         except Exception:
             logger.debug("FTS desync measure failed", exc_info=True)
             return 0  # unreadable index contributes no count (never a guess)
-        finally:
-            if conn is not None:
-                conn.close()
         divergent = sum(1 for p, c in on_disk.items() if indexed.get(p) != c)
         return divergent + sum(1 for p in indexed if p not in on_disk)
 
     def rebuild_index(self) -> int:
-        """Rebuild the full FTS index from all memory files. Returns file count.
+        """Rebuild the full FTS index from all memory files. Returns how many files it holds:
+        0 when it could not be built (:meth:`search_degraded` says why).
 
         Without FTS5 the index doesn't exist; returns 0 rather than attempting a build.
         """
         if not self._fts_available:
             return 0
-        files = self._indexable_files()
-
-        conn = None
         try:
-            conn = self._get_db()
-            conn.execute("DELETE FROM memory_fts")
-            for path_str, content in files:
-                conn.execute(
-                    "INSERT INTO memory_fts (path, content) VALUES (?, ?)",
-                    (path_str, content),
-                )
-            conn.commit()
+            return self._with_index(self._fill)
+        except KeywordIndexUnavailable:
+            return 0  # why is recorded, and was said once (`_degrade`)
         except Exception:
             logger.warning("FTS rebuild failed", exc_info=True)
-        finally:
-            if conn is not None:
-                conn.close()
-        return len(files)
+            return 0
 
     def search(self, query: str, limit: int = 5) -> list[dict]:
         """Search memory using FTS5. Returns [{path, snippet, rank}], or [] without FTS5."""
         if not self._fts_available:
             return []
-        conn = None
-        try:
-            conn = self._get_db()
+
+        def _match(conn: sqlite3.Connection) -> list[dict]:
             cursor = conn.execute(
-                "SELECT path, snippet(memory_fts, 1, '>>>', '<<<', '...', 32), rank "
-                "FROM memory_fts WHERE memory_fts MATCH ? ORDER BY rank LIMIT ?",
+                f"SELECT path, snippet({_FTS_TABLE}, 1, '>>>', '<<<', '...', 32), rank "
+                f"FROM {_FTS_TABLE} WHERE {_FTS_TABLE} MATCH ? ORDER BY rank LIMIT ?",
                 (query, limit),
             )
-            results = [
+            return [
                 {"path": row[0], "snippet": row[1], "rank": row[2]} for row in cursor.fetchall()
             ]
-            return results
+
+        try:
+            return self._with_index(_match, query=True)
         except Exception:
             logger.debug("FTS search failed", exc_info=True)
             return []
-        finally:
-            if conn is not None:
-                conn.close()

@@ -514,6 +514,81 @@ async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
     return ProbeResult(ok=True, detail="memory.db healthy", evidence=ev)
 
 
+async def _probe_memory_keyword_search(ctx: DoctorContext) -> ProbeResult:
+    """memory — keyword search over the memory files can use its index.
+
+    Two measurements, neither a guess. Each index of this home the memory store recorded it could
+    not build or keep up to date in this process, tried once more first so the check says what is
+    true now (``memory.retry_degraded_keyword_indexes``: the index is derived from the memory
+    files, so rebuilding it changes no memory), with the reason the store records. And each damaged
+    memory database moved aside under the home, read from disk (``memory.set_aside_databases``),
+    so any process names them. A copy the home's own index left is a derived index, rebuilt from
+    the files, and a note; one a working folder left holds memories no store has any more, and
+    fails the check until it is dealt with.
+    """
+    from personalclaw import memory
+    from personalclaw.sqlite_compat import FTS5_REMEDY, probe
+
+    if not probe().fts5:
+        return ProbeResult(
+            ok=False,
+            detail="Keyword search over memory is off: this SQLite build has no FTS5.",
+            remedy=f"No automatic fix — {FTS5_REMEDY}",
+        )
+    home = ctx.home.resolve()
+
+    def _in_home(path: Path) -> str:
+        try:
+            return path.resolve().relative_to(home).as_posix()
+        except ValueError:
+            return ""
+
+    left = await asyncio.to_thread(memory.retry_degraded_keyword_indexes, home)
+    degraded = {_in_home(index): why for index, why in left.items()}
+    copies = [_in_home(p) for p in await asyncio.to_thread(memory.set_aside_databases, home)]
+    folders = [rel for rel in copies if "/" in rel]
+    ev: dict[str, Any] = {"degraded": degraded, "set_aside": copies}
+    if degraded:
+        where, why = next(iter(degraded.items()))
+        more = f" and {len(degraded) - 1} more" if len(degraded) > 1 else ""
+        return ProbeResult(
+            ok=False,
+            detail=f"Keyword search is degraded for {where}{more}: {why}.",
+            evidence=ev,
+            remedy=(
+                "No automatic fix — nothing was deleted, and every memory is where it was. Once "
+                "the cause is fixed, the index is rebuilt from the memory files the next time "
+                "memory is saved or searched, or this check runs."
+            ),
+        )
+    if folders:
+        more = f" (and {len(folders) - 1} more)" if len(folders) > 1 else ""
+        return ProbeResult(
+            ok=False,
+            detail=(
+                f"A damaged memory database was moved aside: {folders[-1]}{more}. Nothing in it "
+                "was deleted."
+            ),
+            evidence=ev,
+            remedy=(
+                "No automatic fix — the memories it held are in that file, and a new database "
+                "was started in its place. Restore them from a snapshot under Settings → "
+                "Durability, or recover them from the file; remove it when you no longer need it."
+            ),
+        )
+    if copies:
+        return ProbeResult(
+            ok=True,
+            detail=(
+                f"Keyword search works. A damaged copy of its index was moved aside to "
+                f"{copies[-1]}; the index was rebuilt from the memory files, so nothing is "
+                "missing. Remove the copy when you no longer need it."
+            ),
+            evidence=ev,
+        )
+    return ProbeResult(ok=True, detail="Keyword search over memory is working.", evidence=ev)
+
+
 async def _probe_channels(ctx: DoctorContext) -> ProbeResult:
     """channels — each registered transport's connected/health signal.
 
@@ -2335,6 +2410,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_memory,
             "Memory store + faiss consistency",
+        )
+    )
+    register_probe(
+        Probe(
+            "memory.keyword-search",
+            "memory",
+            Tier.CAPABILITY,
+            _probe_memory_keyword_search,
+            "Memory keyword search",
         )
     )
     register_probe(

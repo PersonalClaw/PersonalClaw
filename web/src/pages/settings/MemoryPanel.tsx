@@ -16,7 +16,7 @@ import {
   type MemoryEntitiesResponse, type MemoryEntity, type MemoryEntityType,
   type MemoryGraphSummary, type MemoryLink, type MemoryGraphData,
   type MemoryEntityProposal, type MemorySlot, type MemorySlotTrimProposal,
-  type MemoryFacet,
+  type MemoryFacet, type DoctorProbe,
   type RecallRanking, hasApiCode,
 } from '../../lib/api'
 import { ProbeRow } from './DoctorPanel'
@@ -1588,25 +1588,30 @@ function HealthTab({ onChanged }: { onChanged: () => void }) {
 }
 
 // ── Search index ────────────────────────────────────────────────────────────
-/** Whether semantic search reaches every memory the embedding model embedded: the Doctor's own
- *  memory check (`memory.store`) — its measurement, its sentence and its Fix — shown on the tab
- *  whose Observability counts the index and the embedded memories. Those two counts sat side by
- *  side with nothing saying whether they should agree: "0 faiss index size · 40 embedded count"
- *  carried no warning and no Fix. Hidden while the Doctor is switched off, which switches off its
- *  checks and its Fixes everywhere. */
+/** The Doctor's own memory search checks — each one's measurement, its sentence and its Fix or
+ *  remedy — shown on the tab whose Observability counts the index and the embedded memories:
+ *  whether semantic search reaches every memory the embedding model embedded (`memory.store`),
+ *  and whether keyword search can use its index over the memory files (`memory.keyword-search`),
+ *  or is degraded and why. The two counts sat side by side with nothing saying whether they
+ *  should agree: "0 faiss index size · 40 embedded count" carried no warning and no Fix. Hidden
+ *  while the Doctor is switched off, which switches off its checks and its Fixes everywhere. */
+const SEARCH_CHECKS = ['memory.store', 'memory.keyword-search']
+
 function SearchIndexSection({ onFixed }: { onFixed: () => void }) {
   const { data, error, refresh } = useQuery(
     'settings:memory-index', () => api.doctorCapability('memory'), { persist: false },
   )
   if (hasApiCode(error, 'doctor_disabled')) return null
-  const probe = data?.probes.find((p) => p.id === 'memory.store')
-  if (data !== undefined && !probe) return null
+  const probes = SEARCH_CHECKS
+    .map((id) => data?.probes.find((p) => p.id === id))
+    .filter((p): p is DoctorProbe => p !== undefined)
+  if (data !== undefined && probes.length === 0) return null
   const fixed = () => { invalidateKeys('settings:memory-index'); refresh(); onFixed() }
   return (
-    <Section title="Search index" hint="Whether semantic search reaches every memory the embedding model has embedded.">
-      {probe ? <ProbeRow probe={probe} onFixed={fixed} />
-        : error ? <InlineLoadError what="the search index check" error={error} onRetry={refresh} />
-        : <ListSkeleton rows={1} what="the search index check" />}
+    <Section title="Search index" hint="Whether search reaches every memory: semantic search through the embedded vectors, and keyword search through the memory files.">
+      {probes.length ? probes.map((p) => <ProbeRow key={p.id} probe={p} onFixed={fixed} />)
+        : error ? <InlineLoadError what="the search index checks" error={error} onRetry={refresh} />
+        : <ListSkeleton rows={1} what="the search index checks" />}
     </Section>
   )
 }

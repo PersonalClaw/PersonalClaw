@@ -1123,7 +1123,7 @@ class GatewayOrchestrator:
 
         # FTS index
         indexed = memory.rebuild_index()
-        logger.info("FTS index built: %d files", indexed)
+        logger.info("FTS index: %d file(s) indexed", indexed)
 
     # 🔴 `_run_action_job` + `_maybe_autopause` retired with `ScheduleService`. Both took
     # a `ScheduleJob` and were reachable only from the deleted `_cron_callback` dispatcher. The

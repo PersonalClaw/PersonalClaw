@@ -153,18 +153,22 @@ class TestMemoryStore:
         assert store.read_recent_history(days=0) == ""
 
     def test_fts_self_healing(self, tmp_path):
-        """Corrupted DB should be auto-deleted and rebuilt."""
+        """A corrupted index heals itself: the damaged file is moved aside, never deleted, and the
+        index is rebuilt from the memory files."""
         store = MemoryStore(workspace=tmp_path)
         store.init()
         store.write_preferences("# Prefs\n\n- likes Python\n")
         store.rebuild_index()
-        # Corrupt the DB
         db_path = tmp_path / "memory_index.db"
-        if db_path.exists():
-            db_path.write_bytes(b"corrupted data")
-        # Should self-heal
+        assert db_path.exists()
+        db_path.write_bytes(b"corrupted data")
+
         count = store.rebuild_index()
+
         assert count >= 1
+        assert store.search("Python")
+        (moved,) = tmp_path.glob("memory_index.db.broken-*")
+        assert moved.read_bytes() == b"corrupted data"
 
     def test_add_preference_empty_string(self, tmp_path):
         store = MemoryStore(workspace=tmp_path)

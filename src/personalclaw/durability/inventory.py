@@ -2290,6 +2290,14 @@ IGNORED: tuple[str, ...] = (
     # remains is a pre-import copy of state that now lives elsewhere — the same category as `*.bak`.
     "*.imported-*",
     "*.migrated",
+    # A memory database SQLite reported damaged, moved aside whole so a new one could start in its
+    # place (`memory.MemoryStore`): `memory_index.db.broken-<UTC instant>` beside where it was, and
+    # the files SQLite kept beside it. Never deleted, and never opened or written to again by
+    # PersonalClaw, so it is not live state any store keeps: the home's own copy is a damaged
+    # search index, rebuilt from the memory files, and a working folder's copy holds memories no
+    # store has any more. The Doctor's memory check names each one until the owner removes it,
+    # which is where a set-aside copy is reported, rather than here as a path nothing claims.
+    "*.broken-*",
     # The record that this home already settled what an earlier release left OUTSIDE it on this
     # machine (`outside_home.settle_previous_locations`: skills copied home from ~/.agents/skills,
     # a saved pointer to the old default workspace dropped). It describes THIS machine's leftovers,

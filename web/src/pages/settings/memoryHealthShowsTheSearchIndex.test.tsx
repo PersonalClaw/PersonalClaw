@@ -1,6 +1,6 @@
 /**
  * Settings → Memory → Health says whether semantic search reaches every embedded memory, and
- * offers the repair when it does not.
+ * offers the repair when it does not; and whether keyword search can use its index, and why not.
  *
  * Observability showed "0 faiss index size · 40 embedded count" with nothing saying whether the
  * two should agree, so an index that missed every memory carried no warning and no Fix. The tab
@@ -35,10 +35,17 @@ const HEALTHY = probe({})
 const NO_FAISS = probe({
   detail: 'faiss is not installed — semantic recall searches the stored vectors directly',
 })
+/** The keyword index's check when it cannot be built: its reason, and no Fix, only what to do. */
+const KEYWORD_DEGRADED = probe({
+  id: 'memory.keyword-search', title: 'Memory keyword search', ok: false,
+  detail: 'Keyword search is degraded for workspace/_ext/srv_example_newsletter/memory_index.db: the disk is full.',
+  remedy: 'No automatic fix — nothing was deleted, and every memory is where it was. Once the cause is fixed, the index is rebuilt from the memory files the next time memory is saved or searched, or this check runs.',
+})
 
 const calls = { checks: 0, applied: [] as string[], confirms: [] as string[], stats: 0 }
-/** What the check answers before the Fix is applied, and after. */
-let answers: { before: DoctorProbe | 'off'; after: DoctorProbe | 'off' } = { before: 'off', after: 'off' }
+type Answer = DoctorProbe | DoctorProbe[] | 'off'
+/** What the checks answer before the Fix is applied, and after. */
+let answers: { before: Answer; after: Answer } = { before: 'off', after: 'off' }
 
 async function mount() {
   vi.doMock('../../ui/dialog', async (orig) => ({
@@ -70,7 +77,8 @@ async function mount() {
           if (answer === 'off') {
             return Promise.reject(new real.ApiError('The Doctor is switched off.', 404, 'doctor_disabled'))
           }
-          return Promise.resolve({ capability: 'memory', ok: answer.ok, probes: [answer] })
+          const probes = Array.isArray(answer) ? answer : [answer]
+          return Promise.resolve({ capability: 'memory', ok: probes.every((p) => p.ok), probes })
         },
         doctorFixes: () => Promise.resolve({ fixes: [FIX] }),
         doctorFixApply: (id: string) => {
@@ -120,6 +128,16 @@ describe('the Search index section', () => {
     expect(within(box).queryByRole('button', { name: /Fix/ })).toBeNull()
     expect(calls.checks).toBeGreaterThanOrEqual(2)
     await waitFor(() => expect(calls.stats).toBeGreaterThanOrEqual(2))
+  })
+
+  it('says when keyword search is degraded and why, beside the semantic check, with no Fix', async () => {
+    answers = { before: [HEALTHY, KEYWORD_DEGRADED], after: [HEALTHY, KEYWORD_DEGRADED] }
+    await mount()
+    const box = await section()
+    expect(await within(box).findByText(KEYWORD_DEGRADED.detail)).toBeTruthy()
+    expect(within(box).getByText(KEYWORD_DEGRADED.remedy as string)).toBeTruthy()
+    expect(within(box).getByText('memory.db healthy')).toBeTruthy()
+    expect(within(box).queryByRole('button', { name: /Fix/ })).toBeNull()
   })
 
   it('says that an install without faiss has no index to desync, with no Fix', async () => {

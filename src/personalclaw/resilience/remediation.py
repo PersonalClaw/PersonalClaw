@@ -810,7 +810,14 @@ def _job_reindex_embeddings() -> str:
 def _job_rebuild_memory_fts() -> str:
     from personalclaw.memory import MemoryStore
 
-    return f"FTS index rebuilt: {MemoryStore().rebuild_index()} file(s)"
+    store = MemoryStore()
+    count = store.rebuild_index()
+    # Raising is the only way to say "this did not work" (see `_job_reindex_embeddings`): a count
+    # over an index that could not be built read as a rebuild that happened.
+    why = store.search_degraded()
+    if why:
+        raise RuntimeError(f"the memory full-text index could not be rebuilt: {why}")
+    return f"FTS index rebuilt: {count} file(s)"
 
 
 def _job_rebuild_memory_index() -> str:

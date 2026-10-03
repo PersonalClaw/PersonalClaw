@@ -497,6 +497,16 @@ item vector).
   of `memory.db` (`StateEntry.partitions`): a snapshot and an export copy it through
   the sqlite backup API, a merge restore merges its memories as it merges
   `memory.db`'s, and Doctor's durability audit counts it declared.
+- Because that file holds memories, nothing deletes it when the keyword index cannot be
+  used (`memory.py`, "The keyword index"). The index is derived from the memory files, so
+  an index that fails is dropped and rebuilt in place from them, and nothing else in the
+  file is touched. A database SQLite reports damaged is moved aside whole, with the files
+  SQLite keeps beside it, to `memory_index.db.broken-<UTC instant>`, a new one is started,
+  and a notice says where the old one went. A lock, a read-only file or a full disk
+  changes nothing: keyword search is recorded as degraded with its reason, logged once,
+  and the Doctor's `memory.keyword-search` check (also shown on Settings → Memory →
+  Health) says so, tries the index again before it reports, and names every damaged
+  copy still set aside.
 - A partition's `learning.db` holds the evidence its lessons stand on
   (`VectorMemoryStore._lesson_evidence_store`; a lesson with none falls below the
   confidence gate), so it is declared a partition of `learning.db` and travels and
