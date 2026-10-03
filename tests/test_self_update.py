@@ -399,13 +399,15 @@ class _StubSessions:
 class _StubDashboardState:
     """The surfaces `active_work_snapshot` + `_check_for_updates` + `_auto_apply_update`
     touch, made controllable: a mutable running-agent / session count, a `push_refresh`
-    recorder, and no-op progress hooks. `active_work_snapshot` is the REAL
-    `DashboardState` method bound onto the stub, so the gate runs the production logic."""
+    recorder, no-op progress hooks, and the set of tasks the dashboard holds (where an update
+    keeps the work it starts). `active_work_snapshot` is the REAL `DashboardState` method bound
+    onto the stub, so the gate runs the production logic."""
 
     def __init__(self, *, running_agents: int = 0, sessions: int = 0) -> None:
         self.subagents = _StubSubagents([_FakeAgent(False) for _ in range(running_agents)])
         self.sessions = _StubSessions(sessions)
         self.refreshes: list[str] = []
+        self._background_tasks: set = set()
 
     def drain(self) -> None:
         self.subagents.all_agents = []
@@ -530,7 +532,7 @@ class _FakeOkProc:
 
 @pytest.mark.asyncio
 async def test_staged_holds_until_active_work_drains_then_applies_on_resolved_tag(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, environment_made_by
 ) -> None:
     """RUM-5 acceptance criteria centerpiece — with a session ACTIVE the staged apply HOLDS (nothing
     applied, a background waiter parks); once the work DRAINS it fires EXACTLY once, and the
@@ -578,6 +580,9 @@ async def test_staged_holds_until_active_work_drains_then_applies_on_resolved_ta
     monkeypatch.setattr(uk, "resolve_default_branch", _reset_or_branch_boom, raising=False)
     monkeypatch.setattr(uk, "package_root", lambda _p: str(tmp_path))
     monkeypatch.setattr(uk, "source_checkout", lambda: str(tmp_path))
+    # pip made the environment, and is there to install the release.
+    environment_made_by("pip")
+    monkeypatch.setattr("personalclaw._installer._have_pip", lambda: True)
 
     async def _fake_pip(*_a, **_k):
         return _FakeOkProc()
@@ -587,9 +592,9 @@ async def test_staged_holds_until_active_work_drains_then_applies_on_resolved_ta
     async def _fake_build(*_a, **_k):
         calls.append(("build",))
 
-    monkeypatch.setattr(gw, "build_frontend_async", _fake_build)
+    monkeypatch.setattr("personalclaw.dashboard.handlers.updates.build_frontend_async", _fake_build)
 
-    async def _fake_reexec(_state):
+    async def _fake_reexec(_state, **_kwargs):
         calls.append(("reexec",))
 
     monkeypatch.setattr("personalclaw.dashboard.handlers.updates._graceful_reexec", _fake_reexec)

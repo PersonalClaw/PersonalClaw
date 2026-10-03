@@ -750,9 +750,10 @@ class TestAutoApplyUpdate:
     # follows the current branch by fast-forward. Both are exercised in
     # TestAutoApplyUpdateGitPath / TestAutoApplyUpdateVenvPath.
     @pytest.mark.asyncio
-    async def test_release_channel_checks_out_tag_regardless_of_branch(self):
+    async def test_release_channel_checks_out_tag_regardless_of_branch(self, environment_made_by):
         """No branch gate any more: on a feature branch, stable still rides the
         resolved release tag (checkout), never a branch reset/pull."""
+        environment_made_by("pip")
         orch = _make_orchestrator()
         ds = _mock_dashboard_state()
         orch.dashboard_state = ds
@@ -767,7 +768,11 @@ class TestAutoApplyUpdate:
             patch("personalclaw.self_update.git_fetch_tags", return_value=_git_ok()),
             patch("personalclaw.self_update.git_checkout", return_value=_git_ok()) as checkout,
             patch("personalclaw.self_update.package_root", return_value="/tmp/proj"),
-            patch("personalclaw.gateway.build_frontend_async", new_callable=AsyncMock),
+            patch("personalclaw._installer._have_pip", return_value=True),
+            patch(
+                "personalclaw.dashboard.handlers.updates.build_frontend_async",
+                new_callable=AsyncMock,
+            ),
             patch("personalclaw.dashboard.handlers.updates._graceful_reexec", reexec),
             patch("os.execv", side_effect=AssertionError("direct execv")),
         ):
@@ -782,7 +787,7 @@ class TestAutoApplyUpdate:
                 await orch._auto_apply_update()
 
         checkout.assert_called_once_with("/tmp/proj", "v99.0.0")
-        reexec.assert_awaited_once_with(ds)
+        reexec.assert_awaited_once_with(ds, auth_mode="")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1174,6 +1179,7 @@ class TestAutoApplyUpdateGitPath:
         with (
             patch("personalclaw.self_update.source_checkout", return_value="/tmp/proj"),
             patch("personalclaw.config.loader.AppConfig.load", return_value=_fake_updates_cfg()),
+            patch("personalclaw.self_update.resolve_target", AsyncMock(return_value="v99.0.0")),
             patch(
                 "personalclaw.self_update.git_tracked_changes",
                 return_value=[" M src/personalclaw/gateway.py"],
@@ -1190,8 +1196,9 @@ class TestAutoApplyUpdateGitPath:
         )
 
     @pytest.mark.asyncio
-    async def test_release_channel_fetch_tags_then_checkout(self):
+    async def test_release_channel_fetch_tags_then_checkout(self, environment_made_by):
         """stable + a newer resolved tag ⇒ fetch --tags + checkout <tag>, no reset."""
+        environment_made_by("pip")
         orch = _make_orchestrator()
         ds = _mock_dashboard_state()
         orch.dashboard_state = ds
@@ -1206,7 +1213,11 @@ class TestAutoApplyUpdateGitPath:
             patch("personalclaw.self_update.git_fetch_tags", return_value=_git_ok()) as fetch_tags,
             patch("personalclaw.self_update.git_checkout", return_value=_git_ok()) as checkout,
             patch("personalclaw.self_update.package_root", return_value="/tmp/proj"),
-            patch("personalclaw.gateway.build_frontend_async", new_callable=AsyncMock),
+            patch("personalclaw._installer._have_pip", return_value=True),
+            patch(
+                "personalclaw.dashboard.handlers.updates.build_frontend_async",
+                new_callable=AsyncMock,
+            ),
             patch("personalclaw.dashboard.handlers.updates._graceful_reexec", reexec),
             patch("os.execv", side_effect=AssertionError("direct execv")),
         ):
@@ -1222,7 +1233,7 @@ class TestAutoApplyUpdateGitPath:
 
         fetch_tags.assert_called_once()
         checkout.assert_called_once_with("/tmp/proj", "v99.0.0")
-        reexec.assert_awaited_once_with(ds)
+        reexec.assert_awaited_once_with(ds, auth_mode="")
 
     @pytest.mark.asyncio
     async def test_release_channel_already_on_tag_returns_early(self):
@@ -1269,7 +1280,9 @@ class TestAutoApplyUpdateGitPath:
         ds.clear_update_progress.assert_called()
 
     @pytest.mark.asyncio
-    async def test_nightly_fetch_fails_returns_early(self):
+    async def test_nightly_with_no_upstream_count_returns_early(self):
+        """The branch's upstream cannot be counted (the fetch failed with nothing fetched before,
+        or there is no upstream): nothing to advance, so nothing moves."""
         orch = _make_orchestrator()
         ds = _mock_dashboard_state()
         orch.dashboard_state = ds
@@ -1281,8 +1294,7 @@ class TestAutoApplyUpdateGitPath:
                 return_value=_fake_updates_cfg("nightly"),
             ),
             patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
-            patch("personalclaw.self_update.resolve_default_branch", return_value="main"),
-            patch("personalclaw.self_update.git_fetch", return_value=_git_ok(1)),
+            patch("personalclaw.self_update.commits_behind_upstream", AsyncMock(return_value=None)),
             patch("personalclaw.self_update.git_fast_forward") as ff,
         ):
             await orch._auto_apply_update()
@@ -1303,9 +1315,7 @@ class TestAutoApplyUpdateGitPath:
                 return_value=_fake_updates_cfg("nightly"),
             ),
             patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
-            patch("personalclaw.self_update.resolve_default_branch", return_value="main"),
-            patch("personalclaw.self_update.git_fetch", return_value=_git_ok()),
-            patch("personalclaw.self_update.git_is_up_to_date", return_value=True),
+            patch("personalclaw.self_update.commits_behind_upstream", AsyncMock(return_value=0)),
             patch("personalclaw.self_update.git_fast_forward") as ff,
         ):
             await orch._auto_apply_update()
@@ -2036,7 +2046,8 @@ class TestHeartbeatCallback:
 
 
 class TestAutoApplyUpdateVenvPath:
-    """Venv-based auto-update tail (pip install -e . + rebuild + restart)."""
+    """Venv-based auto-update tail (the install with the tool that made the environment, pip
+    here + rebuild + restart)."""
 
     @staticmethod
     async def _pip(rc: int = 0):
@@ -2053,10 +2064,11 @@ class TestAutoApplyUpdateVenvPath:
         return _fake_exec
 
     @pytest.mark.asyncio
-    async def test_nightly_ff_full_path_reaches_restart(self):
+    async def test_nightly_ff_full_path_reaches_restart(self, environment_made_by):
         """nightly: fetch, fast-forward, pip install, frontend build, then the
         graceful re-exec is REACHED (guards the dead tail whose swallowed
         importlib.reload NameError meant os.execv never ran)."""
+        environment_made_by("pip")
         orch = _make_orchestrator()
         ds = _mock_dashboard_state()
         orch.dashboard_state = ds
@@ -2070,12 +2082,15 @@ class TestAutoApplyUpdateVenvPath:
                 return_value=_fake_updates_cfg("nightly"),
             ),
             patch("personalclaw.self_update.git_tracked_changes", return_value=[]),
+            patch("personalclaw.self_update.commits_behind_upstream", AsyncMock(return_value=3)),
             patch("personalclaw.self_update.resolve_default_branch", return_value="main"),
-            patch("personalclaw.self_update.git_fetch", return_value=_git_ok()),
-            patch("personalclaw.self_update.git_is_up_to_date", return_value=False),
             patch("personalclaw.self_update.git_fast_forward", return_value=_git_ok()) as ff,
             patch("personalclaw.self_update.package_root", return_value="/tmp/proj"),
-            patch("personalclaw.gateway.build_frontend_async", new_callable=AsyncMock),
+            patch("personalclaw._installer._have_pip", return_value=True),
+            patch(
+                "personalclaw.dashboard.handlers.updates.build_frontend_async",
+                new_callable=AsyncMock,
+            ),
             patch("personalclaw.dashboard.handlers.updates._graceful_reexec", reexec),
             patch("os.execv", side_effect=AssertionError("direct execv")),
         ):
@@ -2086,12 +2101,13 @@ class TestAutoApplyUpdateVenvPath:
         ds.push_update_progress.assert_any_call("installing", "Installing package…")
         ds.push_update_progress.assert_any_call("building", "Building frontend…")
         ds.push_update_progress.assert_any_call("restarting", "Restarting server…")
-        reexec.assert_awaited_once_with(ds)
+        reexec.assert_awaited_once_with(ds, auth_mode="")
 
     @pytest.mark.asyncio
-    async def test_pip_failure_aborts_before_restart(self):
+    async def test_pip_failure_aborts_before_restart(self, environment_made_by):
         """pip install failure must NOT restart into a broken env — the
         pipeline pushes an error step and keeps the current image running."""
+        environment_made_by("pip")
         orch = _make_orchestrator()
         ds = _mock_dashboard_state()
         orch.dashboard_state = ds
@@ -2106,14 +2122,18 @@ class TestAutoApplyUpdateVenvPath:
             patch("personalclaw.self_update.git_fetch_tags", return_value=_git_ok()),
             patch("personalclaw.self_update.git_checkout", return_value=_git_ok()),
             patch("personalclaw.self_update.package_root", return_value="/tmp/proj"),
-            patch("personalclaw.gateway.build_frontend_async", new_callable=AsyncMock) as fe_build,
+            patch("personalclaw._installer._have_pip", return_value=True),
+            patch(
+                "personalclaw.dashboard.handlers.updates.build_frontend_async",
+                new_callable=AsyncMock,
+            ) as fe_build,
             patch("personalclaw.dashboard.handlers.updates._graceful_reexec", reexec),
             patch("os.execv", side_effect=AssertionError("direct execv")),
         ):
             with patch("asyncio.create_subprocess_exec", side_effect=await self._pip(1)):
                 await orch._auto_apply_update()
 
-        ds.push_update_progress.assert_any_call("error", "pip install failed")
+        ds.push_update_progress.assert_any_call("error", "pip install failed: boom")
         fe_build.assert_not_awaited()
         reexec.assert_not_awaited()
 
@@ -2789,9 +2809,13 @@ class TestCheckMissingDepsPip:
     """Dep repair via pip install. A failure is reported on stderr, where a failure is looked
     for; progress stays on stdout."""
 
-    def test_pip_install_on_missing_dep(self, capsys):
+    def test_pip_install_on_missing_dep(self, capsys, environment_made_by):
+        environment_made_by("uv")
         orch = _make_orchestrator()
-        with patch("importlib.util.find_spec", return_value=None):
+        with (
+            patch("personalclaw._installer._have_uv", return_value=True),
+            patch("importlib.util.find_spec", return_value=None),
+        ):
             with patch("personalclaw.self_update.source_checkout", return_value="/proj"):
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = MagicMock(returncode=0)
@@ -2801,9 +2825,13 @@ class TestCheckMissingDepsPip:
         assert "✅ Dependencies installed" in out
         assert err == ""
 
-    def test_pip_install_failure(self, capsys):
+    def test_pip_install_failure(self, capsys, environment_made_by):
+        environment_made_by("uv")
         orch = _make_orchestrator()
-        with patch("importlib.util.find_spec", return_value=None):
+        with (
+            patch("personalclaw._installer._have_uv", return_value=True),
+            patch("importlib.util.find_spec", return_value=None),
+        ):
             with patch("personalclaw.self_update.source_checkout", return_value="/proj"):
                 with patch("subprocess.run") as mock_run:
                     mock_run.return_value = MagicMock(returncode=1, stderr=b"error")

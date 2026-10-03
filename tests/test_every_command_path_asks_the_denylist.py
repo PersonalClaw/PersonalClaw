@@ -99,9 +99,7 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
         _COMPOSED
     ),
     "dashboard/handlers/updates.py::_do_update_check::asyncio.create_subprocess_exec": _GIT,
-    "dashboard/handlers/updates.py::api_update_apply._apply::asyncio.create_subprocess_exec": (
-        _COMPOSED
-    ),
+    "dashboard/handlers/updates.py::_advance_checkout::asyncio.create_subprocess_exec": (_COMPOSED),
     "dashboard/handlers_system.py::_collect_gpu_metrics::subprocess.check_output": _PROBE,
     "dashboard/handlers_system.py::_collect_system_metrics::subprocess.check_output": _PROBE,
     "dashboard/handlers_system.py::_get_static_system_info::subprocess.check_output": _PROBE,
@@ -112,9 +110,6 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "evals/runner.py::_spawn_cell::subprocess.run": "an evals matrix cell (PersonalClaw's own)",
     "frontend.py::build_frontend_async::asyncio.create_subprocess_exec": _COMPOSED,
     "frontend.py::build_frontend_sync::subprocess.run": _COMPOSED,
-    "gateway.py::GatewayOrchestrator._auto_apply_update::asyncio.create_subprocess_exec": (
-        _COMPOSED
-    ),
     "gateway.py::_wslview_open::subprocess.run": "the system browser opener",
     "knowledge/pipeline/nodes/media_nodes.py::_run_cmd::asyncio.create_subprocess_exec": (
         _COMPOSED

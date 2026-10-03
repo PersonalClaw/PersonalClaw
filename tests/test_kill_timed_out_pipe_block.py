@@ -213,7 +213,7 @@ async def test_control_the_replaced_shape_blows_the_same_bound(tmp_path):
 _UPDATES_GROUP_LED = {
     "proc",  # git fetch      -> forks git-remote-https / ssh
     "pip_up",  # pip -U         -> forks build backends / compilers
-    "pip_install",  # pip install -e -> forks build backends
+    "install",  # the checkout's install (pip install -e / uv sync) -> forks build backends
 }
 _UPDATES_LEAF = {
     "local",  # git rev-parse HEAD
@@ -777,26 +777,30 @@ def test_the_tree_wide_matchers_are_not_vacuous():
 
 
 @pytest.mark.asyncio
-async def test_gateway_auto_update_reaps_the_install_it_timed_out(monkeypatch, tmp_path):
+async def test_gateway_auto_update_reaps_the_install_it_timed_out(
+    monkeypatch, tmp_path, environment_made_by
+):
     """A timed-out ``pip install -e .`` in the auto-update leaves NO live child behind.
 
-    The defect this pins: ``gateway._auto_apply_update`` is the twin of
+    The defect this pins: ``gateway._auto_apply_update`` was the twin of
     ``dashboard/handlers/updates.py::api_update_apply``, and the reaping fix landed only
     on the twin. Its `pip install` had a ``wait_for`` and no ``TimeoutError`` handler, so
     a timeout unwound to the function's outer ``except Exception`` and the child was never
     signalled — **2 live processes per timed-out install** (the ``pip`` child and its
     forked build backend), still running after the call returned and the loop closed,
-    accumulating once per auto-update poll.
+    accumulating once per auto-update poll. The two are one function now
+    (``updates.start_checkout_update``), and this drives it the way the auto-update does.
 
-    The site set here is smaller than when this class was first measured: the git stages
-    moved into ``self_update``'s synchronous helpers, which run under
+    The git stages run in ``self_update``'s synchronous helpers, which run under
     ``subprocess.run(timeout=…)`` and so reap their own direct child inside CPython. The
-    install is the one async spawn left in this function, and the one that can fork.
+    install is the one async spawn left in the update, and the one that can fork.
 
-    The deadline is INJECTED (``_AUTOUPDATE_PIP_TIMEOUT``), never slept on.
+    The deadline is INJECTED (``_CHECKOUT_INSTALL_TIMEOUT``), never slept on.
     """
+    from personalclaw import _installer
     from personalclaw import gateway as gw
     from personalclaw import self_update
+    from personalclaw.dashboard.handlers import updates
 
     pids = tmp_path / "pids"
     proj = tmp_path / "proj"
@@ -821,17 +825,23 @@ async def test_gateway_auto_update_reaps_the_install_it_timed_out(monkeypatch, t
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     monkeypatch.setattr(self_update, "source_checkout", lambda: str(proj))
+    # The environment pip made, so the install is `sys.executable -m pip install -e .`.
+    environment_made_by("pip")
+    monkeypatch.setattr(_installer, "_have_pip", lambda: True)
     monkeypatch.setattr(gw.sys, "executable", str(stub))
-    monkeypatch.setattr(gw, "_AUTOUPDATE_PIP_TIMEOUT", 1.0)
+    monkeypatch.setattr(updates, "_CHECKOUT_INSTALL_TIMEOUT", 1.0)
 
     # Drive the nightly branch straight to the install: every git stage before it is a
-    # `self_update` thread helper, stubbed to succeed so the deadline under test is the
-    # only thing this exercises.
+    # `self_update` helper, stubbed to succeed so the deadline under test is the only thing
+    # this exercises.
     ok = subprocess.CompletedProcess(args=["git"], returncode=0, stdout="", stderr="")
+
+    async def _one_behind(_proj, *, fetch):
+        return 1
+
     monkeypatch.setattr(self_update, "git_tracked_changes", lambda _proj: [])
+    monkeypatch.setattr(self_update, "commits_behind_upstream", _one_behind)
     monkeypatch.setattr(self_update, "resolve_default_branch", lambda _proj: "main")
-    monkeypatch.setattr(self_update, "git_fetch", lambda _proj, _branch: ok)
-    monkeypatch.setattr(self_update, "git_is_up_to_date", lambda _proj, _branch: False)
     monkeypatch.setattr(self_update, "git_fast_forward", lambda _proj, _branch: ok)
     monkeypatch.setattr(self_update, "package_root", lambda _proj: proj)
     monkeypatch.setattr(

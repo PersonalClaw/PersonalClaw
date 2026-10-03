@@ -60,10 +60,14 @@ def spawns(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(cli_server.subprocess, "run", _fake_run)
+    monkeypatch.setattr("personalclaw._installer.require_own_installer", lambda: "fake")
     monkeypatch.setattr(
         "personalclaw._installer.install_argv", lambda args: ["FAKE-INSTALLER", "install", *args]
     )
-    monkeypatch.setattr("personalclaw._installer.installer_name", lambda: "fake")
+    monkeypatch.setattr(
+        "personalclaw._installer.checkout_install_argv",
+        lambda package_root: ["FAKE-INSTALLER", "install", "-e", "."],
+    )
     return seen
 
 
@@ -434,11 +438,24 @@ async def test_the_staged_apply_leaves_a_pinned_candidate_where_it_is(
 ) -> None:
     """The unattended apply checked the pinned candidate out again on every check."""
     from personalclaw import gateway as gw
+    from personalclaw.dashboard.handlers import updates as dash_updates
     from personalclaw.gateway import GatewayOrchestrator
 
-    cfg = types.SimpleNamespace(updates=types.SimpleNamespace(channel="stable", pin="0.3.0-rc.1"))
+    # Automatic checks on, so the apply reaches its comparison rather than stopping at the gate.
+    cfg = types.SimpleNamespace(
+        updates=types.SimpleNamespace(channel="stable", pin="0.3.0-rc.1", check_enabled=True)
+    )
     monkeypatch.setattr("personalclaw.config.AppConfig.load", lambda *_a, **_k: cfg)
     monkeypatch.setattr("personalclaw.__version__", "0.3.0rc1")
+    monkeypatch.setattr(dash_updates, "_local_version", "0.3.0rc1")
+    compared: list[str] = []
+    real_moves_to = su.moves_to
+
+    def _moves_to(target: str, current: str, pin: str = "") -> bool:
+        compared.append(f"{target} from {current}")
+        return real_moves_to(target, current, pin)
+
+    monkeypatch.setattr(su, "moves_to", _moves_to)
     moved: list[str] = []
 
     async def _resolve(channel: str, pin: str = "") -> str:
@@ -465,6 +482,7 @@ async def test_the_staged_apply_leaves_a_pinned_candidate_where_it_is(
     stub = types.SimpleNamespace(dashboard_state=None)
     await GatewayOrchestrator._auto_apply_update(stub)  # type: ignore[arg-type]
 
+    assert compared == ["v0.3.0-rc.1 from 0.3.0rc1"], "the apply never compared the release"
     assert moved == [], f"the pinned candidate was fetched/checked out again: {moved}"
 
 

@@ -40,12 +40,17 @@ class _Git:
 
 
 def _fake_installer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stand in for uv/pip resolution, keeping the real ``install`` verb position."""
+    """Stand in for the tool that made the environment, keeping the real ``install`` verb
+    position: a wheel's upgrade, and a checkout's install once it has moved."""
+    monkeypatch.setattr("personalclaw._installer.require_own_installer", lambda: "fake")
     monkeypatch.setattr(
         "personalclaw._installer.install_argv",
         lambda args: ["FAKE-INSTALLER", "install", *args],
     )
-    monkeypatch.setattr("personalclaw._installer.installer_name", lambda: "fake")
+    monkeypatch.setattr(
+        "personalclaw._installer.checkout_install_argv",
+        lambda package_root: ["FAKE-INSTALLER", "install", "-e", "."],
+    )
 
 
 @pytest.fixture
@@ -165,6 +170,7 @@ def test_git_release_channel_fetches_tags_and_checks_out_the_resolved_tag(
     monkeypatch.setattr(cli_server, "__version__", "0.1.0")
     git = _Git(**{"status": (0, "", "")})  # clean tree
     monkeypatch.setattr(su, "_run_git", git)
+    _fake_installer(monkeypatch)
 
     cli_server._update()
 
@@ -174,7 +180,7 @@ def test_git_release_channel_fetches_tags_and_checks_out_the_resolved_tag(
     assert not git.ran("reset")
     assert not git.ran("pull")
     # The install runs, and the agent config is refreshed afterwards.
-    assert any("install" in " ".join(a) for a in spawns)
+    assert ["FAKE-INSTALLER", "install", "-e", "."] in spawns
     assert any(a[-2:] == ["setup", "--agent-only"] for a in spawns)
     assert proj in capsys.readouterr().out
 
@@ -230,6 +236,7 @@ def test_git_pin_checks_out_the_pinned_tag(
     monkeypatch.setattr(cli_server, "__version__", "0.2.0")  # running a NEWER version
     git = _Git(**{"status": (0, "", "")})
     monkeypatch.setattr(su, "_run_git", git)
+    _fake_installer(monkeypatch)
 
     cli_server._update()
 
@@ -251,13 +258,14 @@ def test_git_nightly_channel_fast_forwards_the_branch(
         }
     )
     monkeypatch.setattr(su, "_run_git", git)
+    _fake_installer(monkeypatch)
 
     cli_server._update()
 
     assert git.ran("fetch", "origin", "main")
     assert git.ran("merge", "--ff-only", "origin/main")
     assert not git.ran("reset")  # the destructive path is gone
-    assert any("install" in " ".join(a) for a in spawns)
+    assert ["FAKE-INSTALLER", "install", "-e", "."] in spawns
     assert proj in capsys.readouterr().out
 
 

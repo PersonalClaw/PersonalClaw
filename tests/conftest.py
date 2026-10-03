@@ -550,6 +550,43 @@ def package_in_checkout(monkeypatch):
 
 
 @pytest.fixture
+def environment_made_by(tmp_path_factory, monkeypatch):
+    """``environment_made_by(tool)``: PersonalClaw runs from an environment that *tool* made.
+
+    The record is the one every installer leaves in a distribution's metadata, its ``INSTALLER``
+    file (``uv sync``, ``uv pip install`` and ``uv tool install`` write ``uv``, pip and pipx
+    ``pip``), so it is a real one: a ``personalclaw`` distribution saying *tool*, earlier on
+    ``sys.path`` than the installed one and therefore the one ``importlib.metadata`` reads.
+    *requires* and *extras* are its ``Requires-Dist`` and ``Provides-Extra`` lines, and the
+    packages named in *installed* are installed beside it."""
+
+    def _made_by(
+        tool: str,
+        *,
+        requires: tuple[str, ...] = (),
+        extras: tuple[str, ...] = (),
+        installed: tuple[str, ...] = (),
+    ) -> None:
+        site = tmp_path_factory.mktemp("site-packages")
+        lines = ["Metadata-Version: 2.1", "Name: personalclaw", "Version: 0.0.1"]
+        lines += [f"Provides-Extra: {extra}" for extra in extras]
+        lines += [f"Requires-Dist: {requirement}" for requirement in requires]
+        info = site / "personalclaw-0.0.1.dist-info"
+        info.mkdir()
+        (info / "METADATA").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (info / "INSTALLER").write_text(f"{tool}\n", encoding="utf-8")
+        for name in installed:
+            other = site / f"{name.replace('-', '_')}-1.0.dist-info"
+            other.mkdir()
+            (other / "METADATA").write_text(
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n", encoding="utf-8"
+            )
+        monkeypatch.syspath_prepend(str(site))
+
+    return _made_by
+
+
+@pytest.fixture
 def git_over_ssh(tmp_path_factory, monkeypatch):
     """``git_over_ssh(repo)`` is an ``ssh://`` URL that reaches the local repository *repo*.
 

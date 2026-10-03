@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -589,6 +590,7 @@ def _update_git_nightly(git_dir: str) -> None:
     tracked = self_update.git_tracked_changes(git_dir)
     if tracked:
         _refuse_dirty_tree(tracked, "a fast-forward")
+    _require_installer()
 
     print(f"  ⏩ git merge --ff-only origin/{branch}…")
     ff = self_update.git_fast_forward(git_dir, branch)
@@ -623,6 +625,7 @@ def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
     tracked = self_update.git_tracked_changes(git_dir)
     if tracked:
         _refuse_dirty_tree(tracked, f"checking out {target}")
+    _require_installer()
 
     print("  ⬇️  git fetch --tags…")
     fetched = self_update.git_fetch_tags(git_dir)
@@ -639,19 +642,22 @@ def _update_git_release(git_dir: str, channel: str, pin: str) -> None:
 
 
 def _finish_git_update(git_dir: str) -> None:
-    """Rebuild the SPA and reinstall after the tree has been advanced.
+    """Rebuild the SPA and install the checkout after the tree has been advanced.
 
     The SPA is built from source here (a checkout has no bundled dist), and both
-    the build and the editable install run at the PACKAGE root — which is nested
-    one level under the repo root in the monorepo layout, where git runs.
+    the build and the install run at the PACKAGE root — which is nested
+    one level under the repo root in the monorepo layout, where git runs. It installs with the
+    tool that made the environment (``_installer.checkout_install_argv``), which
+    :func:`_require_installer` found there before the tree moved.
     """
     pkg_root = self_update.package_root(git_dir)
     build_frontend_sync(Path(pkg_root))
-    _install(["-e", ".", "--quiet"], cwd=pkg_root, label="install -e .")
+    _install([], checkout=pkg_root)
 
     print("\n✅ PersonalClaw updated!")
     print(f"\n{DATA_WARNING}\n")
     _refresh_agent_config(pkg_root)
+    print("\n  ↻ Restart the gateway to run the new code: personalclaw restart")
 
 
 def _update_pip() -> None:
@@ -664,8 +670,9 @@ def _update_pip() -> None:
     git-only ``nightly`` channel has no published wheel and rides ``stable``.
 
     No source tree is required — that requirement is exactly the dead end this
-    replaced. The installer is RESOLVED (uv or pip): a uv-created venv, and a
-    `uv tool install`, ship no pip module. Unlike the dashboard's apply there is no
+    replaced. It installs with the tool that made the environment
+    (``_installer.install_argv``): uv for a ``uv tool install``, which ships no pip
+    module, and pip for a pip or pipx install. Unlike the dashboard's apply there is no
     re-exec: this process is a short-lived CLI, not the gateway, so it prints the
     restart command instead of bouncing a running server nobody asked it to touch.
     """
@@ -696,7 +703,7 @@ def _update_pip() -> None:
     spec = self_update.upgrade_spec(target)
     if target:
         print(_move_line(target))
-    _install(["-U", spec, "--quiet"], cwd="", label=f"install -U {spec}")
+    _install(["-U", spec, "--quiet"])
 
     print("\n✅ PersonalClaw updated!")
     print(f"\n{DATA_WARNING}\n")
@@ -806,24 +813,43 @@ def _move_line(target: str) -> str:
     return f"  {arrow} v{__version__} → v{self_update.normalize_version(target)}"
 
 
-def _install(args: list[str], *, cwd: str, label: str) -> None:
-    """Run the resolved installer with *args*, or exit 1 with a readable reason."""
-    from personalclaw._installer import (
-        NoInstallerError,
-        install_argv,
-        installer_env,
-        installer_name,
-    )
+def _require_installer() -> None:
+    """Exit 1, having changed nothing, when the tool that made PersonalClaw's environment is not
+    there to install the update (``_installer.require_own_installer``). Asked before the checkout
+    moves: found missing after it, the update would leave the new release's sources over the old
+    release's environment."""
+    from personalclaw._installer import NoInstallerError, require_own_installer
 
     try:
-        argv = install_argv(args)
+        require_own_installer()
     except NoInstallerError as exc:
         print(f"  ❌ {exc}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"  🔨 {installer_name()} {label}")
+
+def _install(args: list[str], *, checkout: str = "") -> None:
+    """Install into PersonalClaw's own environment with the tool that made it, or exit 1 with a
+    readable reason: *args* for a wheel (``-U personalclaw==<tag>``), or the source *checkout*,
+    installed in place where it is."""
+    from personalclaw._installer import (
+        NoInstallerError,
+        checkout_install_argv,
+        install_argv,
+        installer_env,
+    )
+
+    try:
+        if checkout:
+            argv = checkout_install_argv(checkout)
+        else:
+            argv = install_argv(args)
+    except NoInstallerError as exc:
+        print(f"  ❌ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"  🔨 {shlex.join(argv)}")
     result = subprocess.run(
-        argv, cwd=cwd or None, capture_output=True, text=True, env=installer_env()
+        argv, cwd=checkout or None, capture_output=True, text=True, env=installer_env()
     )
     if result.returncode != 0:
         # Same one-line summary the dashboard shows: uv's stderr is ANSI-colored and
@@ -870,9 +896,10 @@ def _update(to: str = "") -> None:
     | kind | what happens | exit |
     |---|---|---|
     | git | fetch + checkout the channel/pin release tag (nightly: | 0; 1 on failure, no |
-    |  | fast-forward) + SPA build + editable install | release found, or a |
-    |  |  | dirty tree blocking it |
-    | pip | resolved installer `-U personalclaw==<channel/pin tag>`, | 0; 1 on install failure |
+    |  | fast-forward) + SPA build + install with the tool that | release found, or a |
+    |  | made the environment, then "restart the gateway" | dirty tree or a missing |
+    |  |  | tool blocking it |
+    | pip | that tool's `-U personalclaw==<channel/pin tag>`, | 0; 1 on install failure |
     |  | then "restart the gateway" (pip / pipx / uv tool) | or a pin naming no release |
     | container | prints the host's pull + recreate for the documented | 0; 1 on a pin naming no |
     |  | install (`container_host.update_commands`), or says it is | release, or no release |

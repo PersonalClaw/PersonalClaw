@@ -1,19 +1,21 @@
-"""Self-update on uv venvs, and surfacing the real failure (issue #51).
+"""Self-update of a wheel install with the tool that made it, and surfacing the real failure.
 
 The pip-kind updater hardcoded ``python -m pip install -U``, which does not exist
 in a ``uv venv`` — so Settings → Updates showed "Update failed — pip upgrade
 failed" forever on the uv install path, while the panel itself already LABELLED
 that kind "pip / uv install". Worse, the actual cause (``No module named pip``) was
 captured and logged but never sent to the UI, so the only way to learn anything was
-to read gateway.log.
+to read gateway.log. It now upgrades with the tool that made the environment, and
+refuses before anything starts when that tool is not there.
 
-Hermetic: the installer probes and the subprocess are both faked, so these pass on
-a pip venv and a uv venv alike.
+Hermetic: which tool made the environment, the installer probes and the subprocess are
+all set, so these pass in an environment pip made and one uv made alike.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 
 import pytest
@@ -51,6 +53,18 @@ class _Proc:
 
     def kill(self):  # pragma: no cover — only the timeout path calls this
         pass
+
+
+@pytest.fixture
+def tools(monkeypatch, environment_made_by):
+    """``tools(made_by=…, uv=…, pip=…)``: the tool that made the environment, and which exist."""
+
+    def _set(*, made_by: str, uv: bool, pip: bool) -> None:
+        environment_made_by(made_by)
+        monkeypatch.setattr(_installer, "_have_uv", lambda: uv)
+        monkeypatch.setattr(_installer, "_have_pip", lambda: pip)
+
+    return _set
 
 
 @pytest.fixture
@@ -123,21 +137,20 @@ async def _run_apply(
 
     req = make_mocked_request("POST", "/api/update")
     req.app["state"] = state
-    await upd._apply_pip_update(req, state)
+    resp = await upd._apply_pip_update(req, state)
     # The apply runs as a background task; let it finish.
     for _ in range(50):
         await asyncio.sleep(0)
         if state.progress:
             break
     await asyncio.sleep(0.05)
-    return state.progress
+    return resp
 
 
 @pytest.mark.asyncio
-async def test_uses_uv_when_the_venv_has_no_pip(monkeypatch, spawn):
+async def test_uses_uv_when_the_venv_has_no_pip(monkeypatch, spawn, tools):
     """The #51 repro: self-update must work on a uv venv."""
-    monkeypatch.setattr(_installer, "_have_uv", lambda: True)
-    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+    tools(made_by="uv", uv=True, pip=False)
     seen = spawn(_Proc(0))
     state = _StateStub()
 
@@ -153,11 +166,10 @@ async def test_uses_uv_when_the_venv_has_no_pip(monkeypatch, spawn):
 
 
 @pytest.mark.asyncio
-async def test_failure_detail_reaches_the_ui(monkeypatch, spawn):
+async def test_failure_detail_reaches_the_ui(monkeypatch, spawn, tools):
     """Before the fix the panel showed the static "pip upgrade failed" while the
     real cause sat in gateway.log. The user must be able to SEE the cause."""
-    monkeypatch.setattr(_installer, "_have_uv", lambda: False)
-    monkeypatch.setattr(_installer, "_have_pip", lambda: True)
+    tools(made_by="pip", uv=False, pip=True)
     spawn(_Proc(1, b"ERROR: Could not find a version that satisfies personalclaw==9.9.9\n"))
     state = _StateStub()
 
@@ -192,7 +204,7 @@ _RUM6_RELEASES = [
     ],
 )
 async def test_pip_apply_installs_the_channel_pin_resolved_spec(
-    monkeypatch, spawn, channel, pin, expected
+    monkeypatch, spawn, tools, channel, pin, expected
 ):
     """RUM-6 core (dashboard): POST /api/update upgrades to the channel/pin tag.
 
@@ -200,8 +212,7 @@ async def test_pip_apply_installs_the_channel_pin_resolved_spec(
     than stable's latest (0.2.1) over the same list, so a `releases/latest` apply
     fails the beta and pin rows. Exercises the REAL resolver (`fetch_releases` is the
     only stub)."""
-    monkeypatch.setattr(_installer, "_have_uv", lambda: True)
-    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+    tools(made_by="uv", uv=True, pip=False)
     seen = spawn(_Proc(0))
     state = _StateStub()
 
@@ -212,10 +223,9 @@ async def test_pip_apply_installs_the_channel_pin_resolved_spec(
 
 
 @pytest.mark.asyncio
-async def test_pip_apply_pin_miss_refuses_and_never_installs_latest(monkeypatch, spawn):
+async def test_pip_apply_pin_miss_refuses_and_never_installs_latest(monkeypatch, spawn, tools):
     """A pin naming no release must REFUSE — never silently upgrade to the latest wheel."""
-    monkeypatch.setattr(_installer, "_have_uv", lambda: True)
-    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+    tools(made_by="uv", uv=True, pip=False)
     seen = spawn(_Proc(0))
     state = _StateStub()
 
@@ -241,7 +251,7 @@ async def test_pip_apply_pin_miss_refuses_and_never_installs_latest(monkeypatch,
     ],
 )
 async def test_pip_apply_installs_nothing_that_is_not_a_move(
-    monkeypatch, spawn, running, channel, pin, said
+    monkeypatch, spawn, tools, running, channel, pin, said
 ):
     """POST /api/update on a wheel installs the resolved release only when it is a move.
 
@@ -250,8 +260,7 @@ async def test_pip_apply_installs_nothing_that_is_not_a_move(
     on every apply because its tag and its installed version are spelled differently. Nothing
     restarts either: a wheel has no local change for a restart to pick up.
     """
-    monkeypatch.setattr(_installer, "_have_uv", lambda: True)
-    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+    tools(made_by="uv", uv=True, pip=False)
     seen = spawn(_Proc(0))
     state = _StateStub()
 
@@ -305,10 +314,11 @@ def test_summary_is_bounded_and_empty_safe():
 
 
 @pytest.mark.asyncio
-async def test_no_installer_reports_the_real_reason_without_spawning(monkeypatch):
-    """With neither installer, don't spawn anything — say what's missing."""
-    monkeypatch.setattr(_installer, "_have_uv", lambda: False)
-    monkeypatch.setattr(_installer, "_have_pip", lambda: False)
+@pytest.mark.parametrize("made_by", ["uv", "pip"])
+async def test_no_installer_reports_the_real_reason_without_spawning(monkeypatch, tools, made_by):
+    """Without the tool that made the environment, nothing starts: the Update is answered with
+    the sentence that names what to run, before the apply claims the slot or says "updating"."""
+    tools(made_by=made_by, uv=False, pip=False)
 
     async def _unreachable(*a, **kw):  # pragma: no cover
         raise AssertionError("spawned a subprocess with no installer available")
@@ -316,8 +326,12 @@ async def test_no_installer_reports_the_real_reason_without_spawning(monkeypatch
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _unreachable)
     state = _StateStub()
 
-    await _run_apply(state, monkeypatch)
+    resp = await _run_apply(state, monkeypatch)
 
-    errors = [d for s, d in state.progress if s == "error"]
-    assert errors, f"no error pushed: {state.progress}"
-    assert "uv" in errors[0]
+    assert resp.status == 409
+    error = json.loads(resp.text)["error"]
+    assert error["code"] == "update_installer_missing"
+    assert error["message"].startswith(f"Nothing was changed: {made_by} made")
+    assert "personalclaw update" in error["message"]
+    assert state.progress == [] and state.refreshes == []
+    assert upd._apply_in_flight is False

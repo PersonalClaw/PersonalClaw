@@ -1259,6 +1259,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "loop_conflict_moved": (
         "The work changed since you read it, so nothing was redone or dropped. Read it again."
     ),
+    # ── updating PersonalClaw in place (dashboard/handlers/updates.py — POST /api/update) ──
+    # 409: the tool that made PersonalClaw's environment, uv or pip, is the one that installs an
+    # update into it, and it is not there. Refused before anything moved; the message names what
+    # to run instead.
+    "update_installer_missing": (
+        "The tool that installs PersonalClaw's updates into its environment is not there, so "
+        "nothing was changed."
+    ),
 }
 
 

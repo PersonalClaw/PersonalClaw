@@ -1,24 +1,25 @@
-"""Which tool installs packages into *this* environment (issues #46, #51).
+"""Which tool installs packages into *this* environment, and with which command.
 
-Four separate code paths used to hardcode ``[sys.executable, "-m", "pip", ...]``:
-the app dependency installer, the pip-kind self-updater, the startup dep repair,
-and the git-checkout updater. A ``uv``-created virtualenv **ships no pip** — uv is
-the installer — so every one of them died with ``No module named pip`` on the
-project's own documented dev setup (``uv venv`` + ``uv pip install -e ".[dev]"``),
-and on the uv-based end-user install path.
+PersonalClaw installs into its own environment, the one it runs from, when it updates (the
+dashboard's Update, the staged auto-update, ``personalclaw update``) and when its startup repairs a
+missing dependency. Each runs the tool that MADE that environment (:func:`own_installer`), read
+from the record every installer leaves in a distribution's metadata, its ``INSTALLER`` file:
+``uv sync``, ``uv pip install`` and ``uv tool install`` write ``uv``; pip and pipx write ``pip``.
+That record is a fact about the environment, and what happens to be on PATH is not. Taking
+whichever tool turned up (uv first, then pip) ran uv in environments pip made and installed a
+uv-synced checkout behind its lockfile, and the checkout's update, which spelled out
+``python -m pip``, failed in every environment uv made: they have no pip until they install a
+version that declares it, and by then the update had already checked the new release out.
 
-The fix is one resolver, used by all four, rather than four copies of the same
-detection drifting apart. Order (first available wins):
+When that tool is not there, the install refuses with :class:`NoInstallerError`: one sentence that
+says nothing was changed and names what to run. An update asks first
+(:func:`require_own_installer`), before it changes anything.
 
-1. **``uv``** on PATH → ``uv pip install --python <sys.executable> …``. Explicitly
-   targeted at the running interpreter: uv otherwise resolves its own notion of
-   the active environment (``VIRTUAL_ENV``, or a discovered ``.venv``), which can
-   be a *different* env than the one the gateway is importing from — installing
-   there would report success while the import still fails.
-2. **``pip``** as an importable module → the historical command. Probed by
-   spec, not by running it, so detection costs no subprocess.
-3. Neither → :class:`NoInstallerError`, which names both remedies. Previously this
-   surfaced as a bare ``No module named pip`` that pointed at the wrong problem.
+uv is always pointed at the running interpreter (``--python <sys.executable>``). Otherwise it
+resolves its own idea of the environment (``VIRTUAL_ENV``, or a discovered ``.venv``), which can be
+a *different* one than the gateway imports from, and installing there reports success while the
+import still fails. For a ``uv sync`` it is worse than that: asked for any other interpreter, uv
+deletes the environment and makes a new one, under the running gateway.
 
 ``pip`` is checked as a MODULE (``python -m pip``) and never as a bare ``pip``
 executable on PATH: a stray system-wide ``pip`` would install into some other
@@ -41,10 +42,12 @@ strip ``ensurepip``'s wheels from their system Python, so on that Python (measur
 
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
 import logging
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 from types import MappingProxyType
 
@@ -111,19 +114,24 @@ def node_cli_env() -> dict[str, str]:
 def installer_env() -> dict[str, str]:
     """This process's environment with :func:`installer_cache_env` over it, for an install or
     build of PersonalClaw itself (a self-update, the startup dependency repair, a frontend
-    rebuild)."""
+    rebuild).
+
+    It names the environment PersonalClaw runs from as uv's project environment
+    (``UV_PROJECT_ENVIRONMENT``), so a ``uv sync`` of the checkout (:func:`checkout_install_argv`)
+    installs into that environment wherever it is, and never into a ``.venv`` beside the sources
+    that nothing runs from. pip and npm ignore it."""
     from personalclaw.env import gateway_env
 
-    return {**gateway_env(), **installer_cache_env()}
+    return {**gateway_env(), **installer_cache_env(), "UV_PROJECT_ENVIRONMENT": sys.prefix}
 
 
 class NoInstallerError(RuntimeError):
-    """No usable package installer for the running interpreter.
+    """A tool an install needs is not there, said in one sentence that names what to run.
 
-    Raised instead of letting a ``No module named pip`` escape: it names the
-    interpreter and the fix, where that message named neither. A missing pip also
-    carries the sentence's two halves, ``problem`` and ``fix`` (:func:`missing_pip`),
-    for a surface that shows what broke and what to do apart (an engine's install).
+    Raised instead of letting a ``No module named pip`` (or a missing ``uv``) escape from the
+    install itself, after an update has already moved the checkout. A missing pip also carries
+    the sentence's two halves, ``problem`` and ``fix`` (:func:`missing_pip`), for a surface that
+    shows what broke and what to do apart (an engine's install).
     """
 
     def __init__(self, message: str, *, problem: str = "", fix: str = "") -> None:
@@ -149,13 +157,25 @@ def _have_pip() -> bool:
         return False
 
 
-def installer_name() -> str:
-    """``"uv"``, ``"pip"``, or ``""`` when neither is usable. For diagnostics."""
-    if _have_uv():
-        return "uv"
-    if _have_pip():
-        return "pip"
-    return ""
+def _own_distribution() -> importlib.metadata.Distribution | None:
+    """The installed distribution of the running PersonalClaw, or ``None`` when there is none
+    (PersonalClaw run from bare sources on ``PYTHONPATH``)."""
+    try:
+        return importlib.metadata.distribution("personalclaw")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def own_installer() -> str:
+    """The tool that made PersonalClaw's own environment, and so the one that installs into it.
+
+    ``"uv"`` when the running PersonalClaw's ``INSTALLER`` record says uv. ``"pip"`` otherwise:
+    pip and pipx write ``pip``, and PersonalClaw run from bare sources has no record, in an
+    environment that ``python -m venv`` made with pip in it.
+    """
+    dist = _own_distribution()
+    record = (dist.read_text("INSTALLER") or "") if dist is not None else ""
+    return "uv" if record.strip() == "uv" else "pip"
 
 
 def missing_pip(python: str = "") -> tuple[str, str]:
@@ -199,8 +219,47 @@ def _pip() -> list[str]:
 _UV_REJECTS: frozenset[str] = frozenset({"--disable-pip-version-check"})
 
 
+def _cannot_install(tool: str) -> NoInstallerError:
+    """Why PersonalClaw cannot install into its own environment, which *tool* made: one sentence
+    that says nothing was changed and names what to run.
+
+    For uv that is ``personalclaw update`` wherever uv works: the gateway runs with the PATH it was
+    started with (a service keeps the one it was installed with), so a uv a terminal has can be one
+    the gateway cannot see. For pip it is the reinstall :func:`missing_pip` names, in the words
+    ``personalclaw doctor`` uses, because pip is one of PersonalClaw's own dependencies.
+    """
+    if tool == "uv":
+        return NoInstallerError(
+            "Nothing was changed: uv made PersonalClaw's environment, and PersonalClaw cannot find "
+            "`uv` on its PATH, so run `personalclaw update` from a terminal where `uv` works."
+        )
+    problem, fix = missing_pip()
+    return NoInstallerError(
+        f"Nothing was changed: pip made PersonalClaw's environment, and {problem}; {fix}, then "
+        "run `personalclaw update`.",
+        problem=problem,
+        fix=fix,
+    )
+
+
+def require_own_installer() -> str:
+    """:func:`own_installer`, once that tool is there to run.
+
+    Every update asks this before it changes anything, so a missing tool refuses the update rather
+    than failing it halfway, with the checkout on the new release and the environment not.
+
+    Raises:
+        NoInstallerError: the tool that made the environment is not there (:func:`_cannot_install`).
+    """
+    tool = own_installer()
+    if not (_have_uv() if tool == "uv" else _have_pip()):
+        raise _cannot_install(tool)
+    return tool
+
+
 def install_argv(args: list[str]) -> list[str]:
-    """The argv that installs *args* into the running interpreter's environment.
+    """The argv that installs *args* into PersonalClaw's own environment, with the tool that made
+    it (:func:`own_installer`).
 
     Args:
         args: installer arguments AFTER the ``install`` verb — requirement specs
@@ -211,20 +270,106 @@ def install_argv(args: list[str]) -> list[str]:
         A complete argv list for ``subprocess``.
 
     Raises:
-        NoInstallerError: neither uv nor pip is available.
+        NoInstallerError: that tool is not there (:func:`require_own_installer`).
     """
-    if _have_uv():
-        # --python pins the TARGET env to the interpreter we are running as; see
-        # the module docstring for why letting uv infer it is not safe here.
+    if require_own_installer() == "uv":
         kept = [a for a in args if a not in _UV_REJECTS]
         return ["uv", "pip", "install", "--python", sys.executable, *kept]
-    if _have_pip():
-        return [sys.executable, "-m", "pip", "install", *args]
-    problem, fix = missing_pip()
-    raise NoInstallerError(
-        f"No package installer is available for this environment: {problem}, and `uv` is not "
-        f"on PATH. Install uv (https://docs.astral.sh/uv/), or {fix}, then retry."
-    )
+    return [sys.executable, "-m", "pip", "install", *args]
+
+
+def checkout_install_argv(package_root: str | Path) -> list[str]:
+    """The argv that installs the source checkout at *package_root* into PersonalClaw's own
+    environment once an update has moved it, with the tool that made the environment. It runs in
+    *package_root*.
+
+    pip: ``pip install -e .``, editable, the way a checkout runs.
+
+    uv: ``uv sync --locked``, the versions the checkout's lockfile names, the way uv made the
+    environment. ``--inexact`` keeps what the environment has beyond them (a package installed by
+    hand, an extra nothing here can tell was asked for), so an update adds and upgrades and never
+    removes. The extras the environment has are synced with the rest (:func:`_installed_extras`).
+    :func:`installer_env` names the running environment uv's project environment.
+
+    Raises:
+        NoInstallerError: that tool is not there (:func:`require_own_installer`).
+    """
+    if require_own_installer() == "uv":
+        argv = ["uv", "sync", "--locked", "--inexact", "--python", sys.executable, "--quiet"]
+        for extra in _installed_extras(_declared_extras(Path(package_root))):
+            argv += ["--extra", extra]
+        return argv
+    return [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"]
+
+
+def _declared_extras(package_root: Path) -> set[str]:
+    """The extras the checkout at *package_root* declares (``[project.optional-dependencies]``),
+    normalized. An extra the running version has and the checkout no longer declares is not one
+    ``uv sync`` can be asked for."""
+    from packaging.utils import canonicalize_name
+
+    try:
+        project = tomllib.loads((package_root / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    table = project.get("project", {}).get("optional-dependencies", {})
+    return {canonicalize_name(name) for name in table} if isinstance(table, dict) else set()
+
+
+def _installed_extras(declared: set[str]) -> list[str]:
+    """The extras of the running PersonalClaw that this environment has, among *declared*.
+
+    Nothing records which extras an environment was synced with, so it is read back from what is
+    installed. An extra counts when every package it adds on this platform is installed, and an
+    extra that names others of PersonalClaw's (``dev`` naming ``test``) counts when they all do.
+    One whose packages are there for another reason counts too, which only syncs those packages
+    to the versions the lockfile names.
+    """
+    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.utils import canonicalize_name
+
+    dist = _own_distribution()
+    if dist is None:
+        return []
+    own = canonicalize_name(dist.metadata["Name"] or "personalclaw")
+    extras = {canonicalize_name(e) for e in dist.metadata.get_all("Provides-Extra") or []}
+    needs: dict[str, list[Requirement]] = {}
+    for line in dist.requires or []:
+        try:
+            requirement = Requirement(line)
+        except InvalidRequirement:
+            continue
+        marker = requirement.marker
+        if marker is None or marker.evaluate({"extra": ""}):
+            continue  # one every install has, not an extra's
+        for extra in extras:
+            if marker.evaluate({"extra": extra}):
+                needs.setdefault(extra, []).append(requirement)
+
+    def installed(extra: str, asking: frozenset[str]) -> bool:
+        if extra in asking:
+            return True  # an extra naming itself back decides nothing
+        wanted = needs.get(extra)
+        if not wanted:
+            return False
+        for requirement in wanted:
+            if canonicalize_name(requirement.name) == own:
+                named = (canonicalize_name(e) for e in requirement.extras)
+                if not all(installed(e, asking | {extra}) for e in named):
+                    return False
+            elif not _installed(requirement.name):
+                return False
+        return True
+
+    return sorted(e for e in needs if e in declared and installed(e, frozenset()))
+
+
+def _installed(name: str) -> bool:
+    try:
+        importlib.metadata.distribution(name)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
 
 
 def prefix_install_argv(args: list[str]) -> list[str]:

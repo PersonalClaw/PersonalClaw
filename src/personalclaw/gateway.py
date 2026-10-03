@@ -43,7 +43,7 @@ from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.approval_grants import ToolDecision
 from personalclaw.audit_subject import log_title
-from personalclaw.cancellation import cancel_and_wait, kill_timed_out
+from personalclaw.cancellation import cancel_and_wait
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -73,7 +73,6 @@ from personalclaw.dashboard.token_auth import (
     retire_startup_links,
 )
 from personalclaw.env import _is_wsl, browser_available
-from personalclaw.frontend import build_frontend_async
 from personalclaw.heartbeat import (
     HeartbeatService,
     is_keep_response,
@@ -144,13 +143,6 @@ logger = logging.getLogger(__name__)
 
 # Max retries for injecting subagent results into parent sessions.
 _MAX_INJECT_ATTEMPTS = 2
-
-# The auto-update install deadline, named so a test can inject one instead of sleeping on
-# it. It was an inline literal, which made the only timeout path left in this function
-# untestable except by waiting it out — and an untested timeout path is how it ended up
-# with no teardown at all (2 orphans per timed-out install, measured: the `pip` child and
-# its build-backend grandchild).
-_AUTOUPDATE_PIP_TIMEOUT = 400.0  # `pip install -e .` — forks build backends
 
 
 def _delivery_owning(channel_id: str) -> Any:
@@ -4970,208 +4962,23 @@ class GatewayOrchestrator:
             logger.warning("Staged auto-update failed", exc_info=True)
 
     async def _auto_apply_update(self) -> None:
-        """Auto-apply the resolved release: fetch, advance to the target, restart.
+        """Install the staged update: the one update of the source checkout, unattended.
 
-        Release-based, never pull-from-main (RUM-4). The ``updates`` channel/pin
-        decides the target: every channel but ``nightly`` resolves a release TAG
-        and moves the checkout onto it (``git fetch --tags`` + ``git checkout
-        <tag>``); the git-only ``nightly`` channel is the ONE path that tracks the
-        current branch, and it advances by FAST-FORWARD only — never a silent
-        ``reset``. A stable/beta checkout that is already on (or past) the resolved
-        tag does nothing, so an unreleased ``main`` commit can no longer trigger an
-        unattended move.
-
-        SAFE-BY-DEFAULT: this UNATTENDED path never silently discards a user's
-        uncommitted tracked-file edits. If the working tree carries tracked
-        changes it REFUSES to advance and leaves the tree untouched — the
-        interactive surfaces do the same, and all share the
-        ``self_update.git_tracked_changes`` predicate so "is it safe to advance?"
-        is answered in exactly one place. Untracked files (task specs, notes) are
-        never at risk and never block an update.
+        It is :func:`~personalclaw.dashboard.handlers.updates.start_checkout_update`, the function
+        the owner's Update runs, so the two cannot drift apart. Unattended it asks the gate every
+        automatic check asks first, does nothing when there is nothing to advance, and says why it
+        did not run on the update progress instead of to a request. Its rules for the tree are the
+        owner's Update's: it lands only on the channel's or the pin's release, never on ``main``;
+        it never advances over uncommitted tracked edits (untracked files never block it); and it
+        installs with the tool that made the environment, which must be there before anything
+        moves. Returns once the update has run, the restart it ends with asked for.
         """
-        from personalclaw import __version__ as _cur_version
-        from personalclaw import self_update
-        from personalclaw.config import AppConfig
-
-        # The checkout the running package comes from: advancing any other tree would leave the
-        # gateway on the code it runs now, with someone else's tree moved underneath them.
-        proj = self_update.source_checkout()
-        if not proj:
-            return
+        from personalclaw.dashboard.handlers.updates import start_checkout_update
 
         try:
-            # Unattended, so this is PersonalClaw reaching out on its own, and it asks the gate
-            # every automatic check asks, when it runs: a staged install can wait for work to
-            # drain, and automatic checks can be turned off while it waits.
-            if not self_update.may_check_for_updates(asked=False):
-                logger.info("Auto-update: automatic update checks are off, so nothing is installed")
-                return
-
-            cfg = AppConfig.load()
-            channel = cfg.updates.channel
-            pin = cfg.updates.pin
-
-            # SAFE-BY-DEFAULT: refuse to advance over uncommitted tracked edits.
-            # ONE predicate, shared with the dashboard + CLI paths.
-            tracked = await asyncio.to_thread(self_update.git_tracked_changes, proj)
-            if tracked:
-                logger.warning(
-                    "Auto-update: refusing to apply — %d uncommitted tracked-file "
-                    "change(s) in %s. Commit or `git stash` them; the update applies "
-                    "on the next check.",
-                    len(tracked),
-                    proj,
-                )
-                if self.dashboard_state:
-                    self.dashboard_state.push_update_progress(
-                        "error",
-                        "Update paused — commit or stash your local changes first.",
-                    )
-                return
-
-            if channel == "nightly":
-                # Nightly: track the current branch, advancing by fast-forward only.
-                branch = await asyncio.to_thread(self_update.resolve_default_branch, proj)
-                if self.dashboard_state:
-                    self.dashboard_state.push_update_progress("pulling", "Fetching latest changes…")
-                fetch = await asyncio.to_thread(self_update.git_fetch, proj, branch)
-                if fetch.returncode != 0:
-                    if self.dashboard_state:
-                        self.dashboard_state.clear_update_progress()
-                    return
-                if await asyncio.to_thread(self_update.git_is_up_to_date, proj, branch):
-                    if self.dashboard_state:
-                        self.dashboard_state.clear_update_progress()
-                    return
-                ff = await asyncio.to_thread(self_update.git_fast_forward, proj, branch)
-                if ff.returncode != 0:
-                    logger.error(
-                        "Auto-update: fast-forward to origin/%s failed (rc=%d) — "
-                        "branch diverged; leaving tree untouched",
-                        branch,
-                        ff.returncode,
-                    )
-                    if self.dashboard_state:
-                        self.dashboard_state.clear_update_progress()
-                    return
-                logger.info("Auto-update: fast-forwarded %s, rebuilding", branch)
-            else:
-                # Ride the release tag resolved from the channel/pin. Skip when we
-                # are already on (or past) it — the whole point of retiring
-                # pull-from-main: an unreleased `main` commit never moves the tree.
-                target = await self_update.resolve_target(channel, pin)
-                if not target:
-                    logger.debug("Auto-update: no release resolved for channel=%s", channel)
-                    if self.dashboard_state:
-                        self.dashboard_state.clear_update_progress()
-                    return
-                if not self_update.moves_to(target, _cur_version, pin):
-                    if self.dashboard_state:
-                        self.dashboard_state.clear_update_progress()
-                    return
-                if self.dashboard_state:
-                    self.dashboard_state.push_update_progress("pulling", f"Checking out {target}…")
-                fetch = await asyncio.to_thread(self_update.git_fetch_tags, proj)
-                if fetch.returncode != 0:
-                    if self.dashboard_state:
-                        self.dashboard_state.clear_update_progress()
-                    return
-                checked = await asyncio.to_thread(self_update.git_checkout, proj, target)
-                if checked.returncode != 0:
-                    logger.error(
-                        "Auto-update: git checkout %s failed (rc=%d)",
-                        target,
-                        checked.returncode,
-                    )
-                    if self.dashboard_state:
-                        self.dashboard_state.clear_update_progress()
-                    return
-                logger.info("Auto-update: checked out %s, rebuilding", target)
-
-            # pip install -e . picks up new dependencies into the RUNNING
-            # interpreter's env (sys.executable) before the re-exec. Git ran
-            # at the repo root; pip + the frontend build run at the package
-            # root (nested in the monorepo layout).
-            pkg_root = self_update.package_root(proj)
-            if self.dashboard_state:
-                self.dashboard_state.push_update_progress("installing", "Installing package…")
-            from personalclaw._installer import installer_env
-
-            pip_install = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "-e",
-                ".",
-                "--quiet",
-                cwd=pkg_root,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=installer_env(),
-                # Own group: pip forks build backends / compilers, all inheriting these
-                # pipes. Without it kill_timed_out CORRECTLY refuses to signal a group —
-                # this child would share the gateway's — and falls back to a single-pid
-                # kill, which leaves the build backend holding the pipe. The
-                # grandchild survived the teardown. Same reason as the twin in
-                # dashboard/handlers/updates.py.
-                start_new_session=True,
-            )
-            try:
-                _, pip_err = await asyncio.wait_for(
-                    pip_install.communicate(), timeout=_AUTOUPDATE_PIP_TIMEOUT
-                )
-            except asyncio.TimeoutError:
-                # The deadline is the WHOLE teardown: `wait_for` cancels the read but
-                # leaves the child (and pip's forked build backends) running, so without
-                # this the timeout left two live processes behind per fire — on the
-                # auto-update poll, which means they accumulate for the gateway's life.
-                # kill_timed_out is the ONE owner of that path: it checks group
-                # leadership before signalling a group and its reap is bounded.
-                await kill_timed_out(pip_install)
-                logger.error(
-                    "Auto-update: pip install timed out after %.0fs; child killed and reaped",
-                    _AUTOUPDATE_PIP_TIMEOUT,
-                )
-                if self.dashboard_state:
-                    self.dashboard_state.push_update_progress("error", "pip install timed out")
-                return
-            if pip_install.returncode != 0:
-                logger.error(
-                    "Auto-update: pip install failed (rc=%d): %s",
-                    pip_install.returncode,
-                    mask_child_output(pip_err, limit=500),
-                )
-                # Restarting into an env with missing/stale deps could brick
-                # the gateway — keep running the current image instead.
-                if self.dashboard_state:
-                    self.dashboard_state.push_update_progress("error", "pip install failed")
-                return
-
-            if self.dashboard_state:
-                self.dashboard_state.push_update_progress("building", "Building frontend…")
-            # Build frontend assets (npm ci && npm run build in <pkg>/web/)
-            await build_frontend_async(
-                pkg_root,
-                push_progress=(
-                    self.dashboard_state.push_update_progress if self.dashboard_state else None
-                ),
-            )
-
-            logger.info("Auto-update: rebuild complete, restarting")
-            print("Update applied — restarting gateway…")
-            if self.dashboard_state:
-                # Same restart as the manual /api/update pipeline: the 'restarting' step, then
-                # this gateway's own full stop, then the fresh image (`restart_request`).
-                self.dashboard_state.push_update_progress("restarting", "Restarting server…")
-                from personalclaw.dashboard.handlers.updates import _graceful_reexec
-
-                await _graceful_reexec(self.dashboard_state)
-                return
-            # Headless (no dashboard state): the same stop-then-start, with nothing to tell.
-            from personalclaw.restart_request import request_restart
-
-            request_restart()
+            update = await start_checkout_update(self.dashboard_state, asked=False)
+            if update.task is not None:
+                await update.task
         except Exception:
             logger.warning("Auto-update failed", exc_info=True)
 

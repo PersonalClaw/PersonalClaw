@@ -8,7 +8,9 @@ import os
 import re
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Coroutine
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
@@ -21,6 +23,7 @@ from personalclaw.config.loader import AppConfig
 from personalclaw.dashboard.sse import GatewayStopping, next_unless_stopping
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.frontend import build_frontend_async
+from personalclaw.http_errors import json_error
 from personalclaw.net.git import git_argv, git_env, transport_refusal
 from personalclaw.request_validation import bool_field, json_object_body
 from personalclaw.security import MaskingFormatter, mask_child_output
@@ -417,16 +420,21 @@ async def api_changelog(request: web.Request) -> web.Response:
     return web.json_response({"content": content})
 
 
-# In-flight guard: only one update apply may run at a time. A plain bool is
-# race-free here because the handler sets it synchronously (no await between
-# check and set) on the single-threaded event loop; the background task clears
-# it in a finally. Concurrent POST /api/update returns 409 instead of spawning
-# a second pull/build/restart pipeline against the same working tree.
+# In-flight guard: only one update may run at a time, the owner's and the staged auto-update's
+# alike. A plain bool is race-free here because it is claimed synchronously (no await between
+# check and set) on the single-threaded event loop; the update clears it in a finally. A second
+# POST /api/update gets 409, and a staged update that finds one running leaves it to the next
+# check, instead of a second pull/install/build/restart pipeline against the same working tree.
 _apply_in_flight = False
 
+#: How long installing the checkout may run before it is stopped and reaped, named so a test can
+#: inject one instead of sleeping on it. pip and uv both run the package's build backend, and a
+#: dependency the release changed may have to be downloaded.
+_CHECKOUT_INSTALL_TIMEOUT = 400.0
 
-def _busy() -> web.Response | None:
-    """The 409 for an update that must not start now, or ``None`` when one may.
+
+def _busy_reason() -> str:
+    """Why an update must not start now, or ``""`` when one may.
 
     One is already running; or the gateway is stopping to restart. A restart returns to whoever
     asked for it and the gateway then takes a moment to stop, so an apply's own slot is free again
@@ -436,12 +444,31 @@ def _busy() -> web.Response | None:
     from personalclaw.restart_request import pending
 
     if _apply_in_flight:
-        return web.json_response({"error": "An update is already in progress"}, status=409)
+        return "An update is already in progress"
     if pending() is not None:
-        return web.json_response(
-            {"error": "PersonalClaw is restarting. Try again once it is back."}, status=409
-        )
-    return None
+        return "PersonalClaw is restarting. Try again once it is back."
+    return ""
+
+
+def _busy() -> web.Response | None:
+    """The 409 for an update that must not start now (:func:`_busy_reason`), or ``None``."""
+    reason = _busy_reason()
+    return web.json_response({"error": reason}, status=409) if reason else None
+
+
+def _installer_missing() -> str:
+    """The sentence an update refuses with when the tool that made PersonalClaw's environment,
+    the one that installs the update, is not there; ``""`` when it is.
+
+    Asked before an update changes anything (``_installer.require_own_installer``)."""
+    from personalclaw._installer import NoInstallerError, require_own_installer
+
+    try:
+        require_own_installer()
+    except NoInstallerError as exc:
+        logger.warning("Update refused: %s", exc)
+        return str(exc)
+    return ""
 
 
 async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.Response:
@@ -453,16 +480,21 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
     resolve their channel's newest release; the git-only ``nightly`` channel has no
     published wheel and rides ``stable``. When a pin matches no release the apply
     REFUSES rather than falling back to latest. Targets the SAME interpreter/prefix
-    the gateway runs from — mirrors the git path's editable install step. The
-    installer is RESOLVED (uv or pip), not assumed: a uv-created venv ships no pip
-    module (issue #51). No web build: the wheel already carries the SPA. The 409
-    concurrent-apply guard is shared with the git path.
+    the gateway runs from, with the tool that made it (``_installer.install_argv``):
+    uv for an environment uv made (``uv tool install``), which has no pip until it
+    installs a version that declares one, and pip for one pip or pipx made. When that
+    tool is not there the apply refuses with a 409 before it starts, naming what to run.
+    No web build: the wheel already carries the SPA. The 409 concurrent-apply guard is
+    shared with the git path.
     """
     global _apply_in_flight
 
     busy = _busy()
     if busy is not None:
         return busy
+    missing = _installer_missing()
+    if missing:
+        return json_error("update_installer_missing", message=missing, status=409)
     _apply_in_flight = True
     state.push_refresh("updating")
 
@@ -500,18 +532,10 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
                 return
             spec = self_update.upgrade_spec(target)
 
-            # Resolve the installer instead of assuming stdlib pip — a uv venv has
-            # none, which made self-update impossible on the uv install path while
-            # the UI already labelled this kind "pip / uv install" (issue #51).
-            from personalclaw._installer import NoInstallerError, install_argv, installer_env
+            # The tool that made the environment, found there before this started.
+            from personalclaw._installer import install_argv, installer_env
 
-            try:
-                argv = install_argv(["-U", spec, "--quiet"])
-            except NoInstallerError as exc:
-                logger.error("self-update: %s", exc)
-                state.push_update_progress("error", str(exc))
-                return
-
+            argv = install_argv(["-U", spec, "--quiet"])
             state.push_update_progress("installing", f"Upgrading {spec}…")
             pip_up = await asyncio.create_subprocess_exec(
                 *argv,
@@ -526,7 +550,7 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
                 _, pip_err = await asyncio.wait_for(pip_up.communicate(), timeout=400)
             except asyncio.TimeoutError:
                 await kill_timed_out(pip_up)
-                state.push_update_progress("error", "pip upgrade timed out")
+                state.push_update_progress("error", "Upgrade timed out")
                 return
             if pip_up.returncode != 0:
                 detail = mask_child_output(pip_err, limit=None, one_line=False)
@@ -561,28 +585,14 @@ async def _apply_pip_update(request: web.Request, state: DashboardState) -> web.
 
 
 async def api_update_apply(request: web.Request) -> web.Response:
-    """POST /api/update — advance the checkout to its release, rebuild, restart.
+    """POST /api/update — move this install to its release, the way it was installed.
 
-    Release-based, per the ``updates`` channel/pin (RUM-4): the git kind rides
-    release TAGS like every other install kind — ``git fetch --tags`` +
-    ``git checkout <tag>`` — it never fast-forwards ``main`` nor hard-resets the
-    tree onto a branch. The git-only ``nightly`` channel is the ONE path that
-    tracks the current
-    branch, and it advances by FAST-FORWARD (clean tree required), never a reset.
-    Then ``pip install -e .`` (same interpreter) → frontend rebuild
-    (``npm ci && npm run build`` in ``web/``) → graceful re-exec. Progress is
-    broadcast as ``update_progress`` WS events with steps ``pulling`` →
-    ``installing`` → ``building`` → ``restarting`` (→ ``error``/``failed``).
-
-    Graceful degradation: when there is NOTHING to advance (already on the
-    resolved release tag / pinned version, no upstream, or offline with no
-    release resolved) the pipeline short-circuits straight to the ``restarting``
-    step — the user asked for "Update & Restart", and a restart is still
-    meaningful (applies committed local changes). The dirty-tree gate only guards
-    a REAL advance (moving HEAD over a dirty tree is dangerous); if nothing will
-    be advanced, dirtiness doesn't matter, so the target probe runs BEFORE it.
+    A container or desktop install answers with the commands that update it; a wheel is upgraded
+    in place (:func:`_apply_pip_update`); a source checkout is updated by
+    :func:`start_checkout_update`, the one update the staged auto-update runs as well. Progress is
+    broadcast as ``update_progress`` WS events with steps ``pulling`` → ``installing`` →
+    ``building`` → ``restarting`` (→ ``error``/``failed``).
     """
-    global _apply_in_flight
     state: DashboardState = request.app["state"]
 
     kind = self_update.detect_install_kind()
@@ -629,193 +639,299 @@ async def api_update_apply(request: web.Request) -> web.Response:
     if kind == "pip":
         return await _apply_pip_update(request, state)
 
-    # git: ride release tags by channel/pin; nightly tracks the branch. The tree it
-    # advances is the checkout the running package comes from, the same one the kind was read
-    # from, never a tree the process only started in.
+    update = await start_checkout_update(state, asked=True, auth_mode=_live_auth_mode(request))
+    if update.outcome == "updating":
+        return web.json_response({"ok": True, "status": "updating"})
+    if update.outcome == "restarting":
+        return web.json_response({"ok": True, "status": "restarting", "detail": update.detail})
+    if update.outcome == "installer_missing":
+        return json_error("update_installer_missing", message=update.detail, status=409)
+    return web.json_response({"error": update.detail}, status=update.status)
+
+
+@dataclass(frozen=True)
+class CheckoutUpdate:
+    """What :func:`start_checkout_update` decided, before it changed anything.
+
+    ``outcome`` is ``"updating"`` (the checkout advances, installs, builds and restarts in
+    ``task``), ``"restarting"`` (nothing to advance and the owner asked: ``task`` only restarts),
+    ``"none"`` (nothing to do, unattended), ``"installer_missing"`` (the tool that made the
+    environment is not there) or ``"refused"``. ``detail`` is the sentence that says so, and
+    ``status`` what ``POST /api/update`` answers a refusal with.
+    """
+
+    outcome: str
+    detail: str = ""
+    status: int = 200
+    task: "asyncio.Task[None] | None" = None
+
+
+async def start_checkout_update(
+    state: DashboardState | None, *, asked: bool, auth_mode: str = ""
+) -> CheckoutUpdate:
+    """Start the one update of the source checkout PersonalClaw runs from.
+
+    The owner's Update (``POST /api/update``, *asked*) and the staged auto-update
+    (``updates.auto = "staged"``, ``GatewayOrchestrator._auto_apply_update``) both start here, so
+    they cannot drift apart: they did, and both spelled out ``python -m pip install -e .``, which
+    fails in every environment uv made.
+
+    Release-based, per the ``updates`` channel/pin: the checkout rides release TAGS like every
+    other install kind (``git fetch --tags`` + ``git checkout <tag>``), never fast-forwarding
+    ``main`` nor hard-resetting the tree onto a branch. ``nightly`` is the one channel that tracks
+    the current branch, and it advances by FAST-FORWARD, never a reset. Then the checkout is
+    installed into the running environment with the tool that made it
+    (``_installer.checkout_install_argv``), its frontend is built (``npm ci && npm run build`` in
+    ``web/``), and the gateway restarts.
+
+    Everything that can refuse is decided before anything changes. *state* is ``None`` for a
+    gateway with no dashboard. Each refusal is said once:
+
+    * there is nothing to advance (already on the resolved release or pinned version, no
+      upstream, offline with no release resolved): the owner's Update still restarts, which
+      applies committed local changes; the auto-update does nothing;
+    * tracked files have uncommitted changes: both advances are non-destructive on their own
+      (``checkout`` refuses to clobber, a fast-forward cannot rewrite history), but a clean tree
+      keeps one contract and a readable refusal instead of git's own halfway through. It is asked
+      only for a real advance, so a dirty tree never blocks a restart;
+    * the tool that made the environment is not there to install the release: found missing after
+      the checkout, the update would leave the new release's sources over the old release's
+      environment, and the gateway on the old code;
+    * an update is already running, or the gateway is restarting.
+
+    Asked, a refusal is the answer to the request; unattended, it is said on the update progress
+    and in the log, and the update applies at a later check. Unattended, it also asks the gate
+    every automatic check asks (``self_update.may_check_for_updates``) when it runs: a staged
+    install can wait for work to drain, and automatic checks can be turned off while it waits.
+    """
+    global _apply_in_flight
+
+    # The checkout the running package comes from: advancing any other tree would leave the
+    # gateway on the code it runs now, with someone else's tree moved underneath them.
     proj = self_update.source_checkout()
     if not proj:
-        return web.json_response(
-            {"error": "No source checkout to update: this PersonalClaw does not run from one."},
+        return CheckoutUpdate(
+            "refused",
+            "No source checkout to update: this PersonalClaw does not run from one.",
             status=400,
         )
+    busy = _busy_reason()
+    if busy:
+        if not asked:
+            logger.info("Auto-update: %s, so it applies at a later check", busy)
+        return CheckoutUpdate("refused", busy, status=409)
+    if not asked and not self_update.may_check_for_updates(asked=False):
+        logger.info("Auto-update: automatic update checks are off, so nothing is installed")
+        return CheckoutUpdate("none")
 
-    busy = _busy()
-    if busy is not None:
-        return busy
-    # Claim the in-flight slot BEFORE the first await below — otherwise two
-    # concurrent POSTs could both pass the check while one parks on a subprocess.
-    # A rejected concurrent request therefore does NO config read and NO network.
-    # Every return path from here must release it.
+    def say_unattended(detail: str) -> None:
+        if not asked and state is not None:
+            state.push_update_progress("error", detail)
+
+    # Claimed BEFORE the first await below, so two updates cannot both pass the check while one
+    # waits on git or the network. Until an update starts, every way out releases it.
     _apply_in_flight = True
-
-    # Signal updating state via SSE
-    state.push_refresh("updating")
-
-    # What does "advance" mean for this checkout? The `updates` channel/pin decides,
-    # replacing the retired `update_dev_mode` bool. Every channel but `nightly` rides
-    # a release TAG (fetch --tags + checkout); `nightly` is the ONE branch-tracking
-    # path (fast-forward only). resolve_target reads the ETag-cached releases list
-    # and never raises.
-    _cfg = AppConfig.load()
-    _channel = _cfg.updates.channel
-    _pin = _cfg.updates.pin
-    _target_tag = ""
-    if _channel != "nightly":
-        try:
-            _target_tag = await self_update.resolve_target(_channel, _pin)
-        except Exception:
-            logger.debug("resolve_target failed; treating as no release resolved", exc_info=True)
-            _target_tag = ""
-    logger.debug("git update apply: channel=%s pin=%s target=%s", _channel, _pin, _target_tag)
-
-    # Nothing-to-advance probe FIRST (before the dirty gate): "Update & Restart"
-    # with nothing to advance degrades to a plain restart instead of 409ing on
-    # tree state that can't matter. Nightly rides commits (fast-forward when
-    # behind); every other channel rides the resolved release tag (skip when we
-    # are already on or past it, so an unreleased `main` commit never triggers a
-    # move — the whole point of retiring pull-from-main).
-    advance = False
-    if _channel == "nightly":
-        # The owner asked for this update: fetch the branch it would advance, then count.
-        behind = await self_update.commits_behind_upstream(proj, fetch=True)
-        if behind is None:
-            note = "No upstream configured — restarting…"
-        elif behind == 0:
-            note = "Already up to date — restarting…"
-        else:
-            advance = True
-            note = ""
-    else:
-        if not _target_tag:
-            note = "No newer release found — restarting…"
-        elif not self_update.moves_to(_target_tag, _local_version, _pin):
-            sentence = self_update.up_to_date_sentence(_target_tag, _local_version, _pin)
-            note = f"{sentence} — restarting…"
-        else:
-            advance = True
-            note = ""
-    if not advance:
-        logger.info("Update apply: nothing to advance (%s) — restarting only", note)
-        _auth_mode = _live_auth_mode(request)
-
-        async def _restart_only() -> None:
-            global _apply_in_flight
-            try:
-                # First (and only) step is `restarting` — the FE overlay renders
-                # its simplified restart-only view for exactly this shape.
-                state.push_update_progress("restarting", note)
-                await _graceful_reexec(state, auth_mode=_auth_mode)
-            except Exception:
-                logger.exception("Restart (nothing-to-advance update) failed")
-                state.push_update_progress("error", "Restart failed — check logs")
-            finally:
-                _apply_in_flight = False
-
-        task = asyncio.create_task(_restart_only())
-        state._background_tasks.add(task)
-        task.add_done_callback(state._background_tasks.discard)
-        return web.json_response({"ok": True, "status": "restarting", "detail": note})
-
-    # Clean-tree gate before advancing HEAD. Both advance mechanisms are
-    # non-destructive on their own (checkout refuses to clobber, ff-only can't
-    # rewrite history), but requiring a clean tree keeps one clear contract and a
-    # readable message rather than a raw git refusal mid-apply.
-    tracked = await asyncio.to_thread(self_update.git_tracked_changes, proj)
-    if tracked:
-        logger.warning("Update skipped: working tree has uncommitted changes")
-        _apply_in_flight = False
-        return web.json_response(
-            {"error": "Working tree has uncommitted changes — commit or stash first"},
-            status=409,
-        )
-
-    async def _apply() -> None:
-        global _apply_in_flight
-        try:
-            if _channel == "nightly":
-                # Nightly: advance the current branch by fast-forward only — never a
-                # silent reset. A diverged branch fails cleanly and is left untouched.
-                branch = await asyncio.to_thread(self_update.resolve_default_branch, proj)
-                state.push_update_progress("pulling", f"Fast-forwarding {branch}…")
-                ff = await asyncio.to_thread(self_update.git_fast_forward, proj, branch)
-                if ff.returncode != 0:
-                    state.push_update_progress(
-                        "error", f"Could not fast-forward {branch} (diverged?) — no changes made"
-                    )
-                    return
-            else:
-                # Ride the release tag: fetch tags, then check the resolved tag out
-                # (detaches HEAD onto that exact release). No pull, no reset.
-                state.push_update_progress("pulling", f"Fetching release {_target_tag}…")
-                fetched = await asyncio.to_thread(self_update.git_fetch_tags, proj)
-                if fetched.returncode != 0:
-                    state.push_update_progress("error", "git fetch --tags failed")
-                    return
-                checked = await asyncio.to_thread(self_update.git_checkout, proj, _target_tag)
-                if checked.returncode != 0:
-                    state.push_update_progress("error", f"git checkout {_target_tag} failed")
-                    return
-
-            # Reinstall the package into the RUNNING interpreter's env so new
-            # dependencies land before the re-exec (sys.executable is the venv
-            # python the gateway was launched with). Git ran at the repo root;
-            # pip + the frontend build run at the package root (may be nested).
-            pkg_root = self_update.package_root(proj)
-            state.push_update_progress("installing", "Installing package…")
-            from personalclaw._installer import installer_env
-
-            pip_install = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "-e",
-                ".",
-                "--quiet",
-                cwd=pkg_root,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=installer_env(),
-                # Own group: pip forks build backends / compilers, all inheriting these
-                # pipes. See kill_timed_out.
-                start_new_session=True,
+    started = False
+    try:
+        target_tag, note = await _checkout_target(proj)
+        if note:
+            logger.info("Update: nothing to advance (%s)", note)
+            if not asked:
+                if state is not None:
+                    state.clear_update_progress()
+                return CheckoutUpdate("none", note)
+            started = True
+            return CheckoutUpdate(
+                "restarting", note, task=_hold(state, _restart_only(state, note, auth_mode))
             )
-            try:
-                _, pip_err = await asyncio.wait_for(pip_install.communicate(), timeout=400)
-            except asyncio.TimeoutError:
-                await kill_timed_out(pip_install)
-                state.push_update_progress("error", "pip install timed out")
-                return
-            if pip_install.returncode != 0:
-                logger.error(
-                    "Update: pip install failed (rc=%d): %s",
-                    pip_install.returncode,
-                    mask_child_output(pip_err, limit=500),
+
+        if await asyncio.to_thread(self_update.git_tracked_changes, proj):
+            if asked:
+                logger.warning("Update skipped: working tree has uncommitted changes")
+            else:
+                logger.warning(
+                    "Auto-update: refusing to apply — uncommitted tracked-file changes in %s. "
+                    "Commit or `git stash` them; the update applies on the next check.",
+                    proj,
                 )
-                state.push_update_progress("error", "pip install failed")
-                return
+            say_unattended("Update paused — commit or stash your local changes first.")
+            return CheckoutUpdate(
+                "refused",
+                "Working tree has uncommitted changes — commit or stash first",
+                status=409,
+            )
 
-            # Build frontend assets (npm ci && npm run build in <pkg>/web/)
-            state.push_update_progress("building", "Building frontend…")
-            await build_frontend_async(pkg_root, push_progress=state.push_update_progress)
+        missing = _installer_missing()
+        if missing:
+            say_unattended(missing)
+            return CheckoutUpdate("installer_missing", missing, status=409)
 
-            # Restart: the gateway stops the way every stop runs, then starts the new image
-            state.push_update_progress("restarting", "Restarting server…")
-            logger.info("Update complete — restarting")
-            await _graceful_reexec(state, auth_mode=_live_auth_mode(request))
-        except Exception:
-            logger.exception("Update failed")
-            state.push_update_progress("failed", "Update failed — check logs")
-            state.push_refresh("update_failed")
-        finally:
-            # Reached on success too, since a restart returns once it is asked for; `_busy`
-            # refuses the next apply while the gateway stops to restart.
+        if state is not None:
+            state.push_refresh("updating")
+        started = True
+        task = _hold(state, _advance_checkout(state, proj, target_tag, auth_mode=auth_mode))
+        return CheckoutUpdate("updating", task=task)
+    finally:
+        if not started:
             _apply_in_flight = False
 
-    task = asyncio.create_task(_apply())
-    state._background_tasks.add(task)
-    task.add_done_callback(state._background_tasks.discard)
-    return web.json_response({"ok": True, "status": "updating"})
+
+async def _checkout_target(proj: str) -> tuple[str, str]:
+    """Where an update moves the checkout: ``(tag, "")`` to check release *tag* out, ``("", "")``
+    to fast-forward the branch (``nightly``), or ``("", note)`` when there is nothing to advance.
+
+    Every channel but ``nightly`` resolves a release tag from the ETag-cached releases list and
+    moves only when that release is a move (``self_update.moves_to``), so an unreleased ``main``
+    commit never moves the checkout. ``nightly`` fetches the branch it would advance, then counts.
+    """
+    cfg = AppConfig.load()
+    channel, pin = cfg.updates.channel, cfg.updates.pin
+    if channel == "nightly":
+        behind = await self_update.commits_behind_upstream(proj, fetch=True)
+        if behind is None:
+            return "", "No upstream configured — restarting…"
+        if behind == 0:
+            return "", "Already up to date — restarting…"
+        return "", ""
+    try:
+        tag = await self_update.resolve_target(channel, pin)
+    except Exception:
+        logger.debug("resolve_target failed; treating as no release resolved", exc_info=True)
+        tag = ""
+    logger.debug("checkout update: channel=%s pin=%s target=%s", channel, pin, tag)
+    if not tag:
+        return "", "No newer release found — restarting…"
+    if not self_update.moves_to(tag, _local_version, pin):
+        return "", f"{self_update.up_to_date_sentence(tag, _local_version, pin)} — restarting…"
+    return tag, ""
+
+
+def _hold(state: DashboardState | None, work: Coroutine[Any, Any, None]) -> "asyncio.Task[None]":
+    """Run *work* as a task the dashboard holds, so it outlives the request that started it."""
+    task = asyncio.create_task(work)
+    if state is not None:
+        state._background_tasks.add(task)
+        task.add_done_callback(state._background_tasks.discard)
+    return task
+
+
+async def _restart_only(state: DashboardState | None, note: str, auth_mode: str) -> None:
+    """Update & Restart with nothing to advance: the restart alone."""
+    global _apply_in_flight
+    try:
+        # First (and only) step is `restarting` — the FE overlay renders its simplified
+        # restart-only view for exactly this shape.
+        if state is not None:
+            state.push_update_progress("restarting", note)
+        await _graceful_reexec(state, auth_mode=auth_mode)
+    except Exception:
+        logger.exception("Restart (nothing-to-advance update) failed")
+        if state is not None:
+            state.push_update_progress("error", "Restart failed — check logs")
+    finally:
+        _apply_in_flight = False
+
+
+async def _advance_checkout(
+    state: DashboardState | None, proj: str, target_tag: str, *, auth_mode: str
+) -> None:
+    """Move the checkout, install it, build its frontend and restart: the update
+    :func:`start_checkout_update` started. No *target_tag* is the nightly fast-forward."""
+    global _apply_in_flight
+
+    def progress(step: str, detail: str) -> None:
+        if state is not None:
+            state.push_update_progress(step, detail)
+
+    try:
+        if not target_tag:
+            # Nightly: advance the current branch by fast-forward only — never a
+            # silent reset. A diverged branch fails cleanly and is left untouched.
+            branch = await asyncio.to_thread(self_update.resolve_default_branch, proj)
+            progress("pulling", f"Fast-forwarding {branch}…")
+            ff = await asyncio.to_thread(self_update.git_fast_forward, proj, branch)
+            if ff.returncode != 0:
+                progress("error", f"Could not fast-forward {branch} (diverged?) — no changes made")
+                return
+        else:
+            # Ride the release tag: fetch tags, then check the resolved tag out
+            # (detaches HEAD onto that exact release). No pull, no reset.
+            progress("pulling", f"Fetching release {target_tag}…")
+            fetched = await asyncio.to_thread(self_update.git_fetch_tags, proj)
+            if fetched.returncode != 0:
+                progress("error", "git fetch --tags failed")
+                return
+            checked = await asyncio.to_thread(self_update.git_checkout, proj, target_tag)
+            if checked.returncode != 0:
+                progress("error", f"git checkout {target_tag} failed")
+                return
+
+        # Install into the RUNNING environment, with the tool that made it, so new dependencies
+        # land before the restart. Git ran at the repo root; the install and the frontend build
+        # run at the package root (nested in the monorepo layout).
+        pkg_root = self_update.package_root(proj)
+        progress("installing", "Installing package…")
+        from personalclaw._installer import checkout_install_argv, installer_env
+
+        argv = checkout_install_argv(pkg_root)
+        label = "uv sync" if argv[0] == "uv" else "pip install"
+        install = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=pkg_root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=installer_env(),
+            # Own group: the installer forks build backends and compilers, all inheriting
+            # these pipes. See kill_timed_out.
+            start_new_session=True,
+        )
+        try:
+            _, install_err = await asyncio.wait_for(
+                install.communicate(), timeout=_CHECKOUT_INSTALL_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            # The deadline is the WHOLE teardown: `wait_for` cancels the read but leaves the
+            # installer and its build backend running. kill_timed_out is the one owner of that.
+            await kill_timed_out(install)
+            logger.error(
+                "Update: %s timed out after %.0fs; stopped", label, _CHECKOUT_INSTALL_TIMEOUT
+            )
+            progress("error", f"{label} timed out")
+            return
+        if install.returncode != 0:
+            logger.error(
+                "Update: %s failed (rc=%d): %s",
+                label,
+                install.returncode,
+                mask_child_output(install_err, limit=500),
+            )
+            # Restarting into an environment with missing or stale dependencies could leave the
+            # gateway unable to start, so it keeps running the code it runs now.
+            summary = self_update.installer_error_summary(
+                mask_child_output(install_err, limit=None, one_line=False)
+            )
+            progress("error", f"{label} failed: {summary}" if summary else f"{label} failed")
+            return
+
+        # Build frontend assets (npm ci && npm run build in <pkg>/web/)
+        progress("building", "Building frontend…")
+        await build_frontend_async(
+            pkg_root, push_progress=state.push_update_progress if state is not None else None
+        )
+
+        # Restart: the gateway stops the way every stop runs, then starts the new image
+        progress("restarting", "Restarting server…")
+        logger.info("Update complete — restarting")
+        await _graceful_reexec(state, auth_mode=auth_mode)
+    except Exception:
+        logger.exception("Update failed")
+        progress("failed", "Update failed — check logs")
+        if state is not None:
+            state.push_refresh("update_failed")
+    finally:
+        # Reached on success too, since a restart returns once it is asked for; `_busy`
+        # refuses the next apply while the gateway stops to restart.
+        _apply_in_flight = False
 
 
 def _live_auth_mode(request: web.Request) -> str:
@@ -831,7 +947,7 @@ def _live_auth_mode(request: web.Request) -> str:
         return ""
 
 
-async def _graceful_reexec(state: DashboardState, *, auth_mode: str = "") -> None:
+async def _graceful_reexec(state: DashboardState | None, *, auth_mode: str = "") -> None:
     """Restart the gateway: stop it the way every stop runs, then start a fresh image in place.
 
     Shared by the update-apply restart, the standalone restart endpoint and the staged
@@ -845,10 +961,12 @@ async def _graceful_reexec(state: DashboardState, *, auth_mode: str = "") -> Non
 
     *auth_mode* is the LIVE ``AuthConfig.mode`` (an AuthMode str-enum: 'none' / 'local_token' / …)
     the caller read from ``request.app['auth_cfg']``, pinned into the new image's environment (#46)
-    so a Restart re-applies code without ever changing whether auth is on or off."""
+    so a Restart re-applies code without ever changing whether auth is on or off. *state* is
+    ``None`` on a gateway with no dashboard, where there is nobody to tell."""
     exe = sys.executable
     if not os.path.isfile(exe) or not os.access(exe, os.X_OK):
-        state.push_update_progress("error", "Cannot restart: invalid Python executable path")
+        if state is not None:
+            state.push_update_progress("error", "Cannot restart: invalid Python executable path")
         return
     from personalclaw.restart_request import request_restart
 

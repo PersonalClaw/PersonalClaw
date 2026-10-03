@@ -51,7 +51,10 @@ in-flight guard and re-execs the live gateway; the CLI applies synchronously,
 prints to stdout, prompts a TTY and re-execs nothing (there is no server in that
 process). A single ``apply(kind, progress=...)`` would be a callback-shaped
 abstraction over two different lifecycles, so it was rejected — the shared part
-is the decision plus these primitives.
+is the decision plus these primitives, and the installer every surface runs
+(``_installer``: the tool that made the environment). The dashboard's Update and the
+gateway's staged auto-update ARE one lifecycle, and so one function
+(``dashboard.handlers.updates.start_checkout_update``).
 
 Pre-1.0 clean break (owner 2026-07-20): implemented directly, WITHOUT a
 lifecycle gate — there is no lifecycle/gates.py machinery yet, so this is the one
@@ -221,7 +224,7 @@ def detect_install_kind() -> InstallKind:
 
 
 def package_root(proj: str) -> str:
-    """Resolve the directory ``pip install -e .`` and the frontend build run
+    """Resolve the directory the checkout's install and the frontend build run
     from. Git operations run in the checkout (``proj`` =
     :func:`source_checkout`), but the installable package may live one
     level down: a standalone checkout has ``pyproject.toml`` at the top,

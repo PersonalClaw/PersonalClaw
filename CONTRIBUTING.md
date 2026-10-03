@@ -209,8 +209,9 @@ ERROR: Package 'personalclaw' requires a different Python: 3.9.6 not in '<3.14,>
 ```
 
 If `python3 --version` is not 3.12.x or 3.13.x, create the venv with an explicit interpreter
-(`python3.13 -m venv .venv`) or let `uv` supply one (`uv venv --python 3.13`, the version the
-one-line installer installs on).
+(`python3.13 -m venv .venv`) or let `uv` supply one (`uv sync --python 3.13 --extra dev`, the
+version the one-line installer installs on). An update installs with the tool that made the
+environment: `uv sync --locked --inexact` in one uv made, `pip install -e .` in one pip made.
 
 **git 2.12 or newer.** PersonalClaw's own git refuses an older one
 (`net/git.py::MIN_GIT_VERSION`), which ignores the settings that stop a repository's own
@@ -220,10 +221,10 @@ too. `git version` says which you have.
 ```bash
 # from the repo root
 python3 --version            # must be 3.12.x or 3.13.x
-python3 -m venv .venv        # …or: uv venv --python 3.13
+python3 -m venv .venv        # …or: uv sync --extra dev (uv makes .venv from uv.lock)
 source .venv/bin/activate
 
-pip install -e ".[dev]"
+pip install -e ".[dev]"      # with uv, skip this: uv sync installed the checkout already
 
 # build the dashboard SPA once (rebuilds are picked up live)
 make web-build

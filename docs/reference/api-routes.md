@@ -982,7 +982,7 @@ The 907 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/triggers/{id}/test` | execute a lifecycle trigger's action once. |
 | `POST` | `/api/triggers/{id}/to-chat` | open a schedule trigger as a chat session. |
 | `POST` | `/api/triggers/{id}/toggle` | enable/disable. |
-| `POST` | `/api/update` | advance the checkout to its release, rebuild, restart. |
+| `POST` | `/api/update` | move this install to its release, the way it was installed. |
 | `POST` | `/api/update/cancel` | dismiss a stuck/failed update overlay. |
 | `GET` | `/api/update/check` | the update status, checking only when an automatic check is due. |
 | `POST` | `/api/update/check` | check for updates once, now, even with automatic checks off. |

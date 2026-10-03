@@ -162,11 +162,9 @@ _GATEWAY_ENV: dict[str, str] = {
     "dashboard/handlers/updates.py::_apply_pip_update._apply::asyncio.create_subprocess_exec": (
         "self pip update"
     ),
-    "dashboard/handlers/updates.py::api_update_apply._apply::asyncio.create_subprocess_exec": (
-        "self-update git/pip"
-    ),
-    "gateway.py::GatewayOrchestrator._auto_apply_update::asyncio.create_subprocess_exec": (
-        "auto-update pip (its git runs through `self_update._run_git`)"
+    "dashboard/handlers/updates.py::_advance_checkout::asyncio.create_subprocess_exec": (
+        "the checkout's install, for the Update and the staged auto-update (its git runs "
+        "through `self_update._run_git`)"
     ),
     "frontend.py::build_frontend_sync::subprocess.run": "PersonalClaw's own frontend build",
     "frontend.py::build_frontend_async::asyncio.create_subprocess_exec": (

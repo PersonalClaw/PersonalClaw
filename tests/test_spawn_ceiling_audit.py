@@ -443,12 +443,11 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "dashboard/handlers/updates.py::_apply_pip_update._apply::asyncio.create_subprocess_exec": (
         "service: self pip update"
     ),
-    # The top-level dirty-tree check in api_update_apply moved to
-    # asyncio.to_thread(self_update.git_tracked_changes) — no direct spawn here now.
-    # The nested _apply still spawns pip install (and the tag advance runs through
-    # asyncio.to_thread over self_update's sync git primitives, not a spawn here).
-    "dashboard/handlers/updates.py::api_update_apply._apply::asyncio.create_subprocess_exec": (
-        "service: update git/pip"
+    # The checkout's update (the owner's Update and the staged auto-update are one function)
+    # spawns only its install, with the tool that made the environment; the tag advance runs
+    # through asyncio.to_thread over self_update's sync git primitives, not a spawn here.
+    "dashboard/handlers/updates.py::_advance_checkout::asyncio.create_subprocess_exec": (
+        "service: the checkout's install (pip install -e . or uv sync)"
     ),
     # A restart is the gateway's own full stop, then this exec of its fresh image.
     "restart_request.py::start::os.execve": ("service: re-exec the gateway itself"),
@@ -480,10 +479,6 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "frontend.py::build_frontend_sync::subprocess.run": "operator: frontend npm build",
     "frontend.py::build_frontend_async::asyncio.create_subprocess_exec": (
         "operator: frontend npm build"
-    ),
-    # Gateway auto-update — service; its restart goes through `restart_request.start`.
-    "gateway.py::GatewayOrchestrator._auto_apply_update::asyncio.create_subprocess_exec": (
-        "service: auto-update git/pip"
     ),
     "gateway.py::_wslview_open::subprocess.run": "operator: open browser on WSL",
     # Knowledge media pipeline — ffprobe/ffmpeg on operator-ingested media (host tools).

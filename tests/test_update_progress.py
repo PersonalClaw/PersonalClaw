@@ -312,8 +312,9 @@ class TestUpdateEndpoints:
 
 class TestUpdateApplyPipeline:
     """The public manual-apply pipeline: fetch --tags + checkout the
-    resolved release tag (nightly: fast-forward) → pip install -e . → frontend
-    rebuild → graceful re-exec, with the in-flight guard."""
+    resolved release tag (nightly: fast-forward) → install with the tool that made the
+    environment (pip here: ``pip install -e .``) → frontend rebuild → graceful re-exec, with
+    the in-flight guard."""
 
     def _make_request(self, state):
         app = web.Application()
@@ -325,13 +326,15 @@ class TestUpdateApplyPipeline:
 
     @pytest.mark.asyncio
     async def test_full_pipeline_reaches_restart(
-        self, monkeypatch, tmp_path, package_in_checkout
+        self, monkeypatch, tmp_path, package_in_checkout, environment_made_by
     ) -> None:
         """Release channel, a newer tag resolved → steps pulling/installing/
         building/restarting fire and _graceful_reexec is REACHED. The git kind
         rides the release TAG (fetch --tags + checkout), never a pull/reset."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         package_in_checkout(tmp_path)  # a git checkout the package runs from
+        environment_made_by("pip")
+        monkeypatch.setattr("personalclaw._installer._have_pip", lambda: True)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -409,12 +412,14 @@ class TestUpdateApplyPipeline:
 
     @pytest.mark.asyncio
     async def test_pip_failure_stops_before_restart(
-        self, monkeypatch, tmp_path, package_in_checkout
+        self, monkeypatch, tmp_path, package_in_checkout, environment_made_by
     ) -> None:
         """pip install failure → error step, no frontend build, no re-exec,
         and the in-flight guard is released."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         package_in_checkout(tmp_path)  # a git checkout the package runs from
+        environment_made_by("pip")
+        monkeypatch.setattr("personalclaw._installer._have_pip", lambda: True)
         import personalclaw.dashboard.handlers.updates as upd
 
         monkeypatch.setattr(upd, "_apply_in_flight", False)
@@ -447,7 +452,11 @@ class TestUpdateApplyPipeline:
         assert resp.status == 200
         await asyncio.sleep(0.05)
 
-        assert state._update_progress == {"step": "error", "detail": "pip install failed"}
+        # The installer's own reason reaches the panel, not a bare label.
+        assert state._update_progress == {
+            "step": "error",
+            "detail": "pip install failed: resolver exploded",
+        }
         fe_build.assert_not_awaited()
         reexec.assert_not_awaited()
         assert upd._apply_in_flight is False
