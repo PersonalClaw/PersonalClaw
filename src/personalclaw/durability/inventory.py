@@ -23,9 +23,10 @@ Each entry declares four things that matter to a backup:
   shards and exports; restoring it is at best wasted bytes and at worst a
   corrupt index paired with a newer store.
 
-``merge`` and ``tombstones`` are declared here but consumed by later sessions
-(restore --mode merge, shard sync); they are part of the entry's identity, so
-they belong in the manifest rather than being bolted on later.
+``merge`` is declared here but consumed by later sessions (restore --mode merge,
+shard sync); it is part of the entry's identity, so it belongs in the manifest
+rather than being bolted on later. A store a sync merges by id carries its deletes
+whatever deletes a record (``durability.ancestors``), so no entry declares them.
 """
 
 from __future__ import annotations
@@ -121,7 +122,6 @@ class StateEntry:
     # which a merge added to this machine's. A replace restore still brings them back with the
     # whole home, holding what was in flight (`snapshot._hold_what_was_in_flight`).
     merged_in: bool = True
-    tombstones: bool = False  # deletes need markers to survive a sync merge
     # This store's content IS databases, one per key (`codegraph/<workspace>.db`), so the
     # undeclared-DB audit cannot match them by exact path and must accept the whole subtree. Opt-in
     # per entry, NOT inferred from `kind`: exempting every tree would blind the audit to a DB nested
@@ -484,7 +484,6 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="tasks",
         domain=DOMAIN_WORK,
         merge=MERGE_UNION_BY_ID,
-        tombstones=True,
         help="tasks, task lists, and task comments",
     ),
     StateEntry(
@@ -493,7 +492,6 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="projects",
         domain=DOMAIN_WORK,
         merge=MERGE_UNION_BY_ID,
-        tombstones=True,
         help="projects and their briefs/context",
         # Worktrees are git-owned checkouts, re-creatable from the repo.
         derived_within=("*/worktrees",),
@@ -1332,7 +1330,6 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="voice_profiles",
         domain=DOMAIN_CONFIG,
         merge=MERGE_UNION_BY_ID,
-        tombstones=True,
         help="voice profiles: records, reference audio, locked clips, consent recordings",
         # A generation-history clip is disposable render output (bounded LRU, re-derived
         # by simply speaking again) — a backup should not carry it. The reference clip,

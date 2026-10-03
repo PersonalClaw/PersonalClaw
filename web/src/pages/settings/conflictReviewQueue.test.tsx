@@ -44,6 +44,7 @@ function conflict(over: Partial<DurabilityConflict> = {}): DurabilityConflict {
     resolution: '',
     resolved_at: '',
     arrival: '',
+    deleted: '',
     ...over,
   }
 }
@@ -254,6 +255,85 @@ describe('resolving is confirmed, and never silent', () => {
     } finally {
       window.removeEventListener('ne:toast', onToast)
     }
+  })
+})
+
+// ── A delete against an edit it never saw ─────────────────────────────────────────────────────
+//
+// `conflicts.weigh_deletions` records one when a machine deleted a record the other machine changed
+// after they last agreed. Neither side is "a version written": one choice keeps it deleted (or
+// keeps the edit), the other brings it back (or deletes it here), and there is no merge to draft.
+
+function deletedHere(): DurabilityConflict {
+  return conflict({ deleted: 'here', local_row: { id: 'task-42', deleted_at: '2026-09-02T10:00:00+00:00' } })
+}
+
+function deletedThere(): DurabilityConflict {
+  return conflict({ deleted: 'there', remote_row: { id: 'task-42', deleted_at: '2026-09-02T10:00:00+00:00' } })
+}
+
+function confirmIn(dialog: HTMLElement, label: RegExp) {
+  const go = Array.from(dialog.querySelectorAll('button')).find((b) => label.test(b.textContent ?? ''))
+  expect(go).toBeTruthy()
+  fireEvent.click(go!)
+}
+
+describe('a delete against an edit reads as one', () => {
+  it('a record deleted HERE says so, and offers keeping it deleted or bringing it back', async () => {
+    stubPanel(() => Promise.resolve(queue({ conflicts: [deletedHere()] })))
+    mount()
+    await waitFor(() => expect(screen.getByText('task-42')).toBeTruthy())
+    expect(screen.getByText(/This machine deleted it, and the other machine changed it/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /keep it deleted/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /bring back the other machine/i })).toBeTruthy()
+    // A delete has nothing to merge: no merge button, and no promise of a draft that never comes.
+    expect(screen.queryByRole('button', { name: /accept the drafted merge/i })).toBeNull()
+    expect(screen.queryByText(/No merge has been drafted yet/)).toBeNull()
+    expect(screen.getByText(/nothing to merge/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /compare both versions/i }))
+    await waitFor(() => expect(screen.getByText('Deleted on this machine.')).toBeTruthy())
+    expect(screen.getByText(/Ship the exporter/)).toBeTruthy()
+  })
+
+  it('bringing it back asks first, says nothing here is written over, and sends take_remote', async () => {
+    stubPanel(() => Promise.resolve(queue({ conflicts: [deletedHere()] })))
+    mount()
+    await waitFor(() => expect(screen.getByText('task-42')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /bring back the other machine/i }))
+    const dialog = await screen.findByRole('alertdialog')
+    const text = dialog.textContent ?? ''
+    expect(text).toContain('The other machine’s version of task-42 will be brought back into tasks on this machine')
+    expect(text).not.toMatch(/in place of this machine's edit/)
+    expect(resolveCall).not.toHaveBeenCalled()
+    confirmIn(dialog, /bring back/i)
+    await waitFor(() => expect(resolveCall).toHaveBeenCalledWith('c0ffee1234567890', 'take_remote'))
+  })
+
+  it('keeping it deleted writes nothing, and says so', async () => {
+    stubPanel(() => Promise.resolve(queue({ conflicts: [deletedHere()] })))
+    mount()
+    await waitFor(() => expect(screen.getByText('task-42')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /keep it deleted/i }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog.textContent ?? '').toMatch(/task-42 stays deleted from tasks on this machine; nothing is written/)
+    confirmIn(dialog, /keep it deleted/i)
+    await waitFor(() => expect(resolveCall).toHaveBeenCalledWith('c0ffee1234567890', 'keep_local'))
+  })
+
+  it('a record deleted THERE keeps this machine’s edit until she deletes it here too', async () => {
+    stubPanel(() => Promise.resolve(queue({ conflicts: [deletedThere()] })))
+    mount()
+    await waitFor(() => expect(screen.getByText('task-42')).toBeTruthy())
+    expect(screen.getByText(/The other machine deleted it, and this machine changed it/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /keep this machine/i })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /delete it here too/i }))
+    const dialog = await screen.findByRole('alertdialog')
+    const text = dialog.textContent ?? ''
+    expect(text).toContain('task-42 will be deleted from tasks on this machine, with the change made here')
+    expect(text).toMatch(/only a snapshot has it/)
+    confirmIn(dialog, /delete it here too/i)
+    await waitFor(() => expect(resolveCall).toHaveBeenCalledWith('c0ffee1234567890', 'take_remote'))
   })
 })
 

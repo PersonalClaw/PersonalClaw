@@ -58,6 +58,7 @@ from typing import Any, Mapping
 
 from personalclaw.atomic_write import atomic_write, make_private_dirs, write_private_file
 from personalclaw.durability import inventory as inv
+from personalclaw.durability.ancestors import Deletion
 from personalclaw.record_ids import is_path_in_store, is_safe_relative_path
 from personalclaw.sqlite_compat import sqlite3
 
@@ -181,7 +182,8 @@ class ExportResult:
 # A row of an entity directory, or of a ``json_file``, is one file of the store: a JSON file as
 # its parsed ``data`` (an entity directory names it by its path without ``.json``), any other file
 # as its ``text`` when it is UTF-8 and as ``base64`` otherwise (named by its path). A tombstone is
-# ``{"id", "deleted_at"}`` for a JSON entity.
+# ``{"id", "deleted_at", "held"}``: a record a sync's export says this home deleted
+# (``export_shards(deletions=)``), with the versions of it this home held.
 
 #: The largest file a row carries. A row is never split across the parts of a shard, and a file
 #: carried as ``base64`` is 4/3 its size, so a file this size still fits one part.
@@ -215,15 +217,13 @@ def _outside_the_store(entry: inv.StateEntry, rel: str) -> bool:
 
 def store_file(entry: inv.StateEntry, rel: str) -> bool:
     """Whether *rel*, a path inside *entry*'s directory, names a file of that store: a plain
-    relative path that stays inside it (``record_ids.is_safe_relative_path``), not a database, not
-    the tombstone side-log, and not outside the store (:func:`_outside_the_store`). The exporter
-    reads these files and no others, and a sync writes no others: a row another machine names by
-    any other path is not one of the store's."""
-    from personalclaw.durability.tombstones import TOMBSTONE_FILE
-
+    relative path that stays inside it (``record_ids.is_safe_relative_path``), not a database, and
+    not outside the store (:func:`_outside_the_store`). The exporter reads these files and no
+    others, and a sync writes no others: a row another machine names by any other path is not one
+    of the store's."""
     if not is_safe_relative_path(rel):
         return False
-    if rel == TOMBSTONE_FILE or PurePosixPath(rel).suffix in (".db", ".db-journal"):
+    if PurePosixPath(rel).suffix in (".db", ".db-journal"):
         return False
     return not _outside_the_store(entry, rel)
 
@@ -278,6 +278,47 @@ def _file_bytes(path: Path) -> tuple[bytes | None, str]:
         return None, f"unreadable ({exc.strerror or exc})"
 
 
+#: Why a folder of a store is in ``Read.left_out``: listing it failed, so whatever it holds is
+#: not known — a sync reads none of it as deleted (:func:`unread`).
+NOT_LISTED = "a folder that could not be listed"
+
+
+@dataclass(frozen=True)
+class Unread:
+    """What a read of a store could not read (:func:`unread`): the whole store, the files it
+    left out (by record id), and the folders it could not list (by path inside the store)."""
+
+    everything: bool = False
+    files: frozenset[str] = frozenset()
+    folders: tuple[str, ...] = ()
+
+    def __call__(self, rid: str) -> bool:
+        """Whether the record *rid* is one this read could not read."""
+        return (
+            self.everything
+            or rid in self.files
+            or any(rid.startswith(f"{folder}/") for folder in self.folders)
+        )
+
+
+def unread(entry: inv.StateEntry, read: Read) -> Unread:
+    """What *read* — *entry*'s store, as its exporter reads it — could not read: a file it left
+    out, one in a folder it could not list, or all of it. A record missing for that reason was
+    not deleted, so a sync reads none of these as gone, and its copy carries no delete of one."""
+    files: set[str] = set()
+    folders: list[str] = []
+    prefix = f"{entry.path}/"
+    for path, why in read.left_out.items():
+        if path == entry.path or not path.startswith(prefix):
+            return Unread(everything=True)
+        rel = path[len(prefix) :]
+        if why == NOT_LISTED:
+            folders.append(rel)
+        else:
+            files.add(rel[: -len(".json")] if rel.endswith(".json") else rel)
+    return Unread(files=frozenset(files), folders=tuple(sorted(folders)))
+
+
 def read_entity_dir(entry: inv.StateEntry, root: Path) -> Read:
     """One row per file of *entry*'s directory at *root* (:func:`store_file`), sorted by id.
 
@@ -285,14 +326,25 @@ def read_entity_dir(entry: inv.StateEntry, root: Path) -> Read:
     other files, and said nothing: saved prompts and prompt snippets are YAML, an agent's prompt
     assets Markdown, a voice profile's reference clip and consent recording audio. A file it cannot
     carry — JSON that does not parse, one too large for a row, or one named as another's row would
-    be — is in ``left_out``, with why. Symlinks are not followed, and a folder that is not the
-    store's is not walked.
+    be — is in ``left_out``, with why, and so is a folder it could not list (:data:`NOT_LISTED`;
+    the store's own path when that is *root*). Symlinks are not followed, and a folder that is not
+    the store's is not walked.
     """
     out = Read()
     if not root.is_dir():
         return out
     found: list[tuple[str, Path]] = []
-    for directory, dirs, files in os.walk(root, followlinks=False):
+
+    def not_listed(exc: OSError) -> None:
+        try:
+            rel = Path(str(exc.filename)).relative_to(root).as_posix()
+        except (TypeError, ValueError):
+            rel = "."
+        where = entry.path if rel == "." else f"{entry.path}/{rel}"
+        logger.warning("shards: %s could not be listed: %s", where, exc.strerror or exc)
+        out.left_out[where] = NOT_LISTED
+
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=not_listed):
         here = Path(directory).relative_to(root)
         dirs[:] = sorted(d for d in dirs if not _outside_the_store(entry, (here / d).as_posix()))
         for name in files:
@@ -549,6 +601,7 @@ def export_shards(
     entries: list[str] | None = None,
     for_sync: bool = False,
     agreements: Mapping[str, Mapping[str, Mapping[str, str]]] | None = None,
+    deletions: Mapping[str, Mapping[str, Deletion]] | None = None,
 ) -> ExportResult:
     """Export the records to deterministic shards under ``out_dir``.
 
@@ -571,7 +624,15 @@ def export_shards(
     ``agreements.json`` and declared in the manifest. A peer reads only this machine's newest copy,
     so this is how it learns that this home took its version of a record before changing it again
     — which it learned before from an older copy that held that version.
+
+    ``deletions`` is a sync's too: ``entry id → entity id → delete``, the records this home deleted
+    (``ancestors.Ancestors.deletions``). Each rides its store's shard as a tombstone — after the
+    rows of an entity directory, or the document of a store of records — with the versions of it
+    this home held, so the other machines delete it too and weigh their own copy against what the
+    delete saw (``conflicts.weigh_deletions``). A store that is not there still carries its
+    deletes.
     """
+    deletions = deletions or {}
     result = ExportResult()
     make_private_dirs(out_dir)
     wanted = set(entries) if entries else None
@@ -585,7 +646,8 @@ def export_shards(
             if for_sync and (entry.machine_local or inv.append_only_folder(entry)):
                 continue
             src = home / entry.path
-            if not src.exists():
+            gone = deletions.get(entry.id, {}) if for_sync else {}
+            if not src.exists() and not gone:
                 if wanted is not None:
                     # Asked for by name and gone: what an earlier export holds of it goes too, or
                     # the export would keep a removed store's last content for good.
@@ -616,17 +678,19 @@ def export_shards(
                 rows = read.rows
                 if for_sync and entry.machine_local_within:
                     rows = [r for r in rows if not inv.stays_here(entry, str(r.get("id", "")))]
-                if entry.tombstones and src.is_dir():
-                    # Fold the hard-delete side-log so a deleted row's marker rides the
-                    # export. Only for tombstone entries; a no-op otherwise.
-                    from personalclaw.durability.tombstones import merge_into_rows
-
-                    rows = merge_into_rows(src, rows)
+                held = {str(r.get("id", "")) for r in rows}
+                rows = sorted(
+                    rows + _tombstones(gone, held, unread(entry, read)),
+                    key=lambda r: str(r.get("id", "")),
+                )
                 result.shards.extend(_write_shard(out_dir, f"{entry.id}/entities.jsonl", rows))
             elif entry.kind == inv.KIND_JSON_FILE:
                 read = read_json_file(entry, src)
                 result.left_out.update(read.left_out)
-                result.shards.extend(_write_shard(out_dir, f"{entry.id}/value.jsonl", read.rows))
+                gone_rows = _tombstones(gone, _record_ids(entry, read.rows), unread(entry, read))
+                result.shards.extend(
+                    _write_shard(out_dir, f"{entry.id}/value.jsonl", read.rows + gone_rows)
+                )
             elif entry.kind == inv.KIND_JSONL_APPEND:
                 files = [src] if src.is_file() else sorted(src.rglob("*.jsonl"))
                 # A running Temporary chat's transcript is never copied out: the chat is forgotten
@@ -663,6 +727,31 @@ def export_shards(
     _drop_earlier_folder_copies(out_dir)
     _write_manifest(home, out_dir, result)
     return result
+
+
+def _tombstones(gone: Mapping[str, Deletion], held: set[str], unknown: Unread) -> list[dict]:
+    """A tombstone row for each of *gone* — a store's records this home deleted — that it neither
+    holds (*held*) nor could fail to read (*unknown*: a file there that it could not read is not
+    gone), sorted by id. A delete with no time says so: a tombstone is one only while its
+    ``deleted_at`` reads as a value."""
+    return [
+        {"id": rid, "deleted_at": mark.at or "unknown", "held": list(mark.held)}
+        for rid, mark in sorted(gone.items())
+        if rid and rid not in held and not unknown(rid)
+    ]
+
+
+def _record_ids(entry: inv.StateEntry, rows: list[dict]) -> set[str]:
+    """The ids of the records a store of records' one row holds; none for another store."""
+    if entry.records is None:
+        return set()
+    held: set[str] = set()
+    for row in rows:
+        for record in entry.records.records(row.get("data")) or []:
+            rid = record.get("id") if isinstance(record, dict) else None
+            if isinstance(rid, str) and rid:
+                held.add(rid)
+    return held
 
 
 def is_an_export(directory: Path) -> bool:

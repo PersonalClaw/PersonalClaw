@@ -13,7 +13,8 @@ layer owns the transport, the CAS registry, and writing the merged rows back.
 Strategies (mirror ``inventory.MERGE_*``):
 - ``union_by_id``       — keep every row present on either side, keyed by ``id``;
                           a tombstone (``deleted_at``) on either side wins over a
-                          live row with the same id (deletion survives the union).
+                          live row with the same id (deletion survives the union) —
+                          the delete the sync decided to take (``conflicts.weigh_deletions``).
 - ``lww_by_updated_at`` — same union, but a same-id row present on both sides
                           resolves to the one with the greater ``updated_at``
                           (ties → the local row, so a merge is stable).
@@ -100,9 +101,7 @@ def _tomb_time(row: dict) -> str:
     return str(v) if v else ""
 
 
-def merge_union_by_id(
-    local: list[dict], remote: list[dict], *, tombstones: bool = False, lww_field: str = ""
-) -> MergeResult:
+def merge_union_by_id(local: list[dict], remote: list[dict], *, lww_field: str = "") -> MergeResult:
     """Union two id-keyed row lists (entity dirs).
 
     Every id present on either side survives. A same-id collision resolves by:
@@ -112,8 +111,7 @@ def merge_union_by_id(
       3. else → the local row is kept (union is additive; it never overwrites a
          live local row it has no ordering signal for).
 
-    ``tombstones=False`` disables tombstone precedence (an entry that doesn't write
-    delete markers). Output rows are sorted by id for deterministic bytes.
+    Output rows are sorted by id for deterministic bytes.
     """
     by_id: dict[str, dict] = {}
     origin: dict[str, str] = {}  # id -> "local" | "remote" | "merged"
@@ -128,7 +126,7 @@ def merge_union_by_id(
             origin[rid] = "remote"
             continue
         cur = by_id[rid]
-        winner = _resolve_pair(cur, row, tombstones=tombstones, lww_field=lww_field)
+        winner = _resolve_pair(cur, row, lww_field=lww_field)
         if winner is not cur:
             by_id[rid] = winner
             origin[rid] = "merged"
@@ -141,35 +139,30 @@ def merge_union_by_id(
             result.updated += 1
         else:
             result.kept += 1
-        if tombstones and _is_tombstone(row):
+        if _is_tombstone(row):
             result.tombstoned += 1
     return result
 
 
-def _resolve_pair(local: dict, remote: dict, *, tombstones: bool, lww_field: str) -> dict:
+def _resolve_pair(local: dict, remote: dict, *, lww_field: str) -> dict:
     """Pick the winner of a same-id collision. Deterministic; ties favor local."""
-    if tombstones:
-        lt, rt = _is_tombstone(local), _is_tombstone(remote)
-        if lt or rt:
-            if lt and rt:
-                # Both deleted — the later deletion is authoritative.
-                return remote if _tomb_time(remote) > _tomb_time(local) else local
-            return local if lt else remote
+    lt, rt = _is_tombstone(local), _is_tombstone(remote)
+    if lt or rt:
+        if lt and rt:
+            # Both deleted — the later deletion is authoritative.
+            return remote if _tomb_time(remote) > _tomb_time(local) else local
+        return local if lt else remote
     if lww_field:
         return remote if _lww_key(remote, lww_field) > _lww_key(local, lww_field) else local
     return local
 
 
 def merge_lww_by_updated_at(
-    local: list[dict],
-    remote: list[dict],
-    *,
-    tombstones: bool = False,
-    field: str = _DEFAULT_LWW_FIELD,
+    local: list[dict], remote: list[dict], *, field: str = _DEFAULT_LWW_FIELD
 ) -> MergeResult:
     """Union-by-id with last-write-wins on ``field`` (default ``updated_at``) for
-    same-id collisions. Tombstones still take precedence when enabled."""
-    return merge_union_by_id(local, remote, tombstones=tombstones, lww_field=field)
+    same-id collisions. Tombstones still take precedence."""
+    return merge_union_by_id(local, remote, lww_field=field)
 
 
 _ABSENT = object()
@@ -225,7 +218,6 @@ def merge_rows(
     local: list[dict],
     remote: list[dict],
     *,
-    tombstones: bool = False,
     dedup_key: str = "id",
     lww_field: str = _DEFAULT_LWW_FIELD,
 ) -> MergeResult:
@@ -236,9 +228,9 @@ def merge_rows(
     routing one here is a caller bug, raised rather than silently mis-merged.
     """
     if strategy == MERGE_UNION_BY_ID:
-        return merge_union_by_id(local, remote, tombstones=tombstones, lww_field="")
+        return merge_union_by_id(local, remote, lww_field="")
     if strategy == MERGE_LWW:
-        return merge_lww_by_updated_at(local, remote, tombstones=tombstones, field=lww_field)
+        return merge_lww_by_updated_at(local, remote, field=lww_field)
     if strategy == MERGE_APPEND_DEDUP:
         return merge_append_dedup(local, remote, key=dedup_key)
     if strategy in (MERGE_SQLITE_ATTACH_IGNORE, MERGE_REPLACE_ONLY):

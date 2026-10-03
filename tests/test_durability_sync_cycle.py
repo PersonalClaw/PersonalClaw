@@ -125,16 +125,14 @@ class TestCriterion4Convergence:
         store = SharedStore()
         a_home = tmp_path / "A"
         b_home = tmp_path / "B"
-        # Both start with task-x; use a tombstone-bearing entry (tasks has tombstones=True).
         _task(a_home, "task-x", {"id": "task-x", "title": "live"})
-        # A deletes task-x → write a tombstone row in its place.
-        (a_home / "tasks" / "task-x.json").write_text(
-            json.dumps({"id": "task-x", "deleted_at": "2026-08-06"}), encoding="utf-8"
-        )
-        _task(b_home, "task-x", {"id": "task-x", "title": "still here on B"})
+        run_sync_cycle(store, a_home, self_id="A", now="t1")  # A publishes task-x
+        run_sync_cycle(store, b_home, self_id="B", now="t2")  # B takes it in
+        run_sync_cycle(store, a_home, self_id="A", now="t3")  # the two are in step
 
-        run_sync_cycle(store, a_home, self_id="A", now="t1")  # A publishes the tombstone
-        run_sync_cycle(store, b_home, self_id="B", now="t2")  # B pulls A's tombstone
+        (a_home / "tasks" / "task-x.json").unlink()  # A deletes it, as its store does
+        run_sync_cycle(store, a_home, self_id="A", now="t4")  # A's copy carries the delete
+        run_sync_cycle(store, b_home, self_id="B", now="t5")  # B pulls it
 
         # On B, task-x is gone — the entity-dir apply removes the file on a tombstone, so a
         # deleted task is not left as a live row (no resurrection).

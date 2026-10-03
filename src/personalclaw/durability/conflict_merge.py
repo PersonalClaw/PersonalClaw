@@ -88,12 +88,13 @@ def pending(queue: ConflictQueue, *, limit: int = DEFAULT_LIMIT) -> list[Conflic
     A record whose draft already failed is NOT retried here: a per-pass retry storm against a
     down model would burn the budget on the same conflict every cycle, and the record is
     already correctly surfaced (needs-review, no proposal). Clearing ``proposal_error`` is a
-    review-surface action.
+    review-surface action. A delete and an edit it never saw (``ConflictRecord.deleted``) has
+    nothing to merge — the record is kept or it is not — so none is drafted for one.
     """
     out = [
         r
         for r in queue.items(status=STATUS_NEEDS_REVIEW)
-        if r.proposal is None and not r.proposal_error
+        if r.proposal is None and not r.proposal_error and not r.deleted
     ]
     return out[: max(0, int(limit))]
 

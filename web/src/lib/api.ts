@@ -440,6 +440,10 @@ export interface DurabilityConflict {
    *  that brings another machine's rows in by a rule — an automation arrives switched off. `''` when
    *  the version is written as it is. */
   arrival: string
+  /** Which side is a delete the other side's edit was never seen by: `'here'` (this machine
+   *  deleted it), `'there'` (the other machine did), `''` for two edits. A delete has nothing to
+   *  merge, so no merge is drafted for one. */
+  deleted: '' | 'here' | 'there'
 }
 /** One tracked state tree in the time-travel history. */
 export interface DurabilityHistoryRoot {

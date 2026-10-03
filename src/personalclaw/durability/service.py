@@ -678,10 +678,6 @@ def run_sync_job() -> JobResult:
                 now=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 encrypt=str(getattr(cfg, "sync_encrypt", "auto") or "auto"),
             )
-            # GC tombstone side-logs past the horizon (`TOMBSTONE_HORIZON_SECS`). Only after a
-            # SUCCESSFUL cycle — a failed push means peers may not have pulled the delete yet.
-            if report.ok:
-                _prune_tombstones(home)
             if report.conflicts:
                 _draft_conflict_proposals(home)
         except Exception as exc:  # noqa: BLE001 — a failed sync must not kill the loop
@@ -827,33 +823,6 @@ def _draft_conflict_proposals(home: Path) -> None:
         logger.info("durability: conflict merge pass — %s", report.detail)
     except Exception:  # noqa: BLE001 — a draft is a suggestion; never fail the sync for it
         logger.warning("durability: conflict merge pass failed", exc_info=True)
-
-
-#: How long a delete's marker rides this machine's copies (DAS-6c-iii): a machine away for longer
-#: than this never sees the delete, and its copy of the record can come back. A peer reads only a
-#: machine's newest copy (`pull_engine`), and the copies before it are removed
-#: (`durability.published`), so the marker has to be in the newest when that peer comes back. The
-#: markers are an id and a time each, so a long horizon costs nearly nothing.
-TOMBSTONE_HORIZON_SECS = 90 * 24 * 60 * 60
-
-
-def _prune_tombstones(home: Path) -> None:
-    """GC each tombstone-bearing entry's sync-only delete side-log (DAS-6c-iii): a marker older
-    than :data:`TOMBSTONE_HORIZON_SECS` is dropped. Best-effort — a prune failure never affects
-    the sync outcome."""
-    try:
-        from datetime import datetime, timedelta, timezone
-
-        from personalclaw.durability import inventory as inv
-        from personalclaw.durability.tombstones import prune
-
-        horizon = datetime.now(timezone.utc) - timedelta(seconds=TOMBSTONE_HORIZON_SECS)
-        keep_after = horizon.isoformat()
-        for entry in inv.all_entries():
-            if entry.tombstones and entry.kind == inv.KIND_JSON_ENTITY_DIR:
-                prune(home / entry.path, keep_after=keep_after)
-    except Exception:  # noqa: BLE001
-        logger.debug("durability: tombstone prune skipped", exc_info=True)
 
 
 def _notify_drill(ok: bool, detail: str, notifier=None) -> None:

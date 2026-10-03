@@ -10,8 +10,9 @@ Row shapes, matching the readers (``shards.read_entity_dir``, ``shards.read_json
 
 * ``json_entity_dir`` — one file per row (``shards.row_file``): a JSON file for a row with
   ``data``, and any other file, as it was, for one with ``text`` or ``base64``. A **tombstone**
-  row (a ``deleted_at`` marker) removes the entity's file instead, so a delete synced from a peer
-  propagates to the live store rather than resurrecting the entity.
+  row (a ``deleted_at`` marker) removes the entity's file instead — the file the read found under
+  its id, a JSON file or any other — so a delete synced from a peer propagates to the live store
+  rather than resurrecting the entity.
 * ``json_file`` — a single row → the file at ``dest``; a tombstone removes the file.
 * ``jsonl_append`` — rows are the raw event dicts, of a store that is one file.
 
@@ -178,6 +179,14 @@ def _apply_entity_dir(
             continue
         target = root / rel
         if _is_tombstone(row):
+            here = as_read.get(rid)
+            if here is None:
+                continue  # nothing of it was read here, so nothing is removed
+            rel = row_file(here)
+            if not is_path_in_store(root, rel):
+                result.refused.append(rel)
+                continue
+            target = root / rel
             if target.exists() and _swap(result, rid, target, read.shas.get(rid)):
                 target.unlink()
                 result.removed += 1

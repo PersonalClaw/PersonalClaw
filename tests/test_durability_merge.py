@@ -46,27 +46,21 @@ class TestTombstones:
     def test_remote_tombstone_beats_local_live_row(self):
         local = [{"id": "a", "title": "alive"}]
         remote = [{"id": "a", "deleted_at": "2026-08-06T00:00:00Z"}]
-        r = merge.merge_union_by_id(local, remote, tombstones=True)
+        r = merge.merge_union_by_id(local, remote)
         assert r.rows[0].get("deleted_at") and r.tombstoned == 1  # deletion survives
 
     def test_local_tombstone_survives_a_remote_live_row(self):
         # A task deleted on A stays deleted after B (which still has it live) syncs in.
         local = [{"id": "a", "deleted_at": "2026-08-06T00:00:00Z"}]
         remote = [{"id": "a", "title": "resurrected?"}]
-        r = merge.merge_union_by_id(local, remote, tombstones=True)
+        r = merge.merge_union_by_id(local, remote)
         assert r.rows[0].get("deleted_at") and "title" not in r.rows[0]
 
     def test_later_deletion_wins_when_both_tombstoned(self):
         local = [{"id": "a", "deleted_at": "2026-08-01T00:00:00Z"}]
         remote = [{"id": "a", "deleted_at": "2026-08-06T00:00:00Z"}]
-        r = merge.merge_union_by_id(local, remote, tombstones=True)
+        r = merge.merge_union_by_id(local, remote)
         assert r.rows[0]["deleted_at"] == "2026-08-06T00:00:00Z"
-
-    def test_tombstones_disabled_falls_back_to_local(self):
-        local = [{"id": "a", "title": "alive"}]
-        remote = [{"id": "a", "deleted_at": "2026-08-06T00:00:00Z"}]
-        r = merge.merge_union_by_id(local, remote, tombstones=False)
-        assert r.rows[0] == {"id": "a", "title": "alive"}  # no tombstone precedence
 
 
 class TestLww:
@@ -93,7 +87,7 @@ class TestLww:
         # live row with a later updated_at.
         local = [{"id": "a", "deleted_at": "2026-08-01", "updated_at": "2026-08-01"}]
         remote = [{"id": "a", "updated_at": "2026-08-09", "v": "edited-later"}]
-        r = merge.merge_lww_by_updated_at(local, remote, tombstones=True)
+        r = merge.merge_lww_by_updated_at(local, remote)
         assert r.rows[0].get("deleted_at")
 
 
@@ -152,8 +146,8 @@ class TestConvergence:
         a = [{"id": "task-a", "updated_at": "1"}]
         b = [{"id": "task-b", "updated_at": "1"}]
         # A pulls B; B pulls A.
-        a_after = merge.merge_union_by_id(a, b, tombstones=True)
-        b_after = merge.merge_union_by_id(b, a, tombstones=True)
+        a_after = merge.merge_union_by_id(a, b)
+        b_after = merge.merge_union_by_id(b, a)
         assert (
             {x["id"] for x in a_after.rows}
             == {x["id"] for x in b_after.rows}
@@ -165,13 +159,13 @@ class TestConvergence:
         # task-x is tombstoned on B too — no resurrection.
         a = [{"id": "task-x", "deleted_at": "2026-08-06"}]
         b = [{"id": "task-x", "title": "still here"}]
-        b_after = merge.merge_union_by_id(b, a, tombstones=True)
+        b_after = merge.merge_union_by_id(b, a)
         row = next(r for r in b_after.rows if r["id"] == "task-x")
         assert row.get("deleted_at") and "title" not in row
 
     def test_merge_is_idempotent(self):
         local = [{"id": "a", "updated_at": "2"}, {"id": "b", "updated_at": "1"}]
         remote = [{"id": "b", "updated_at": "3"}, {"id": "c", "updated_at": "1"}]
-        once = merge.merge_lww_by_updated_at(local, remote, tombstones=True)
-        twice = merge.merge_lww_by_updated_at(once.rows, remote, tombstones=True)
+        once = merge.merge_lww_by_updated_at(local, remote)
+        twice = merge.merge_lww_by_updated_at(once.rows, remote)
         assert once.rows == twice.rows  # re-applying the same remote changes nothing

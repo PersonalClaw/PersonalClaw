@@ -4,7 +4,7 @@ The bridge that turns "I pulled a peer's shards" into "the peer's rows are now i
 store", composing the three pure pieces already built:
 
     local rows  ←  read the entry's on-disk form the same way the exporter extracts it
-    merged      ←  merge.merge_rows(entry.merge, local, remote, tombstones=entry.tombstones)
+    merged      ←  merge.merge_rows(entry.merge, local, remote)
     live store  →  writeback.apply_rows(entry, dest, merged, read=what was read)
 
 It is deliberately the ROW path only — the kinds whose merge is a deterministic row
@@ -51,6 +51,17 @@ where the peer's ``updated_at`` reads later; changed on both, it is a conflict f
 peer's copy that is a version this home published after the agreement is this home's own edit
 handed back, so the peer is behind (:func:`_in_common`). A restore's merge and an import have no
 agreement to measure from, so a record this home has stays as it is there.
+
+**A delete made on one machine stays made** (:func:`conflicts.weigh_deletions`). A record this
+home held and no longer holds is one it deleted (``ancestors.Deletion``), whatever store it is in
+and whatever deleted it. A peer's copy made before the delete reached it still holds the record
+as this home held it, and taking that in brought the record back here — and the copy this home
+sent next carried it again, so the delete was undone on both. That copy is declined now, and this
+home's delete rides its copies, so the peer deletes the record too. A version this home never
+held is an edit its delete never saw, and a conflict for review in either direction: until a
+person chooses, the record stays deleted where it was deleted and as edited where it was edited.
+A record whose file could not be read is not deleted (``shards.unread``), and a store that is not
+there deletes nothing: only one read whole says what is gone.
 """
 
 from __future__ import annotations
@@ -65,15 +76,18 @@ from personalclaw import record_files
 from personalclaw.durability import conflicts as conflicts_mod
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import writeback
+from personalclaw.durability.ancestors import Deletion
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD
 from personalclaw.durability.merge import MergeResult, _is_tombstone, forward, merge_rows
 from personalclaw.durability.shards import (
     Read,
+    Unread,
     _jsonl_rows_by_year,
     read_entity_dir,
     read_json_file,
     row_file,
     store_file,
+    unread,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,6 +126,12 @@ class ReconcileResult:
     #: it would read the peer's older copy as an edit made there. The two agree on it once this
     #: home pulls a seq of the peer's that holds it.
     new_ancestors: dict[str, str] = dataclass_field(default_factory=dict)
+    #: The peer's copies of records deleted here that hold a version the delete saw: not taken
+    #: in, so each stays deleted.
+    kept_deleted: int = 0
+    #: ``entity id → delete`` for each record this reconcile deleted because the peer deleted it:
+    #: the peer's deletes, which this home now holds as such (``Ancestors.took_deletion``).
+    deleted_there: dict[str, Deletion] = dataclass_field(default_factory=dict)
 
 
 def read_local(entry: inv.StateEntry, src: Path) -> Read:
@@ -173,7 +193,8 @@ def outside_their_store(home: Path, entry: inv.StateEntry, rows: list[dict]) -> 
 def entity_rows(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:
     """The entities a sync reconciles among *rows* — the exporter's rows for *entry*, this home's
     or a peer's: the rows themselves, or for a store of records (``StateEntry.records``) the
-    records its one document holds.
+    records its one document holds, and the records a peer's copy says it deleted (a tombstone
+    row beside the document, ``shards.export_shards(deletions=)``).
 
     Only records with an id: one without cannot be told from another, so it is never merged. This
     home's stays where it is in the file (:func:`_merged_document`); a peer's is not taken in.
@@ -182,6 +203,9 @@ def entity_rows(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:
         return rows
     out: list[dict] = []
     for row in rows:
+        if "data" not in row and _is_tombstone(row):
+            out.extend(_with_ids([row]))
+            continue
         out.extend(_identified(entry, row.get("data")))
     return out
 
@@ -230,9 +254,10 @@ def _merged_document(
     or None when that is the file exactly as it is.
 
     Each record where this home keeps it, and the ones that arrived after them in the order the
-    peer keeps them, so a sync never reorders the list a person sees. A record the merge did not
-    take — one with no id, or a second with an id already placed — stays as it is. A home with no
-    file gets the peer's around the records, as its store writes one.
+    peer keeps them, so a sync never reorders the list a person sees. A record the merge ended on
+    a delete of leaves the file. A record the merge did not take — one with no id, or a second
+    with an id already placed — stays as it is. A home with no file gets the peer's around the
+    records, as its store writes one.
     """
     assert entry.records is not None
     by_id = {record_files.record_id(r): r for r in merged if record_files.record_id(r)}
@@ -241,12 +266,13 @@ def _merged_document(
     for item in _here(entry, document):
         rid = record_files.record_id(item)
         if rid in by_id and rid not in placed:
-            items.append(by_id[rid])
             placed.add(rid)
+            if not _is_tombstone(by_id[rid]):
+                items.append(by_id[rid])
         else:
             items.append(item)
     for rid in arrived_order:
-        if rid in by_id and rid not in placed:
+        if rid in by_id and rid not in placed and not _is_tombstone(by_id[rid]):
             items.append(by_id[rid])
             placed.add(rid)
     if document is None and not items:
@@ -269,8 +295,11 @@ def take_in(
     has is read at the write, under the file's lock for a store of records and through the same
     guard as a sync's (:func:`_here`), never the copy the conflict recorded when it was found. In
     any other store the one file is written only while it is still as it was read: one that
-    changed in between is left as it is, in ``moved``.
+    changed in between is left as it is, in ``moved``. *there* that is a delete — the review taking
+    the other machine's delete of a record this home edited — deletes the record here.
     """
+    if _is_tombstone(there):
+        return _delete_here(entry, dest, entity_id, there), False
 
     def taken(here: dict | None) -> tuple[dict, bool]:
         if here is None or _is_tombstone(here):
@@ -307,6 +336,27 @@ def take_in(
 
     wrote = record_files.rewrite(dest, change)
     return writeback.ApplyResult(written=1 if wrote else 0), edited
+
+
+def _delete_here(
+    entry: inv.StateEntry, dest: Path, entity_id: str, tombstone: dict
+) -> writeback.ApplyResult:
+    """Delete *entity_id* from *entry*'s store at *dest*, as another machine's delete
+    (*tombstone*) takes it: its file of an entity directory, over the file as it was read, or its
+    record out of a store of records, under the file's lock."""
+    shape = entry.records
+    if shape is None:
+        read = read_local(entry, dest)
+        rows = [r for r in read.rows if conflicts_mod.row_id(r) != entity_id]
+        return writeback.apply_rows(entry, dest, [*rows, tombstone], read=read)
+
+    def change(document: Any) -> Any:
+        here = _here(entry, document)
+        kept = [item for item in here if record_files.record_id(item) != entity_id]
+        return None if len(kept) == len(here) else shape.document(document, kept)
+
+    wrote = record_files.rewrite(dest, change)
+    return writeback.ApplyResult(removed=1 if wrote else 0)
 
 
 def bring_in_folder(home: Path, entry: inv.StateEntry, archived: Path) -> int:
@@ -390,11 +440,15 @@ def reconcile_entry(
     ancestors: Optional[Mapping[str, str]] = None,
     published: Optional[Mapping[str, Sequence[str]]] = None,
     agreed_there: Optional[Mapping[str, str]] = None,
+    history: Optional[Mapping[str, Sequence[str]]] = None,
+    deleted: Optional[Mapping[str, Deletion]] = None,
+    peer: str = "",
     queue: Optional[conflicts_mod.ConflictQueue] = None,
     now: str = "",
 ) -> ReconcileResult:
-    """Merge ``remote_rows`` into ``entry``'s live store under ``home`` and write the result
-    back. Returns a :class:`ReconcileResult` carrying the cursor verdict.
+    """Merge ``remote_rows`` — the rows of the machine ``peer`` — into ``entry``'s live store
+    under ``home`` and write the result back. Returns a :class:`ReconcileResult` carrying the
+    cursor verdict.
 
     Declines (``handled=False``) a non-row kind — the cycle routes sqlite via ATTACH-IGNORE,
     and a sync carries no tree. Consumes a ``replace_only`` entry and writes nothing: it is
@@ -418,6 +472,16 @@ def reconcile_entry(
     ``agreed_there`` is what the peer's copy says it last agreed on with this home, record by
     record (``shards.ImportResult.agreements``): one of those versions, newer than this home's
     own agreement, is one the peer took from here, and its edit since is measured from it.
+
+    **Deletes** (:func:`conflicts.weigh_deletions`). ``history`` is every version this home held
+    of each record (:meth:`ancestors.Ancestors.held`), and ``deleted`` the records it deleted or
+    took another machine's delete of (:meth:`ancestors.Ancestors.deleted`). A record in either
+    that this home does not hold now, read whole, is one it deleted — unless the delete is
+    ``peer``'s own: the peer's copy then holds the record because the peer brought it back, and
+    it comes in. A peer's copy of a deleted record that holds a version this home held is not
+    taken in; a peer's delete of a record this home holds as that delete saw it is applied, and
+    returned in ``deleted_there``; a delete and an edit it never saw is a conflict, recorded and
+    held as one. Without a ``queue`` such a pair goes the way the merge always took it, the peer's.
     """
     if not handles_kind(entry.kind):
         return ReconcileResult(entry.id, handled=False, detail=f"non-row kind {entry.kind}")
@@ -437,12 +501,49 @@ def reconcile_entry(
     )
     outcome: dict[str, Any] = {}
 
-    def merge_into(local: list[dict]) -> MergeResult:
-        held, recorded = _record_conflicts(entry, local, remote, bases, queue, now)
-        effective_remote = (
-            [r for r in remote if conflicts_mod.row_id(r) not in held] if held else remote
+    def removed_here(live: set[str], unknown: Unread) -> dict[str, Deletion]:
+        """The records this home deleted that the read holding *live* says are gone."""
+        marks = deleted or {}
+        out: dict[str, Deletion] = {}
+        for rid, mark in marks.items():
+            if rid in live or unknown(rid) or (mark.by and mark.by == peer):
+                continue  # held, unknown, or the peer's own delete it has taken back
+            out[rid] = mark
+        for rid, versions in (history or {}).items():
+            if rid not in marks and rid not in live and not unknown(rid):
+                out[rid] = Deletion(at=now, held=tuple(versions))  # since the last publish
+        return out
+
+    def merge_into(local: list[dict], unknown: Unread) -> MergeResult:
+        live = {conflicts_mod.row_id(r): r for r in local if conflicts_mod.row_id(r)}
+        weighed = conflicts_mod.weigh_deletions(
+            entry, live, remote, removed_here(set(live), unknown), now=now
         )
-        outcome.update(held=held, recorded=recorded, effective_remote=effective_remote)
+        edits = [r for r in remote if not _is_tombstone(r)]
+        held, recorded = _record_conflicts(
+            entry, local, edits, bases, queue, now, deletions=weighed.conflicts
+        )
+        applied = set(weighed.applied)
+        if queue is None:
+            # Nothing can hold a conflict, so the peer's side is taken, as the merge always did:
+            # its delete is applied, and its edit of a record deleted here comes in.
+            there = conflicts_mod.DELETED_THERE
+            applied |= {c.entity_id for c in weighed.conflicts if c.deleted == there}
+        dropped = held | weighed.declined | weighed.moot
+        effective_remote = [
+            r
+            for r in remote
+            if conflicts_mod.row_id(r) not in dropped
+            and (conflicts_mod.row_id(r) in applied or not _is_tombstone(r))
+        ]
+        outcome.update(
+            held=held,
+            recorded=recorded,
+            effective_remote=effective_remote,
+            live=set(live),
+            applied=applied,
+            kept_deleted=len(weighed.declined - held),
+        )
         ahead, behind = _one_side_changed(entry, local, effective_remote, bases)
         decided = ahead.keys() | behind
         merged = merge_rows(
@@ -451,10 +552,10 @@ def reconcile_entry(
             _as_they_arrive(
                 entry, [r for r in effective_remote if conflicts_mod.row_id(r) not in decided]
             ),
-            tombstones=entry.tombstones,
             dedup_key="id",
         )
-        merged.updated += len(ahead)
+        # A delete taken in is a removal, not an update.
+        merged.updated += len(ahead) - merged.tombstoned
         merged.kept -= len(ahead)
         return merged
 
@@ -463,19 +564,22 @@ def reconcile_entry(
             peer_document = next((r.get("data") for r in remote_rows if "data" in r), None)
 
             def change(document: Any) -> Any:
-                merged = merge_into(_with_ids(_here(entry, document)))
+                # A store with no file here tells nothing of what it held.
+                unknown = Unread(everything=document is None)
+                merged = merge_into(_with_ids(_here(entry, document)), unknown)
                 outcome["merged"] = merged
                 arrived_order = [conflicts_mod.row_id(r) for r in outcome["effective_remote"]]
                 return _merged_document(entry, document, peer_document, arrived_order, merged.rows)
 
             record_files.rewrite(dest, change)
-            removed, moved, refused = 0, [], []
+            removed, moved, refused = outcome["merged"].tombstoned, [], []
         else:
             # This machine's own files of the folder are not the merge's: left out of what it
             # writes back, so the pull never touches them. The write is only what the merge
             # changed, over files still as they were read.
             read = read_local(entry, dest)
-            merged = merge_into(_without_what_stays_here(entry, read.rows))
+            unknown = unread(entry, read) if dest.is_dir() else Unread(everything=True)
+            merged = merge_into(_without_what_stays_here(entry, read.rows), unknown)
             outcome["merged"] = merged
             applied = writeback.apply_rows(entry, dest, merged.rows, read=read)
             removed, moved, refused = applied.removed, applied.moved, applied.refused
@@ -485,6 +589,8 @@ def reconcile_entry(
     merged = outcome["merged"]
     held, recorded = outcome["held"], outcome["recorded"]
     detail = f"+{merged.added} ~{merged.updated} -{removed}"
+    if outcome["kept_deleted"]:
+        detail += f" {outcome['kept_deleted']} kept deleted (deleted here)"
     if recorded or held:
         detail += f" !{recorded} conflict(s), {len(held)} id(s) held local"
     if moved:
@@ -494,6 +600,15 @@ def reconcile_entry(
         held = held | set(moved)
     if refused:
         detail += f" {len(refused)} refused (outside the store)"
+        # Never written, so not held here as the peer holds it: an agreement on one would read as
+        # this home's delete, and a delete of one did not happen.
+        held = held | {
+            conflicts_mod.row_id(r)
+            for r in merged.rows
+            if writeback.row_rel(r) in refused or row_file(r) in refused
+        }
+    by_id = {conflicts_mod.row_id(r): r for r in outcome["effective_remote"]}
+    taken = {rid for rid in outcome["applied"] - held if _is_tombstone(by_id.get(rid) or {})}
     return ReconcileResult(
         entry.id,
         verdict=CONSUMED,
@@ -504,8 +619,19 @@ def reconcile_entry(
         conflicts=recorded,
         refused=list(refused),
         new_ancestors={
-            **{rid: sha for rid, sha in handed_back.items() if rid not in held},
+            **{
+                rid: sha
+                for rid, sha in handed_back.items()
+                if rid not in held and rid in outcome["live"]
+            },
             **_agreed_shas(entry, outcome["effective_remote"], merged.rows, held),
+        },
+        kept_deleted=outcome["kept_deleted"],
+        deleted_there={
+            rid: Deletion(
+                at=now, held=tuple(sorted(conflicts_mod.held_by_the_delete(by_id[rid]))), by=peer
+            )
+            for rid in sorted(taken)
         },
     )
 
@@ -542,6 +668,8 @@ def _in_common(
     bases = dict(ancestors)
     handed_back: dict[str, str] = {}
     for row in remote:
+        if _is_tombstone(row):
+            continue  # a delete is weighed against what it saw (conflicts.weigh_deletions)
         rid = conflicts_mod.row_id(row)
         agreed = bases.get(rid)
         versions = list(published.get(rid) or [])
@@ -556,16 +684,29 @@ def _in_common(
     return bases, handed_back
 
 
-def held_shas(home: Path, entry: inv.StateEntry) -> dict[str, str]:
+def held_shas(home: Path, entry: inv.StateEntry) -> tuple[dict[str, str], Unread] | None:
     """``entity id → sha`` of what two homes compare of every record this home holds of *entry*
-    (:func:`conflicts.compared`): what it publishes, which the sync records after each export
-    (:meth:`ancestors.Ancestors.publish`)."""
-    rows = entity_rows(entry, read_local_rows(entry, Path(home) / entry.path))
+    (:func:`conflicts.compared`) — what it publishes, which the sync records before each export
+    (:meth:`ancestors.Ancestors.publish`) — with what of the store it could not read
+    (``shards.unread``). ``None`` when the store is not there, or could not be read at all: nothing
+    is known of it then, so none of its records reads as deleted."""
+    dest = Path(home) / entry.path
+    if not (dest.is_file() if entry.kind == inv.KIND_JSON_FILE else dest.is_dir()):
+        return None
+    read = read_local(entry, dest)
+    unknown = unread(entry, read)
+    if unknown.everything:
+        return None
+    if entry.records is not None and (
+        not read.rows or entry.records.records(read.rows[0].get("data")) is None
+    ):
+        return None  # a file of another shape holds none of the store's records
+    rows = entity_rows(entry, read.rows)
     return {
         conflicts_mod.row_id(row): conflicts_mod.row_sha(conflicts_mod.compared(entry, row))
         for row in _without_what_stays_here(entry, rows)
         if conflicts_mod.row_id(row)
-    }
+    }, unknown
 
 
 def _one_side_changed(
@@ -641,13 +782,13 @@ def _agreed_shas(
     remote_shas = {
         conflicts_mod.row_id(r): conflicts_mod.row_sha(conflicts_mod.compared(entry, r))
         for r in remote_rows
-        if conflicts_mod.row_id(r)
+        if conflicts_mod.row_id(r) and not _is_tombstone(r)
     }
     out: dict[str, str] = {}
     for row in merged_rows:
         rid = conflicts_mod.row_id(row)
-        if not rid or rid in held:
-            continue
+        if not rid or rid in held or _is_tombstone(row):
+            continue  # a delete leaves no version the two hold
         sha = conflicts_mod.row_sha(conflicts_mod.compared(entry, row))
         if remote_shas.get(rid) == sha:
             out[rid] = sha
@@ -661,8 +802,11 @@ def _record_conflicts(
     ancestors: Optional[Mapping[str, str]],
     queue: Optional[conflicts_mod.ConflictQueue],
     now: str,
+    *,
+    deletions: Sequence[conflicts_mod.ConflictRecord] = (),
 ) -> tuple[set[str], int]:
-    """Detect + queue this entry's both-sides-edited divergences.
+    """Detect + queue this entry's both-sides-edited divergences, and *deletions* — a delete
+    and an edit it never saw (:func:`conflicts.weigh_deletions`).
 
     Returns ``(held ids, newly recorded count)``. Held is the union of what was detected now
     and what is still unresolved in the queue from an earlier cycle — "local stays
@@ -673,6 +817,7 @@ def _record_conflicts(
     if queue is None:
         return set(), 0
     detected = conflicts_mod.detect_conflicts(entry, local, remote_rows, ancestors or {}, now=now)
+    detected += list(deletions)
     recorded = 0
     for rec in detected:
         if queue.record(rec):

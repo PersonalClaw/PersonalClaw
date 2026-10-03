@@ -1092,6 +1092,67 @@ const WRITTEN: Record<Exclude<DurabilityConflictChoice, 'keep_local'>, string> =
   accept_proposal: 'The drafted merge',
 }
 
+/** A delete and an edit it never saw (`conflicts.weigh_deletions`). The record stays deleted where
+ *  it was deleted and as edited where it was edited, so the two answers are keeping this machine's
+ *  side or taking the other's — bringing the record back here, or deleting it here — and a delete
+ *  has nothing to merge. Each side says it in those words, not as a version "written". */
+const DELETED_WORDS: Record<'here' | 'there', {
+  what: string
+  keep: string
+  take: string
+  shown: { local: string | null; remote: string | null }
+  keepTitle: string
+  takeTitle: string
+  kept: (c: DurabilityConflict) => string
+  taken: (c: DurabilityConflict) => string
+}> = {
+  here: {
+    what: 'This machine deleted it, and the other machine changed it after they last agreed. It stays deleted here; nothing has been brought back. There is nothing to merge: choose which to keep.',
+    keep: 'Keep it deleted',
+    take: 'Bring back the other machine’s',
+    shown: { local: 'Deleted on this machine.', remote: null },
+    keepTitle: 'Keep it deleted?',
+    takeTitle: 'Bring it back?',
+    kept: (c) => `Resolved ${c.entity_id}: it stays deleted on this machine.`,
+    taken: (c) => `Resolved ${c.entity_id}: the other machine’s version is brought back.`,
+  },
+  there: {
+    what: 'The other machine deleted it, and this machine changed it after they last agreed. This machine’s version is in place; nothing has been deleted. There is nothing to merge: choose which to keep.',
+    keep: 'Keep this machine’s',
+    take: 'Delete it here too',
+    shown: { local: null, remote: 'Deleted on the other machine.' },
+    keepTitle: 'Keep this machine’s version?',
+    takeTitle: 'Delete it here too?',
+    kept: (c) => `Resolved ${c.entity_id}: this machine's version is kept as it is.`,
+    taken: (c) => `Resolved ${c.entity_id}: it is deleted on this machine.`,
+  },
+}
+
+/** The two answers to a delete against an edit, each naming the row it answers, as the three
+ *  answers to an edit against an edit do. */
+function DeletedChoices({ c, side, busy, onResolve }: {
+  c: DurabilityConflict
+  side: 'here' | 'there'
+  busy: string
+  onResolve: (c: DurabilityConflict, choice: 'keep_local' | 'take_remote') => void
+}) {
+  const words = DELETED_WORDS[side]
+  return (
+    <>
+      <Button variant="secondary" size="sm" loading={busy === c.id} loadingLabel="Writing…" disabled={busy !== ''}
+        ariaLabel={`${words.keep}: ${c.entity_id}`}
+        onClick={() => onResolve(c, 'keep_local')}>
+        {words.keep}
+      </Button>
+      <Button variant="secondary" size="sm" disabled={busy !== ''} disabledReason={BUSY_REASON}
+        ariaLabel={`${words.take}: ${c.entity_id}`}
+        onClick={() => onResolve(c, 'take_remote')}>
+        {words.take}
+      </Button>
+    </>
+  )
+}
+
 /** Where a both-sides-edited divergence gets decided (§4.2 item 2).
  *
  *  The queue itself shipped with the sync engine — a detector, a durable JSONL, and the rule
@@ -1113,7 +1174,7 @@ function ConflictsSection({ read, onChanged }: {
   const [busy, setBusy] = useState('')
   const [expanded, setExpanded] = useState('')
 
-  const hint = 'When two machines edit the same thing while apart, PersonalClaw keeps both versions and waits for you instead of guessing.'
+  const hint = 'When two machines edit the same thing while apart, or one deletes what the other changed, PersonalClaw keeps both and waits for you instead of guessing.'
 
   if (!read.ok) {
     return (
@@ -1196,6 +1257,36 @@ function ConflictsSection({ read, onChanged }: {
     setBusy('')
   }
 
+  // A delete against an edit: the same two answers, said as what they do to the record here.
+  // Keeping this machine's side writes nothing; taking the other's brings its version back by the
+  // store's arrival rule (`c.arrival`), or deletes this machine's edit, which no store keeps.
+  const resolveDeleted = async (c: DurabilityConflict, choice: 'keep_local' | 'take_remote') => {
+    const side = c.deleted === 'there' ? 'there' : 'here'
+    const words = DELETED_WORDS[side]
+    const keep = choice === 'keep_local'
+    if (!(await confirm({
+      title: keep ? words.keepTitle : words.takeTitle,
+      body: side === 'here'
+        ? (keep
+          ? `${c.entity_id} stays deleted from ${c.entry_id} on this machine; nothing is written. The other machine's version stays in the shared store, so you can still decide differently from that side.`
+          : `The other machine’s version of ${c.entity_id} will be brought back into ${c.entry_id} on this machine. Nothing here is written over: it is deleted here.${c.arrival ? ` ${c.arrival}` : ''}`)
+        : (keep
+          ? `This machine's version of ${c.entity_id} stays in ${c.entry_id} as it is; nothing is written. The other machine's delete stays in the shared store, so you can still decide differently from that side.`
+          : `${c.entity_id} will be deleted from ${c.entry_id} on this machine, with the change made here, which is not kept anywhere else — only a snapshot has it.`),
+      confirmLabel: keep ? words.keep : words.take,
+      danger: true,
+    }))) return
+    setBusy(c.id)
+    try {
+      const r = await api.resolveDurabilityConflict(c.id, choice)
+      notify(keep ? words.kept(c) : `${words.taken(c)}${r.note ? ` ${r.note}` : ''}`, 'success')
+      onChanged()
+    } catch (e) {
+      notify(`Nothing was applied: ${String((e as Error)?.message || e)}`, 'error')
+    }
+    setBusy('')
+  }
+
   return (
     <Section title="Conflicts to review" hint={hint}>
       <div className="rounded-lg bg-surface-container px-4 py-3">
@@ -1224,11 +1315,13 @@ function ConflictsSection({ read, onChanged }: {
                   </span>
                 </div>
                 <p data-type="caption" className="mt-1 text-on-surface-low">
-                  Both machines changed this after they last agreed. This machine's version is
-                  in place; nothing has been overwritten.
+                  {c.deleted
+                    ? DELETED_WORDS[c.deleted].what
+                    : "Both machines changed this after they last agreed. This machine's version is in place; nothing has been overwritten."}
                 </p>
 
-                {c.proposal
+                {/* A delete has nothing to merge, so no draft is promised for one. */}
+                {c.deleted ? null : c.proposal
                   ? (
                     <div data-type="caption" className="mt-2 rounded-md bg-surface px-3 py-2">
                       <div className="text-on-surface" style={fvs(550)}>Drafted merge</div>
@@ -1247,21 +1340,27 @@ function ConflictsSection({ read, onChanged }: {
                   {/* Three near-identical choices per conflict, and a wrong pick overwrites an edit —
                       so which ROW you are answering has to be in the name. `c.entity_id` is what the row
                       displays and what the confirm body and the toast already say. */}
-                  <Button variant="secondary" size="sm" loading={busy === c.id} loadingLabel="Writing…" disabled={busy !== ''}
-                    ariaLabel={`${CHOICE_LABELS.keep_local}: ${c.entity_id}`}
-                    onClick={() => resolve(c, 'keep_local')}>{CHOICE_LABELS.keep_local}
-                  </Button>
-                  <Button variant="secondary" size="sm" disabled={busy !== ''} disabledReason={BUSY_REASON}
-                    ariaLabel={`${CHOICE_LABELS.take_remote}: ${c.entity_id}`}
-                    onClick={() => resolve(c, 'take_remote')}>
-                    {CHOICE_LABELS.take_remote}
-                  </Button>
-                  <Button variant="secondary" size="sm" disabled={busy !== '' || !c.proposal}
-                    disabledReason={!c.proposal ? 'No merge has been drafted for this conflict' : undefined}
-                    ariaLabel={`${CHOICE_LABELS.accept_proposal}: ${c.entity_id}`}
-                    onClick={() => resolve(c, 'accept_proposal')}>
-                    {CHOICE_LABELS.accept_proposal}
-                  </Button>
+                  {c.deleted ? (
+                    <DeletedChoices c={c} side={c.deleted} busy={busy} onResolve={resolveDeleted} />
+                  ) : (
+                    <>
+                      <Button variant="secondary" size="sm" loading={busy === c.id} loadingLabel="Writing…" disabled={busy !== ''}
+                        ariaLabel={`${CHOICE_LABELS.keep_local}: ${c.entity_id}`}
+                        onClick={() => resolve(c, 'keep_local')}>{CHOICE_LABELS.keep_local}
+                      </Button>
+                      <Button variant="secondary" size="sm" disabled={busy !== ''} disabledReason={BUSY_REASON}
+                        ariaLabel={`${CHOICE_LABELS.take_remote}: ${c.entity_id}`}
+                        onClick={() => resolve(c, 'take_remote')}>
+                        {CHOICE_LABELS.take_remote}
+                      </Button>
+                      <Button variant="secondary" size="sm" disabled={busy !== '' || !c.proposal}
+                        disabledReason={!c.proposal ? 'No merge has been drafted for this conflict' : undefined}
+                        ariaLabel={`${CHOICE_LABELS.accept_proposal}: ${c.entity_id}`}
+                        onClick={() => resolve(c, 'accept_proposal')}>
+                        {CHOICE_LABELS.accept_proposal}
+                      </Button>
+                    </>
+                  )}
                   <Button variant="secondary" size="xs" onClick={() => setExpanded(expanded === c.id ? '' : c.id)}>
                     {expanded === c.id ? 'Hide both versions' : 'Compare both versions'}
                   </Button>
@@ -1269,8 +1368,10 @@ function ConflictsSection({ read, onChanged }: {
 
                 {expanded === c.id && (
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    <RowVersion label="This machine" row={c.local_row} />
-                    <RowVersion label="The other machine" row={c.remote_row} />
+                    <RowVersion label="This machine" row={c.local_row}
+                      deleted={c.deleted ? DELETED_WORDS[c.deleted].shown.local : null} />
+                    <RowVersion label="The other machine" row={c.remote_row}
+                      deleted={c.deleted ? DELETED_WORDS[c.deleted].shown.remote : null} />
                     {c.proposal && <RowVersion label="Drafted merge" row={c.proposal} />}
                   </div>
                 )}
@@ -1300,12 +1401,12 @@ function ConflictsSection({ read, onChanged }: {
 
 /** One version of a conflicted row, verbatim. Verbatim on purpose: a summary of what
  *  changed is a second opinion, and the point of this control is to show the bytes the
- *  decision writes. */
-function RowVersion({ label, row }: { label: string; row: Record<string, unknown> }) {
+ *  decision writes. A side that is a delete has no bytes, and says so (`deleted`). */
+function RowVersion({ label, row, deleted }: { label: string; row: Record<string, unknown>; deleted?: string | null }) {
   return (
     <div>
       <div data-type="caption" className="mb-1 text-on-surface-low uppercase tracking-wide">{label}</div>
-      <pre data-type="caption" className="max-h-48 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface-var">{JSON.stringify(row, null, 1)}</pre>
+      <pre data-type="caption" className="max-h-48 overflow-auto rounded-md bg-surface px-3 py-2 text-on-surface-var">{deleted ?? JSON.stringify(row, null, 1)}</pre>
     </div>
   )
 }

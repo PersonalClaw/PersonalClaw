@@ -856,7 +856,7 @@ async def api_projects_delete(request: web.Request) -> web.Response:
         await _teardown_bound_loops(pid, state)
         _unbind_bound_chats(state, pid)
     # Cascade the project's TASKS before the project + its lists are dropped. `delete_project`
-    # removes the task LISTS (and tombstones them) but the task rows live in the native task
+    # removes the task LISTS but the task rows live in the native task
     # provider, keyed by task_list_id — so without this they'd survive pointing at dead list ids
     # with a blanked project label, unreachable from every scoped view (#457). Resolve by project
     # NAME (the provider's stable key) BEFORE delete_project, because the derive-label lookup the

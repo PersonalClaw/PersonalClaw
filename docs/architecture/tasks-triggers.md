@@ -375,6 +375,27 @@ switched on or off as it is here, and what it runs differently asks first. It
 used to come in as an automation this home did not have, switched off, so taking
 the other machine's schedule stopped one that ran here.
 
+A delete made in one home stays made, and reaches the other, in every store a
+sync merges record by record. No store says when it deletes a record; the sync
+does: a record this home held (it published it, or agreed on it with a peer) and
+no longer holds is deleted here (`durability.ancestors.Deletion`), whatever
+deleted it, and the delete keeps every version of the record this home held. It
+rides this home's copies for 90 days (`DELETE_HORIZON_SECS`, counted from when
+the sync noticed it, and never forgotten before a copy carried it). A peer's copy
+that still holds one of those versions is older than the delete: the record stays
+deleted here, and the peer deletes it when it reads this home's copy, if its own
+is one of them (`durability.conflicts.weigh_deletions`). Any other version is an
+edit the delete never saw, made after the delete or before it arrived: a conflict
+for review on both homes, held as each has it — deleted where it was deleted,
+edited where it was edited — until a person keeps it deleted, brings the other
+home's version back (by the store's arrival rule: an automation comes back
+switched off), or deletes it here too. A delete has nothing to merge, so none is
+drafted. A file that could not be read and a store that is not there delete
+nothing, and a home that took another's delete does not send it on, so a record
+brought back where it was deleted (a restore of a snapshot that holds it) comes
+back everywhere. A machine away for longer than 90 days never sees the delete,
+and its copy of the record comes back.
+
 **What a run is told, and what it may change.** An action that starts an agent
 (`run-prompt`, `invoke-agent`) hands it the automation's instruction followed by what
 started this run (`triggers.fire_facts.describe`): the file that arrived (its path, its

@@ -24,7 +24,7 @@ from personalclaw.durability import (
     reconcile,
     writeback,
 )
-from personalclaw.durability.ancestors import Ancestors
+from personalclaw.durability.ancestors import DELETE_HORIZON_SECS, Ancestors, Deletion
 from personalclaw.durability.registry import Registry
 
 _ENTRY = inv.StateEntry(
@@ -214,6 +214,66 @@ class TestAncestors:
         mine.publish("tasks_test", {"t2": "w0"})
         assert "t1" not in mine.published("tasks_test"), "a record this home no longer holds"
 
+    def test_a_record_no_longer_held_is_a_delete_that_keeps_every_version_held(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.publish("tasks_test", {"t1": "v1", "t2": "w1"}, now="2026-09-01T00:00:00+00:00")
+        mine.publish("tasks_test", {"t1": "v2", "t2": "w1"}, now="2026-09-02T00:00:00+00:00")
+        mine.record("peerA", "tasks_test", {"t1": "v-agreed"})
+
+        mine.publish("tasks_test", {"t2": "w1"}, now="2026-09-03T00:00:00+00:00")
+        mine.save()
+
+        again = Ancestors(tmp_path)
+        assert again.deleted("tasks_test") == {
+            "t1": Deletion(at="2026-09-03T00:00:00+00:00", held=("v-agreed", "v1", "v2"))
+        }
+        assert again.of("peerA", "tasks_test") == {}, "its agreements went into the delete"
+        assert again.deletions() == {"tasks_test": again.deleted("tasks_test")}
+        assert again.held("tasks_test") == {"t1": ["v-agreed", "v1", "v2"], "t2": ["w1"]}
+
+    def test_a_record_held_again_is_not_deleted_and_an_unread_one_never_was(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.publish("tasks_test", {"t1": "v1", "t2": "w1"}, now="2026-09-01T00:00:00+00:00")
+        mine.publish("tasks_test", {}, now="2026-09-02T00:00:00+00:00", unread={"t2"})
+        assert set(mine.deleted("tasks_test")) == {"t1"}
+        assert mine.published("tasks_test") == {"t2": ["w1"]}, "an unread record stays as known"
+
+        mine.publish("tasks_test", {"t1": "v9", "t2": "w1"}, now="2026-09-03T00:00:00+00:00")
+        assert mine.deleted("tasks_test") == {} and mine.deletions() == {}
+
+    def test_a_delete_taken_from_another_machine_is_not_sent_on(self, tmp_path):
+        mine = Ancestors(tmp_path)
+        mine.publish("tasks_test", {"t1": "v1"}, now="2026-09-01T00:00:00+00:00")
+        mine.took_deletion("tasks_test", {"t1": Deletion(at="now", held=("v1",), by="peerA")})
+        mine.publish("tasks_test", {}, now="2026-09-02T00:00:00+00:00")
+        mine.save()
+
+        again = Ancestors(tmp_path)
+        assert again.deleted("tasks_test")["t1"].by == "peerA"
+        assert again.deletions() == {}, "another machine's delete is that machine's to send"
+
+    def test_a_delete_is_forgotten_past_the_horizon_and_only_then(self, tmp_path):
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime(2026, 10, 2, tzinfo=timezone.utc)
+        horizon = timedelta(seconds=DELETE_HORIZON_SECS)
+        mine = Ancestors(tmp_path)
+        for rid, age in (("past", horizon + timedelta(days=1)), ("within", horizon - timedelta(1))):
+            mine.publish("tasks_test", {rid: "v1"}, now=(now - age).isoformat())
+            mine.publish("tasks_test", {}, now=(now - age).isoformat())
+        mine.forget_old_deletes("not a time")
+        assert set(mine.deleted("tasks_test")) == {"past", "within"}
+
+        mine.forget_old_deletes(now.isoformat())
+        assert set(mine.deleted("tasks_test")) == {"within"}
+        assert DELETE_HORIZON_SECS >= 30 * 24 * 60 * 60
+
+    def test_a_malformed_delete_degrades_to_none(self, tmp_path):
+        (tmp_path / "ancestors.json").write_text(
+            json.dumps({"deleted": {"tasks_test": {"t1": "nope", "t2": {"at": "x", "held": 3}}}})
+        )
+        assert Ancestors(tmp_path).deleted("tasks_test") == {"t2": Deletion(at="x")}
+
     def test_the_shared_registry_carries_no_agreement(self):
         """A registry an older build wrote carries one; it is not read, and the next write
         leaves it out of the one object an encrypted sync leaves readable."""
@@ -222,6 +282,80 @@ class TestAncestors:
         ).encode()
         written = Registry.loads(raw).to_bytes().decode("utf-8")
         assert "ancestors" not in written and "t1" not in written
+
+
+# ── a delete, weighed against what it saw ────────────────────────────────────
+
+
+def _tomb(rid: str, *held: str) -> dict:
+    return {"id": rid, "deleted_at": "2026-09-02T00:00:00+00:00", "held": list(held)}
+
+
+class TestWeighDeletions:
+    """``conflicts.weigh_deletions``: a delete stands against every version the deleting home
+    held, and against any other version it is a conflict, in either direction."""
+
+    def _sha(self, row: dict) -> str:
+        return conflicts.row_sha(conflicts.compared(_ENTRY, row))
+
+    def test_the_peers_copy_of_a_record_deleted_here_as_the_delete_saw_it_is_declined(self):
+        theirs = _row("t1", "as both held it")
+        gone = {"t1": Deletion(at="2026-09-02", held=(self._sha(theirs),))}
+        out = conflicts.weigh_deletions(_ENTRY, {}, [theirs], gone)
+        assert (out.declined, out.conflicts, out.applied) == ({"t1"}, [], {})
+
+    def test_the_peers_edit_of_a_record_deleted_here_is_a_conflict(self):
+        gone = {"t1": Deletion(at="2026-09-02", held=(self._sha(_row("t1", "as held")),))}
+        out = conflicts.weigh_deletions(_ENTRY, {}, [_row("t1", "edited there")], gone, now="n")
+        [rec] = out.conflicts
+        assert (rec.entity_id, rec.deleted, rec.detected_at) == ("t1", conflicts.DELETED_HERE, "n")
+        assert rec.local_row == {"id": "t1", "deleted_at": "2026-09-02"}
+        assert rec.remote_row["data"]["text"] == "edited there" and not out.declined
+
+    def test_the_peers_delete_of_a_record_here_as_it_saw_it_is_applied(self):
+        mine = _row("t1", "as both held it")
+        delete = _tomb("t1", "older", self._sha(mine))
+        out = conflicts.weigh_deletions(_ENTRY, {"t1": mine}, [delete], {})
+        assert out.applied == {"t1": delete} and out.conflicts == []
+
+    def test_the_peers_delete_of_a_record_edited_here_is_a_conflict(self):
+        mine = _row("t1", "edited here")
+        out = conflicts.weigh_deletions(_ENTRY, {"t1": mine}, [_tomb("t1", "as held")], {})
+        [rec] = out.conflicts
+        assert (rec.deleted, rec.local_row, out.applied) == (conflicts.DELETED_THERE, mine, {})
+        assert rec.remote_row == {"id": "t1", "deleted_at": "2026-09-02T00:00:00+00:00"}
+
+    def test_a_delete_that_names_no_version_saw_none(self):
+        mine = _row("t1", "here")
+        out = conflicts.weigh_deletions(
+            _ENTRY, {"t1": mine}, [{"id": "t1", "deleted_at": "x", "held": "nope"}], {}
+        )
+        assert [r.deleted for r in out.conflicts] == [conflicts.DELETED_THERE]
+
+    def test_a_delete_of_what_is_not_here_is_moot_and_a_new_record_is_untouched(self):
+        out = conflicts.weigh_deletions(_ENTRY, {}, [_tomb("gone", "x"), _row("new", "hi")], {})
+        assert (out.moot, out.declined, out.applied, out.conflicts) == ({"gone"}, set(), {}, [])
+
+    def test_the_same_divergence_is_the_same_record(self):
+        gone = {"t1": Deletion(at="2026-09-02", held=("v1",))}
+        first = conflicts.weigh_deletions(_ENTRY, {}, [_row("t1", "edited")], gone)
+        again = conflicts.weigh_deletions(_ENTRY, {}, [_row("t1", "edited")], gone)
+        assert first.conflicts[0].id == again.conflicts[0].id
+
+    def test_an_append_stream_has_no_delete_to_weigh(self):
+        stream = inv.StateEntry(
+            id="s", kind=inv.KIND_JSONL_APPEND, path="s.jsonl", domain="x", merge="append_dedup"
+        )
+        out = conflicts.weigh_deletions(stream, {}, [_tomb("t1")], {"t1": Deletion(at="x")})
+        assert (out.moot, out.conflicts) == (set(), [])
+
+    def test_no_merge_is_drafted_for_a_delete(self, tmp_path):
+        queue = conflicts.ConflictQueue(tmp_path)
+        out = conflicts.weigh_deletions(
+            _ENTRY, {}, [_row("t1", "edited")], {"t1": Deletion(at="x", held=("v1",))}
+        )
+        assert queue.record(out.conflicts[0])
+        assert conflict_merge.pending(queue) == []
 
 
 # ── reconcile: local stays authoritative ─────────────────────────────────────

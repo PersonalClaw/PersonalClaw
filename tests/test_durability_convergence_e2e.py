@@ -178,18 +178,14 @@ class TestCriterion4OverRealFolder:
         remote = tmp_path / "shared"
         a, b = tmp_path / "A", tmp_path / "B"
         _task(a, "task-x", {"id": "task-x", "title": "live"})
-        # A hard-deletes task-x and leaves a tombstone marker (the side-log shape,
-        # which the exporter folds into the entity rows).
-        (a / "tasks" / "task-x.json").unlink()
-        (a / "tasks" / "_tombstones.jsonl").write_text(
-            json.dumps({"id": "task-x", "deleted_at": "2026-08-06T00:00:00Z"}) + "\n",
-            encoding="utf-8",
-        )
-        _task(b, "task-x", {"id": "task-x", "title": "still here on B"})
-
         ta, tb = FolderTransport(remote), FolderTransport(remote)
-        run_sync_cycle(ta, a, self_id="A", now="t1")  # publishes the tombstone
-        run_sync_cycle(tb, b, self_id="B", now="t2")  # B pulls it
+        run_sync_cycle(ta, a, self_id="A", now="t1")
+        run_sync_cycle(tb, b, self_id="B", now="t2")  # B has task-x as A made it
+        run_sync_cycle(ta, a, self_id="A", now="t3")
+
+        (a / "tasks" / "task-x.json").unlink()  # A hard-deletes task-x, as its store does
+        run_sync_cycle(ta, a, self_id="A", now="t4")  # A's copy carries the delete
+        run_sync_cycle(tb, b, self_id="B", now="t5")  # B pulls it
 
         assert not (
             b / "tasks" / "task-x.json"

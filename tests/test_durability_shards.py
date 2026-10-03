@@ -425,3 +425,83 @@ class TestImport:
         imported = shards.import_shards(out)
         ns = [r["n"] for r in imported.rows["sessions"]]
         assert ns == list(range(20))  # every row, in write order
+
+
+class TestASyncCarriesItsDeletes:
+    """A sync's export carries the records this home deleted (``deletions=``), in the shard of the
+    store each was in, with the versions of it this home held: the other machines delete it too."""
+
+    def _rows(self, out, rel):
+        return [json.loads(ln) for ln in (out / rel).read_text().splitlines() if ln.strip()]
+
+    def test_an_entity_directorys_deletes_ride_beside_its_rows(self, tmp_path):
+        from personalclaw.durability.ancestors import Deletion
+
+        home = _home(tmp_path)
+        out = tmp_path / "out"
+        gone = {"tasks": {"t-gone": Deletion(at="2026-09-02T00:00:00+00:00", held=("v1",))}}
+        shards.export_shards(home, out, for_sync=True, deletions=gone)
+
+        rows = self._rows(out, "tasks/entities.jsonl")
+        assert [r["id"] for r in rows] == ["t-1", "t-2", "t-gone"]
+        assert rows[-1] == {
+            "id": "t-gone",
+            "deleted_at": "2026-09-02T00:00:00+00:00",
+            "held": ["v1"],
+        }
+        shards.validate(out)
+
+    def test_a_store_of_records_carries_its_deletes_after_its_document(self, tmp_path):
+        from personalclaw.durability.ancestors import Deletion
+
+        home = _home(tmp_path)
+        (home / "tags.json").write_text(json.dumps([{"id": "kept", "name": "work"}]))
+        out = tmp_path / "out"
+        gone = {"tags": {"kept": Deletion(at="x"), "gone": Deletion(at="2026-09-02", held=("v",))}}
+        shards.export_shards(home, out, for_sync=True, deletions=gone)
+
+        rows = self._rows(out, "tags/value.jsonl")
+        assert rows[0]["id"] == "tags.json" and rows[0]["data"] == [{"id": "kept", "name": "work"}]
+        assert rows[1:] == [
+            {"id": "gone", "deleted_at": "2026-09-02", "held": ["v"]}
+        ], "a record the file still holds is not deleted"
+
+    def test_a_store_that_is_not_there_still_carries_its_deletes(self, tmp_path):
+        from personalclaw.durability.ancestors import Deletion
+
+        home = _home(tmp_path)
+        out = tmp_path / "out"
+        gone = {"prompts": {"standup.yaml": Deletion(at="2026-09-02", held=("v",))}}
+        shards.export_shards(home, out, for_sync=True, deletions=gone)
+        assert [r["id"] for r in self._rows(out, "prompts/entities.jsonl")] == ["standup.yaml"]
+
+    def test_an_export_that_is_not_a_syncs_carries_none(self, tmp_path):
+        from personalclaw.durability.ancestors import Deletion
+
+        home = _home(tmp_path)
+        out = tmp_path / "out"
+        shards.export_shards(home, out, deletions={"tasks": {"t-gone": Deletion(at="x")}})
+        assert "t-gone" not in (out / "tasks" / "entities.jsonl").read_text()
+
+    def test_a_folder_that_cannot_be_listed_is_named_not_read_as_empty(self, tmp_path, monkeypatch):
+        import os
+
+        from personalclaw.durability import inventory as inv
+
+        home = _home(tmp_path)
+        (home / "projects" / "p1").mkdir(parents=True)
+        (home / "projects" / "p1" / "project.json").write_text('{"id": "p1"}')
+        real_walk = os.walk
+
+        def walk(top, **kwargs):
+            # The listing of p1 fails, as one the user cannot read does; whoever runs the test.
+            for directory, dirs, files in real_walk(top, **kwargs):
+                if os.path.basename(directory) == "p1":
+                    kwargs["onerror"](PermissionError(13, "Permission denied", directory))
+                    continue
+                yield directory, dirs, files
+
+        monkeypatch.setattr(shards.os, "walk", walk)
+        read = shards.read_entity_dir(inv.by_id("projects"), home / "projects")
+        assert read.left_out == {"projects/p1": shards.NOT_LISTED}
+        assert read.rows == []

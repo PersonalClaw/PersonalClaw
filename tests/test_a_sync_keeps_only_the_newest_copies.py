@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw.durability import tombstones as tomb
 from personalclaw.durability.outbox import Outbox
 from personalclaw.durability.published import KEEP_PREVIOUS_SECS
 from personalclaw.durability.registry import REGISTRY_KEY, Registry, seq_of_key, shard_prefix
@@ -383,7 +382,6 @@ class TestAMachineThatWasAwayCatchesUpFromTheNewestCopy:
 
         # B is away while A deletes one task, edits another, makes a third: many copies.
         (a / "tasks" / "t1.json").unlink()
-        tomb.record_tombstone(a / "tasks", "t1", now=_at(10))
         _cycle(store, a, "A", 20)
         _task(a, "t2", "edited while B was away")
         _cycle(store, a, "A", 40)

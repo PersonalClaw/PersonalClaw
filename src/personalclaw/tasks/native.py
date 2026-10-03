@@ -146,20 +146,6 @@ def _as_one_writer(write: Callable[[], _T]) -> _T:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def _record_task_tombstone(task_id: str) -> None:
-    """Append a sync-only delete marker for a hard-deleted task (DAS-6c-iii).
-
-    The row id in the ``tasks`` shard is the file stem (the task id), and the side-log
-    lives at the entry dir root, so record it there. Best-effort — a failed breadcrumb
-    must never turn into a failed delete."""
-    try:
-        from personalclaw.durability.tombstones import record_tombstone
-
-        record_tombstone(_tasks_dir(), task_id, now=_now_iso())
-    except Exception:  # noqa: BLE001 — the delete already happened; the marker is a nicety
-        pass
-
-
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -662,10 +648,6 @@ class NativeTaskProvider(TaskProvider):
             # could open, and a recycled id would have inherited it. `missing_ok` because an
             # uncommented task has no sidecar, which is the common case, not an error.
             self._comments_path(task_id).unlink(missing_ok=True)
-            # Sync-only delete marker: the hard unlink above is the store's
-            # truth; this breadcrumb lets the delete propagate across machines instead of a
-            # peer resurrecting the task. Best-effort — never fails the delete.
-            _record_task_tombstone(task_id)
             # Removing a prerequisite can unblock its dependents — reconcile.
             tasks = self._task_map()
             # Drop edges that pointed at the deleted task so the graph stays clean.

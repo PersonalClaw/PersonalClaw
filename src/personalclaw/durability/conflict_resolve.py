@@ -32,7 +32,8 @@ converges on its own schedule, and it does so differently per choice:
   resolved record is not resurrected as a new needs-review row. The decision sticks.
 * ``take_remote`` — local becomes the remote sha, as two homes compare a row
   (``conflicts.compared``), so the two sides are converged and the divergence stops being
-  detected at all.
+  detected at all. For a delete and an edit it never saw (``ConflictRecord.deleted``) that is
+  the other machine's version brought back here, or its delete made here.
 * ``accept_proposal`` — local becomes a THIRD sha the peer has never seen, so once the peer's
   export is pulled the divergence is genuinely new (different local sha → different record id)
   and a fresh review item appears until the peer has the merged row. That is honest rather
@@ -260,7 +261,9 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
         removed=applied.removed,
         record=rec.to_dict(),
         note=(
-            "" if choice == CHOICE_KEEP_LOCAL else (entry.edit_arrival if edited else entry.arrival)
+            ""
+            if choice == CHOICE_KEEP_LOCAL or rec.deleted == conflicts_mod.DELETED_THERE
+            else (entry.edit_arrival if edited else entry.arrival)
         ),
     )
 
@@ -273,8 +276,8 @@ def taking_it_here(home: Path, rec: conflicts_mod.ConflictRecord) -> str:
     entry = inv.by_id(rec.entry_id)
     if entry is None or entry.machine_local or inv.stays_here(entry, rec.entity_id):
         return ""
-    if not reconcile.handles_kind(entry.kind):
-        return ""
+    if not reconcile.handles_kind(entry.kind) or rec.deleted == conflicts_mod.DELETED_THERE:
+        return ""  # taking the other machine's delete brings nothing in
     try:
         has = reconcile.holds(entry, Path(home) / entry.path, rec.entity_id)
     except (OSError, ValueError):

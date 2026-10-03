@@ -737,8 +737,8 @@ _BLIND_BY_DESIGN: dict[str, tuple[frozenset[str], str]] = {
                 "personalclaw/durability/db_merge.py",
                 "personalclaw/durability/footprint.py",
                 "personalclaw/durability/reconcile.py",
-                "personalclaw/durability/service.py",
                 "personalclaw/durability/shards.py",
+                "personalclaw/durability/sync_cycle.py",
                 "personalclaw/portability.py",
                 "personalclaw/snapshot.py",
             }

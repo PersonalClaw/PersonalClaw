@@ -297,6 +297,9 @@ def _pull_one_seq(
                     ancestors=ancestors.of(peer_id, entry.id) if ancestors else {},
                     published=ancestors.published(entry.id) if ancestors else {},
                     agreed_there=agreed_there.get(entry.id, {}),
+                    history=ancestors.held(entry.id) if ancestors else {},
+                    deleted=ancestors.deleted(entry.id) if ancestors else {},
+                    peer=peer_id,
                     queue=queue,
                     now=now,
                 )
@@ -311,8 +314,10 @@ def _pull_one_seq(
                 )
                 if ancestors is not None:
                     # The records this home now holds as the peer does are what the two agree
-                    # on, and the next divergence from this peer is measured from them.
+                    # on, and the next divergence from this peer is measured from them. What the
+                    # peer deleted here is its delete, which this home's copies do not send on.
                     ancestors.record(peer_id, entry.id, res.new_ancestors)
+                    ancestors.took_deletion(entry.id, res.deleted_there)
                 if res.verdict == PAYLOAD_BAD:
                     poison = True
             elif db_merger is not None:

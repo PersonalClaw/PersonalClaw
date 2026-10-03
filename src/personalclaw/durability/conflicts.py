@@ -25,6 +25,15 @@ Three properties this module exists to guarantee:
   dedups into the same row instead of piling up, and a resolved-then-recurring divergence
   is legible rather than duplicated.
 
+**A delete is weighed by the same rule** (:func:`weigh_deletions`). It stands against every
+version of the record the deleting home held before it (``ancestors.Deletion.held``): a copy
+that still holds one of those is older than the delete, so a record deleted here stays deleted
+when a peer's copy made before the delete reached it is pulled, and a delete that arrives is
+applied to a record this home holds as the deleting home held it. Any other version is an edit
+the delete never saw — made after it, or before it reached the home that deleted — and that is a
+conflict for review, recorded with the delete as its side (``ConflictRecord.deleted``): neither
+the edit comes back nor is it dropped until a person chooses.
+
 Storage is one append-only JSONL under the sync root (``sync/conflicts.jsonl``) —
 machine-local, alongside the pull cursor and the outbox, because a conflict is *this*
 machine's unresolved decision and both versions durably persist in the shared store
@@ -49,6 +58,8 @@ from typing import Mapping
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.durability import inventory as inv
+from personalclaw.durability.ancestors import Deletion
+from personalclaw.durability.merge import _is_tombstone
 from personalclaw.durability.shards import canonical_json
 
 logger = logging.getLogger(__name__)
@@ -68,6 +79,13 @@ STATUS_RESOLVED = "resolved"
 SURFACE_MEMORY = "memory"
 SURFACE_KNOWLEDGE = "knowledge"
 SURFACE_DURABILITY = "durability"
+
+#: ``ConflictRecord.deleted``: this machine deleted the record, and the other machine's version
+#: is an edit the delete never saw.
+DELETED_HERE = "here"
+#: ``ConflictRecord.deleted``: the other machine deleted it, and this machine's version is an edit
+#: that delete never saw.
+DELETED_THERE = "there"
 
 #: Merge strategies whose same-id collisions can be a conflict, or an edit made on one side.
 #: ``append_dedup`` cannot: a stable event id means "the same append", so a re-import is a
@@ -107,9 +125,15 @@ def compared(entry: inv.StateEntry, row: dict) -> dict:
     Every sha that says whether two homes agree on a row is taken over this — detection here, and
     the common ancestors a reconcile records — so they cannot disagree about what counts as an
     edit. An automation's run, switch or grant changes it in ONE home, and read as an edit it made
-    every pull a conflict once both homes had run anything.
+    every pull a conflict once both homes had run anything. A delete is compared as it is: it
+    holds nothing of either home's.
     """
-    return row if entry.compared is None else entry.compared(row)
+    return row if entry.compared is None or _is_tombstone(row) else entry.compared(row)
+
+
+def deleted_row(entity_id: str, at: str) -> dict:
+    """A delete, as a conflict records and shows it: the record's id and when it was deleted."""
+    return {"id": entity_id, "deleted_at": at}
 
 
 @dataclass
@@ -138,6 +162,9 @@ class ConflictRecord:
     #: :mod:`durability.conflict_resolve`'s ``CHOICE_*``. Empty while unreviewed.
     resolution: str = ""
     resolved_at: str = ""
+    #: Which side of the conflict is a delete: :data:`DELETED_HERE`, :data:`DELETED_THERE`, or
+    #: ``""`` for two edits.
+    deleted: str = ""
 
     @property
     def id(self) -> str:
@@ -168,6 +195,7 @@ class ConflictRecord:
             "proposal_error": self.proposal_error,
             "resolution": self.resolution,
             "resolved_at": self.resolved_at,
+            "deleted": self.deleted,
         }
 
     @classmethod
@@ -193,6 +221,7 @@ class ConflictRecord:
             proposal_error=str(d.get("proposal_error", "")),
             resolution=str(d.get("resolution", "")),
             resolved_at=str(d.get("resolved_at", "")),
+            deleted=str(d.get("deleted", "")),
         )
 
 
@@ -254,6 +283,103 @@ def detect_conflicts(
             )
         )
     return out
+
+
+@dataclass
+class Weighed:
+    """What :func:`weigh_deletions` made of the deletes between this home's records and a peer's."""
+
+    #: The peer's copies of records deleted here that hold a version the delete saw: never taken.
+    declined: set[str] = field(default_factory=set)
+    #: ``entity id → the peer's delete`` of a record this home holds as the delete saw it.
+    applied: dict[str, dict] = field(default_factory=dict)
+    #: The peer's deletes of records this home does not hold: nothing to do.
+    moot: set[str] = field(default_factory=set)
+    #: A delete and an edit it never saw, in either direction, for review.
+    conflicts: list[ConflictRecord] = field(default_factory=list)
+
+
+def held_by_the_delete(row: dict) -> set[str]:
+    """The versions a peer's delete (*row*, a tombstone) says the deleting home held. A delete
+    that names none saw no version of anything here."""
+    held = row.get("held")
+    return {s for s in held if isinstance(s, str) and s} if isinstance(held, list) else set()
+
+
+def weigh_deletions(
+    entry: inv.StateEntry,
+    live: Mapping[str, dict],
+    remote: list[dict],
+    removed: Mapping[str, Deletion],
+    *,
+    now: str = "",
+) -> Weighed:
+    """Every delete between this home and a peer, weighed by the rule in the module docstring.
+
+    ``live`` is this home's records by id; ``remote`` the peer's rows, its deletes among them;
+    ``removed`` the records this home deleted, or took another machine's delete of, that it does
+    not hold now (and read whole, so their absence says so). For a store a sync merges by id;
+    any other merges no record by id and has no delete to weigh.
+
+    ============================================  ===========================================
+    the peer's copy of one deleted here, held     declined: it stays deleted here
+    the peer's copy of one deleted here, edited   **CONFLICT** — deleted here, held
+    the peer's delete of one here, as it saw it   applied: it is deleted here
+    the peer's delete of one here, edited here    **CONFLICT** — deleted there, held
+    the peer's delete of one not here             moot
+    ============================================  ===========================================
+
+    Pure: no I/O, no clock (``now`` is passed), records in entity-id order.
+    """
+    out = Weighed()
+    if entry.merge not in ID_KEYED_MERGES:
+        return out
+    for row in sorted(remote, key=row_id):
+        rid = row_id(row)
+        if not rid:
+            continue
+        if _is_tombstone(row):
+            here = live.get(rid)
+            if here is None:
+                out.moot.add(rid)
+                continue
+            mine = compared(entry, here)
+            if row_sha(mine) in held_by_the_delete(row):
+                out.applied[rid] = row
+                continue
+            gone = deleted_row(rid, str(row.get("deleted_at", "")))
+            out.conflicts.append(_deletion_conflict(entry, rid, mine, gone, DELETED_THERE, now))
+            continue
+        mark = removed.get(rid)
+        if mark is None or rid in live:
+            continue
+        theirs = compared(entry, row)
+        if row_sha(theirs) in mark.held:
+            out.declined.add(rid)
+            continue
+        gone = deleted_row(rid, mark.at)
+        out.conflicts.append(_deletion_conflict(entry, rid, gone, theirs, DELETED_HERE, now))
+    return out
+
+
+def _deletion_conflict(
+    entry: inv.StateEntry, rid: str, local: dict, remote: dict, deleted: str, now: str
+) -> ConflictRecord:
+    """A delete and an edit it never saw, as a record for review. The two never agreed on a
+    version both still hold, so it has no ancestor."""
+    return ConflictRecord(
+        entry_id=entry.id,
+        entity_id=rid,
+        domain=entry.domain,
+        surface=surface_for_domain(entry.domain),
+        ancestor_sha="",
+        local_sha=row_sha(local),
+        remote_sha=row_sha(remote),
+        local_row=local,
+        remote_row=remote,
+        detected_at=now,
+        deleted=deleted,
+    )
 
 
 class ConflictQueue:

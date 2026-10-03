@@ -6,8 +6,9 @@ The orchestrator that assembles every piece built in 6c-i … 6c-ii-h into the l
     registry = read the shared registry.json from the remote     (transport.pull of REGISTRY_KEY)
     pull_from_peers(transport, home, registry, cursor,            # 6c-ii-e + the 6c-ii-h db_merger
                     db_merger=make_db_merger(home), ancestors=…)  # merged against each peer's base
-    export_shards(home, out, for_sync=True, agreements=…)         # 6b + 6c-ii-g (DB copies)
-    ancestors.publish(…) per record store                         # what this home published
+    ancestors.publish(…) per record store                         # what it publishes, what is gone
+    export_shards(home, out, for_sync=True, agreements=…,         # 6b + 6c-ii-g (DB copies),
+                  deletions=…)                                    # and this home's deletes
     unless the export holds what the store's newest copy does     # durability.published
         publish_export(transport, out, registry, outbox, …)       # 6c-ii-f (+ CAS registry bump)
     retire_superseded(transport, …)                               # the copies a newer one replaced
@@ -123,18 +124,42 @@ class SyncCycleReport:
         return base
 
 
-def _record_published(ancestors: Ancestors, home: Path) -> None:
-    """Record each record of every store a sync merges by id, as this home just exported it
+def _record_published(ancestors: Ancestors, home: Path, now: str) -> None:
+    """Record each record of every store a sync merges by id, as this home is about to export it
     (:meth:`ancestors.Ancestors.publish`): a peer that takes one of these versions and hands it
-    back is then read as behind, not as having edited it."""
+    back is then read as behind, not as having edited it. And what is gone: a record this home
+    held and no longer holds is deleted here, and the export that follows carries the delete. A
+    store that is not there, or could not be read, is left as it was known."""
     for entry in inv.INVENTORY:
         if (
             reconcile.handles_kind(entry.kind)
             and entry.merge in ID_KEYED_MERGES
             and not entry.machine_local
         ):
-            ancestors.publish(entry.id, reconcile.held_shas(home, entry))
+            _forget_the_retired_side_log(home, entry)
+            held = reconcile.held_shas(home, entry)
+            if held is not None:
+                shas, unknown = held
+                known = ancestors.held(entry.id).keys() | ancestors.deleted(entry.id).keys()
+                # What could not be read, and what stays on each machine, is never a delete.
+                unread = {rid for rid in known if unknown(rid) or inv.stays_here(entry, rid)}
+                ancestors.publish(entry.id, shas, now=now, unread=unread)
     ancestors.save()
+
+
+#: The delete side-log the task stores kept before a sync noticed deletes for itself
+#: (``ancestors.Ancestors.publish``). A home that kept one still holds it, nothing reads it now,
+#: and as a file of the store a copy would carry it: removed before the export.
+_RETIRED_SIDE_LOG = "_tombstones.jsonl"
+
+
+def _forget_the_retired_side_log(home: Path, entry: inv.StateEntry) -> None:
+    if entry.kind != inv.KIND_JSON_ENTITY_DIR:
+        return
+    try:
+        (Path(home) / entry.path / _RETIRED_SIDE_LOG).unlink(missing_ok=True)
+    except OSError:
+        logger.debug("sync cycle: could not remove %s/%s", entry.path, _RETIRED_SIDE_LOG)
 
 
 def read_registry(transport: SyncTransportProvider) -> Registry:
@@ -288,10 +313,14 @@ def run_sync_cycle(
         listed = transport.list_remote(machine_prefix(self_id))
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)
+            _record_published(ancestors, home, now)
             report.left_out = export_shards(
-                home, out, for_sync=True, agreements=ancestors.agreements()
+                home,
+                out,
+                for_sync=True,
+                agreements=ancestors.agreements(),
+                deletions=ancestors.deletions(),
             ).left_out
-            _record_published(ancestors, home)
             digest = export_digest(out)
             standing = registry.seq_of(self_id)
             if published.stands(
@@ -329,6 +358,9 @@ def run_sync_cycle(
         report.error = f"push: {report.pushed.detail or report.pushed.push_outcome}"
         report.failure = "push"
         return report
+    # The store holds this machine's deletes now: one past the horizon has ridden a copy, and goes.
+    ancestors.forget_old_deletes(now)
+    ancestors.save()
     if newest and transport.removes_old_copies:
         _retire(
             transport,
