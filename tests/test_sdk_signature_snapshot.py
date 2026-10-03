@@ -190,6 +190,36 @@ def test_making_a_parameter_keyword_only_is_the_fix_and_not_a_break():
     assert snap.silent_breaks(old, new, "f") == ([], [])
 
 
+def test_the_agent_permission_changed_type_the_loud_way():
+    """``Permissions.agent`` was a ``bool`` right after ``cron``; the agent tier is a string.
+    Replayed against the checked-in record (the one the apps' contract job compares): retyped in
+    place, the field would be a silent break (an old ``Permissions(agent=True)`` still binds), and
+    the recorded shape, a field of another name that is keyword-only, is none — the old name is
+    simply gone, so the old call fails where it is made."""
+    import copy
+
+    symbol = "personalclaw.sdk.manifest.Permissions"
+    live = snap.load()[symbol]
+    params = live["init"]["params"]
+    (tier,) = [p for p in params if p["name"] == "agent_tier"]
+    assert tier["kind"] == "keyword_only" and tier["annotation"] == "str", tier
+    positional = [p for p in params if p["kind"] != "keyword_only"]
+    at = [p["name"] for p in positional].index("cron") + 1
+
+    def with_agent(annotation: str, default: str) -> dict:
+        rec = copy.deepcopy(live)
+        field = {"name": "agent", "kind": "positional_or_keyword", "annotation": annotation}
+        rec["init"]["params"] = [*positional[:at], {**field, "default": default}, *positional[at:]]
+        return rec
+
+    boolean = with_agent("bool", "False")
+    (in_place,) = snap.diff({symbol: boolean}, {symbol: with_agent("str", "''")})
+    assert in_place.silent_breaks == [f"Permissions(): agent (position {at}) retyped: bool → str"]
+    (renamed,) = snap.diff({symbol: boolean}, {symbol: live})
+    assert renamed.silent_breaks == [], renamed.describe()
+    assert not renamed.additive, "a removed constructor parameter is a change an app must hear of"
+
+
 # ── writing the snapshot ───────────────────────────────────────────────────────────────────────
 
 

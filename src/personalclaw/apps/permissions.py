@@ -246,7 +246,7 @@ class PermissionChecker:
 
     def agent_tier(self) -> str:
         """The tier the app's agent work runs at (``permissions.agent``), or ``""`` for none."""
-        return self.permissions.agent
+        return self.permissions.agent_tier
 
 
 def _matches_any(value: str, patterns: list[str]) -> bool:

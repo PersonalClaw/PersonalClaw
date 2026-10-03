@@ -17,6 +17,7 @@ from personalclaw.apps.manifest import (
     MarketplaceDependencies,
     Permissions,
     SetupConfig,
+    permission_key,
 )
 
 # ---------------------------------------------------------------------------
@@ -85,11 +86,11 @@ def _valid_value_for(key: str):
     Derived from the dataclass for the same reason ``PERMISSION_KEYS`` is: a hand-written map
     drifts the moment a permission is added, and this test's whole point is catching drift.
     """
-    field = next(f for f in fields(Permissions) if f.name == key)
+    field = next(f for f in fields(Permissions) if permission_key(f) == key)
     if field.type is bool:
         return True
     if field.type is str:
-        # The one string-valued grant is ``agent``, whose values are a closed set of tiers.
+        # The one string-valued grant is ``agent`` (``agent_tier``), a closed set of tiers.
         return AGENT_TIERS[0]
     return []
 
@@ -253,9 +254,12 @@ class TestPermissionVocabulary:
         has fallen behind its fields refuses a permission that works — worse than no check.
 
         Every bookkeeping name is asserted absent by name: they are fields but not wire keys,
-        and letting one through would make ``network_declared`` a declarable permission.
+        and letting one through would make ``network_declared`` a declarable permission. A
+        field is declared under its own name unless it names another (``agent_tier`` is
+        declared as ``agent``), and the field's own name is then no key at all.
         """
-        declared = {f.name for f in fields(Permissions)}
+        declared = {permission_key(f) for f in fields(Permissions)}
+        assert "agent" in declared and "agent_tier" not in PERMISSION_KEYS
         assert PERMISSION_KEYS == declared - {
             "network_declared",
             "memory_declared_raw",
@@ -298,7 +302,7 @@ class TestPermissionVocabulary:
             network=True,
             memory="shared",
             cron=True,
-            agent="tools",
+            agent_tier="tools",
             appMessaging=["other"],
             storageShared=True,
             storageRead=["other"],

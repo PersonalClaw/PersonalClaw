@@ -12,11 +12,11 @@ app-specific fields.
 import difflib
 import json
 import re
-from dataclasses import dataclass, field, fields
+from dataclasses import Field, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from personalclaw.apps.agent_tiers import declared_agent
+from personalclaw.apps.agent_tiers import AGENT_TIERS, declared_agent
 from personalclaw.apps.core_features import FEATURE_NAME_RE
 from personalclaw.apps.core_version import SEMVER_RE, CoreCompatibility, check_core_compatibility
 
@@ -345,6 +345,10 @@ class ProposalKind:
 
 _PROPOSAL_SUFFIX_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 
+#: Where a ``Permissions`` field's ``metadata`` names the ``app.json`` key it is declared under,
+#: when that is not the field's own name (:func:`permission_key`).
+_MANIFEST_KEY = "manifest_key"
+
 
 @dataclass
 class Permissions:
@@ -382,8 +386,12 @@ class Permissions:
     memory_declared_raw: str = ""
     cron: bool = False
     # The tier its agent work runs at (``apps.agent_tiers``), or "" for none: what its background
-    # agent tasks and the turns of its own conversations may use.
-    agent: str = ""
+    # agent tasks and the turns of its own conversations may use. A manifest declares it as
+    # ``permissions.agent``, which was a boolean, so the field has a name of its own and is
+    # keyword-only: an SDK caller's ``Permissions(agent=True)`` fails where it is made rather than
+    # binding to a string and granting nothing (the SDK's loud-break rule,
+    # ``scripts/sdk_signature_snapshot.py``).
+    agent_tier: str = field(default="", kw_only=True, metadata={_MANIFEST_KEY: "agent"})
     # Target app names this app may send a brokered message to (via
     # POST /api/apps/message). Same list-of-names shape as ``events``/``mcpTools``
     # — an exact name or a trailing-``*`` prefix. Empty → may message NO app (deny
@@ -481,18 +489,23 @@ class Permissions:
     # malformed app still renders a Store card explaining itself, and still cannot be installed.
     unknown_keys: tuple[str, ...] = ()
     # The raw ``agent`` value a manifest declared when it names no tier (``true`` above all), the
-    # bookkeeping shape of ``memory_declared_raw``: ``validate()`` refuses it by name, and ``agent``
-    # stays "", so an install declaring it runs no agent work until an update names a tier. Never
-    # read as one, which would keep a grant nobody agreed to in its words. Last, as fields go.
+    # bookkeeping shape of ``memory_declared_raw``: ``validate()`` refuses it by name, and
+    # ``agent_tier`` stays "", so an install declaring it runs no agent work until an update names
+    # a tier. Never read as one, which would keep a grant nobody agreed to in its words.
     agent_declared_raw: str = ""
 
     def __post_init__(self) -> None:
-        # ``agent`` was a boolean, and one passed still would bind and grant nothing, silently.
-        if not isinstance(self.agent, str):
-            raise TypeError(
-                "Permissions.agent names a tier — 'text', 'read' or 'tools' — or is '' for no "
-                f"agent work; got {self.agent!r}"
-            )
+        # Every reader takes the tier as one of AGENT_TIERS or "" (the permission checker, the
+        # agent-run route, install consent's sentence for it), so anything else is refused where
+        # the permissions are built instead of being handed to them.
+        tier = self.agent_tier
+        if isinstance(tier, str) and (tier == "" or tier in AGENT_TIERS):
+            return
+        refusal = ValueError if isinstance(tier, str) else TypeError
+        raise refusal(
+            f"Permissions.agent_tier names a tier ({', '.join(map(repr, AGENT_TIERS))}) or is '' "
+            f"for no agent work; got {tier!r}"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {}
@@ -515,8 +528,8 @@ class Permissions:
             d["memory"] = True
         if self.cron:
             d["cron"] = True
-        if self.agent:
-            d["agent"] = self.agent
+        if self.agent_tier:
+            d["agent"] = self.agent_tier
         if self.appMessaging:
             d["appMessaging"] = self.appMessaging
         if self.storageShared:
@@ -537,7 +550,7 @@ class Permissions:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Permissions":
-        agent, agent_declared_raw = declared_agent(data.get("agent"))
+        agent_tier, agent_declared_raw = declared_agent(data.get("agent"))
         return cls(
             api=[str(p) for p in data.get("api", []) if p],
             events=[str(e) for e in data.get("events", []) if e],
@@ -550,7 +563,7 @@ class Permissions:
                 "" if isinstance(data.get("memory", False), bool) else str(data.get("memory"))
             ),
             cron=bool(data.get("cron", False)),
-            agent=agent,
+            agent_tier=agent_tier,
             agent_declared_raw=agent_declared_raw,
             appMessaging=[str(t) for t in data.get("appMessaging", []) if t],  # noqa: N815
             storageShared=bool(data.get("storageShared", False)),  # noqa: N815
@@ -575,11 +588,18 @@ class Permissions:
         return None
 
 
+def permission_key(f: Field[Any]) -> str:
+    """The ``permissions`` key of ``app.json`` that ``Permissions`` field *f* holds: its name, or
+    the key its ``metadata`` names where the two differ (``agent_tier`` holds ``agent``)."""
+    return str(f.metadata.get(_MANIFEST_KEY, f.name))
+
+
 #: The closed vocabulary of ``permissions`` keys an ``app.json`` may declare.
 #:
-#: DERIVED from the dataclass rather than hand-listed, because a hand-listed copy drifts the
-#: moment a permission is added — and a vocabulary that has silently fallen behind the fields
-#: refuses a permission that works, which is worse than not checking at all. The four excluded
+#: DERIVED from the dataclass rather than hand-listed, each field under the key it is declared by
+#: (:func:`permission_key`), because a hand-listed copy drifts the moment a permission is added —
+#: and a vocabulary that has silently fallen behind the fields refuses a permission that works,
+#: which is worse than not checking at all. The four excluded
 #: names are internal bookkeeping, not wire keys: ``network_declared`` records whether the
 #: author mentioned ``network``, ``memory_declared_raw`` and ``agent_declared_raw`` record a raw
 #: ``memory`` or ``agent`` value so one that is not a grant can be named back to the author
@@ -588,7 +608,7 @@ class Permissions:
 #: accepted, and have it rendered on the install-consent surface while granting nothing — the
 #: exact defect the unknown-key refusal below exists to prevent.
 PERMISSION_KEYS: frozenset[str] = frozenset(
-    f.name
+    permission_key(f)
     for f in fields(Permissions)
     if f.name
     not in {"network_declared", "memory_declared_raw", "agent_declared_raw", "unknown_keys"}

@@ -61,7 +61,7 @@ def _declared(agent: object = _UNDECLARED) -> AppManifest:
 @pytest.mark.parametrize("tier", ["text", "read", "tools"])
 def test_the_manifest_declares_a_tier_and_consent_is_handed_it(tier):
     manifest = _declared(tier)
-    assert manifest.permissions.agent == tier
+    assert manifest.permissions.agent_tier == tier
     assert manifest.permissions.to_dict() == {"agent": tier}
     assert manifest.validate() == []
 
@@ -69,7 +69,7 @@ def test_the_manifest_declares_a_tier_and_consent_is_handed_it(tier):
 @pytest.mark.parametrize("agent", [_UNDECLARED, False], ids=["absent", "false"])
 def test_declaring_no_agent_is_no_agent_grant(agent):
     manifest = _declared(agent)
-    assert manifest.permissions.agent == ""
+    assert manifest.permissions.agent_tier == ""
     assert "agent" not in manifest.permissions.to_dict()
     assert manifest.validate() == []
 
@@ -77,7 +77,7 @@ def test_declaring_no_agent_is_no_agent_grant(agent):
 @pytest.mark.parametrize("agent", [True, "unattended", "yes", 1, ["text"]])
 def test_true_or_anything_but_a_tier_is_refused_at_install_and_grants_nothing(agent):
     manifest = _declared(agent)
-    assert manifest.permissions.agent == "", "a declaration that names no tier grants nothing"
+    assert manifest.permissions.agent_tier == "", "a declaration that names no tier grants nothing"
     assert "agent" not in manifest.permissions.to_dict(), "consent shows no grant it would not keep"
     errors = [e for e in manifest.validate() if "permissions.agent" in e]
     assert len(errors) == 1, manifest.validate()
@@ -98,7 +98,41 @@ def test_the_refusal_record_is_no_permission_anyone_can_declare():
         {**refused.to_dict(), "permissions": {"agent_declared_raw": "tools"}}
     )
     assert smuggled.permissions.unknown_keys == ("agent_declared_raw",)
-    assert smuggled.permissions.agent == ""
+    assert smuggled.permissions.agent_tier == ""
+
+
+def test_a_call_written_for_the_boolean_fails_where_it_is_made():
+    """``Permissions.agent`` was the boolean grant. Had the field kept that name and changed its
+    type, an SDK caller's old ``Permissions(agent=True)`` would still bind and then grant nothing,
+    so the tier has a name of its own, keyword-only (the SDK's loud-break rule), and the old call
+    fails where it is made. A manifest still declares the tier as ``permissions.agent``."""
+    import inspect
+
+    from personalclaw.apps.manifest import PERMISSION_KEYS, Permissions
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'agent'"):
+        Permissions(agent=True)  # type: ignore[call-arg]
+    tier = inspect.signature(Permissions).parameters["agent_tier"]
+    assert tier.kind is inspect.Parameter.KEYWORD_ONLY and tier.default == ""
+    assert Permissions(agent_tier="read").to_dict() == {"agent": "read"}
+    assert "agent" in PERMISSION_KEYS and "agent_tier" not in PERMISSION_KEYS
+    # The field's own name is no manifest key: written there, it is refused and grants nothing.
+    spelled = AppManifest.from_dict(
+        {**_declared().to_dict(), "permissions": {"agent_tier": "tools"}}
+    )
+    assert spelled.permissions.unknown_keys == ("agent_tier",)
+    assert spelled.permissions.agent_tier == ""
+
+
+@pytest.mark.parametrize("value", [True, "shared", "Tools", None])
+def test_the_tier_field_holds_a_tier_or_nothing(value):
+    """Every reader takes the field as a tier or ``""``: the permission checker, the agent-run
+    route and install consent's sentence for it. A value that is neither is refused where the
+    permissions are built, never handed to them."""
+    from personalclaw.apps.manifest import Permissions
+
+    with pytest.raises((TypeError, ValueError), match="names a tier"):
+        Permissions(agent_tier=value)  # type: ignore[arg-type]
 
 
 def test_the_tiers_widen_in_order_and_a_name_that_is_none_covers_nothing():

@@ -5860,7 +5860,6 @@
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "memory"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "memory_declared_raw"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "cron"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "agent"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "appMessaging"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "storageShared"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "storageRead"},
@@ -5870,7 +5869,8 @@
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "eventSubscriptions"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "config"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "unknown_keys"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "agent_declared_raw"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "agent_declared_raw"},
+    {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "agent_tier"}
    ],
    "returns": "None"
   },

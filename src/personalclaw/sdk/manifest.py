@@ -18,7 +18,9 @@ the surface is CLOSED under its own signatures, so the subset cannot re-form.
 
 ``AGENT_TIERS`` is the vocabulary ``permissions.agent`` takes, narrowest first (``text``, ``read``,
 ``tools``): what a tool that writes or checks a manifest offers, and what an app's own tests check
-its declaration against.
+its declaration against. ``Permissions.agent_tier`` is the tier a manifest declared, or ``""`` for
+none; it is not called ``agent`` because that field was the boolean the tiers replaced, so a call
+still passing ``agent=`` fails where it is made.
 """
 
 from personalclaw.apps.agent_tiers import AGENT_TIERS  # noqa: F401

@@ -23,7 +23,8 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw.apps import manager
-from personalclaw.apps.manifest import PERMISSION_KEYS, AppManifest, Permissions
+from personalclaw.apps.agent_tiers import AGENT_TIERS
+from personalclaw.apps.manifest import PERMISSION_KEYS, AppManifest, Permissions, permission_key
 from personalclaw.apps.permissions import (
     APP_SCOPED_PREFIXES,
     PermissionChecker,
@@ -185,7 +186,7 @@ def _permissions_with_every_field_set() -> Permissions:
     """
     kwargs: dict[str, object] = {}
     for f in fields(Permissions):
-        if f.name not in PERMISSION_KEYS:  # bookkeeping, not a declarable permission
+        if permission_key(f) not in PERMISSION_KEYS:  # bookkeeping, not a declarable permission
             continue
         if f.name == "proposals":  # A list of typed entries, not of name strings
             from personalclaw.apps.manifest import ProposalKind
@@ -195,8 +196,8 @@ def _permissions_with_every_field_set() -> Permissions:
             kwargs[f.name] = ["x"]
         elif isinstance(f.default, bool):
             kwargs[f.name] = True
-        elif isinstance(f.default, str):
-            kwargs[f.name] = "shared"
+        elif isinstance(f.default, str):  # the agent tier, the one string-valued grant
+            kwargs[f.name] = AGENT_TIERS[-1]
         else:  # pragma: no cover — a new field shape must be taught to this rail
             raise AssertionError(f"unhandled Permissions field shape: {f.name}")
     return Permissions(**kwargs)  # type: ignore[arg-type]
