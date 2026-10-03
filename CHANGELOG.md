@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Added
 
+- **An app built for a newer PersonalClaw is refused when you review, install, update or switch it on, and the refusal names what this one lacks: an app lists the core features it relies on in `requiresCoreFeatures`, and `personalclaw.sdk.features` says which this core offers (SDK addition, used by `*-channel`).**
 - **Your agent can search what your earlier chats said (`chat_search`), and a handoff, a standup or a weekly review now looks there too. It never returns the chat you are in, an Incognito chat or a Temporary chat, and from a Temporary chat it searches nothing.**
 - **An answer longer than the word limit its agent's own instructions set is followed by a note giving its word count and quoting the instruction. The answer itself is never cut.**
 - **The agent reads the calendars in the folders you share: each turn names them, and `calendar_events` lists what is on a day, with repeating events expanded in your time zone and an all-day event through its last day.**

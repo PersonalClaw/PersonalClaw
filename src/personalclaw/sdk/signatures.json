@@ -4755,6 +4755,15 @@
    }
   }
  },
+ "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers'})"},
+ "personalclaw.sdk.features.core_has": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "feature"}
+  ],
+  "returns": "bool"
+ },
  "personalclaw.sdk.feedback.FeedbackRecord": {
   "bases": ["object"],
   "init": {
@@ -5424,7 +5433,8 @@
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "extra"},
     {"annotation": "list[Prerequisite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requires"},
     {"annotation": "list[LaunchedProgram]", "default": "<factory>", "kind": "positional_or_keyword", "name": "launches"},
-    {"annotation": "list[ExternalWrite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "writes"}
+    {"annotation": "list[ExternalWrite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "writes"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requiresCoreFeatures"}
    ],
    "returns": "None"
   },
@@ -5619,7 +5629,8 @@
    "params": [
     {"annotation": "str", "default": "'ok'", "kind": "positional_or_keyword", "name": "state"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "required"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "host"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "host"},
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "missing"}
    ],
    "returns": "None"
   },

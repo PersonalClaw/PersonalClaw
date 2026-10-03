@@ -31,7 +31,7 @@ from personalclaw.apps.core_version import (
     CORE_COMPAT_INVALID,
     CORE_COMPAT_OK,
     CORE_COMPAT_UNKNOWN_HOST,
-    check_core_version,
+    check_core_compatibility,
     host_core_version,
     strict_version_tuple,
 )
@@ -85,19 +85,19 @@ def _make_app_source(
 
 class TestFourStateVerdict:
     def test_absent_floor_is_ok_and_admits(self):
-        v = check_core_version("", host=HOST)
+        v = check_core_compatibility("", host=HOST)
         assert v.state == CORE_COMPAT_OK
         assert v.admits is True
         assert v.reason == ""
 
     def test_older_floor_is_ok(self):
-        assert check_core_version("1.0.0", host=HOST).state == CORE_COMPAT_OK
+        assert check_core_compatibility("1.0.0", host=HOST).state == CORE_COMPAT_OK
 
     def test_equal_floor_is_ok(self):
-        assert check_core_version(HOST, host=HOST).state == CORE_COMPAT_OK
+        assert check_core_compatibility(HOST, host=HOST).state == CORE_COMPAT_OK
 
     def test_newer_floor_is_incompatible_and_does_not_admit(self):
-        v = check_core_version("99.0.0", host=HOST)
+        v = check_core_compatibility("99.0.0", host=HOST)
         assert v.state == CORE_COMPAT_INCOMPATIBLE
         assert v.admits is False
         assert "99.0.0" in v.reason and HOST in v.reason
@@ -110,7 +110,7 @@ class TestFourStateVerdict:
         """Fails OPEN: a typo in one advisory field must not brick an app whose code is
         fine. Not silently permissive either — the state is distinct and the reason
         names both the bad value and the host."""
-        v = check_core_version(floor, host=HOST)
+        v = check_core_compatibility(floor, host=HOST)
         assert v.state == CORE_COMPAT_INVALID
         assert v.admits is True
         assert floor in v.reason and HOST in v.reason
@@ -119,23 +119,23 @@ class TestFourStateVerdict:
     def test_unmeasurable_host_admits(self, host):
         """An unmeasurable host is not a reason to refuse an otherwise-fine install —
         this is the normal state of an editable/source-checkout dev tree."""
-        v = check_core_version("99.0.0", host=host)
+        v = check_core_compatibility("99.0.0", host=host)
         assert v.state == CORE_COMPAT_UNKNOWN_HOST
         assert v.admits is True
         assert "99.0.0" in v.reason
 
     def test_versions_compare_numerically_not_lexically(self):
         """The classic trap: ``"10.0.0" < "9.0.0"`` as strings."""
-        assert check_core_version("9.0.0", host="10.0.0").state == CORE_COMPAT_OK
-        assert check_core_version("0.10.0", host="0.9.0").state == CORE_COMPAT_INCOMPATIBLE
-        assert check_core_version("1.0.10", host="1.0.9").state == CORE_COMPAT_INCOMPATIBLE
+        assert check_core_compatibility("9.0.0", host="10.0.0").state == CORE_COMPAT_OK
+        assert check_core_compatibility("0.10.0", host="0.9.0").state == CORE_COMPAT_INCOMPATIBLE
+        assert check_core_compatibility("1.0.10", host="1.0.9").state == CORE_COMPAT_INCOMPATIBLE
 
     def test_prerelease_and_build_suffixes_are_dropped(self):
         """Same semantics as the module's existing ``version_tuple``: pre-release
         ordering is out of scope, so ``1.4.2-rc1`` compares as ``1.4.2``."""
-        assert check_core_version("1.4.2-rc1", host=HOST).state == CORE_COMPAT_OK
-        assert check_core_version("1.4.2", host="1.4.2-rc1").state == CORE_COMPAT_OK
-        assert check_core_version("v1.4.2", host=HOST).state == CORE_COMPAT_OK
+        assert check_core_compatibility("1.4.2-rc1", host=HOST).state == CORE_COMPAT_OK
+        assert check_core_compatibility("1.4.2", host="1.4.2-rc1").state == CORE_COMPAT_OK
+        assert check_core_compatibility("v1.4.2", host=HOST).state == CORE_COMPAT_OK
 
     def test_strict_parse_separates_unmeasurable_from_zero(self):
         """``version_tuple`` collapses junk to ``(0,)``, which as a FLOOR would be
@@ -153,7 +153,7 @@ class TestFourStateVerdict:
         assert m.core_compatibility(host="99.0.1").state == CORE_COMPAT_OK
 
     def test_to_dict_carries_all_four_facts(self):
-        d = check_core_version("99.0.0", host=HOST).to_dict()
+        d = check_core_compatibility("99.0.0", host=HOST).to_dict()
         assert d["state"] == CORE_COMPAT_INCOMPATIBLE
         assert d["required"] == "99.0.0"
         assert d["host"] == HOST
@@ -441,7 +441,7 @@ class TestVacuityFloor:
 
     def test_only_incompatible_fails_to_admit(self):
         states = {
-            check_core_version(f, host=h).state: check_core_version(f, host=h).admits
+            check_core_compatibility(f, host=h).state: check_core_compatibility(f, host=h).admits
             for f, h in [
                 ("", HOST),
                 ("1.0.0", HOST),

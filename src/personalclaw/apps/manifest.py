@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.apps.agent_tiers import declared_agent
-from personalclaw.apps.core_version import SEMVER_RE, CoreCompatibility, check_core_version
+from personalclaw.apps.core_features import FEATURE_NAME_RE
+from personalclaw.apps.core_version import SEMVER_RE, CoreCompatibility, check_core_compatibility
 
 # ---------------------------------------------------------------------------
 # Nested manifest types
@@ -1801,6 +1802,8 @@ _KNOWN_FIELDS = frozenset(
         "author",
         "license",
         "minPersonalClawVersion",
+        # The core features it relies on (``apps.core_features``), checked as the version is.
+        "requiresCoreFeatures",
         "prompts",
         "mcpServers",
         "crons",
@@ -1985,6 +1988,14 @@ class AppManifest:
     # core registers no agent CLI an app does not declare here.
     launches: list[LaunchedProgram] = field(default_factory=list)
     writes: list[ExternalWrite] = field(default_factory=list)
+
+    # --- What it needs from PersonalClaw ---
+    # The core features it relies on, by name (``apps.core_features``, published as
+    # ``personalclaw.sdk.features``). A core that does not offer one refuses to review, install,
+    # update or switch the app on, naming it (``core_compatibility``): every core built between
+    # two releases reads the same version, so ``minPersonalClawVersion`` cannot tell them apart.
+    # Kept as written, so ``validate`` reports an entry that is not a name.
+    requiresCoreFeatures: list[str] = field(default_factory=list)  # noqa: N815
 
     # -----------------------------------------------------------------
     # Validation
@@ -2199,6 +2210,21 @@ class AppManifest:
             dupes = sorted({c for c in self.uiCapabilities if self.uiCapabilities.count(c) > 1})
             errors.append(f"uiCapabilities has duplicate entries: {dupes}")
 
+        # The core features it relies on. A well-formed name this core does not offer is not an
+        # error here: it is a feature of a newer core, and the compatibility check refuses the app
+        # saying so. A value that cannot be a name is the author's mistake, reported by name.
+        malformed = [f for f in self.requiresCoreFeatures if not FEATURE_NAME_RE.match(f)]
+        if malformed:
+            errors.append(
+                "requiresCoreFeatures entries must be core feature names, lowercase words joined "
+                f"by hyphens as personalclaw.sdk.features names them, got: {malformed}"
+            )
+        twice = sorted(
+            {f for f in self.requiresCoreFeatures if self.requiresCoreFeatures.count(f) > 1}
+        )
+        if twice:
+            errors.append(f"requiresCoreFeatures has duplicate entries: {twice}")
+
         # #2964. A ``permissions.api`` entry naming an owner-only capability is an INSTALL
         # error, not a silently-ignored line. The gateway refuses those paths for any app
         # identity whatever the manifest says, so leaving the declaration in place would
@@ -2335,12 +2361,15 @@ class AppManifest:
         return out
 
     def core_compatibility(self, host: str | None = None) -> CoreCompatibility:
-        """Whether the running core satisfies this app's ``minPersonalClawVersion``.
+        """Whether the running core can host this app: its ``minPersonalClawVersion`` and the
+        core features it relies on (``requiresCoreFeatures``).
 
         Never raises and never touches the filesystem, so a read surface (the Store
-        card) and a write surface (install / update / enable / boot) can both ask.
-        See :func:`check_core_version` for which way each unparseable case falls."""
-        return check_core_version(self.minPersonalClawVersion, host)
+        card) and a write surface (review / install / update / enable / boot) can both ask.
+        See :func:`check_core_compatibility` for which way each unparseable case falls."""
+        return check_core_compatibility(
+            self.minPersonalClawVersion, self.requiresCoreFeatures, host=host
+        )
 
     # -----------------------------------------------------------------
     # Serialization
@@ -2364,6 +2393,8 @@ class AppManifest:
             d["license"] = self.license
         if self.minPersonalClawVersion:
             d["minPersonalClawVersion"] = self.minPersonalClawVersion
+        if self.requiresCoreFeatures:
+            d["requiresCoreFeatures"] = list(self.requiresCoreFeatures)
         if self.prompts:
             d["prompts"] = self.prompts
         if self.skills:
@@ -2502,6 +2533,11 @@ class AppManifest:
             author=str(data.get("author", "")),
             license=str(data.get("license", "")),
             minPersonalClawVersion=str(data.get("minPersonalClawVersion", "")),  # noqa: N815
+            # A lone name is read as a list of one; anything else is kept as written (as text),
+            # so ``validate`` names it rather than the entry vanishing into "needs nothing".
+            requiresCoreFeatures=[  # noqa: N815
+                str(f) for f in _as_list(data.get("requiresCoreFeatures"))
+            ],
             prompts=[str(p) for p in data.get("prompts", []) if p],
             skills=[
                 AppSkill.from_dict(s)

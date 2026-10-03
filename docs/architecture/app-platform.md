@@ -77,6 +77,15 @@ backend**.
   have that digest; anything else — `confirm: true` included — answers 409 with
   the review. The install invariant is scanned-bytes == reviewed-bytes ==
   installed-bytes (no swap-after-scan window, and none after consent either).
+- **An app this core cannot host is refused at every door**
+  (`apps/core_version.check_core_compatibility`): the review, install, update, enable and
+  gateway start, and the Store card carries the same verdict (`coreCompatibility`). It
+  refuses an app whose `minPersonalClawVersion` is above this core, and one that names a
+  core feature in `requiresCoreFeatures` this core does not offer (`apps/core_features`,
+  published as `personalclaw.sdk.features`). Every core built between two releases reads the
+  same version, so a floor cannot tell such cores apart and a feature can; a feature also
+  holds in a source checkout, whose version does not parse. The refusal names the version
+  and each feature this core lacks, and says to update PersonalClaw.
 - **Update** is atomic with rollback: the previous install is preserved at
   `~/.personalclaw/apps/.{name}.rollback` for the duration. An update that changes
   what the app gets (compared with the installed copy's disclosure), or scans with
@@ -221,7 +230,8 @@ uninstall and a reinstall all leave exactly the version on disk running:
 **Startup** (`providers/loader.py::load_all_extensions`) recovers an interrupted update, puts the
 app packages on the import path, seeds the native apps, and then hands every installed app to
 `app_runtime.start_installed`: an enabled one is loaded as above, a disabled one is listed with its
-providers off, and an enabled one this core cannot host (`minPersonalClawVersion`) is refused as
+providers off, and an enabled one this core cannot host (`minPersonalClawVersion`,
+`requiresCoreFeatures`) is refused as
 an enable refuses it — listed, its providers saying why, its backend and worker held so no
 watchdog starts them. An app's MCP servers are written at every load, startup included; what the
 owner set on one (`disabled`, `disabledTools`, `autoApprove`) is kept. A process that is not the
@@ -471,6 +481,10 @@ backend has no access to the gateway's SecurityEventLog).
   `testing.launch_acp_entry` launches an ACP entry's command with the environment
   a spawn from that entry gets, so an ACP app's tests check what its CLI is
   handed with a stub in the CLI's place, never the CLI itself.
+  `features` names the contracts this build offers apps (`CORE_FEATURES`,
+  `core_has`): an app declares the ones it relies on in `requiresCoreFeatures`,
+  which install, update and enable check (above), and asks `core_has` about one it
+  can do without.
 - **Its signatures are a reviewed contract**: every name each `sdk` module publishes
   is recorded in `src/personalclaw/sdk/signatures.json`
   (`scripts/sdk_signature_snapshot.py`), `tests/test_sdk_signature_snapshot.py`

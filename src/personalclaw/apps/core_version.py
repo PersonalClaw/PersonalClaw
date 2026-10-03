@@ -1,15 +1,19 @@
-"""Versions: how an app's version and the core version it needs are read and compared.
+"""Versions: how an app's version and the core it needs are read and compared.
 
 The one app-version comparator (:func:`version_tuple`), the strict reading of a version
-(:func:`strict_version_tuple`) and the check of an app's ``minPersonalClawVersion`` against the
-running core (:func:`check_core_version`), beside the shape every manifest version is validated
-against (:data:`SEMVER_RE`). Kept apart from ``apps.manifest`` so that module stays one reading of
+(:func:`strict_version_tuple`) and the check of what an app needs from core, its
+``minPersonalClawVersion`` and its ``requiresCoreFeatures``, against the running core
+(:func:`check_core_compatibility`), beside the shape every manifest version is validated against
+(:data:`SEMVER_RE`). Kept apart from ``apps.manifest`` so that module stays one reading of
 ``app.json``; it imports these.
 """
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
+
+from personalclaw.apps.core_features import core_has
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([+-]|$)")
 
@@ -56,7 +60,7 @@ def strict_version_tuple(v: str) -> tuple[int, ...] | None:
 
 
 # ---------------------------------------------------------------------------
-# Core-version compatibility — the ``minPersonalClawVersion`` gate
+# Core compatibility — the ``minPersonalClawVersion`` and ``requiresCoreFeatures`` gate
 # ---------------------------------------------------------------------------
 
 # Four states rather than a boolean, because "I could not measure the host" is a
@@ -65,7 +69,13 @@ def strict_version_tuple(v: str) -> tuple[int, ...] | None:
 #   ok                    nothing declared, or the running core satisfies the floor
 #   invalid               a floor was declared but is not a parseable app semver
 #   unknown_host_version  the floor parses, the RUNNING core's own version does not
-#   incompatible          both parse and the running core is OLDER than the floor
+#   incompatible          both parse and the running core is OLDER than the floor, or the app
+#                         needs a core feature (``apps.core_features``) this core does not offer
+#
+# A missing feature is ``incompatible`` whatever the floor says: every core built between two
+# releases reads the same version, so a feature is the only thing that tells such cores apart, and
+# it needs no parse of the host's version, so it holds in a source checkout too. A feature name this
+# core has never heard of is one from a newer core, so it refuses as well.
 #
 # Only ``incompatible`` refuses. The other two FAIL OPEN, with a warning, on purpose:
 #
@@ -96,11 +106,14 @@ def host_core_version() -> str:
 
 @dataclass(frozen=True)
 class CoreCompatibility:
-    """Whether the running core satisfies an app's declared ``minPersonalClawVersion``."""
+    """Whether the running core can host an app: its declared ``minPersonalClawVersion``, and the
+    core features it declares it needs (``requiresCoreFeatures``)."""
 
     state: str = CORE_COMPAT_OK
     required: str = ""  # the floor the manifest declared ("" when it declared none)
     host: str = ""  # the running core's version, as reported
+    #: The declared core features this core does not offer, in the order the app declared them.
+    missing: tuple[str, ...] = ()
 
     @property
     def admits(self) -> bool:
@@ -111,15 +124,19 @@ class CoreCompatibility:
     def reason(self) -> str:
         """A user-facing sentence, or ``""`` for :data:`CORE_COMPAT_OK`.
 
-        Names BOTH versions in every non-``ok`` state, and — where the user can act —
-        says what to do next. Prefixed with the app name by the caller, which is the
-        layer that knows it."""
+        Names BOTH versions in every non-``ok`` state, and every core feature the app needs that
+        this core lacks, and — where the user can act — says what to do next. Prefixed with the
+        app name by the caller, which is the layer that knows it."""
         if self.state == CORE_COMPAT_INCOMPATIBLE:
-            return (
-                f"requires PersonalClaw {self.required} or newer, but this core is "
-                f"{self.host}. Upgrade the core — run `personalclaw update` — then "
-                f"try again."
-            )
+            lacks = _lacking(self.missing)
+            if _below_floor(self.required, self.host):
+                needs = (
+                    f"requires PersonalClaw {self.required} or newer, but this core is {self.host}"
+                )
+                needs += f" and {lacks}" if lacks else ""
+            else:
+                needs = f"needs a newer PersonalClaw: this core ({self.host}) {lacks}"
+            return f"{needs}. Upgrade the core — run `personalclaw update` — then try again."
         if self.state == CORE_COMPAT_INVALID:
             return (
                 f"declares minPersonalClawVersion {self.required!r}, which is not a "
@@ -140,20 +157,47 @@ class CoreCompatibility:
             "state": self.state,
             "required": self.required,
             "host": self.host,
+            "missing": list(self.missing),
             "reason": self.reason,
         }
 
 
-def check_core_version(required: str, host: str | None = None) -> CoreCompatibility:
-    """Evaluate a declared ``minPersonalClawVersion`` against the running core.
+def _below_floor(required: str, host: str) -> bool:
+    """Whether both versions parse and *host* is older than the floor *required*."""
+    want = strict_version_tuple(required)
+    have = strict_version_tuple(host)
+    return want is not None and have is not None and have < want
 
-    THE one owner of this decision. Every path that puts an app into effect
-    (install, update, enable, gateway boot) routes here rather than re-deriving the
-    comparison, so there is a single place where "which way does an unparseable value
-    fall" is answered. ``host`` is injectable for tests; production passes ``None``.
+
+def _lacking(missing: tuple[str, ...]) -> str:
+    """``does not have the core feature 'x' it relies on``, or ``""`` when nothing is missing."""
+    if not missing:
+        return ""
+    quoted = [repr(name) for name in missing]
+    if len(quoted) == 1:
+        return f"does not have the core feature {quoted[0]} it relies on"
+    named = ", ".join(quoted[:-1]) + f" and {quoted[-1]}"
+    return f"does not have the core features {named} it relies on"
+
+
+def check_core_compatibility(
+    required: str = "", features: Sequence[str] = (), *, host: str | None = None
+) -> CoreCompatibility:
+    """Evaluate what an app needs from core against the running core: its declared
+    ``minPersonalClawVersion`` (*required*) and the core features it declares it needs
+    (*features*, its ``requiresCoreFeatures``).
+
+    THE one owner of this decision. Every path that puts an app into effect (review, install,
+    update, enable, gateway boot) and the Store's card route here rather than re-deriving the
+    comparison, so there is a single place where "which way does an unparseable value fall" is
+    answered. A feature this core does not offer refuses whatever the floor says (the four-state
+    note above). ``host`` is injectable for tests; production passes ``None``.
     """
     host_version = host_core_version() if host is None else str(host)
     declared = (required or "").strip()
+    missing = tuple(f for f in dict.fromkeys(features) if not core_has(f))
+    if missing:
+        return CoreCompatibility(CORE_COMPAT_INCOMPATIBLE, declared, host_version, missing)
     if not declared:
         # An app that declares nothing must keep working — silence is not a floor.
         return CoreCompatibility(CORE_COMPAT_OK, "", host_version)

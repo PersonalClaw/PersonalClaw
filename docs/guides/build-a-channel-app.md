@@ -149,6 +149,15 @@ returns whether that answer's `ends` is `approved`. Core then decides it the way
 `trust` trusts that one chat, which its header shows and where the owner turns it off. Never add an
 answer of your own to a prompt core asks, and never drop one.
 
+A channel whose prompt offers these answers relies on a core that sends them, so it declares the
+core feature in its `app.json`: `"requiresCoreFeatures": ["approval-answers"]`
+(`personalclaw.sdk.features.APPROVAL_ANSWERS`). A PersonalClaw without it refuses to install or
+update the app, and says so. One built before core features existed cannot read that line and
+hands the prompt a brief with no answers. Never answer that by returning `None` and leaving the
+owner a bare link: log one warning, and post the prompt with nothing to press, saying that this
+PersonalClaw sends no answers the channel can offer, to answer it in PersonalClaw and to update
+PersonalClaw to answer here. It ends as every prompt does (below).
+
 ### An approval ends as PersonalClaw's do
 
 A prompt core asks through `request_approval` keeps no timer of its own: core resolves it with how

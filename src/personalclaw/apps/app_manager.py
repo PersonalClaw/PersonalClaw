@@ -526,19 +526,23 @@ def _collect_app_packages() -> None:
         logger.warning("collecting unused app packages failed", exc_info=True)
 
 
-def _core_version_gate(manifest: AppManifest, *, action: str) -> None:
-    """Raise when the running core is older than the app's declared floor (#1778).
+def _core_compatibility_gate(manifest: AppManifest, *, action: str) -> None:
+    """Raise when the running core cannot host the app: older than its declared floor (#1778),
+    or without a core feature it declares it relies on.
 
     ``minPersonalClawVersion`` is a compat gate; before this it was declared, validated
     and round-tripped but read by nothing, so an app built against a newer SDK surface
     installed happily and then failed at runtime inside the app backend — surfacing as an
-    app bug rather than a version mismatch.
+    app bug rather than a version mismatch. Every core built between two releases reads the
+    same version, so ``requiresCoreFeatures`` is what tells those apart: an update built for a
+    newer core installed on an older one and lost a feature without a word.
 
     Only ``incompatible`` refuses. A malformed floor or an unmeasurable host fails OPEN
-    with a warning — see the four-state note in :mod:`personalclaw.apps.manifest`, which
+    with a warning — see the four-state note in :mod:`personalclaw.apps.core_version`, which
     owns the decision itself so no path re-derives the comparison."""
     compat = manifest.core_compatibility()
     if not compat.admits:
+        logger.warning("app %s: %s refused — %s", manifest.name, action, compat.reason)
         raise AppLifecycleError(f"{action} refused: {manifest.name!r} {compat.reason}")
     if compat.reason:
         logger.warning("app %s: %s", manifest.name, compat.reason)
@@ -572,7 +576,8 @@ def _load_staged_manifest(staged: Path, *, action: str = "install") -> AppManife
     """Parse + gate the manifest at ``staged``. THE chokepoint every write path crosses.
 
     ``install`` calls this for the source peek AND the staged copy; ``update`` does the
-    same — so the core-version gate lives here rather than as a per-entry-point copy that
+    same, and so does ``preview``, the review a consent dialog shows — so the core
+    compatibility gate lives here rather than as a per-entry-point copy that
     can drift. The peek runs only after :func:`_survey` has passed the source, so it reads a
     tree whose every link stays inside it. ``enable`` and the boot backend launcher ask
     :meth:`AppManifest.core_compatibility` directly (their manifest is already installed,
@@ -587,7 +592,7 @@ def _load_staged_manifest(staged: Path, *, action: str = "install") -> AppManife
     errors = manifest.validate()
     if errors:
         raise AppLifecycleError(f"manifest validation failed: {'; '.join(errors)}")
-    _core_version_gate(manifest, action=action)
+    _core_compatibility_gate(manifest, action=action)
     return manifest
 
 
@@ -1372,7 +1377,8 @@ def update(
     try:
         peek = _load_staged_manifest(src, action="update")
     except AppLifecycleError as exc:
-        return InstallResult(ok=False, error=str(exc))
+        _audit("update", "error", name or str(source), caller=caller, error=str(exc))
+        return InstallResult(ok=False, name=name or "", error=str(exc))
     name = name or peek.name
     if _read_installed(name) is None:
         return InstallResult(
@@ -2006,7 +2012,7 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
         return False
     manifest = _manifest_of(name)
     if manifest is not None:
-        # Core-version gate (#1778). Install-time refusal alone is not enough: the core
+        # Core compatibility gate (#1778). Install-time refusal alone is not enough: the core
         # can be DOWNGRADED under an app that was installed against a newer one, and the
         # app is then already on disk. Checked BEFORE onEnable, so no third-party hook
         # runs for an app this core cannot host.
