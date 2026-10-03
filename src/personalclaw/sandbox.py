@@ -641,9 +641,11 @@ def _resolve_enforcement_bin(name: str) -> str | None:
 def _probe_sandbox_exec() -> bool:
     """Return True if macOS ``sandbox-exec`` actually works.
 
-    Uses a file-based profile and targets the current Python interpreter so
-    the capability check matches the executable class used by real
-    ``sandbox_exec_argv()`` invocations.
+    Uses a file-based profile and runs what a real ``sandbox_exec_argv()`` wrap runs first, the
+    resolved ``env`` (``env -i`` prints nothing and exits 0), so the check is of the wrap itself.
+    It used to run this interpreter with ``-c pass``, which a real wrap never runs, and which the
+    desktop app's frozen bundle refuses as an unknown command: there the probe always failed, so
+    the macOS sandbox was never applied in the app.
 
     Both binaries the wrap execs are resolved through
     :func:`_resolve_enforcement_bin` — the system utility path, never ``$PATH`` — for the
@@ -659,22 +661,20 @@ def _probe_sandbox_exec() -> bool:
     # ``env`` to scrub the child's environment, so a host missing *either* binary cannot be
     # wrapped at all. Refuse the capability here, with an explicit log, rather than letting
     # `detect_backend` select a backend whose argv would die at exec.
-    if _resolve_enforcement_bin("env") is None:
+    env_bin = _resolve_enforcement_bin("env")
+    if env_bin is None:
         logger.warning(
             "sandbox-exec is present but 'env' is not on the system utility path (%s) — "
             "the seatbelt wrap cannot scrub the child environment, so the backend is refused",
             _system_utility_path(),
         )
         return False
-    # Probe with a file profile against the same interpreter class real commands use.
-    target = sys.executable
-    target_arg = ["-c", "pass"]
     fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="personalclaw_probe_")
     try:
         os.write(fd, b"(version 1)(allow default)")
         os.close(fd)
         r = subprocess.run(
-            [sb, "-f", profile_path, target, *target_arg],
+            [sb, "-f", profile_path, env_bin, "-i"],
             capture_output=True,
             timeout=5,
         )

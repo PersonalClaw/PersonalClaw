@@ -54,6 +54,7 @@
       "systemBrowser.js",
       "gatewayShutdown.js",
       "gatewayEnv.js",
+      "gatewayLost.js",
       "localSignIn.js",
       "gatewayUrl.js",
       "endpointRegistry.js",

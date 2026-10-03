@@ -419,7 +419,7 @@ def _spawn_detached_gateway(port: int) -> None:
     link an older gateway printed there is taken out first (``private_output_log``).
     """
     log_path = config_dir() / "gateway-restart.log"
-    args = [sys.executable, "-m", "personalclaw", "gateway", "--port", str(port)]
+    args = [*self_update.cli_argv(), "gateway", "--port", str(port)]
     try:
         private_output_log(log_path)
         log_fh = open_streamed(log_path, "ab")
@@ -518,7 +518,7 @@ def _refresh_agent_config(cwd: str) -> None:
     """
     print("  🔒 Refreshing agent config…")
     r = subprocess.run(
-        [sys.executable, "-m", "personalclaw", "setup", "--agent-only"],
+        [*self_update.cli_argv(), "setup", "--agent-only"],
         cwd=cwd or None,
         capture_output=True,
         text=True,

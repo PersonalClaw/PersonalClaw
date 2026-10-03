@@ -36,7 +36,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import sys
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -89,16 +88,12 @@ _CHECKING = Availability(CHECKING)
 
 
 def probe_argv(names: list[str]) -> list[str]:
-    """The child's argv: this install's own CLI, running the hidden probe subcommand.
-
-    ``sys.executable -m personalclaw`` rather than a console script on PATH — a gateway run
-    from a venv whose ``bin`` is not on PATH would otherwise probe a DIFFERENT install. A
-    frozen (PyInstaller) bundle has no ``-m``: its executable IS the CLI.
+    """The child's argv: this install's own CLI (``self_update.cli_argv``), running the hidden
+    probe subcommand — never a console script on PATH, which could probe a DIFFERENT install.
     """
-    from personalclaw.self_update import is_frozen
+    from personalclaw.self_update import cli_argv
 
-    head = [sys.executable] if is_frozen() else [sys.executable, "-m", "personalclaw"]
-    return [*head, PROBE_COMMAND, *names]
+    return [*cli_argv(), PROBE_COMMAND, *names]
 
 
 def parse_answer(line: bytes | str) -> tuple[str, str | None, Availability] | None:

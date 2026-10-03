@@ -187,6 +187,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **Signing in to a remote tool server works in the desktop app: its sign-in page opens in your browser, and the Tools page says it opened there and when you are signed in; a sign-in page that did not open, in the app or in a browser that blocked its tab, is said, with its link.**
+- **Restart brings the desktop app's gateway back, where the restarted gateway used to exit at once and leave the app with no gateway until it was quit and opened again; and when its gateway stops on its own, the app says what happened and offers to start it again.**
+- **In the desktop app, MCP servers, agent CLI sessions, the commands an agent runs and computer use start instead of exiting at once with a usage error, and on a Mac the commands PersonalClaw sandboxes run inside the macOS sandbox, whose check always failed in the app.**
 - **A lesson update memory refuses leaves the lesson it would have replaced as it was, recalled and in every prompt, and is answered as not saved, saying why: on the Memory page, to the agent's `memory_remember` and to `personalclaw learn add` (`MemoryService.lesson_refusal` is an SDK addition no app has to change for).**
 - **A lesson an earlier version left replaced by a lesson that was never kept comes back when its memory opens, and a lesson taught again after what replaced it was removed is no longer deleted by the Health sweep.**
 - **A Temporary chat's work, or an app's not given your memory, no longer raises the confidence of a lesson it repeats.**

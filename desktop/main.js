@@ -23,6 +23,7 @@ const {
 const { shutdownGateway } = require("./gatewayShutdown");
 const { makeSystemBrowser, navigationGuard, registerSystemBrowserIpc, windowOpenHandler } = require("./systemBrowser");
 const { buildGatewayEnv } = require("./gatewayEnv");
+const { START_AGAIN, gatewayLostDialog, isUnasked, makeLastLine } = require("./gatewayLost");
 const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
 const { openShellStore } = require("./shellStore");
 const { loadRegistry } = require("./endpointRegistry");
@@ -157,7 +158,11 @@ function sendStatus(msg) {
  * it minted for this start, and the shell signs its windows in with that
  * (`adoptLocalGateway`). Every LATER ready line is the same process restarted in
  * place, on a new port with a new session, and the shell follows it there
- * (`followRestartedGateway`).
+ * (`followRestartedGateway`). So does the first ready line of a gateway started
+ * again after one stopped (`gatewayLost`): the windows still show the old address.
+ *
+ * An exit before the ready line rejects, carrying the exit (`err.exit`). An exit after it,
+ * while the app is not quitting, is one nobody asked for, and the owner is told (`gatewayLost`).
  */
 function startGateway() {
   return new Promise((resolve, reject) => {
@@ -194,9 +199,13 @@ function startGateway() {
         }),
       }
     );
+    // This start's own process, which its exit is about (`gatewayProcess` moves on to the next).
+    const child = gatewayProcess;
 
     let settled = false;
     let stdoutBuf = "";
+    // Where the gateway says why it stopped, if it ever does (`gatewayLost.js`).
+    const lastLine = makeLastLine();
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true;
@@ -221,13 +230,19 @@ function startGateway() {
         }
         settled = true;
         clearTimeout(timer);
-        adoptLocalGateway(ready).then(() => {
-          sendStatus("Connected ✓");
-          resolve(localGatewayUrl);
-        });
+        const taken = localGatewayUrl ? followRestartedGateway(ready) : adoptLocalGateway(ready);
+        taken
+          .catch((err) => console.warn(`desktop: could not take the started gateway: ${err.message}`))
+          .then(() => {
+            sendStatus("Connected ✓");
+            resolve(localGatewayUrl);
+          });
       }
     });
-    gatewayProcess.stderr.on("data", (c) => console.error("gateway:", c.toString().trim()));
+    gatewayProcess.stderr.on("data", (c) => {
+      lastLine.push(c);
+      console.error("gateway:", c.toString().trim());
+    });
     gatewayProcess.on("error", (err) => {
       console.error("Failed to start gateway:", err.message);
       if (!settled) {
@@ -236,13 +251,20 @@ function startGateway() {
         reject(err);
       }
     });
-    gatewayProcess.on("exit", (code) => {
+    gatewayProcess.on("exit", (code, signal) => {
       console.log(`Gateway exited with code ${code}`);
-      gatewayProcess = null;
+      const held = gatewayProcess === child;
+      if (held) gatewayProcess = null;
+      const exit = { code, signal, lastLine: lastLine.get() };
       if (!settled) {
         settled = true;
         clearTimeout(timer);
-        reject(new Error(`Gateway exited with code ${code}`));
+        reject(Object.assign(new Error(`Gateway exited with code ${code}`), { exit }));
+        return;
+      }
+      // A restart whose new image could not start is one of these.
+      if (isUnasked({ held, quitting: isQuitting })) {
+        gatewayLost(exit).catch((err) => console.error(`desktop: ${err.message}`));
       }
     });
   });
@@ -281,6 +303,39 @@ async function stopGateway() {
       (result.groupSwept ? " (residual process-group members were killed)" : "")
   );
   return result;
+}
+
+/**
+ * The gateway stopped when nobody asked it to (`startGateway`'s exit handler): tell the owner what
+ * happened, and start it again or quit, as she chooses. Started again, its first ready line moves
+ * every window to its address, signed in, the way a restart does. A start that fails is the same
+ * news again, with its own exit.
+ */
+async function gatewayLost(exit) {
+  const options = gatewayLostDialog(exit);
+  let response;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    // A sheet on a window closed to the menu bar, or minimized, would never be seen.
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    ({ response } = await dialog.showMessageBox(mainWindow, options));
+  } else {
+    ({ response } = await dialog.showMessageBox(options));
+  }
+  if (isQuitting) return;
+  if (response !== START_AGAIN) {
+    isQuitting = true;
+    app.quit();
+    return;
+  }
+  // A start that timed out can still be running: never two gateways on one home.
+  if (gatewayProcess) await stopGateway();
+  try {
+    await startGateway();
+  } catch (err) {
+    console.error("Gateway did not start again:", err.message);
+    await gatewayLost(err.exit || { startError: err.message });
+  }
 }
 
 // ── Signing the windows in ──

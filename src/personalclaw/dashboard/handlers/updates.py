@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -961,16 +960,20 @@ async def _graceful_reexec(state: DashboardState | None, *, auth_mode: str = "")
     *auth_mode* is the LIVE ``AuthConfig.mode`` (an AuthMode str-enum: 'none' / 'local_token' / …)
     the caller read from ``request.app['auth_cfg']``, pinned into the new image's environment (#46)
     so a Restart re-applies code without ever changing whether auth is on or off. *state* is
-    ``None`` on a gateway with no dashboard, where there is nobody to tell."""
-    exe = sys.executable
-    if not os.path.isfile(exe) or not os.access(exe, os.X_OK):
-        if state is not None:
-            state.push_update_progress("error", "Cannot restart: invalid Python executable path")
-        return
-    from personalclaw.restart_request import request_restart
+    ``None`` on a gateway with no dashboard, where there is nobody to tell.
+
+    A restart whose program cannot be run is refused before anything stops
+    (``restart_request.RestartUnavailable``), and its sentence is what the owner reads: the gateway
+    keeps serving, which the overlay then says, instead of stopping for good."""
+    from personalclaw.restart_request import RestartUnavailable, request_restart
 
     await asyncio.sleep(0.5)  # let pending SSE/WS frames drain to clients
-    request_restart(auth_mode=auth_mode)
+    try:
+        request_restart(auth_mode=auth_mode)
+    except RestartUnavailable as refused:
+        logger.error("Restart refused: %s", refused)
+        if state is not None:
+            state.push_update_progress("error", str(refused))
 
 
 async def api_restart(request: web.Request) -> web.Response:

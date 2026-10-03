@@ -170,6 +170,30 @@ def sdk_submodules(root: Path | None = None) -> list[str]:
     return names
 
 
+def child_modules(root: Path | None = None) -> list[str]:
+    """The package's own child modules, which the bundle runs as ``<bundle> -m <module>``.
+
+    The gateway starts each of them by NAME (``<interpreter> -m <module>``), so nothing imports
+    them and static analysis left them out of the bundle, the resource-ceiling shim in front of
+    every tool command among them. The list is the one ``personalclaw/_frozen_child.py`` declares
+    as :data:`CHILD_MODULES`, the same one the bundle's entry checks before it runs a module, and
+    it is read from that file's source rather than imported: the spec runs this outside the package.
+    """
+    import ast
+
+    root = root or repo_root()
+    tree = ast.parse((root / SRC_PREFIX / "_frozen_child.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "CHILD_MODULES"
+            and node.value is not None
+        ):
+            return [str(name) for name in ast.literal_eval(node.value)]
+    raise LookupError(f"{SRC_PREFIX}/_frozen_child.py declares no CHILD_MODULES")
+
+
 def undeclared_package_files(root: Path | None = None) -> list[str]:
     """Non-Python files under the package tree that NO package-data glob carries.
 

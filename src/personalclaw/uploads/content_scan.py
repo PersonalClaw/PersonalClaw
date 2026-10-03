@@ -206,14 +206,11 @@ def is_dangerous(window: bytes) -> bool:
 
 
 def scan_argv() -> list[str]:
-    """The child's argv: this install's own CLI running :data:`CHILD_COMMAND`.
+    """The child's argv: this install's own CLI (``self_update.cli_argv``) running
+    :data:`CHILD_COMMAND`, never a console script on PATH, so the child is this install."""
+    from personalclaw.self_update import cli_argv
 
-    ``sys.executable -m personalclaw`` rather than a console script on PATH, so the child is this
-    install; a frozen (PyInstaller) bundle has no ``-m``: its executable IS the CLI."""
-    from personalclaw.self_update import is_frozen
-
-    head = [sys.executable] if is_frozen() else [sys.executable, "-m", "personalclaw"]
-    return [*head, CHILD_COMMAND]
+    return [*cli_argv(), CHILD_COMMAND]
 
 
 async def scan_upload(upload: Path | bytes, category: str, *, surface: str) -> None:

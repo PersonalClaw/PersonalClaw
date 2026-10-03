@@ -213,6 +213,19 @@ clean stop and a half-finished write. A gateway that will not stop is escalated 
 few seconds, and if it still will not, the app says so in its log rather than pretending
 the quit was clean.
 
+## When the gateway stops on its own
+
+**Restart** stops the gateway and starts it again in place: it comes back on a new port, and the
+windows follow it there (see [How the app signs in](#how-the-app-signs-in-to-the-gateway-it-starts)).
+A restart whose program can no longer be run is refused before anything stops, and the window says
+so; the gateway keeps running as it is.
+
+Any other time the gateway stops while the app is open (it crashed, something ended it, or a
+restart could not start it again), the app says so: **PersonalClaw's gateway stopped**, with how it
+exited and the last thing it said, and two choices. **Start Again** starts a new gateway, and every
+window moves to it, signed in, the way it does after a restart. **Quit** quits the app. Dismissing
+the dialog starts it again too; a start that fails says so the same way.
+
 ## Push-to-talk
 
 Press the shortcut, speak, press it again. The recording is transcribed by whichever
@@ -425,10 +438,9 @@ over the installed package. Your data lives in `~/.personalclaw` and is untouche
 There is **no in-app update yet**, and the app will not offer you one. Settings → Updates
 tells you when a newer release exists and then points here; it deliberately does not show
 the "Update" button that a pip or git install gets, because the shell owns this install:
-the backend inside the app is a frozen bundle with no interpreter to upgrade, and the
-gateway is a child process that cannot restart itself out from under the window you are
-looking at. An auto-updater is planned — until it ships, the panel says what is actually
-true rather than promising an update that never arrives.
+the backend inside the app is a frozen bundle with no interpreter to upgrade, so a new
+version is a new app. An auto-updater is planned — until it ships, the panel says what is
+actually true rather than promising an update that never arrives.
 
 ### What the update settings still do here
 

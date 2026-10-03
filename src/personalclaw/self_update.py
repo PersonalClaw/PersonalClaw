@@ -209,6 +209,26 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False)) or hasattr(sys, "_MEIPASS")
 
 
+def cli_argv() -> list[str]:
+    """The command that runs THIS install's own ``personalclaw`` CLI, before its subcommand.
+
+    The one answer for every install kind, and for everything that starts the CLI again: a
+    restart re-launching the gateway with its own arguments (``restart_request``), and every
+    child that runs a subcommand of it. A frozen bundle's executable IS the CLI (its entry
+    script is ``personalclaw/__main__.py``, and the desktop shell starts it as
+    ``<bundle> gateway …``), so the subcommand follows it directly: an interpreter's ``-m`` is
+    not an argument its parser accepts, and a gateway re-launched with one exited at once.
+    Every other install (a checkout, a wheel, a ``uv tool`` or ``pipx`` install) runs it as this
+    interpreter's ``-m personalclaw``, never as a console script found on ``PATH``, which can
+    belong to another install.
+    """
+    import sys
+
+    if is_frozen():
+        return [sys.executable]
+    return [sys.executable, "-m", "personalclaw"]
+
+
 def detect_install_kind() -> InstallKind:
     """Classify the running install as git / pip / container / desktop (C1)."""
     env_kind = (os.environ.get("PERSONALCLAW_INSTALL_KIND") or "").strip().lower()

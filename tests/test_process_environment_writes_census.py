@@ -28,6 +28,9 @@ import ast
 from pathlib import Path
 
 _AS_A_COMMAND_STARTS: dict[str, str] = {
+    "_frozen_child.py::restore_environment": (
+        "what the frozen bundle's own start-up added, taken back out before it runs anything"
+    ),
     "_ssl_compat.py::_ensure_ssl_certs": (
         "the system CA bundle for OpenSSL, as the CLI module is first imported"
     ),

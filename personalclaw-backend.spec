@@ -149,6 +149,14 @@ hidden += manifest.sdk_submodules()
 # acp:<cli> bundles import sibling helpers dynamically too — collect the whole
 # package so ``personalclaw.acp_bundles._register`` etc. always ship.
 hidden += collect_submodules("personalclaw.acp_bundles")
+# The package's own child modules, which the gateway starts by name as `<bundle> -m <module>`
+# (the resource-ceiling shim in front of every tool command among them): nothing imports them, so
+# static analysis never saw one. Read from `_frozen_child.CHILD_MODULES`, the list the bundle's
+# entry runs.
+hidden += manifest.child_modules()
+# The computer-use driver host imports its platform driver by name (`DRIVER_MODULES`), so the
+# drivers ship only if the whole package does.
+hidden += collect_submodules("personalclaw.computer_use")
 
 # LLM provider SDKs are lazy-imported inside provider classes.
 hidden += collect_submodules("openai")

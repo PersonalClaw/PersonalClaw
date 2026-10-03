@@ -192,19 +192,13 @@ def start_transient_gateway() -> tuple[int, str, subprocess.Popen]:
     The child inherits this process's environment — deliberately, so an isolated
     ``PERSONALCLAW_HOME`` stays isolated. It is NOT detached: ``run`` owns it and kills
     it by pid in ``_shutdown_transient``, so a headless invocation cannot leave a
-    gateway running behind the operator's back.
+    gateway running behind the operator's back. It is this install's own CLI
+    (``self_update.cli_argv``).
     """
-    cmd = [
-        sys.executable,
-        "-m",
-        "personalclaw",
-        "gateway",
-        "--port",
-        "auto",
-        "--no-open",
-        "--json-ready",
-    ]
     from personalclaw.env import gateway_env
+    from personalclaw.self_update import cli_argv
+
+    cmd = [*cli_argv(), "gateway", "--port", "auto", "--no-open", "--json-ready"]
 
     proc = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
         cmd,
