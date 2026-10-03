@@ -1128,6 +1128,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "PATCH /api/loops/{id}": OwnerOnly(_STARTS_LOOP),
     "POST /api/loops/{id}/autopilot": OwnerOnly(_STARTS_LOOP),
     "POST /api/loops/{id}/merge": OwnerOnly("merging a loop's work into your branch"),
+    "POST /api/loops/{id}/conflict": OwnerOnly(
+        "redoing or dropping a loop task's work that conflicts"
+    ),
     "POST /api/loops/{id}/grill-tree": OwnerOnly(_STARTS_LOOP),
     "POST /api/loops/{id}/nudge": OwnerOnly(_STARTS_LOOP),
     "POST /api/loops/{id}/plan/approve": OwnerOnly(_STARTS_LOOP),
