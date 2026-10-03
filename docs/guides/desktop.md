@@ -234,10 +234,12 @@ answers. A gateway that started and never answered, within two minutes, is said 
 ## What the desktop app runs, and what needs the installed version
 
 The desktop app runs PersonalClaw's gateway from one bundled program. It carries the Python packages
-PersonalClaw is built with, the model SDKs among them, and it starts no other Python program. So what
-runs inside the gateway runs in the desktop app, and so does an app whose code runs there: every model
-app whose packages the bundle carries (OpenAI and the OpenAI-compatible ones, Anthropic) among them.
-An app whose server runs on Node runs too, when Node is installed.
+PersonalClaw is built with, the model SDKs among them, and it starts no other Python program. So
+everything that runs inside the gateway works: chat, agents and their tools, memory and knowledge,
+automations, prompts and subagents, documents, sheets, decks and PDFs, the workflow templates and the
+bundled skills, and the PersonalClaw tools an agent CLI is given. So do the apps whose code runs in
+the gateway, every model app whose packages the bundle carries (OpenAI and the OpenAI-compatible
+ones, Anthropic) among them. An app whose server runs on Node runs too, when Node is installed.
 
 What needs a Python program of its own does not run in the desktop app. It is refused before
 anything of it starts, with one sentence that says what the desktop app can't run and that the

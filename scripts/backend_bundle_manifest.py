@@ -16,7 +16,8 @@ So the spec no longer keeps its own copy. This module derives the bundle's data 
 from `[tool.setuptools.package-data]` — the SAME declaration the wheel is built from — and
 derives the dynamically-imported module lists from the tree. Adding a data file or an SDK
 submodule now reaches the frozen bundle by the act of declaring it for the wheel; nothing
-has to be remembered twice.
+has to be remembered twice. The same holds for every module core loads by its name
+(:func:`by_name_modules`): naming one is what carries it.
 
 **Why a plain stdlib module and not PyInstaller hooks.** `tests/test_backend_bundle_manifest.py`
 asserts this derivation is COMPLETE, and that assertion has to run in the ordinary test
@@ -33,8 +34,11 @@ Imported by the spec via `importlib.util.spec_from_file_location`, the same way
 
 from __future__ import annotations
 
+import ast
 import glob
+import json
 import os
+import sys
 import tomllib
 from pathlib import Path
 
@@ -170,28 +174,194 @@ def sdk_submodules(root: Path | None = None) -> list[str]:
     return names
 
 
-def child_modules(root: Path | None = None) -> list[str]:
-    """The package's own child modules, which the bundle runs as ``<bundle> -m <module>``.
+def package_modules(root: Path | None = None) -> dict[str, bool]:
+    """Every module of the package by its dotted name, and whether it is a package.
 
-    The gateway starts each of them by NAME (``<interpreter> -m <module>``), so nothing imports
-    them and static analysis left them out of the bundle, the resource-ceiling shim in front of
-    every tool command among them. The list is the one ``personalclaw/_frozen_child.py`` declares
-    as :data:`CHILD_MODULES`, the same one the bundle's entry checks before it runs a module, and
-    it is read from that file's source rather than imported: the spec runs this outside the package.
+    Read from the files under the package tree, never imported: the spec runs this outside the
+    package, and importing it would read a home. A folder whose name is not an identifier holds
+    data, not modules: a native app's own folder (``apps/native/personalclaw-ui-docs``), whose
+    Python files ship as package data and are loaded by their path (:func:`path_loaded_imports`).
     """
-    import ast
-
     root = root or repo_root()
-    tree = ast.parse((root / SRC_PREFIX / "_frozen_child.py").read_text(encoding="utf-8"))
-    for node in tree.body:
-        if (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == "CHILD_MODULES"
-            and node.value is not None
-        ):
-            return [str(name) for name in ast.literal_eval(node.value)]
-    raise LookupError(f"{SRC_PREFIX}/_frozen_child.py declares no CHILD_MODULES")
+    src = root / "src"
+    out: dict[str, bool] = {}
+    for path in (root / SRC_PREFIX).rglob("*.py"):
+        parts = list(path.relative_to(src).with_suffix("").parts)
+        is_package = parts[-1] == "__init__"
+        if is_package:
+            parts.pop()
+        if all(part.isidentifier() for part in parts):
+            out[".".join(parts)] = is_package
+    return out
+
+
+def referenced_module(text: str, modules: dict[str, bool]) -> str | None:
+    """The module of the package *text* names, as its dotted name or as a ``module:attr``
+    reference to it (``personalclaw.tool_providers.registry:create_memory_provider``), or None."""
+    name, sep, attr = text.partition(":")
+    if sep and not attr.isidentifier():
+        return None
+    return name if name in modules else None
+
+
+def formatted_package(node: ast.JoinedStr, modules: dict[str, bool]) -> str | None:
+    """The package a name formatted from its prefix loads a module of
+    (``f"personalclaw.documents.writers.{module}"``), or None."""
+    head = node.values[0] if node.values else None
+    if not (isinstance(head, ast.Constant) and isinstance(head.value, str)):
+        return None
+    prefix = head.value
+    if prefix.endswith(".") and modules.get(prefix[:-1]):
+        return prefix[:-1]
+    return None
+
+
+def package_family(package: str, modules: dict[str, bool]) -> set[str]:
+    """*package* and every module under it."""
+    return {name for name in modules if name == package or name.startswith(f"{package}.")}
+
+
+def _strings(value: object) -> list[str]:
+    """Every string in a parsed JSON document."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for item in value.values() for s in _strings(item)]
+    if isinstance(value, list):
+        return [s for item in value for s in _strings(item)]
+    return []
+
+
+def native_manifests(root: Path | None = None) -> list[Path]:
+    """Every native app's ``app.json``."""
+    root = root or repo_root()
+    return sorted((root / SRC_PREFIX / "apps" / "native").glob("*/app.json"))
+
+
+def entry_point_modules(root: Path | None = None) -> set[str]:
+    """The module of every entry point and console script ``pyproject.toml`` declares, which
+    ``importlib.metadata`` loads by name (``provider_registry.discover_providers``)."""
+    root = root or repo_root()
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    groups = [project.get("scripts", {}), *project.get("entry-points", {}).values()]
+    return {str(target).partition(":")[0].strip() for group in groups for target in group.values()}
+
+
+def by_name_modules(root: Path | None = None) -> list[str]:
+    """Every module of the package core loads by its NAME, which the bundle therefore carries.
+
+    The analysis follows import statements, and core reaches some of its own modules by name:
+    ``importlib.import_module`` and ``__import__`` (the agent's memory, automation, prompt and
+    subagent tools, the document writers), ``importlib.resources.files`` (the bundled skills, the
+    workflow template library and its shared blocks, the route reference), a ``module:factory``
+    reference (every native app's provider), an entry point, and the child modules the bundle's
+    entry runs as ``-m <module>``. None of them reached the analysis, so the desktop app's agent
+    had no memory, automation, prompt or subagent tools, the tool server agent CLIs run exited at
+    its first tool listing, no document could be written, and the template library was empty.
+
+    Derived from the tree, never listed, so naming a module is what carries it:
+
+    * every string in the package's source that is a module's dotted name or a ``module:attr``
+      reference to one, wherever a load takes it from (a constant, a table, a keyword argument);
+    * every name formatted from a package's prefix: that package and every module under it;
+    * every string in a native app's ``app.json`` that references a module of the package (a
+      factory in the app's own folder is package data instead, ``apps/native/*/*.py``);
+    * the entry points ``pyproject.toml`` declares.
+
+    It is a superset of the loads, deliberately: a string that names a module costs the bundle
+    nothing it does not carry already, and telling a load from a mention would take the data flow
+    a scan cannot see. Every name is a module of the package, so the build never looks for one
+    that does not exist. ``tests/test_by_name_load_census.py`` holds every load site to it.
+    """
+    root = root or repo_root()
+    modules = package_modules(root)
+    named: set[str] = set()
+    for path in sorted((root / SRC_PREFIX).rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                module = referenced_module(node.value, modules)
+                if module:
+                    named.add(module)
+            elif isinstance(node, ast.JoinedStr):
+                package = formatted_package(node, modules)
+                if package:
+                    named |= package_family(package, modules)
+    for manifest in native_manifests(root):
+        for text in _strings(json.loads(manifest.read_text(encoding="utf-8"))):
+            module = referenced_module(text, modules)
+            if module:
+                named.add(module)
+    named |= {module for module in entry_point_modules(root) if module in modules}
+    return sorted(named)
+
+
+def native_app_files(root: Path | None = None) -> list[Path]:
+    """The Python files in the native apps' own folders that the loader reads by their path: each
+    manifest's factory module in the app's folder, and the app's own modules those import."""
+    root = root or repo_root()
+    todo: list[Path] = []
+    for manifest in native_manifests(root):
+        for text in _strings(json.loads(manifest.read_text(encoding="utf-8"))):
+            module, sep, attr = text.partition(":")
+            if sep and attr.isidentifier() and module:
+                file = manifest.parent / (module.replace(".", "/") + ".py")
+                if file.is_file():
+                    todo.append(file)
+    seen: list[Path] = []
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen.append(path)
+        for name in _absolute_imports(path):
+            own = _app_module_file(path.parent, name)
+            if own is not None:
+                todo.append(own)
+    return sorted(seen)
+
+
+def _absolute_imports(path: Path) -> list[str]:
+    """The module every absolute import in *path* names (``from a.b import c`` names ``a.b``)."""
+    names: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            names += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.append(node.module)
+    return names
+
+
+def _app_module_file(app_dir: Path, name: str) -> Path | None:
+    """The file in *app_dir* the import of *name* reads, when *name* is the app's own module."""
+    base = app_dir / name.replace(".", "/")
+    for candidate in (base.with_suffix(".py"), base / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def path_loaded_imports(root: Path | None = None) -> list[str]:
+    """What the native apps' own Python files import, which the bundle carries for them.
+
+    A native app may ship its provider in its own folder (``provider:create_provider``): the file
+    ships as package data and the loader reads it by its path, so the analysis never reads it, and
+    whatever it imports (the SDK, core's own third-party dependencies) reached the bundle only when
+    something else imported it too. Every absolute import of each such file is named here, except
+    the app's own modules, which ship beside it as data, and the standard library's: some of its
+    names are aliases no file holds (``collections.abc``), which the analysis cannot find by name,
+    and ``tests/test_by_name_load_census.py`` holds each one to a module the package imports, which
+    the analysis carries.
+    """
+    root = root or repo_root()
+    names: set[str] = set()
+    for path in native_app_files(root):
+        names |= {
+            name
+            for name in _absolute_imports(path)
+            if _app_module_file(path.parent, name) is None
+            and name.split(".", 1)[0] not in sys.stdlib_module_names
+        }
+    return sorted(names)
 
 
 def _top_level(name: str) -> str:

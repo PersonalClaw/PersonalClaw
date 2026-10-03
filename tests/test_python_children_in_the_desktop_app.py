@@ -212,15 +212,17 @@ def test_every_declared_module_is_a_module_of_the_package():
 
 
 def test_the_bundle_carries_every_declared_module():
-    """Nothing imports them by name, so the bundle has them only because the spec asks."""
+    """Nothing imports them, so the bundle has them only because the spec asks for every module
+    the package names (``backend_bundle_manifest.by_name_modules``), these among them."""
     spec = importlib.util.spec_from_file_location(
         "backend_bundle_manifest", _REPO / "scripts" / "backend_bundle_manifest.py"
     )
     assert spec and spec.loader
     manifest = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(manifest)
-    assert manifest.child_modules(_REPO) == list(_declared())
-    assert "manifest.child_modules()" in (_REPO / "personalclaw-backend.spec").read_text(
+    missing = set(_declared()) - set(manifest.by_name_modules(_REPO))
+    assert not missing, sorted(missing)
+    assert "manifest.by_name_modules()" in (_REPO / "personalclaw-backend.spec").read_text(
         encoding="utf-8"
     )
 

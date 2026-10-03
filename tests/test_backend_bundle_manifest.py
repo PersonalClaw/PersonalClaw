@@ -17,7 +17,9 @@ independently recomputed truth:
   silence, which is how three of its patterns came to name paths that do not exist;
 * no non-Python file under the package tree is undeclared — the rail that fires on the *next*
   asset somebody drops in without a glob, rather than on the two this set happened to name;
-* every `personalclaw.sdk.*` submodule is a hidden import, enumerated from the directory;
+* every `personalclaw.sdk.*` submodule is a hidden import, enumerated from the directory, and
+  so is every module core loads by its name (`tests/test_by_name_load_census.py` holds each
+  load site to that list);
 * the spec actually CONSUMES the derivation — a perfect manifest with no call site is the
   failure mode this repo keeps finding.
 
@@ -309,6 +311,21 @@ class TestTheSpecActuallyUsesTheDerivation:
         # A clean log only means something if the gateway actually came up and answered.
         assert "never became ready" in smoke, "a crashed gateway would pass with an empty log"
         assert "the probe proved nothing" in smoke, "an unreachable probe would pass vacuously"
+
+    def test_the_smoke_reads_what_core_loads_by_name(self):
+        """A module core loads by its name and the bundle lacks often logs nothing at all: the
+        template library is just empty, the document writers just absent. So the smoke reads each
+        surface such a module serves and fails on its absence, and none may quietly go."""
+        smoke = (_REPO_ROOT / "scripts" / "smoke_backend_bundle.sh").read_text(encoding="utf-8")
+        for surface in (
+            'not d["load_failures"]',
+            "api /api/workflows",
+            "api /api/skills",
+            '"tool": "document_formats"',
+            '"$BACKEND" mcp-core',
+            '"$BACKEND" doctor --paths',
+        ):
+            assert surface in smoke, f"the smoke stopped reading: {surface}"
 
     def test_the_manifest_is_loadable_by_path_from_the_repo_root(self):
         """The spec resolves the manifest relative to `SPECPATH`; prove that path exists and

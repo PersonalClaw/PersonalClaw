@@ -104,6 +104,52 @@ for route in /api/agent-runners /api/apps /api/config/personalclaw /api/update/c
   esac
 done
 
+# What core loads by its NAME, read where each one shows. A module the analysis cannot see and
+# the bundle lacks logs a warning at most, often nothing, while what it backs is gone: a bundle
+# that passed every check above had no memory, automation, prompt or subagent tools, a tool server
+# that exited at its first tool listing, no document writer, an empty template library, no bundled
+# skill and a route reference that named no folder. So each is read on the surface it serves, and
+# must be there. `python3` only parses the JSON; nothing of PersonalClaw runs in it.
+#
+#   /api/tools          -> every tool provider's module (memory, automation, prompts, subagents …)
+#   /api/workflows      -> the bundled template library (`personalclaw.workflows.bundled`)
+#   /api/skills         -> the bundled skills (`personalclaw.skills.bundled`)
+#   document_formats    -> the document writers (`personalclaw.documents.writers.*`)
+#   mcp-core            -> the tool server agent CLIs run, which lists every category's tools
+#   doctor --paths      -> the route reference (`personalclaw.reference`)
+#
+# MEASURED both directions on 2026-10-03, on bundles built from the tree before and after the
+# manifest derived these modules: every check RED before, GREEN after. Before, the signatures below
+# caught only the tool server's missing module, through the gateway's probe of it at start.
+expect() {
+  # $1 = what is checked, $2 = a Python expression over `d`, the JSON read from stdin
+  python3 -c "import json, sys; d = json.load(sys.stdin); sys.exit(0 if ($2) else 1)" \
+    || { echo "smoke: FAIL — $1"; exit 1; }
+  echo "smoke: $1 -> ok"
+}
+api() { curl -sf --max-time 120 "http://127.0.0.1:$PORT$1"; }
+
+api /api/tools | expect "every tool provider lists its tools" \
+  'not d["load_failures"] and {"memory_remember", "automation_list", "prompt_render",
+   "subagent_run"} <= {t["name"] for t in d["tools"]}'
+api /api/workflows | expect "the workflow template library is there" 'd["total"] > 0'
+api /api/skills | expect "the bundled skills are there" \
+  'any(s.get("source") == "bundled" for s in d)'
+curl -sf --max-time 120 -X POST -H 'Content-Type: application/json' \
+  -d '{"tool": "document_formats", "arguments": {}}' "http://127.0.0.1:$PORT/api/tools/invoke" \
+  | expect "a document writer is there" 'd["ok"] and not d["output"].endswith(": none")'
+printf '%s\n' \
+  '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "0"}}}' \
+  '{"jsonrpc": "2.0", "method": "notifications/initialized"}' \
+  '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}' \
+  | PERSONALCLAW_HOME="$SMOKE_HOME" "$BACKEND" mcp-core 2>/dev/null | tail -1 \
+  | expect "the tool server agent CLIs run lists its tools" \
+    'd.get("id") == 2 and len(d["result"]["tools"]) > 0'
+REFERENCE="$(PERSONALCLAW_HOME="$SMOKE_HOME" "$BACKEND" doctor --paths \
+  | awk -F'\t' '$1 == "reference" {print $2}')"
+test -d "$REFERENCE" || { echo "smoke: FAIL — the route reference is no folder: $REFERENCE"; exit 1; }
+echo "smoke: the route reference is a folder -> ok"
+
 cleanup
 trap - EXIT
 sleep 1

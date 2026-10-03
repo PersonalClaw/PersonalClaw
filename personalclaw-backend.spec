@@ -11,8 +11,9 @@ sibling `_internal/` directory.
 
 WHAT GOES IN IS NOT DECIDED HERE for first-party content. `scripts/backend_bundle_manifest.py`
 derives the data payload from `[tool.setuptools.package-data]` — the same declaration the
-wheel is built from — and the dynamically-imported module lists from the tree, and
-`tests/test_backend_bundle_manifest.py` asserts that derivation is complete. This file used
+wheel is built from — and the dynamically-imported module lists from the tree, every module
+core loads by its name among them, and `tests/test_backend_bundle_manifest.py` and
+`tests/test_by_name_load_census.py` assert that derivation is complete. This file used
 to transcribe those globs by hand and had drifted eleven of thirty, which is how the shipped
 `.app` came to have no `agents/runner_catalog.json` and no `tool_providers/rules_builtin.json`.
 Third-party collection stays below, where PyInstaller's knowledge of site-packages belongs.
@@ -93,70 +94,25 @@ def _assert_host_native_arch() -> None:
 _assert_host_native_arch()
 
 
-def _bundled_provider_modules():
-    """Every provider entry-point module declared by a bundled ``app.json``.
-
-    Bundled providers are loaded at runtime from each manifest's
-    ``provider.implementation`` (``module.path:factory``) via importlib, so
-    PyInstaller's static analysis can't see them. Deriving the hidden-import
-    list straight from the manifests (rather than hand-maintaining it) keeps the
-    frozen app in lockstep with the bundles: a new bundle ships automatically,
-    and none can silently drop out of the frozen binary.
-    """
-    import glob
-    import json
-    import os
-
-    mods: set[str] = set()
-    for manifest in glob.glob("src/personalclaw/apps/native/*/app.json"):
-        try:
-            with open(manifest, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            continue
-        impl = (data.get("provider") or {}).get("implementation", "")
-        module_path = impl.split(":", 1)[0].strip()
-        if module_path:
-            mods.add(module_path)
-            # Also pull the whole owning package so sibling helpers a factory
-            # imports (e.g. acp_bundles._register) come along.
-            pkg = module_path.rsplit(".", 1)[0]
-            if pkg:
-                mods.add(pkg)
-    return sorted(mods)
-
-
-# Provider entry-points are loaded dynamically (importlib), so force-include
-# them as hidden imports. Manifest-derived so the list never drifts; plus the
-# core-native model machinery, referenced by code rather than a bundled manifest:
-# the acp_agent runtime + the two inference PROTOCOL clients (OpenAI-/Anthropic-
-# compatible) that live in core and back every model app via sdk.model. (The model
-# PROVIDERS themselves — openai/anthropic/vllm/bedrock/… — are installed apps now, so
-# they are NOT listed here; they ship + load from apps/.)
-hidden = [
-    "personalclaw.llm.acp_agent",
-    "personalclaw.llm.anthropic",
-    "personalclaw.llm.openai",
-    "personalclaw.inbox_providers.slack_source",
-]
-hidden += _bundled_provider_modules()
+# The first-party modules the analysis cannot see, every one derived by the manifest and none named
+# here: a hand list beside a growing tree is how this one came to name a module that does not
+# exist, and to miss the ones core loads by name.
+#
+# Every module core loads by its NAME (`by_name_modules`): the agent's memory, automation, prompt
+# and subagent tools, the document writers, the bundled skill and template packages read through
+# `importlib.resources`, every native app's provider factory, the child modules the bundle's entry
+# runs as `-m <module>`, the entry points. Without them the desktop app's agent had none of those
+# tools and the tool server agent CLIs run exited at its first tool listing.
+hidden = manifest.by_name_modules()
+# What the native apps' own files import (`path_loaded_imports`): the loader reads those files by
+# their path, so the analysis never reads them.
+hidden += manifest.path_loaded_imports()
 # Every `personalclaw.sdk.*` submodule. An app imports core ONLY through the SDK and
 # `providers.registry` resolves that import at ENABLE time via importlib, so static analysis
 # sees none of it: the 2026-09-23 bundle could not enable a single one of the four extensions
 # it shipped (sdk.search / sdk.tts / sdk.channel / sdk.trigger_source all
 # ModuleNotFoundError). Enumerated from the directory, never named one by one.
 hidden += manifest.sdk_submodules()
-# acp:<cli> bundles import sibling helpers dynamically too — collect the whole
-# package so ``personalclaw.acp_bundles._register`` etc. always ship.
-hidden += collect_submodules("personalclaw.acp_bundles")
-# The package's own child modules, which the gateway starts by name as `<bundle> -m <module>`
-# (the resource-ceiling shim in front of every tool command among them): nothing imports them, so
-# static analysis never saw one. Read from `_frozen_child.CHILD_MODULES`, the list the bundle's
-# entry runs.
-hidden += manifest.child_modules()
-# The computer-use driver host imports its platform driver by name (`DRIVER_MODULES`), so the
-# drivers ship only if the whole package does.
-hidden += collect_submodules("personalclaw.computer_use")
 
 # LLM provider SDKs are lazy-imported inside provider classes.
 hidden += collect_submodules("openai")

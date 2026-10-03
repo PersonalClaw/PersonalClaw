@@ -22,8 +22,9 @@ hands the programs it runs the environment the gateway built for them, and a res
 image the way the desktop shell started the first.
 
 A pure-stdlib leaf, like the shim it serves: it runs before the rest of the package, on every
-spawn the shim fronts. ``scripts/backend_bundle_manifest.py`` reads :data:`CHILD_MODULES` from
-this file without importing it, so the bundle carries each module: nothing imports them by name.
+spawn the shim fronts. Nothing imports the modules :data:`CHILD_MODULES` names, so the bundle
+carries each one because it is named here: ``scripts/backend_bundle_manifest.by_name_modules``
+carries every module the package's source names.
 """
 
 from __future__ import annotations
