@@ -422,3 +422,45 @@ async def test_a_quoted_phrase_ending_in_a_note_reads_that_note(monkeypatch, tmp
 
     assert [r["found"] for r in out.report()["read"]] == ["Talks/exactly-once/outline-v2.md"]
     assert "Closing line" in model.prompts[0]
+
+
+#: The status line of a note whose text the content scan refused when Knowledge took it in.
+REFUSED = "Its text failed the content safety scan, so nothing was made from it."
+
+
+@pytest.mark.parametrize(
+    ("held", "reason"),
+    [
+        (
+            {"processing_status": "failed", "file_metadata": {"refused": REFUSED}},
+            "it is in your knowledge library but holds no text. " + REFUSED[:-1],
+        ),
+        (
+            {"processing_status": "failed", "processing_error": REFUSED},
+            "it is in your knowledge library but holds no text. " + REFUSED[:-1],
+        ),
+        ({"processing_status": "queued"}, "it is in your knowledge library but holds no text yet"),
+        (
+            {"processing_status": "unsearchable"},
+            "it is in your knowledge library but no text was read from it",
+        ),
+    ],
+    ids=["refused", "withheld", "waiting", "read-empty"],
+)
+def test_a_note_with_no_text_says_why_it_has_none(tmp_path, held, reason):
+    """A note Knowledge refused will never hold text, so it is not said to hold none "yet": the
+    draft says why it holds none, as its page does, whether its door refused it or the scan
+    withheld the text its reader made. One still waiting to be read holds none yet; one read
+    with nothing found holds none at all."""
+    from personalclaw.knowledge import get_knowledge_store
+    from personalclaw.reply_grounding import ground
+
+    _library(tmp_path, {"Garden/plan.md": ""})
+    store = get_knowledge_store()
+    (note,) = store.source_items_at("watched-dir", "Garden/plan.md")
+    store.update_item(note["id"], **held)
+    store.db.commit()
+
+    grounding = ground("Answer from my Garden/plan.md.")
+
+    assert [(u.name, u.reason) for u in grounding.unread] == [("Garden/plan.md", reason)]

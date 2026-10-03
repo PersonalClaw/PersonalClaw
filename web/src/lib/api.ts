@@ -4284,7 +4284,12 @@ export interface WatchedSource {
   revision: string
   /** 'full' | 'raw' — 'raw' is the structural no-AI promise, and what the chip reads. */
   enrichment: string
-  poll_interval_secs: number; item_type: string; enabled: boolean
+  poll_interval_secs: number
+  /** The type each of its sightings becomes, for a kind whose sightings carry their text (a
+   *  feed's entries, a page's). `''` for a watched folder: its files are kept as the kinds they
+   *  are. */
+  item_type: string
+  enabled: boolean
   /** How often the engine REALLY polls it: `poll_interval_secs` is what was chosen, and the
    *  engine keeps a floor under it (a network source is never polled faster than its floor,
    *  whatever it asks). The row states this one. */
@@ -4321,7 +4326,9 @@ export interface SourceKind {
   form: string
   previewable: boolean
   poll_interval_secs: number
-  default_item_type: string
+  /** What a new source of this kind makes of each sighting. Absent for a watched folder, whose
+   *  files are kept as the kinds they are. */
+  default_item_type?: string
   detectors?: string[]
   max_requests?: number
   formats?: string[]

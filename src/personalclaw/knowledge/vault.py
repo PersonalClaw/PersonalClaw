@@ -140,6 +140,9 @@ MAX_ITEM_BYTES = 1_000_000
 #: per row, and bounding the cheap half is what would make an edit wait for hours.
 DEFAULT_BATCH = 50
 
+#: The door an edited page's text comes through, as the security event log names it.
+VAULT_SURFACE = "knowledge_vault"
+
 #: Everything `slug` would rewrite, applied to a title first so the basename does not carry
 #: `slug`'s collision suffix on every single page. Same character class as `slug`'s own.
 _WORD_BREAK = re.compile(r"[^A-Za-z0-9._-]+")
@@ -530,6 +533,9 @@ class KnowledgeVault:
         concurrent store write because a memory value is one sentence and its previous value
         stays recoverable through ``memory_events``; a knowledge item is a document whose
         overwritten version is gone, so this refuses and surfaces instead.
+
+        The edited text is a file's, so the content scan reads it before it is applied, as it
+        reads a watched folder's (:func:`_edit_refusal`), and what it refuses is not applied.
         """
         if str(fm.get("id") or "") != item_id:
             return (False, "frontmatter id does not match the page's item")
@@ -558,6 +564,17 @@ class KnowledgeVault:
             # No-op, signalled by an EMPTY reason. See the caller: this is the one refusal
             # that must not be stamped as a conflict.
             return (False, "")
+        refused = _edit_refusal(value)
+        if refused:
+            # Stamped into the page by the caller, as every refusal here is, and said here too:
+            # nobody was there to be told.
+            logger.warning(
+                "knowledge vault: the edit to %s (item %s) was not taken in: %s",
+                row.get("relpath") or "",
+                item_id,
+                refused,
+            )
+            return (False, refused)
         self._store.update_item(item_id, content=value)
         # The contract: a body that moved invalidates every artifact derived from the old
         # text. Invalidate here (cheap, synchronous) and let the host rebuild — the same
@@ -861,6 +878,22 @@ class KnowledgeVault:
             return path.read_text(encoding="utf-8")
         except OSError:
             return ""
+
+
+def _edit_refusal(value: str) -> str:
+    """Why the content scan will not let an edited page's text into its note, as the clause the
+    page's ``sync_conflict`` says, or ``""`` when it may be taken in.
+
+    A page is a file, which any program on the machine can write, so its text is read as a file's
+    is before it becomes the note's (``knowledge.text_items``), and a scan that could not run keeps
+    the note as it was too. The sync runs on the maintenance host's worker thread, which has no
+    event loop, so the scan's child is awaited on a loop of its own."""
+    import asyncio
+
+    from personalclaw.knowledge.text_items import refusal
+
+    refused = asyncio.run(refusal(value, surface=VAULT_SURFACE))
+    return f"{refused.withheld}, so the item was not changed" if refused is not None else ""
 
 
 # ── the maintenance pass (the host, no new cadence) ─────────────────────────

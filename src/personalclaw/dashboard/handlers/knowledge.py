@@ -14,6 +14,7 @@ from aiohttp import web
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.knowledge.restructure import RestructureError
+    from personalclaw.uploads.content_scan import ContentRefused
 
 from personalclaw.dashboard.sse import stream_response
 from personalclaw.http_errors import json_error
@@ -283,6 +284,22 @@ _CREATION_PATH: dict[str, str] = {
 _DEFAULT_CREATION_PATH = "uploading a file to /ingest"
 
 
+async def _app_text_refusal(*parts: str) -> "ContentRefused | None":
+    """The content scan's refusal of the text of a note an app writes or edits, or ``None`` when
+    it may be kept (``knowledge.text_items``).
+
+    An app's note is text from outside: read by the scan before anything is kept of it, and
+    refused with the scan's answer, as an upload is, so nothing is made or changed. What the owner
+    writes herself is her own words, as what she writes in the chat is, and is not scanned."""
+    from personalclaw.apps.permissions import request_app
+
+    if not request_app():
+        return None
+    from personalclaw.knowledge.text_items import refusal
+
+    return await refusal(*parts, surface="knowledge")
+
+
 async def create_item(request: web.Request) -> web.Response:
     """POST /api/knowledge/items -- author a typed item directly (note/gist/
     bookmark/…). A bookmark records its URL on the item. Media types are uploaded
@@ -338,6 +355,10 @@ async def create_item(request: web.Request) -> web.Response:
             title = url or content[:60].strip() or "Untitled"
 
     tags = body.get("tags") if isinstance(body.get("tags"), list) else []
+    summary = str(body.get("summary") or "")
+    refused = await _app_text_refusal(title if title_given else "", summary, content)
+    if refused is not None:
+        return refused.response(refused.nothing_made)
     # Bookmark dedup: re-saving a URL already in this space returns the existing item
     # rather than creating a duplicate (a common double-save). Other types aren't
     # URL-keyed, so they're never deduped.
@@ -358,7 +379,7 @@ async def create_item(request: web.Request) -> web.Response:
         content=content,
         tags=tags,
         url=url,
-        summary=str(body.get("summary") or ""),
+        summary=summary,
         gist_language=str(body.get("gist_language") or "") if item_type == "gist" else "",
         extra={"title_source": "user"} if title_given else None,
     )
@@ -741,6 +762,11 @@ async def update_item(request: web.Request) -> web.Response:
     reingest_requested = bool_field(body, "reingest", default=True)
     if not fields and not tag_edits:
         return web.json_response({"error": "no valid fields"}, status=400)
+    # Before the item is read for the write below, which awaits nothing.
+    said = ("title", "summary", "url_title", "url_description", "content")
+    refused = await _app_text_refusal(*(str(fields.get(key) or "") for key in said))
+    if refused is not None:
+        return refused.response(refused.not_changed)
     # A title set here is a person's — typed, kept in the create form, or the suggestion she
     # took — so enrichment never replaces it again.
     if "title" in fields:
@@ -3291,10 +3317,11 @@ def _kind_descriptor(provider) -> dict:
             "presets": sorted(feed_source.PRESETS),
         }
     if isinstance(provider, dir_source.DirSourceProvider):
-        return {
+        from personalclaw.knowledge.source_engine import takes_files
+
+        folder = {
             "kind": "dir",
             "form": "dir",
-            "default_item_type": "note",
             "default_include": list(dir_source.DEFAULT_INCLUDE),
             "max_files": dir_source.MAX_FILES_PER_SOURCE,
             # The first scan's bound, so the create form states the numbers the provider
@@ -3302,6 +3329,12 @@ def _kind_descriptor(provider) -> dict:
             "first_scan_max_files": dir_source.FIRST_SCAN_MAX_FILES,
             "first_scan_max_bytes": dir_source.FIRST_SCAN_MAX_BYTES,
         }
+        # Core's own folder observer declares no `default_item_type`: the engine takes its files
+        # in as the kinds they are (`source_engine.takes_files`). A subclass hands in the text it
+        # read, as any other provider does, and that text becomes a note.
+        if not takes_files(provider):
+            folder["default_item_type"] = "note"
+        return folder
     return {"kind": "external", "form": "spec", "default_item_type": "bookmark"}
 
 
@@ -3507,6 +3540,7 @@ async def create_watched_source(request: web.Request) -> web.Response:
     The provider must be registered and poll-capable: creating a row nothing polls is the
     inert-source failure this endpoint exists to end.
     """
+    from personalclaw.knowledge.source_engine import takes_files
     from personalclaw.knowledge_providers.base import ENRICHMENTS
 
     # Shared validator, this door's envelope. This module answers flat in ninety-nine places
@@ -3539,16 +3573,29 @@ async def create_watched_source(request: web.Request) -> web.Response:
     # -- `artifact` -- unauthorable through the API, which artifact_ingest relies on), while
     # a known media type is a knowledge type a POLL cannot produce: `SourceItem` carries no
     # bytes and the engine sets no `file_path`, so it would mint file-less items forever.
-    item_type = str(body.get("item_type") or "").strip() or descriptor["default_item_type"]
-    if item_type not in _KNOWLEDGE_TYPES:
-        return web.json_response({"error": f"unknown type {item_type!r}"}, status=400)
-    if item_type not in _AUTHORABLE_TYPES:
-        return web.json_response(
-            {
-                "error": f"a watched source cannot poll '{item_type}' items; item_type must be one of {sorted(_AUTHORABLE_TYPES)}"  # noqa: E501
-            },
-            status=400,
-        )
+    # A watched folder states none: its sightings are files, each kept as the kind it is
+    # (`source_engine.takes_files`), so a type given for one would be a field nothing reads.
+    item_type = str(body.get("item_type") or "").strip()
+    if takes_files(provider):
+        if item_type:
+            return web.json_response(
+                {
+                    "error": "a watched folder keeps each file as the kind it is, so it takes no "
+                    "item_type"
+                },
+                status=400,
+            )
+    else:
+        item_type = item_type or descriptor["default_item_type"]
+        if item_type not in _KNOWLEDGE_TYPES:
+            return web.json_response({"error": f"unknown type {item_type!r}"}, status=400)
+        if item_type not in _AUTHORABLE_TYPES:
+            return web.json_response(
+                {
+                    "error": f"a watched source cannot poll '{item_type}' items; item_type must be one of {sorted(_AUTHORABLE_TYPES)}"  # noqa: E501
+                },
+                status=400,
+            )
     # Bound to a local before the isinstance check: called twice, the narrowing applies to two
     # separate reads and the value handed on stays unnarrowed (the typed body reader is what makes
     # that visible — `request.json()` returned a bare `Any`, which hid it).

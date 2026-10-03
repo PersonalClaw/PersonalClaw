@@ -49,6 +49,26 @@ def reader_text(result) -> str:
     return out.text if (out.text or "").strip() else ""
 
 
+def fetched_text(result) -> str:
+    """What the bookmark scraper fetched for the item in the run *result* (the page, or the paper
+    a document link names): its text, and the title and the description the page's head gave,
+    which the item takes as its own; ``""`` when it fetched nothing. A bookmark that holds text of
+    its own passes it through and fetches nothing, and the scraper names the address it read in
+    its metadata only when it read one.
+
+    What the content scan reads of a fetch before anything is kept of it
+    (``uploads.content_scan.scan_text``)."""
+    from personalclaw.knowledge.text_items import text_of
+
+    out = result.outputs.get(BookmarkScrapeNode.node_type)
+    if out is None or not out.success or not (out.metadata or {}).get("url"):
+        return ""
+    meta = out.metadata
+    return text_of(
+        str(meta.get("url_title") or ""), str(meta.get("url_description") or ""), out.text
+    )
+
+
 class DocumentReadNode:
     """Extract text from a file via the existing reader stack (no model)."""
 

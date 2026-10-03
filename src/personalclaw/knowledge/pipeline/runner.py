@@ -16,7 +16,12 @@ import logging
 from personalclaw.knowledge.pipeline import ensure_nodes_registered, graph_for
 from personalclaw.knowledge.pipeline import outcomes as oc
 from personalclaw.knowledge.pipeline.executor import PipelineExecutor
-from personalclaw.knowledge.pipeline.nodes.text_nodes import DocumentReadNode, reader_text
+from personalclaw.knowledge.pipeline.nodes.text_nodes import (
+    BookmarkScrapeNode,
+    DocumentReadNode,
+    fetched_text,
+    reader_text,
+)
 from personalclaw.knowledge.pipeline.outcomes import PhaseOutcome
 from personalclaw.knowledge.pipeline.types import NodeContext
 from personalclaw.knowledge.searchability import UNSEARCHABLE, reason_detail, verdict_for_ingest
@@ -118,8 +123,9 @@ async def ingest_item(
             except Exception:
                 logger.debug("knowledge ingest publish failed", exc_info=True)
 
-    # A file the library refused at its door (``knowledge.file_items.take_file``) was kept as
-    # nothing, so a re-run has nothing to read: it says why again, not that the item holds no text.
+    # An item the library refused at its door (a file, ``knowledge.file_items``; text from outside,
+    # ``knowledge.text_items``) was kept as nothing, so a re-run has nothing to read: it says why
+    # again, not that the item holds no text.
     refused = str((item.get("file_metadata") or {}).get("refused") or "")
     if refused and not item.get("file_path"):
         _merge_file_metadata(store, item_id, {"node_phases": refused_phases(item_type, refused)})
@@ -173,16 +179,32 @@ async def ingest_item(
             _cleanup_orphaned_artifacts(item_id)
             return "deleted"
 
-        # The text the document reader made of an uploaded file is scanned before anything is
-        # kept of it or a model reads it: the file's bytes were scanned when it was uploaded, and
-        # a document's text, or text beside a stray NUL byte, is not in what that scan reads.
-        if item.get("file_path") and (read := reader_text(result)):
+        # The text this run read from outside the library is scanned before anything is kept of
+        # it or a model reads it: what the document reader made of a file (its bytes were scanned
+        # when it was taken in, and a document's text, or text beside a stray NUL byte, is not in
+        # what that scan reads), and the page or the paper the bookmark scraper fetched. Text the
+        # item already held was scanned at the door it came in by, or is the owner's own
+        # (``knowledge.text_items``).
+        if item.get("file_path"):
+            read, step = reader_text(result), DocumentReadNode.node_type
+        else:
+            read, step = fetched_text(result), BookmarkScrapeNode.node_type
+        if read:
             from personalclaw.uploads.content_scan import ContentRefused, scan_text
 
             try:
                 await scan_text(read, surface="knowledge")
             except ContentRefused as exc:
-                return _withheld(store, item_id, graph, result, exc.nothing_made, _emit)
+                # Said in the gateway's log too, naming the item by where it came from, never by
+                # the text: it is read in the background, with no one there to be told.
+                logger.warning(
+                    "knowledge item %s (%s): what %s read was not kept: %s",
+                    item_id,
+                    item.get("url") or item.get("title") or "",
+                    step,
+                    exc.nothing_made,
+                )
+                return _withheld(store, item_id, graph, exc.nothing_made, _emit, step)
 
         # Persist each pooled node output into the extracted-content pool.
         store.clear_extracted_contents(item_id)
@@ -499,22 +521,22 @@ async def ingest_item(
     return status
 
 
-def _withheld(store, item_id: str, graph, result, reason: str, emit) -> str:
-    """End the ingest of a file whose text the content scan withheld (*reason*, the status line the
-    scan's refusal gives it: ``ContentRefused.nothing_made``).
+def _withheld(store, item_id: str, graph, reason: str, emit, step: str) -> str:
+    """End the ingest of an item whose text, read from outside the library, the content scan
+    withheld (*reason*, the status line the scan's refusal gives it,
+    ``ContentRefused.nothing_made``): a file's, or a page's the bookmark scraper fetched.
 
-    Nothing the graph made of it is kept, nor what an earlier ingest made of the same file (its
-    text, its pool, its chunks, its insights and its vector), no model reads it, and the item says
-    why on its status line and on the step that read it. ``failed``: nothing could be made of it.
+    Nothing the graph made of it is kept, nor what an earlier ingest made of the same item (its
+    text, its pool, its chunks, its insights and its vector), and no model reads it. So no step
+    reads as done: the step that read the text (*step*) says why it failed, and every other step,
+    each of which works on that text, says it made nothing, as an item its door refused says
+    (:func:`refused_phases`). ``failed``: nothing could be made of it.
     """
     store.clear_extracted_contents(item_id)
     store.clear_chunks(item_id)
     store.update_item(item_id, content="", insights={}, embedding=None, touch=False)
-    phases = {
-        nt: result.outcomes.get(nt, oc.skipped("It never became ready to run.")).to_dict()
-        for nt in getattr(graph, "nodes", {})
-    }
-    phases[DocumentReadNode.node_type] = oc.failed(reason).to_dict()
+    phases = {nt: oc.not_applicable(reason).to_dict() for nt in getattr(graph, "nodes", {})}
+    phases[step] = oc.failed(reason).to_dict()
     phases.update({stage: oc.not_applicable(reason).to_dict() for stage in TERMINAL_STAGES})
     _merge_file_metadata(store, item_id, {"node_phases": phases})
     store.update_item(item_id, processing_status="failed", processing_error=reason, touch=False)

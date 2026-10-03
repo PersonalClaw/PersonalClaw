@@ -31,6 +31,12 @@ A watched folder's files are the one thing it takes itself (:func:`takes_files`)
 observer's sighting names a file inside the folder, and the engine takes the file through the
 door the Knowledge page's uploads come through (``knowledge.file_items.take_watched_file``), so
 it is typed by its kind, scanned, and read by the reader for its kind, never decoded into a note.
+
+Every other sighting carries its text, from outside the gateway (a feed's entry, a page's, what an
+app's source read), and the engine scans that text before anything is kept of it
+(``knowledge.text_items``): what the scan refuses, or could not check, is a failed item that keeps
+no text and says why, named in the gateway log too, since no one was there to be told. A sighting
+the source has had is not read again, nor one whose text did not change.
 """
 
 from __future__ import annotations
@@ -39,9 +45,12 @@ import dataclasses
 import logging
 from typing import Any, Awaitable, Callable
 
-from personalclaw.knowledge import project_scope, sharing
+from personalclaw.knowledge import project_scope, sharing, text_items
 
 logger = logging.getLogger(__name__)
+
+#: The door a watched source's text comes through, as the security event log names it.
+SOURCE_SURFACE = "watched_source"
 
 #: Ceiling on one loop iteration's sleep. Mirrors the trigger scheduler's POLL_CEILING: a
 #: source added or re-enabled out of band (an MCP tool in another process editing the
@@ -527,7 +536,8 @@ class SourceEngine:
         silently mis-persisted as an ingestion.
 
         A created or modified file of a watched folder is taken by :meth:`_take_file`, which
-        keeps the same two outcomes for the file's item.
+        keeps the same two outcomes for the file's item. Any other sighting's text is scanned
+        before it is kept (:meth:`_create_new`, :meth:`_remake`).
         """
         from personalclaw.knowledge_providers.base import (
             CHANGE_CREATED,
@@ -549,8 +559,8 @@ class SourceEngine:
         if takes_files(provider):
             return await self._take_file(source, item, provider)
         if change == CHANGE_MODIFIED:
-            return self._reindex_modified(source, item)
-        return self._create_new(source, item)
+            return await self._reindex_modified(source, item)
+        return await self._create_new(source, item)
 
     @staticmethod
     def _declared_attributions(item: Any) -> list[str]:
@@ -602,19 +612,34 @@ class SourceEngine:
         )
         return True
 
-    def _create_new(self, source: dict, item: Any) -> int:
-        """First sighting → a new item, unless another source already has this story.
+    async def _create_new(self, source: dict, item: Any) -> int:
+        """First sighting → a new item, unless another source already has this story, or this
+        source has had it.
 
         Cross-source dedupe runs FIRST (§3.3): a story the library already holds from a
-        different feed becomes an attribution on that item, not a second row. Otherwise
-        ``create_typed_item`` writes the seen-row + item atomically and returns None when
-        this source's guid was already seen — the per-source novelty gate. Only a
-        genuinely-new item (an id) is enqueued, so a page that changes every render cannot
-        storm the queue.
+        different feed becomes an attribution on that item, not a second row. A sighting this
+        source has had is not read again (``KnowledgeStore.source_has_seen``, the novelty gate's
+        question asked before the read): a feed offers its whole document again whenever it
+        changed. The one it reads again is an item made of a sighting the scan could not check,
+        a check still owed (:meth:`_remake`). Then the sighting's text, from outside, is scanned
+        before anything is kept of it (``text_items.refusal``): what the scan refuses, or could
+        not check, becomes a failed item that keeps no text and says why, named by its link.
+        ``create_typed_item`` writes the seen-row + item atomically and returns None when this
+        source's guid was already seen — the per-source novelty gate. Only an item that holds
+        its text is enqueued, so a page that changes every render cannot storm the queue.
         """
         if self._merge_cross_source(source, item):
             return 0
-        extra: dict[str, Any] = {"processing_status": "queued"}
+        sid = source["id"]
+        existing = self._store.find_source_item(sid, item.guid)
+        if existing is not None:
+            if text_items.unchecked(existing):
+                return await self._remake(source, item, existing)
+            return 0
+        if self._store.source_has_seen(sid, item.guid):
+            return 0
+        scanned = await text_items.refusal(item.title, item.content, surface=SOURCE_SURFACE)
+        refused = scanned.nothing_made if scanned is not None else ""
         # The shared-store attribution rides back IN. The `provider` column already
         # says which federated store a row came from, but a shared store has many
         # contributors, so without these keys a teammate's item could only ever be attributed
@@ -622,8 +647,6 @@ class SourceEngine:
         # (`sharing.inbound_attribution`), never the provider's whole metadata blob: a poll
         # result must not be able to smuggle arbitrary metadata onto a library row.
         attribution = sharing.inbound_attribution(item.metadata)
-        if attribution:
-            extra["file_metadata"] = attribution
         # …and it stays FILED under the container it was written in. `session_brief.load_items`
         # — the one path by which a knowledge item reaches a run's prompt — reads items by
         # exactly this tag, so an inbound shared item with no tag would be attributed and
@@ -631,16 +654,34 @@ class SourceEngine:
         # helper the persist path uses, so the writer and the brief cannot drift on the tag's
         # shape. A `project_id` no local project answers to is a harmless dangling tag.
         scope_tags = project_scope.scope_tags(attribution.get(project_scope.PROJECT_ID_KEY, ""))
+        item_type = source.get("item_type") or "bookmark"
+        # What the item was made of, so a sighting whose text did not change is not read again.
+        meta = {**attribution, "content_hash": text_items.digest(item.title, item.content)}
+        if refused:
+            refused_id = self._store.create_typed_item(
+                item_type=item_type,
+                title=item.url or item.guid,
+                url=item.url,
+                provider=source["provider"],
+                source_id=sid,
+                guid=item.guid,
+                tags=scope_tags or None,
+                extra=text_items.refused_fields(item_type, refused, meta),
+            )
+            if refused_id is None:
+                return 0
+            self._said_refused(source, item, refused)
+            return 1
         item_id = self._store.create_typed_item(
-            item_type=source.get("item_type") or "bookmark",
+            item_type=item_type,
             title=item.title or item.url or item.guid,
             content=item.content,
             url=item.url,
             provider=source["provider"],
-            source_id=source["id"],
+            source_id=sid,
             guid=item.guid,
             tags=scope_tags or None,
-            extra=extra,
+            extra={"processing_status": "queued", "file_metadata": meta},
         )
         if item_id is None:
             return 0
@@ -653,8 +694,8 @@ class SourceEngine:
         self._emit_ingested(source, item, item_id, CHANGE_CREATED)
         return 1
 
-    def _reindex_modified(self, source: dict, item: Any) -> int:
-        """An edited item → update the EXISTING row and re-enqueue it.
+    async def _reindex_modified(self, source: dict, item: Any) -> int:
+        """An edited item → the EXISTING row remade of its new text (:meth:`_remake`).
 
         No second row: a mutable corpus (an app's source over a repository's files) re-emits
         the same guid every time a file changes, so keying off the existing item is what makes
@@ -664,28 +705,82 @@ class SourceEngine:
         :meth:`_take_file`'s, which keys off the existing item the same way."""
         existing = self._store.find_source_item(source["id"], item.guid)
         if existing is None:
-            return self._create_new(source, item)
-        item_id = existing["id"]
-        fields: dict[str, Any] = {
-            "title": item.title or existing.get("title") or item.guid,
-            "content": item.content,
-            "processing_status": "queued",
-        }
-        if existing.get("is_archived"):
-            # The guid came BACK (a deleted file restored, a volume remounted): revive the
-            # original item and drop the delete stamp, rather than leaving the user with an
-            # archived row plus no live one for a file that is plainly there again.
-            meta = existing.get("file_metadata")
-            meta = dict(meta) if isinstance(meta, dict) else {}
-            meta.pop("source_deleted_at", None)
-            fields["is_archived"] = 0
-            fields["file_metadata"] = meta
-        self._store.update_item(item_id, **fields)
-        self._enqueue(item_id)
-        from personalclaw.knowledge_providers.base import CHANGE_MODIFIED
+            return await self._create_new(source, item)
+        return await self._remake(source, item, existing)
 
-        self._emit_ingested(source, item, item_id, CHANGE_MODIFIED)
+    async def _remake(self, source: dict, item: Any, existing: dict) -> int:
+        """Remake *existing*, the item this source made of the sighting's guid, of the
+        sighting's text; return 1 if it was re-indexed or refused, else 0.
+
+        Text that did not change since the item was made of it (``file_metadata.content_hash``)
+        is not read again, unless the item is archived or the scan could not check it then.
+        Otherwise the text is scanned before it is kept: refused, the item keeps none of what it
+        held (its text, its pool, its passages, its insights, its vector) and says why; passed,
+        it holds the new text and is re-enqueued. Either way it is live again: a guid that came
+        BACK (a deleted file restored, a volume remounted) revives the original item and drops
+        the delete stamp, rather than leaving the user with an archived row plus no live one
+        for a file that is plainly there again."""
+        from personalclaw.knowledge_providers.base import CHANGE_CREATED
+
+        item_id = existing["id"]
+        meta = existing.get("file_metadata")
+        meta = dict(meta) if isinstance(meta, dict) else {}
+        content_hash = text_items.digest(item.title, item.content)
+        if (
+            meta.get("content_hash") == content_hash
+            and not existing.get("is_archived")
+            and not text_items.unchecked(existing)
+        ):
+            return 0
+        scanned = await text_items.refusal(item.title, item.content, surface=SOURCE_SURFACE)
+        refused = scanned.nothing_made if scanned is not None else ""
+        meta.pop("source_deleted_at", None)
+        meta["content_hash"] = content_hash
+        if refused:
+            item_type = existing.get("item_type") or existing.get("type") or "bookmark"
+            self._store.clear_extracted_contents(item_id)
+            self._store.clear_chunks(item_id)
+            self._store.update_item(
+                item_id,
+                title=item.url or item.guid,
+                content="",
+                insights={},
+                embedding=None,
+                is_archived=0,
+                **text_items.refused_fields(item_type, refused, meta),
+            )
+            self._said_refused(source, item, refused)
+            return 1
+        # What the last ingest, or a refusal, said of the item it was is not what this one is.
+        meta.pop("refused", None)
+        meta.pop("node_phases", None)
+        self._store.update_item(
+            item_id,
+            title=item.title or existing.get("title") or item.guid,
+            content=item.content,
+            is_archived=0,
+            file_metadata=meta,
+            processing_status="queued",
+            processing_error=None,
+        )
+        self._enqueue(item_id)
+        self._emit_ingested(
+            source, item, item_id, getattr(item, "change", CHANGE_CREATED) or CHANGE_CREATED
+        )
         return 1
+
+    @staticmethod
+    def _said_refused(source: dict, item: Any, reason: str) -> None:
+        """Say in the gateway's log that a sighting's text was not kept, and why (*reason*, the
+        item's status line), naming the source and the sighting by its identity, never by its
+        text: no one was there to be told."""
+        logger.warning(
+            "watched source %s (%s): %s was not taken: %s",
+            source["id"],
+            source.get("name") or "",
+            item.guid,
+            reason,
+        )
 
     async def _take_file(self, source: dict, item: Any, provider: Any) -> int:
         """A watched folder's created or modified file → its item, taken as an upload is.

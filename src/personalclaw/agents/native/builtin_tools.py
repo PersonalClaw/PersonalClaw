@@ -342,6 +342,15 @@ def _enrich_in_background(item_id: str) -> None:
     task.add_done_callback(_bg_ingest_tasks.discard)
 
 
+async def _knowledge_refusal(*parts: str):
+    """The content scan's refusal of text the agent writes into the knowledge library, or ``None``
+    when it may be kept (``knowledge.text_items``): what an agent saves there is often what it read
+    on the web, and the library is recalled into prompts. Nothing is written when it is refused."""
+    from personalclaw.knowledge.text_items import refusal
+
+    return await refusal(*parts, surface="knowledge")
+
+
 def _stored_secret(key: str) -> str:
     """What a command's ``{{secret:KEY}}`` is filled with: a credential the owner stored by name in
     Settings → Secrets, and nothing else, or ``""``.
@@ -1892,6 +1901,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             from datetime import datetime
 
             title = datetime.now().strftime("%B %-d, %Y")
+        if (refused := await _knowledge_refusal(title, content)) is not None:
+            return ToolResult(success=False, error=f"knowledge_create: {refused.nothing_made}")
         tags = _t if isinstance((_t := a.get("tags")), list) else []
         extra: dict[str, Any] = {"processing_status": "queued"}
         if item_type == "gist":
@@ -2118,6 +2129,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             store.db.commit()
             return "ok"
 
+        said = (str(fields.get(key) or "") for key in ("title", "content"))
+        if (refused := await _knowledge_refusal(*said)) is not None:
+            return ToolResult(success=False, error=f"knowledge_update: {refused.not_changed}")
         result = await asyncio.get_event_loop().run_in_executor(None, _update)
         if result == "not_found":
             return ToolResult(
@@ -2259,6 +2273,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                 enqueue=_enrich_in_background,
             )
 
+        said = (str(a.get(key, "") or "") for key in ("summary", "content", "expectation"))
+        if (refused := await _knowledge_refusal(*said)) is not None:
+            return ToolResult(success=False, error=f"log_decision: {refused.nothing_made}")
         try:
             row = await asyncio.get_event_loop().run_in_executor(None, _log)
         except DecisionError as exc:

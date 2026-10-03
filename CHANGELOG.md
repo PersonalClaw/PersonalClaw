@@ -173,6 +173,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Removed
 
+- **A watched folder's item type, which nothing read since its files are kept as their own kinds: a folder source states none, and one created with one is refused.**
 - **`POST /api/models/local/{provider}/selftest`, `GET /api/models/local/{provider}/health` and `POST /api/model-providers/{name}/selftest`: a model's Test is `POST /api/models/test`.**
 - **The app manifest's `loggerRoots` (`AppManifest.loggerRoots`), since an app's log lines are recognised by the code that logs them: `bedrock-models`, `code-review`, `companion`, `design-critique`, `docs-slides`, `inbox-github-notifications`, `issue-radar`, `mail-inbox`, `notes`, `ops`, `research-lab`, `spec-builder`, `watched-source-github`, `discord-channel`, `email-channel`, `slack-channel` and `telegram-channel` drop it.**
 
@@ -186,6 +187,8 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A Knowledge item whose text the content safety scan withheld shows each step after the one that read the text as not run, saying why, where those steps read as done though nothing they made was kept.**
+- **A drafted reply that names a note with no text says why: a note Knowledge refused, or whose text the scan withheld, says so in the item's own words, and one read with nothing found says no text was read from it, where each was said to hold no text yet.**
 - **In the desktop app, what needs a Python program of its own is refused before it starts, saying the desktop app can't run it and the version installed with uv can, where it failed with a usage error or said nothing: an app with its own Python server, a worker, an engine, parse scripts or packages the desktop app does not carry (its Store card, Library card, install and Activate say so, and one already installed is never started), Install engine, an app's own tests, and on Linux a command in the sandbox, which never runs outside it.**
 - **Model and channel apps whose SDK the desktop app carries (OpenAI and the OpenAI-compatible ones, Anthropic, Slack) install in the desktop app, where their install asked for a pip it does not have; and `personalclaw doctor` there no longer reports its packages missing and its pip broken.**
 - **The desktop app leaves alone the Python packages the version installed with uv installs for its apps in the PersonalClaw folder they share, where it deleted them each time it started.**
@@ -1106,6 +1109,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Security
 
+- **Text from outside is read by the content safety scan before Knowledge keeps it: a watched feed's or page's entries, an app's source's items (a repository's files among them), the page a bookmark fetches, a web watch's new items, a note an app, the agent or a workflow writes or edits, and an edit made in a knowledge vault page; what the scan refuses or could not check is kept as nothing and says why, where it was stored, searched and recalled into prompts unscanned. A note you write yourself is kept as you wrote it, as your chat messages are.**
 - **A file in a folder Knowledge watches is taken in as an upload is: the content safety scan checks it, the reader for its kind reads it (a script's code, a PDF's text, a picture), and one the scan refuses becomes a failed item that keeps no text, where every matched file became a note of its bytes read as text that nothing had scanned; and neither a watched folder nor the memory vault's `raw/` folder takes a file still being copied in, which became an item of the part copied so far.**
 - **A file dropped in the memory vault's `raw/` folder is taken into Knowledge as an upload is: the content safety scan checks it, the reader for its kind reads it (a script's code, a PDF's text, a picture), and one Knowledge refuses becomes a failed item that says why, where it became a note with nothing read from it but its name, or with text no scan had checked; a second file of the same name no longer replaces the first in `raw/.ingested/`.**
 - **The agents an app's agent starts are the app's work too: a batch of subagents never starts on your YOLO, a chat's Trust or the hook setting, and each of its tasks, each subagent the app's agent starts and each step of a workflow run it starts runs at no more than the app's agent tier and approves none of its calls, so each call that needs approval asks you, and the ask names the app and its scheduled job. A batch from an app whose tier is text, or that holds none, starts nothing and says why, and a refused subagent is no longer reported as queued (affects `research-lab`).**

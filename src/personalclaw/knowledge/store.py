@@ -1396,6 +1396,15 @@ class KnowledgeStore:
                 ON items(url)
                 WHERE source_id IS NOT NULL;
         """)
+        # A watched folder keeps each of its files as the kind it is, so its row states no item
+        # type (``create_source``). One an earlier version saved stated the type its notes were
+        # made as, which nothing reads now; cleared, so every folder's row reads the same.
+        from personalclaw.knowledge_providers.dir_source import DirSourceProvider
+
+        self.db.execute(
+            "UPDATE sources SET item_type = '' WHERE provider = ? AND item_type != ''",
+            (DirSourceProvider(None).name,),
+        )
         self.db.commit()
 
     # ── WatchedSource store ─────────────────────────────────────────────────────────
@@ -1410,11 +1419,16 @@ class KnowledgeStore:
         enrichment: str = "full",
         poll_interval_secs: int = 3600,
         budget: dict | None = None,
-        item_type: str = "bookmark",
+        item_type: str = "",
         enabled: bool = True,
         created_by: str = "user",
     ) -> str:
-        """Persist a WatchedSource row and return its ``src-<8hex>`` id (§1.2)."""
+        """Persist a WatchedSource row and return its ``src-<8hex>`` id (§1.2).
+
+        ``item_type`` is the kind of item each of the source's sightings becomes, for a source
+        whose sightings carry their text (a feed's entries, a page's); ``""`` states none, and
+        the engine makes such a sighting a bookmark. A watched folder states none: its
+        sightings are files, each kept as the kind it is."""
         sid = f"src-{uuid4().hex[:8]}"
         now = utc_now_iso()
         self.db.execute(
@@ -1483,7 +1497,6 @@ class KnowledgeStore:
         "enabled": lambda v: 1 if v else 0,
         "enrichment": str,
         "poll_interval_secs": int,
-        "item_type": str,
         "spec": lambda v: json.dumps(v or {}),
         "budget": lambda v: json.dumps(v or {}),
     }
@@ -1773,6 +1786,21 @@ class KnowledgeStore:
             (provider, rel, "%/" + _like_escape(rel)),
         ).fetchall()
         return self._serialize_items(rows)
+
+    def source_has_seen(self, source_id: str, guid: str) -> bool:
+        """Whether *source_id* has had a sighting of *guid*: its seen-set holds it, or an item
+        was made of it (the seen-set is capped and forgets its oldest; the item does not).
+
+        The novelty gate's question, asked before a sighting is read, so one the gate would
+        refuse costs no read: a feed offers its whole document again whenever it changed."""
+        if not (source_id and guid):
+            return False
+        row = self.db.execute(
+            "SELECT 1 FROM source_seen WHERE source_id = ? AND guid = ? "
+            "UNION ALL SELECT 1 FROM items WHERE source_id = ? AND guid = ? LIMIT 1",
+            (source_id, guid, source_id, guid),
+        ).fetchone()
+        return row is not None
 
     def mark_source_seen(self, source_id: str, guid: str) -> bool:
         """Record that *source_id* has now seen *guid*, writing NO item (§3.3).

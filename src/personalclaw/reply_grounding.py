@@ -299,7 +299,7 @@ def _read_named(name: str) -> Note | Unread:
         content = str(note.get("content") or "")
         found = str(note.get("guid") or name)
         if not content.strip():
-            return Unread(name, "it is in your knowledge library but holds no text yet")
+            return Unread(name, _why_no_text(note))
         text, cut = _masked(content, MAX_NOTE_CHARS)
         return Note(name, found, LIBRARY, text, cut)
     try:
@@ -325,6 +325,21 @@ def _read_named(name: str) -> Note | Unread:
         return Unread(name, "it is empty")
     text, cut = _masked(content, MAX_NOTE_CHARS)
     return Note(name, name, WORKSPACE, text, cut or len(data) == _MAX_FILE_BYTES)
+
+
+def _why_no_text(note: dict) -> str:
+    """Why a note in the library holds no text, as a clause she reads: what its page says when it
+    never will (Knowledge refused it at its door, or its reading failed), that it holds none yet
+    while it waits to be read, else that no text was read from it."""
+    status = str(note.get("processing_status") or "")
+    why = str((note.get("file_metadata") or {}).get("refused") or "")
+    if not why and status == "failed":
+        why = str(note.get("processing_error") or "")
+    if why.strip():
+        return f"it is in your knowledge library but holds no text. {why.strip().rstrip('.')}"
+    if status in ("queued", "processing"):
+        return "it is in your knowledge library but holds no text yet"
+    return "it is in your knowledge library but no text was read from it"
 
 
 def _library_notes(name: str) -> list[dict]:

@@ -111,6 +111,19 @@ byte-order mark is read in the encoding the mark names. That text reaches the mo
 (`security.fence_untrusted`), as a fetched page does: an attachment's text in a chat turn, a
 referenced Knowledge item, and a document read with `read_file`.
 
+Text from outside that the library keeps with no file is read by the same rules before it is
+stored (`knowledge.text_items`): a watched source's entries (see Watched sources, below), the page
+or paper a bookmark's scraper fetches (scanned before the ingest keeps any of it), a web watch's
+new items (`triggers/web_poll.py`), a note an app writes or edits through `/api/knowledge/items`,
+one the agent writes with `knowledge_create`, `knowledge_update` or `log_decision`, one a
+workflow's `knowledge-persist` step writes, and an edit made to a page of the knowledge vault
+(`knowledge/vault.py`), which is a file. A door with someone to answer is told in the scan's words
+and nothing is written: "Its text failed the content safety scan, so nothing was made from it." for
+a new note, "…, so the item was not changed." for an edit. A source's entry or a web watch's item
+the scan refuses is a failed item that keeps no text and says why, named in the gateway log; the
+vault leaves the note as it was and stamps why into the page (`sync_conflict`). A note the owner
+writes in the app is her own words, as her chat message is, and is not scanned.
+
 Refused content is answered 422 `upload_content_refused`, and nothing is made from it. A scan that
 did not run is never read as a pass: a window that cannot be read, a child that cannot start, one
 silent past 60 s, and one that ends without an answer (as it does when the scanner raises on the
@@ -332,6 +345,16 @@ advancing the cursor only after every item is durable.
   for the next pass (see the content scan, above). A note an earlier version made
   of a watched file is left as it was until the file next changes; to have one
   read the new way now, save its file again.
+- **Any other sighting's text is scanned before it is kept.** A feed's entry, a page's, and what
+  an app's source hands in (a repository's files, a shared store's items) carry their text, and
+  the engine scans it (`text_items.refusal`) before `create_typed_item` writes anything. What the
+  scan refuses, or could not check, is a failed item named by its link or its guid that keeps no
+  text, said in the gateway log. A sighting the source has had is not read again
+  (`KnowledgeStore.source_has_seen`, the novelty gate's question asked before the scan), except
+  one the scan could not check, which is read when the source offers it again. A change the source
+  reports is read when its text moved (`file_metadata.content_hash`); refused, the item keeps none
+  of what it held. A watched folder states no `item_type`: its files are kept as their own kinds,
+  so its kind declares no `default_item_type` and a create that names one is refused.
 - **A watched folder's first scan** reads in what is already there, newest
   first, up to `FIRST_SCAN_MAX_FILES` files or `FIRST_SCAN_MAX_BYTES`, each
   file counted whole; a file too large for what is left of the bytes is left out

@@ -29,7 +29,10 @@ upload is scanned too, before a model is handed it or it is stored for one (:fun
 chat or an Inbox attachment's text, a Knowledge document's and a code file's, and a document the
 agent opens with ``read_file``. It is read the same way and by the same surfaces, except that no
 window of it is skipped for holding a NUL byte: a reader made it, so it is text, and it is what
-the model reads.
+the model reads. Text from outside that Knowledge keeps with no file is read the same way before
+it is kept (``knowledge.text_items``): a watched source's entries, the page a bookmark fetches, a
+web watch's new items, the notes an app, the agent or a workflow writes, and a knowledge vault
+page's edit.
 
 Why a child process. The scan holds the interpreter lock for long stretches: one of its rules
 parses the window as Python, and one parse of a window that reads as Python (source code, JSON
@@ -101,6 +104,12 @@ def nothing_made(why: str) -> str:
     return f"{why[:1].upper()}{why[1:]}, so nothing was made from it."
 
 
+def not_changed(why: str) -> str:
+    """What an edit of a library item whose new text the scan withheld says, for the reason *why*
+    (:data:`WITHHELD`): the item keeps what it held."""
+    return f"{why[:1].upper()}{why[1:]}, so the item was not changed."
+
+
 class ContentRefused(UploadError):
     """The scan's answer that an upload may not be used, with its wire code.
 
@@ -121,14 +130,22 @@ class ContentRefused(UploadError):
         """The status line of a library item whose file this withheld (:func:`nothing_made`)."""
         return nothing_made(self.withheld)
 
-    def response(self) -> web.Response:
-        """The wire answer: ``{"error": {"code", "message"}}`` with this refusal's status."""
+    @property
+    def not_changed(self) -> str:
+        """What an edit whose new text this withheld says (:func:`not_changed`)."""
+        return not_changed(self.withheld)
+
+    def response(self, message: str = "") -> web.Response:
+        """The wire answer: ``{"error": {"code", "message"}}`` with this refusal's status. The
+        message is the upload's unless the route says what it refused (*message*): a note's text
+        is not an upload."""
         from personalclaw.http_errors import json_error
 
+        said = message or self.message
         # Each code a literal, so the wire-code registry's check sees it.
         if self.code == REFUSED_CODE:
-            return json_error("upload_content_refused", message=self.message, status=self.status)
-        return json_error("upload_content_unchecked", message=self.message, status=self.status)
+            return json_error("upload_content_refused", message=said, status=self.status)
+        return json_error("upload_content_unchecked", message=said, status=self.status)
 
 
 def read_window(path: Path) -> bytes | None:
@@ -235,14 +252,17 @@ async def scan_upload(upload: Path | bytes, category: str, *, surface: str) -> N
 
 
 async def scan_text(text: str, *, surface: str) -> None:
-    """Scan the text a reader made of an upload, before a model is handed it or it is kept for one.
+    """Scan text before a model is handed it or it is kept for one: what a reader made of an
+    upload, or text from outside that Knowledge keeps (``knowledge.text_items``).
 
-    *surface* is where the text is going, for the security event log: ``attachment`` (a chat),
-    ``inbox`` (an Inbox message's attachment), ``knowledge`` (the library) or ``read_file`` (the
-    agent's file tool). Read as :func:`scan_upload` reads a file, whole up to
-    :data:`WHOLE_FILE_BYTES` and else as its first and last window, except that no window is
-    skipped for holding a NUL byte: a reader made this text, so it is text, and the model reads
-    all of it. Returns when it may be handed on; raises :class:`ContentRefused` when it may not.
+    *surface* is where the text is going, or the door it came by, for the security event log:
+    ``attachment`` (a chat), ``inbox`` (an Inbox message's attachment), ``knowledge`` (the
+    library), ``read_file`` (the agent's file tool), ``watched_source`` (a watched source's
+    entries), ``web_watch`` (a web watch's new items) or ``knowledge_vault`` (an edit of a vault
+    page). Read as :func:`scan_upload` reads a file, whole up to :data:`WHOLE_FILE_BYTES` and else
+    as its first and last window, except that no window is skipped for holding a NUL byte: this is
+    text already, and the model reads all of it. Returns when it may be handed on; raises
+    :class:`ContentRefused` when it may not.
     """
     data = text.encode("utf-8", errors="replace")
     if not data.strip():

@@ -191,6 +191,17 @@ class KnowledgePersistActionProvider(ActionProvider):
             existing_hash=existing_hash,
             mode=mode,
         )
+        if decision.action in ("create", "update"):
+            # The text this writes is not the owner's own: often what an earlier step read on
+            # the web, and the library is recalled into prompts. So it is scanned before it is
+            # kept (`knowledge.text_items`), and a refusal is returned with the scan's sentence,
+            # with nothing written. A no-op or a reinforcement writes no new text.
+            from personalclaw.knowledge.text_items import refusal
+
+            refused = await refusal(title, summary, body, surface="knowledge")
+            if refused is not None:
+                said = refused.nothing_made if decision.action == "create" else refused.not_changed
+                return ActionResult(success=False, error=said)
 
         if decision.action == "noop":
             return ActionResult(

@@ -271,15 +271,71 @@ def test_a_dir_source_pointing_at_a_sensitive_path_is_refused(store, registered,
     assert "sensitive" in body["error"] or "does not exist" in body["error"]
 
 
-def test_a_real_dir_saves_with_the_kinds_own_default_item_type(store, registered, tmp_path):
+def test_a_folder_saves_with_no_item_type(store, registered, tmp_path):
+    """A watched folder keeps each of its files as the kind it is (a document, a script, a
+    picture), so it states no item type: the field it carried was read by nothing."""
     watched = tmp_path / "notes"
     watched.mkdir()
 
     resp, body = _create(store, name="Notes", provider="watched-dir", spec={"path": str(watched)})
 
     assert resp.status == 201
-    assert body["source"]["item_type"] == "note"
+    assert body["source"]["item_type"] == ""
     assert body["source"]["kind"] == "dir"
+    assert [s["item_type"] for s in store.list_sources()] == [""]
+
+
+def test_a_folder_is_refused_an_item_type(store, registered, tmp_path):
+    watched = tmp_path / "notes"
+    watched.mkdir()
+
+    resp, body = _create(
+        store, name="Notes", provider="watched-dir", spec={"path": str(watched)}, item_type="note"
+    )
+
+    assert resp.status == 400
+    assert "item_type" in body["error"] and "kind" in body["error"]
+    assert store.list_sources() == []
+
+
+def test_a_folder_kind_offers_no_item_type(store, registered):
+    _, body = _get_sources(store)
+
+    (folder,) = [k for k in body["kinds"] if k["form"] == "dir"]
+    assert "default_item_type" not in folder
+    assert all("default_item_type" in k for k in body["kinds"] if k["form"] != "dir")
+
+
+def test_a_folder_observer_extended_elsewhere_still_offers_an_item_type(store):
+    """Only core's own folder observer has its files taken in as their kinds. A subclass hands in
+    the text it read, as any other provider does, so its kind still says what that text becomes."""
+
+    class _Extended(DirSourceProvider):
+        pass
+
+    assert H._kind_descriptor(_Extended(store))["default_item_type"] == "note"
+    assert "default_item_type" not in H._kind_descriptor(DirSourceProvider(store))
+
+
+def test_a_folder_an_earlier_version_saved_states_no_item_type_once_opened(tmp_path):
+    """A folder saved before stated the type its notes were made as; nothing reads it now, so
+    the row is cleared when the library opens, and every folder reads the same."""
+    path = str(tmp_path / "library.db")
+    first = KnowledgeStore(path)
+    first.create_source(
+        name="Notes", provider="watched-dir", kind="dir", spec={"path": "/x"}, item_type="note"
+    )
+    first.create_source(
+        name="Feed", provider="watched-feed", kind="feed", spec={}, item_type="bookmark"
+    )
+    first.db.close()
+
+    reopened = KnowledgeStore(path)
+
+    assert {s["name"]: s["item_type"] for s in reopened.list_sources()} == {
+        "Notes": "",
+        "Feed": "bookmark",
+    }
 
 
 def test_a_row_states_the_interval_the_engine_really_polls_at(store, registered, tmp_path):
@@ -443,15 +499,14 @@ def test_every_declared_default_item_type_survives_the_guard(store, registered, 
     which no enrolled provider exercises and which would otherwise be the one default that
     could rot into a 400 nobody could act on.
     """
-    watched = tmp_path / "watched"
-    watched.mkdir()
     specs = {
         "watched-page": {"url": PAGE_URL},
         "watched-feed": {"kind": "rss", "url": "https://f.example.com/f"},
-        "watched-dir": {"path": str(watched)},
     }
     declared = {}
-    for prov in (registered.web, registered.feed, registered.dir):
+    # The kinds whose sightings carry their text. A folder's are files, kept as their own kinds,
+    # so it declares no default (`test_a_folder_kind_offers_no_item_type`).
+    for prov in (registered.web, registered.feed):
         default = H._kind_descriptor(prov)["default_item_type"]
         declared[prov.name] = default
         # …and it is admissible where it is actually consumed: with `item_type` OMITTED,
@@ -464,7 +519,6 @@ def test_every_declared_default_item_type_survives_the_guard(store, registered, 
     assert declared == {
         "watched-page": "bookmark",
         "watched-feed": "bookmark",
-        "watched-dir": "note",
     }
     # The fourth default: the generic descriptor for a provider matching none of the three.
     generic = H._kind_descriptor(SimpleNamespace(name="app-contributed"))

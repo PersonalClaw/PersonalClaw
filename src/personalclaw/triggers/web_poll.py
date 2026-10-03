@@ -544,27 +544,60 @@ def _route_to_knowledge(trigger: Any, url: str, fresh_raw: list[str], store: Any
     memory subsystem. The seen-set already gated "new", so only fresh items reach here; returns the
     count written.
 
+    An item's key is text off someone else's page, so it is scanned before it is kept
+    (``knowledge.text_items``). What the scan refuses, or could not check, is a failed bookmark
+    that keeps none of it, named by the watched page, and said in the gateway's log, since no one
+    was there to be told.
+
     NEVER raises: a knowledge-store failure must not kill the poll (the never-die contract) — it is
     logged and the fire still happens. `store` is injected in tests; in production it defaults to
     the process-wide `KnowledgeStore` (opened `check_same_thread=False`, so the poll worker may
     write it).
     """
+    from personalclaw.knowledge import text_items
+
     written = 0
     try:
         if store is None:
             from personalclaw.knowledge import get_knowledge_store
 
             store = get_knowledge_store()
-        for raw in fresh_raw:
+        # Every new item is scanned before any is kept, several at once: a poll has no cap on how
+        # many it brings, and one scan after another holds the fire for most of a second each.
+        verdicts = _await_maybe(
+            text_items.refusals([(raw,) for raw in fresh_raw], surface="web_watch")
+        )
+        for raw, scanned in zip(fresh_raw, verdicts, strict=True):
             item_url = raw if raw[:4].lower() == "http" else ""
             title = raw if len(raw) <= 200 else raw[:197] + "..."
+            summary = f"New item from web watch {trigger.name!r} ({url})"
+            tags = ["web-watch", trigger.name]
+            if scanned is not None:
+                refused = scanned.nothing_made
+                item_id = store.create_typed_item(
+                    item_type="bookmark",
+                    title=url,
+                    provider="web_watch",
+                    summary=summary,
+                    tags=tags,
+                    extra=text_items.refused_fields("bookmark", refused),
+                )
+                logger.warning(
+                    "web watch %s: new item %s on %s was not taken: %s",
+                    trigger.id,
+                    item_id,
+                    url,
+                    refused,
+                )
+                written += 1
+                continue
             store.create_typed_item(
                 item_type="bookmark",
                 title=title,
                 url=item_url,
                 provider="web_watch",
-                summary=f"New item from web watch {trigger.name!r} ({url})",
-                tags=["web-watch", trigger.name],
+                summary=summary,
+                tags=tags,
             )
             written += 1
     except Exception:  # noqa: BLE001 - see the docstring
