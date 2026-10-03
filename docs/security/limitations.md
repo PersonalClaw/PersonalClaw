@@ -680,11 +680,15 @@ views show, and it has these edges:
   steps, a knowledge item's digest and a sync-conflict merge you review have no tools to read
   with. They pass the outbound scan at the model-call guard instead: at `guardrails.scan_mode`'s
   default, `redact`, a credential in the prompt is replaced before it leaves; `block` refuses the
-  call and `warn` sends it. A provider the guard counts as local keeps `warn` whatever the setting
-  says, so its prompt is scanned and then sent as written. It counts a provider as local by where
-  its endpoint is: `localhost`, a loopback address, or `0.0.0.0`, which reaches this machine. An
-  Ollama or any other model server on another machine is scanned like a hosted provider, and so
-  is a provider that names no endpoint, such as the bundled model running inside the gateway.
+  call and `warn` sends it. A model that runs on this machine keeps `warn` whatever the setting
+  says, so its prompt is scanned and then sent as written. The guard asks that of the model each
+  call is for (`llm.registry.served_on_this_machine`): a model runs here when it runs inside the
+  gateway (the bundled offline model), or when a model server that runs its models where it is
+  (Ollama, vLLM) is at `localhost`, a loopback address or `0.0.0.0` and does not pass that model on.
+  A model your Ollama answers from Ollama's cloud (its tag says `cloud`, or the server names the
+  host it answers it from) is passed on, so its prompt is scanned like a hosted provider's, as is
+  every model of a server on another machine and of an OpenAI-compatible endpoint, which can pass
+  a prompt on to a cloud service from any address.
   Masking these would put a marker
   into answers that are written back, such as a merge you accept. PersonalClaw's own chores (a
   title, follow-ups, memory consolidation) are one-shot calls too, and they are masked as well as

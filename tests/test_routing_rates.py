@@ -144,7 +144,7 @@ def test_a_model_server_on_another_machine_is_not_free(tmp_path, endpoint):
     With nothing that prices its model it is unpriced, never free."""
     _configured("ollama", endpoint=endpoint)
 
-    assert served_on_this_machine("ollama") is False
+    assert served_on_this_machine("ollama", _UNPRICED) is False
     assert rate_for("ollama", _UNPRICED, home=tmp_path) is None
     assert not price_call("ollama", _UNPRICED, input_tokens=1_000_000, home=tmp_path).priced
 
@@ -175,14 +175,14 @@ def test_a_name_spelled_like_a_local_engine_is_not_local_by_itself(tmp_path):
     """What a provider is called never makes it free: a name no configured entry has names no
     endpoint, and so no machine."""
     for name in ("ollama", "ollama-models", "lm-studio", "vllm", "llama.cpp"):
-        assert served_on_this_machine(name) is False, name
+        assert served_on_this_machine(name, _UNPRICED) is False, name
         assert rate_for(name, _UNPRICED, home=tmp_path) is None, name
 
 
 def test_an_entry_that_names_no_endpoint_is_not_local(tmp_path):
     _configured("in-process", "some-runtime")
 
-    assert served_on_this_machine("in-process") is False
+    assert served_on_this_machine("in-process", _UNPRICED) is False
     assert rate_for("in-process", _UNPRICED, home=tmp_path) is None
 
 
@@ -192,9 +192,9 @@ def test_an_entry_is_where_its_endpoint_is_whatever_else_its_options_say(tmp_pat
     _configured("here", endpoint=_HERE[0], base_url=_ELSEWHERE[0])
     _configured("elsewhere", endpoint=_ELSEWHERE[0], base_url=_HERE[0])
 
-    assert served_on_this_machine("here") is True
+    assert served_on_this_machine("here", _UNPRICED) is True
     assert rate_for("here", _UNPRICED, home=tmp_path) == ModelRate(0.0, 0.0)
-    assert served_on_this_machine("elsewhere") is False
+    assert served_on_this_machine("elsewhere", _UNPRICED) is False
     assert rate_for("elsewhere", _UNPRICED, home=tmp_path) is None
 
 

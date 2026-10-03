@@ -52,6 +52,21 @@ inside :func:`~personalclaw.providers.provider_bridge.can_resolve_use_case`, whi
 GET and every workflow preflight. A type with nothing to check registers none and is always
 ready, which is every type but one today."""
 
+PassesOnProbe = Callable[["ProviderEntry", str], bool]
+"""Pass-on signature: ``passes_on(entry, model) -> bool``.
+
+A model server runs the models it serves where it is (:attr:`ProviderCapability.hosts_model`),
+but one can also answer some of them from somewhere else: it passes their requests on to a hosted
+service. A type whose server can do that registers one beside its factory (``register_type(...,
+passes_on=probe)``) to name those models, one at a time: ``True`` means a request for *model*
+through *entry* is answered on another machine, so :func:`served_on_this_machine` does not count
+that model as one this machine runs, wherever the entry's endpoint is.
+
+It must be cheap and side-effect free — no build, no socket, no subprocess — because it is asked
+before every model call, from what the type already knows: what its server last said about the
+model, and what the model is called. A type that answers every model it serves where it is
+registers none."""
+
 CatalogFactory = Callable[..., ModelCatalog]
 """Catalog factory signature: ``create_catalog(options: dict, *, model="") -> ModelCatalog``.
 
@@ -211,6 +226,9 @@ class ProviderRegistry:
         # Per-type READINESS probes (see ``ReadinessProbe``). Optional: a type without one is
         # always ready.
         self._readiness: dict[str, ReadinessProbe] = {}
+        # Per-type PASS-ON probes (see ``PassesOnProbe``). Optional: a type without one answers
+        # every model it serves where its endpoint is.
+        self._passes_on: dict[str, PassesOnProbe] = {}
 
     # ── Registration ──────────────────────────────────────────────────
 
@@ -220,11 +238,14 @@ class ProviderRegistry:
         factory: ProviderFactory,
         *,
         readiness: ReadinessProbe | None = None,
+        passes_on: PassesOnProbe | None = None,
     ) -> None:
         """Register a provider type with its capability descriptor and factory.
 
         ``readiness`` is the type's optional answer to "can this entry serve right now?" — see
-        :data:`ReadinessProbe` and :meth:`not_ready`.
+        :data:`ReadinessProbe` and :meth:`not_ready`. ``passes_on`` is its optional answer to
+        "is this model answered on another machine?" — see :data:`PassesOnProbe` and
+        :meth:`passes_on`.
 
         Raises :class:`ProviderResolutionError` if the type is already
         registered; silent overwrite would mask accidental double
@@ -239,6 +260,8 @@ class ProviderRegistry:
         self._capabilities[type_] = cap
         if readiness is not None:
             self._readiness[type_] = readiness
+        if passes_on is not None:
+            self._passes_on[type_] = passes_on
         app_code.keep(lambda: self._forget_type(type_, factory))
         logger.debug(
             "registered provider type %r with capabilities %s",
@@ -252,6 +275,7 @@ class ProviderRegistry:
             del self._factories[type_]
             self._capabilities.pop(type_, None)
             self._readiness.pop(type_, None)
+            self._passes_on.pop(type_, None)
 
     def register_catalog(self, type_: str, factory: "CatalogFactory") -> None:
         """Register a provider type's optional CATALOG factory (discovery/management).
@@ -367,6 +391,31 @@ class ProviderRegistry:
             return None
         why, fix = verdict
         return str(why), str(fix)
+
+    def passes_on(self, entry: ProviderEntry, model: str) -> bool:
+        """Whether *entry*'s type says a request for *model* through it is answered on another
+        machine (:data:`PassesOnProbe`); ``False`` for a type that registered no probe.
+
+        Fail-CLOSED on a probe that raises, the opposite of :meth:`not_ready`: this answer is what
+        makes a call a free one under the spend caps and its prompt one the outbound scan only
+        warns about, and a model its type cannot place gets neither. Logged loudly, so a probe
+        that always raises does not read as every model being remote with nothing saying why.
+        """
+        probe = self._passes_on.get(entry.type)
+        if probe is None:
+            return False
+        try:
+            return bool(probe(entry, model))
+        except Exception:  # noqa: BLE001 — a model nothing can place is not taken to run here
+            logger.warning(
+                "pass-on probe for provider type %r raised; treating %r on %r as answered "
+                "elsewhere",
+                entry.type,
+                model,
+                entry.name,
+                exc_info=True,
+            )
+            return True
 
     def capability_of(self, type_: str) -> ProviderCapability:
         """Return the :class:`ProviderCapability` for ``type_``.
@@ -540,25 +589,32 @@ def _endpoint_of(entry: ProviderEntry, capability: ProviderCapability | None) ->
     return endpoint or ""
 
 
-def served_on_this_machine(name: str) -> bool:
-    """Whether the provider entry named *name* serves its model on this machine.
+def served_on_this_machine(name: str, model: str) -> bool:
+    """Whether the model *model*, served through the provider entry named *name*, runs on this
+    machine.
 
     THE one answer to "does this model run here", asked wherever being wrong towards "yes" costs
-    money or privacy: the rate table's free local tier (``routing.rates``), the router's
-    local-first ordering (``routing.policy``) and the spend guard's outbound scan, which it
-    relaxes only for a prompt that never leaves the machine (``guardrails.model_call``). What the
-    entry's type does with a request and where the entry sends it decide it together, never what
-    the provider is called: a model server of any kind can run on another machine, and one there
-    can be billed for, and its prompts leave this one; and an endpoint on this machine is not
-    proof that the model runs here, because a proxy on this machine can answer for a paid cloud
-    API.
+    money or privacy: the rate table's free local tier (``routing.rates``), and so the spend caps
+    and the usage rows priced by it; the router's local-first ordering and its ``Always local``
+    pin (``routing.policy``); the spend guard's outbound scan, which it relaxes only for a prompt
+    that never leaves the machine (``guardrails.model_call``); the queue calls to a model on this
+    machine take turns in (:func:`model_server_here`); and the Models page, which judges only such
+    a model against this machine's memory. Asked per model, because one server can answer some
+    of its models itself and pass others on. What the entry's type does with a request, where the
+    entry sends it, and what the type says about the model decide it together, never what the
+    provider is called: a model server of any kind can run on another machine, and one there can
+    be billed for, and its prompts leave this one; and an endpoint on this machine is not proof
+    that the model runs here, because a proxy on this machine can answer for a paid cloud API.
 
     So local means the entry's type runs its model inside the gateway's own process
     (:attr:`ProviderCapability.in_process`), or the type runs the models it serves where its
-    endpoint is (:attr:`ProviderCapability.hosts_model`) and the endpoint the entry sends to is
-    on this machine. An entry of a type that passes requests on (an OpenAI-compatible endpoint),
-    an entry with no endpoint either way, an endpoint anywhere else, and an entry whose type is
-    not registered (its app is not installed, so nothing says what serves it) are not local.
+    endpoint is (:attr:`ProviderCapability.hosts_model`), the endpoint the entry sends to is on
+    this machine, and the type does not say it passes *model* on to another machine
+    (:meth:`ProviderRegistry.passes_on`: a model an Ollama answers from its cloud). An entry of a
+    type that passes requests on (an OpenAI-compatible endpoint), an entry with no endpoint either
+    way, an endpoint anywhere else, a model its server answers from elsewhere, and an entry whose
+    type is not registered (its app is not installed, so nothing says what serves it) are not
+    local.
 
     A name no configured entry has may be a use-case engine an app registered (speech, embedding,
     image): it is local by the same rule, from what the engine declares
@@ -573,7 +629,11 @@ def served_on_this_machine(name: str) -> bool:
         return False
     if capability.in_process:
         return True
-    return capability.hosts_model and _endpoint_here(entry, capability)
+    return (
+        capability.hosts_model
+        and _endpoint_here(entry, capability)
+        and not get_default_registry().passes_on(entry, model)
+    )
 
 
 def sends_to_this_machine(name: str) -> bool:
@@ -596,9 +656,11 @@ def sends_to_this_machine(name: str) -> bool:
     return _endpoint_here(entry, capability)
 
 
-def model_server_here(name: str) -> str:
-    """The server on this machine that the provider entry named *name* sends its requests to, as
-    one name, or ``""`` when :func:`sends_to_this_machine` says its requests go elsewhere.
+def model_server_here(name: str, model: str) -> str:
+    """The server on this machine that runs *model* for the provider entry named *name*, as one
+    name, or ``""`` when :func:`sends_to_this_machine` says the entry's requests go elsewhere or
+    the server passes *model* on to another machine (:meth:`ProviderRegistry.passes_on`), so
+    nothing here is busy with it.
 
     Its endpoint, so two entries for one server (a chat instance and a background instance of the
     same local runtime) name the same one, or ``in-process:<entry>`` for a type that runs its models
@@ -611,7 +673,7 @@ def model_server_here(name: str) -> str:
         return ""
     if capability is not None and capability.in_process:
         return f"in-process:{entry.name}"
-    if not _endpoint_here(entry, capability):
+    if not _endpoint_here(entry, capability) or get_default_registry().passes_on(entry, model):
         return ""
     return _endpoint_of(entry, capability).strip().rstrip("/").lower()
 

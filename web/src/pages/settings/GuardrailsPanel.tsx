@@ -92,7 +92,7 @@ export function GuardrailsPanel() {
         </RowGroup>
       </Section>
 
-      <Section title="Outbound scan" hint="How a prompt bound for a REMOTE model provider is handled when it contains secrets or PII. Local models always warn (their content never leaves your machine).">
+      <Section title="Outbound scan" hint="How a prompt bound for a model that runs off this machine is handled when it contains secrets or PII. A model that runs on this machine always warns (its prompt never leaves your machine); a model your Ollama answers from its cloud runs off it.">
         <RowGroup>
           <Field label="Scan mode" hint="warn = log & send · redact = substitute & send · block = refuse the call.">
             <SegPills ariaLabel="Scan mode" value={String(cfg.scan_mode ?? 'redact')}

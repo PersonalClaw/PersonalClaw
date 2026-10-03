@@ -2306,13 +2306,14 @@ def metered(
     # guard's generic default — the whole point of ordering a local model first is that it is
     # cheap to *try*, which is only true if a stalled local model gives up quickly and lets the
     # chain reach the cloud ref. ONE timeout, on the one attempt: nothing is stacked, because
-    # this replaces the guard's default rather than adding to it, and only for the local leg.
+    # this replaces the guard's default rather than adding to it, and only for the local leg: the
+    # model, not the entry, is what runs here or not (a model the server passes on is cloud).
     _timeout_kw: dict[str, Any] = {}
     if routed:
         try:
             from personalclaw.routing.policy import is_local_ref, local_timeout_secs
 
-            if is_local_ref(provider_name):
+            if is_local_ref(f"{provider_name}:{model}"):
                 _secs = local_timeout_secs()
                 if _secs > 0:
                     _timeout_kw["timeout_secs"] = _secs

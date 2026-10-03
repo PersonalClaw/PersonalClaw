@@ -101,11 +101,13 @@ class InProcessCompaction:
         chars = cc.total_chars(self._messages)
         if chars <= 0:
             return None
-        entry = str(getattr(self._model, "served_ref", "") or "").split(":", 1)[0]
+        entry, _, model = str(getattr(self._model, "served_ref", "") or "").partition(":")
         window = self._turn_window
         served = (
             window.tokens
-            if window is not None and window.source == "served" and served_on_this_machine(entry)
+            if window is not None
+            and window.source == "served"
+            and served_on_this_machine(entry, model)
             else None
         )
         window_tokens = model_context_window(

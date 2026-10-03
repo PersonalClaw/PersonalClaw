@@ -135,7 +135,7 @@ def test_a_provider_no_configured_entry_names_gets_the_settings_scan(home):
 def test_an_endpoint_that_only_contains_a_local_spelling_is_not_local(base_url, ollama_app):
     entry = _entry(base_url, provider_type="ollama")
 
-    assert served_on_this_machine(entry) is False
+    assert served_on_this_machine(entry, "qwen3:4b") is False
     assert sends_to_this_machine(entry) is False
 
 
@@ -153,7 +153,7 @@ def test_an_endpoint_that_only_contains_a_local_spelling_is_not_local(base_url, 
 def test_a_model_server_at_a_loopback_endpoint_is_local(base_url, ollama_app):
     entry = _entry(base_url, provider_type="ollama")
 
-    assert served_on_this_machine(entry) is True
+    assert served_on_this_machine(entry, "qwen3:4b") is True
 
 
 @pytest.mark.parametrize(
@@ -173,7 +173,7 @@ def test_an_openai_compatible_endpoint_on_this_machine_gets_the_settings_scan(ho
     )
 
     assert sends_to_this_machine(entry) is True
-    assert served_on_this_machine(entry) is False
+    assert served_on_this_machine(entry, "gpt-4o-mini") is False
     with pytest.raises(SecretLeakBlocked):
         guard._prescan(_PROMPT)
 
@@ -185,4 +185,4 @@ def test_an_entry_that_names_no_endpoint_and_has_no_default_is_not_local():
         ProviderEntry(name="nowhere-named", type="openai_compatible", model="", options={})
     )
 
-    assert served_on_this_machine("nowhere-named") is False
+    assert served_on_this_machine("nowhere-named", "gpt-4o-mini") is False

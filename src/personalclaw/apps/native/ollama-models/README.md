@@ -19,6 +19,32 @@ without breaking it:
 - `personalclaw.sdk.local_model`
 - `personalclaw.sdk.model`
 
+## Models Ollama answers from its cloud
+
+An Ollama server runs most of the models it lists on the machine it runs on, and an instance at
+`localhost` therefore serves models that run on this machine: free, tried first by local-first
+routing, and scanned on the way out only as prompts that never leave the machine. A model Ollama
+answers from **Ollama's cloud** is not one of them. Its prompts go to a hosted service, so
+PersonalClaw treats it as the remote model it is: unpriced until you give it a price under
+**Settings → Usage → Model prices** (a daily dollar cap refuses its calls until then, and a
+price of $0 is how you say it costs you nothing), not tried first as local, given the outbound
+scan your settings ask for, and shown under Settings as running off this machine, with no fit
+chip.
+
+This app tells core which models those are, one at a time (the `passes_on` probe it registers
+with its provider type):
+
+1. **What the server said.** Ollama names the host it answers a cloud model from
+   (`remote_host`) in its model list (`GET /api/tags`), in the model's record (`POST /api/show`)
+   and on each line of an answer (`POST /api/chat`), and names none for a model of its own. The
+   app keeps the last of these per server, so a copy of a cloud model under a name of its own is
+   placed too, once the server has listed it or answered for it.
+2. **What the model is called**, before the server has been asked: Ollama tags its cloud models
+   `cloud` (`glm-4.6:cloud`), or with the size before it (`gpt-oss:120b-cloud`).
+
+Either one makes the model remote. A model whose tag says nothing of the cloud and that the server
+has named no host for runs where the server is.
+
 ## Structured output
 
 Ollama enforces a JSON Schema **server-side** via a top-level `format` field on

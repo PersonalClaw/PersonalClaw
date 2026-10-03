@@ -102,6 +102,14 @@ describe('modelChips', () => {
     expect(modelChips(MC({ downloaded: true }))).not.toContain('truncated')
   })
 
+  it('shows an off-machine chip for a model its server runs off this machine, and only then', () => {
+    // An Ollama's cloud model: listed by a server here, answered elsewhere (`runs_here: false`).
+    expect(modelChips(MC({ runs_here: false, downloaded: true }))).toEqual(['off-machine'])
+    // The ordinary model beside it carries no `runs_here`, nor does a hosted provider's model.
+    expect(modelChips(MC({ downloaded: true, fit: 'green' }))).not.toContain('off-machine')
+    expect(modelChips(MC({}))).not.toContain('off-machine')
+  })
+
   it('stacks every applicable chip', () => {
     const chips = modelChips(MC({ status: 'deprecated', non_commercial: true, integrity: 'truncated' }))
     expect(chips).toEqual(['status', 'non-commercial', 'truncated'])

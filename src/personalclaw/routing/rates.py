@@ -26,13 +26,15 @@ in another. The effective rate resolves through a **total, explicit precedence**
    (:func:`adopt_prices_set_before`).
 2. **local** — a model this machine serves itself prices ``0.0``: its cost axis is
    latency/energy, not dollars. This is a real, known price, NOT an absence. The model runs here
-   when its entry's type runs its models inside the gateway, or runs them where its endpoint is
-   and that endpoint is on this machine (:func:`personalclaw.llm.registry.served_on_this_machine`),
-   and an engine an app registered (speech, embedding, image) runs here by what it declares
+   when its entry's type runs its models inside the gateway, or runs them where its endpoint is,
+   that endpoint is on this machine, and the type does not say it passes this model on to another
+   machine (:func:`personalclaw.llm.registry.served_on_this_machine`, asked per model), and an
+   engine an app registered (speech, embedding, image) runs here by what it declares
    (``providers.engines``).
    An endpoint on this machine alone does not make a model free: an OpenAI-compatible instance
-   there may be a proxy for a paid cloud API, so it is priced by the tiers below, by its model's
-   id, and is unpriced when none of them knows that id.
+   there may be a proxy for a paid cloud API, and a model a server here answers from a hosted
+   service (an Ollama cloud model) runs elsewhere, so each is priced by the tiers below, by its
+   model's id, and is unpriced when none of them knows that id.
 3. **app default** — the declaration of the app that registered the entry's TYPE:
    :attr:`~personalclaw.sdk.provider_helpers.BrandedProviderSpec.pricing`
    (``{model_pattern: {in_per_mtok, out_per_mtok}}``), read from the live app registration, so a
@@ -931,7 +933,7 @@ def _default_rate(provider: str, model: str, unit: str | None) -> Rate | None:
     which resetting your price brings back."""
     from personalclaw.llm.registry import served_on_this_machine
 
-    if served_on_this_machine(provider):
+    if served_on_this_machine(provider, model):
         return _local(unit)
     app_default = _app_default_rate(provider, model, unit)
     if app_default is not None:

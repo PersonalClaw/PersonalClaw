@@ -296,15 +296,16 @@ def model_of(ref: str) -> str:
 
 def is_local_ref(ref: str) -> bool:
     """Whether ``ref`` names a model served on this machine: its provider entry's type runs its
-    models where its endpoint is, and that endpoint is here.
+    models where its endpoint is, that endpoint is here, and the type does not pass this model on.
 
     The one rule for "local" (``llm.registry.served_on_this_machine``), the one the rate table
-    prices a local model free by and the model-call guard scans by: what serves the entry and where
-    its endpoint is, never what the provider is called. It was decided by the name, matched against
-    the local-model apps', so an Ollama on another machine, which bills and sends prompts off this
-    one, was ordered first as a free local model, and ``LocalOllama`` on this machine, whose name
-    matches no app's, was ordered as cloud. An OpenAI-compatible endpoint on this machine is not
-    local either: a proxy there can answer for a paid cloud API.
+    prices a local model free by and the model-call guard scans by: what serves the entry, where
+    its endpoint is and where the server answers the ref's MODEL, never what the provider is
+    called. It was decided by the name, matched against the local-model apps', so an Ollama on
+    another machine, which bills and sends prompts off this one, was ordered first as a free local
+    model, and ``LocalOllama`` on this machine, whose name matches no app's, was ordered as cloud.
+    An OpenAI-compatible endpoint on this machine is not local either: a proxy there can answer
+    for a paid cloud API. Nor is a model the Ollama here answers from its cloud.
 
     Conservative: an entry that names no endpoint, and a name no configured entry has, are CLOUD.
     Mis-labeling a cloud ref as local would order a paid, off-machine provider ahead of a free
@@ -313,7 +314,7 @@ def is_local_ref(ref: str) -> bool:
     """
     from personalclaw.llm.registry import served_on_this_machine
 
-    return served_on_this_machine(provider_of(ref))
+    return served_on_this_machine(provider_of(ref), model_of(ref))
 
 
 def _structured_providers() -> set[str]:

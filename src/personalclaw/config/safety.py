@@ -271,9 +271,10 @@ class GuardrailsConfig:
         metadata=_meta(
             "Outbound Scan Mode",
             "How the model-call seam handles secrets/PII in an outbound prompt bound "
-            "for a REMOTE provider: 'warn' (log + proceed), 'redact' (substitute + "
-            "proceed), or 'block' (refuse the call). Local-only providers always warn "
-            "(the content never leaves the machine).",
+            "for a REMOTE model: 'warn' (log + proceed), 'redact' (substitute + "
+            "proceed), or 'block' (refuse the call). A model that runs on this machine "
+            "always warns (its prompt never leaves it); one a server here passes on to "
+            "another machine, such as a model an Ollama answers from its cloud, is remote.",
             enum=["warn", "redact", "block"],
             # Guard-class: the default must never be the leaky 'warn' (which
             # would send secrets to a remote provider). A config typo falls back to

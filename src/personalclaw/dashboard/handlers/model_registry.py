@@ -369,7 +369,10 @@ async def api_models_available(request: web.Request) -> web.Response:
     LOCAL rows carry a hardware-fit verdict (``fit`` / ``fit_reason`` / ``fit_need_mb`` /
     ``quoted_size_mb`` / ``fit_step_down``) and the response carries the one memory budget
     they were judged against. Config-provider and image/video-gen rows carry NO fit fields:
-    they have no local weights, and an absent field is how the UI knows to draw no chip.
+    they have no local weights, and an absent field is how the UI knows to draw no chip. Nor
+    does a row of a configured model server's card whose model runs off this machine (one an
+    Ollama answers from its cloud, or any model of a server on another machine): it carries
+    ``runs_here: false`` instead, which the UI says.
 
     Every configured instance's row carries its MEASURED ``connection``
     (``providers/connection.py``). An instance whose last check failed is not asked for its
@@ -477,7 +480,9 @@ async def api_models_available(request: web.Request) -> web.Response:
     # diarization backends, ollama, …). Each card lists the provider's full catalog
     # (downloaded AND downloadable) with per-model capabilities, so the same surface
     # drives binding, download, and runtime. No per-kind branching, no hardcoded names.
+    from personalclaw.llm.registry import served_on_this_machine
     from personalclaw.local_models import fit as _fit
+    from personalclaw.local_models.registry import adapts_an_entry
     from personalclaw.local_models.registry import list_catalog as _local_catalog
     from personalclaw.local_models.registry import registered as _local_registered
 
@@ -513,38 +518,52 @@ async def api_models_available(request: web.Request) -> web.Response:
                 logger.debug("local catalog failed for %s", pkey, exc_info=True)
                 rows, listing_error = [], relayed_failure_copy(exc)[:FAILURE_DETAIL_CHARS]
                 _listing_failed(pkey)
+        # A configured model server's card (an Ollama instance) lists models that run where that
+        # server answers each one: its own on its machine, and one it passes on to a hosted
+        # service elsewhere (``llm.registry.served_on_this_machine``). Only a model that runs
+        # here is judged against this machine's memory, or counts as a variant of a family here;
+        # any other says it runs off this machine and carries no fit at all, because the
+        # question does not apply to it. A bundled runtime's models run in the gateway.
+        per_model = adapts_an_entry(prov)
+        runs_here = [
+            not per_model or served_on_this_machine(pkey, str(d.get("name", ""))) for d in rows
+        ]
+        here = [d for d, ok in zip(rows, runs_here) if ok]
         # A family QUOTES its median variant, never its smallest: quoting the smallest
         # promises a fit the user will not get from the variant they actually pick. A
         # colonless name is a family of one, so its quote is its own size and nothing
         # changes for it.
         sizes_by_family: dict[str, list[float]] = {}
-        for d in rows:
+        for d in here:
             sizes_by_family.setdefault(_fit.family_key(str(d.get("name", ""))), []).append(
                 float(d.get("size_mb") or 0)
             )
         models = []
-        for d in rows:
-            family = _fit.family_key(str(d.get("name", "")))
-            quoted = _fit.median_variant_size_mb(sizes_by_family.get(family, []))
-            # The VERDICT is judged against the weights this row actually pulls — its own
-            # size. Judging every variant by the family quote would paint the family's
-            # largest variant with the median's verdict, i.e. promise a fit that OOMs. A row
-            # that publishes NO size (a family entry in a searchable catalog) falls back to
-            # the family quote, which is the median and never the smallest for exactly the
-            # reason above; with neither, ``fit_verdict`` answers "unknown".
-            own_size_mb = float(d.get("size_mb") or 0)
-            assessment = _fit.fit_verdict(
-                size_mb=own_size_mb or quoted,
-                context_tokens=int(d.get("context_tokens") or 0),
-                budget_bytes=budget_bytes,
-            )
+        for d, ok in zip(rows, runs_here):
             d["provider"] = pkey
             d["provider_type"] = pkey
-            d["quoted_size_mb"] = round(quoted, 1)
-            d["fit"] = assessment.verdict
-            d["fit_reason"] = assessment.reason
-            d["fit_need_mb"] = round(assessment.need_bytes / _BYTES_PER_MB, 1)
-            d["fit_step_down"] = _step_down_name(rows, family, assessment.verdict, budget_bytes)
+            if not ok:
+                d["runs_here"] = False
+            else:
+                family = _fit.family_key(str(d.get("name", "")))
+                quoted = _fit.median_variant_size_mb(sizes_by_family.get(family, []))
+                # The VERDICT is judged against the weights this row actually pulls — its own
+                # size. Judging every variant by the family quote would paint the family's
+                # largest variant with the median's verdict, i.e. promise a fit that OOMs. A
+                # row that publishes NO size (a family entry in a searchable catalog) falls back
+                # to the family quote, which is the median and never the smallest for exactly
+                # the reason above; with neither, ``fit_verdict`` answers "unknown".
+                own_size_mb = float(d.get("size_mb") or 0)
+                assessment = _fit.fit_verdict(
+                    size_mb=own_size_mb or quoted,
+                    context_tokens=int(d.get("context_tokens") or 0),
+                    budget_bytes=budget_bytes,
+                )
+                d["quoted_size_mb"] = round(quoted, 1)
+                d["fit"] = assessment.verdict
+                d["fit_reason"] = assessment.reason
+                d["fit_need_mb"] = round(assessment.need_bytes / _BYTES_PER_MB, 1)
+                d["fit_step_down"] = _step_down_name(here, family, assessment.verdict, budget_bytes)
             if d.get("gated"):
                 if token_ready is None:
                     token_ready = await _hf_token_ready()

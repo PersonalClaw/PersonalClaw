@@ -15,6 +15,7 @@ import { StatusPill } from '../../ui/StatusPill'
 import {
   FIT_LABEL, FIT_TONE, budgetKnown, filterByFit, fitDescription, hostFitOf, statedSizeMb, unrunnable,
 } from './modelFit'
+import { OffMachineChip } from './OffMachineChip'
 
 /** Bytes as whole MiB — the unit every catalog `size_mb` is in (`size_mb × 1024 × 1024` is the
  *  byte total a download is measured against), and the unit the onboarding offer, the chat notice
@@ -84,7 +85,9 @@ function FitChip({ model }: { model: AvailableModel }) {
  *
  *  Every row also answers "will it run HERE?": a fit chip beside the downloaded/gated
  *  cluster, and a browse filter that can hide the ones this device cannot run — but ONLY on a host
- *  whose memory budget was actually measured. See `modelFit.ts`. */
+ *  whose memory budget was actually measured. See `modelFit.ts`. A model the server does not run
+ *  here (one an Ollama answers from its cloud) gets no fit chip, and says it runs off this machine
+ *  (`OffMachineChip`) instead. */
 export function LocalModelManager({
   provider, models, searchable, error, onChanged,
 }: {
@@ -218,6 +221,7 @@ export function LocalModelManager({
               {m.downloaded && <Check size={11} style={{ color: 'var(--color-success)' }} />}
               {gatedUndownloaded && <Lock size={10} className="shrink-0 text-on-surface-low" aria-label="Requires a token / license" />}
               <FitChip model={m} />
+              <OffMachineChip model={m} />
             </div>
             <div data-type="caption" className="truncate text-on-surface-low">
               {downloading

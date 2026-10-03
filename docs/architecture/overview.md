@@ -165,8 +165,9 @@ directory on `sys.path`, and registers its contributions through a typed
 
 ### A local model takes one call at a time, yours first
 
-A model on this machine (`llm.registry.sends_to_this_machine`) answers one request at a time, so
-every call to one takes its turn in that model's queue first (`guardrails/local_queue.py`): one
+A model on this machine (`llm.registry.model_server_here`: a server here, unless it passes that
+model on, as an Ollama does a model it answers from Ollama's cloud) answers one request at a time,
+so every call to one takes its turn in that model's queue first (`guardrails/local_queue.py`): one
 call at a time per local model, whichever entry or address sends to it, in two lanes. A guarded
 call takes it in `ModelCallGuard`; a chat's, a room member's or a code turn's reply, which resolves
 unguarded, takes it in the native loop (`agents/native/local_turn.py`). A call somebody is

@@ -89,7 +89,7 @@ def test_a_known_cloud_model_through_a_loopback_relay_is_priced_by_its_id(relay)
 
     assert rate == ModelRate(0.15, 0.6, cache_read_per_mtok=0.075, cache_write_per_mtok=0.0)
     assert rate is not None and rate.source == "builtin"
-    assert served_on_this_machine(relay) is False
+    assert served_on_this_machine(relay, "gpt-4o-mini") is False
     assert is_local_ref(f"{relay}:gpt-4o-mini") is False
     with pytest.raises(SecretLeakBlocked):
         _prescan(relay, "gpt-4o-mini")
@@ -201,9 +201,9 @@ def test_a_type_that_runs_its_models_where_its_endpoint_is_is_local_only_there()
             ProviderEntry(name=name, type=type_, model="", options={"endpoint": url})
         )
 
-    assert served_on_this_machine("box-here") is True
-    assert served_on_this_machine("box-there") is False
-    assert served_on_this_machine("forwarder-here") is False
+    assert served_on_this_machine("box-here", "qwen3:8b") is True
+    assert served_on_this_machine("box-there", "qwen3:8b") is False
+    assert served_on_this_machine("forwarder-here", "qwen3:8b") is False
 
 
 def test_model_prices_lists_a_model_that_was_used_though_nothing_is_bound_to_it(

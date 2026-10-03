@@ -265,7 +265,9 @@ bed:
   audio for speech-to-text, characters for text-to-speech. The rate is one you set in
   **Settings → Usage → Model prices**, a known $0 for a model this machine runs itself (a model
   server whose app runs the models it serves where it is, such as Ollama, at an address on this
-  machine; the bundled offline model; and a speech, embedding or image engine whose models are
+  machine, for each model it runs itself and not one it answers from Ollama's cloud, whose tag
+  says `cloud` or whose host the server names; the bundled offline model; and a speech, embedding
+  or image engine whose models are
   downloaded into PersonalClaw's home, or that runs them through a model server at an address on
   this machine), the rate its provider app declares, or the shipped price list (`price_call` and
   `price_units` in `src/personalclaw/routing/rates.py`, which price every dollar the caps and the
@@ -305,7 +307,8 @@ to a per-turn cost/token ledger (`src/personalclaw/usage_ledger.py`) and rolled 
 honest about what it cannot price — a turn nothing prices records `priced = False` and
 renders as **unpriced**, never as `$0.00`, and any rollup containing one reports itself
 incomplete. So you can always answer "what did that cost me", and a model served on this
-machine costs nothing either way.
+machine costs nothing either way. A model your Ollama answers from Ollama's cloud is not one: it
+is unpriced until you give it a price ($0 if your plan makes it free to you).
 
 Whatever provider and model you use, you can give it your own price under **Settings → Usage →
 Model prices**, and that includes overriding a price PersonalClaw knows: whoever runs a model may

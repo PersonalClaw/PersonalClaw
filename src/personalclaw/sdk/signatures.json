@@ -7196,6 +7196,14 @@
     ],
     "returns": "tuple[str, str] | None"
    },
+   "passes_on": {
+    "kind": "method",
+    "params": [
+     {"annotation": "ProviderEntry", "kind": "positional_or_keyword", "name": "entry"},
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "model"}
+    ],
+    "returns": "bool"
+   },
    "register_catalog": {
     "kind": "method",
     "params": [
@@ -7216,7 +7224,8 @@
     "params": [
      {"annotation": "ProviderCapability", "kind": "positional_or_keyword", "name": "cap"},
      {"annotation": "Callable[..., ModelProvider]", "kind": "positional_or_keyword", "name": "factory"},
-     {"annotation": "Callable[..., tuple[str, str] | None] | None", "default": "None", "kind": "keyword_only", "name": "readiness"}
+     {"annotation": "Callable[..., tuple[str, str] | None] | None", "default": "None", "kind": "keyword_only", "name": "readiness"},
+     {"annotation": "Callable[[ProviderEntry, str], bool] | None", "default": "None", "kind": "keyword_only", "name": "passes_on"}
     ],
     "returns": "None"
    },

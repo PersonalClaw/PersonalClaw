@@ -84,5 +84,7 @@ class ProviderCapability:
     # OpenAI-compatible endpoint, which a proxy on this machine can answer for a paid cloud API).
     # Only for such a type does an endpoint on this machine mean the model runs here
     # (``llm.registry.served_on_this_machine``): priced at a known $0, ordered first by local-first
-    # routing and scanned as a prompt that never leaves the machine.
+    # routing and scanned as a prompt that never leaves the machine. A model such a server
+    # answers from somewhere else is not, which its type says one model at a time with the
+    # pass-on probe it registers (``ProviderRegistry.register_type(passes_on=...)``).
     hosts_model: bool = False

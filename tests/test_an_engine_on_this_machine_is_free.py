@@ -140,7 +140,7 @@ def test_a_local_model_engine_is_priced_at_its_known_zero(app, model, caps, tmp_
     rate = rate_for(app, model, home=tmp_path)
 
     assert rate == ModelRate(0.0, 0.0) and rate is not None and rate.source == "local"
-    assert served_on_this_machine(app) is True
+    assert served_on_this_machine(app, model) is True
     assert is_local_ref(f"{app}:{model}") is True
     (row,) = rates_view([(app, model)], home=tmp_path)["models"]
     assert (row["priced"], row["source"]) == (True, "local")
@@ -165,7 +165,7 @@ def test_an_image_runtime_on_this_machine_that_runs_its_model_there_is_free(tmp_
     rate = rate_for("local-image", "flux1-schnell.safetensors", home=tmp_path)
 
     assert rate is not None and rate.source == "local"
-    assert served_on_this_machine("local-image") is True
+    assert served_on_this_machine("local-image", "flux1-schnell.safetensors") is True
 
 
 @pytest.mark.parametrize(
@@ -180,7 +180,7 @@ def test_an_image_runtime_on_this_machine_that_runs_its_model_there_is_free(tmp_
 def test_an_engine_is_not_free_by_its_kind(endpoint, hosts_model, tmp_path):
     image_registry.register_provider(_Painter("painter", endpoint, hosts_model=hosts_model))
 
-    assert served_on_this_machine("painter") is False
+    assert served_on_this_machine("painter", "studio-xl") is False
     assert rate_for("painter", "studio-xl", home=tmp_path) is None
 
 
@@ -191,12 +191,12 @@ def test_a_local_model_engine_that_sends_to_an_address_elsewhere_is_not_free(tmp
 
     _register_local_engine("whisper-box", _RemoteWeights("whisper_box"), ["stt"])
 
-    assert served_on_this_machine("whisper-box") is False
+    assert served_on_this_machine("whisper-box", "turbo") is False
     assert rate_for("whisper-box", "turbo", home=tmp_path) is None
 
 
 def test_a_name_nothing_registered_is_not_local(tmp_path):
-    assert served_on_this_machine("nothing-by-this-name") is False
+    assert served_on_this_machine("nothing-by-this-name", "turbo") is False
     assert rate_for("nothing-by-this-name", "turbo", home=tmp_path) is None
 
 
@@ -217,12 +217,12 @@ def test_a_model_servers_download_card_never_makes_its_name_local():
     local_registry.register_config_model_managers()
     assert local_registry.get_provider("desk") is not None, "premise: the card is registered"
 
-    assert served_on_this_machine("desk") is True
-    assert served_on_this_machine("studio") is False
+    assert served_on_this_machine("desk", "llama3.1") is True
+    assert served_on_this_machine("studio", "llama3.1") is False
     assert runs_here(local_registry.get_provider("desk")) is False
 
     registry.unregister_entry("desk")
-    assert served_on_this_machine("desk") is False
+    assert served_on_this_machine("desk", "llama3.1") is False
 
 
 def test_an_unattended_transcription_on_this_machine_runs_under_a_dollar_cap_at_nothing(

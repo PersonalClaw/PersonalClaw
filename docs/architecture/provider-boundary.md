@@ -147,6 +147,17 @@ implements it. What matters here is where the boundary sits inside each family:
    must probe every filesystem layout a provider writes; deletes clear all
    layouts; a binding to a catalog-absent model surfaces as a synthetic
    not-downloaded row rather than disappearing.
+   **Where a model runs** is one answer, asked per model:
+   `llm.registry.served_on_this_machine(entry, model)`. Its price (a known $0
+   here), the spend caps, local-first routing and its `Always local` pin, the
+   outbound scan, the local-model queue and the Models page's fit chip all ask
+   it. A type says what it can: `ProviderCapability.in_process` (it runs its
+   models inside the gateway), `hosts_model` (it runs them where its endpoint
+   is), and a `passes_on` probe registered with `register_type` for the models
+   such a server answers from somewhere else. The bundled Ollama app's probe
+   answers from the host its server names for a model (`remote_host` in
+   `/api/tags`, `/api/show` and each answer), and before the server has said
+   anything, from the `cloud` tag Ollama gives its cloud models.
 5. **Subscription credentials** — a provider whose vendor bills by subscription
    has no API key to paste; it rides an agent CLI the user already signed in.
    `llm/subscription_credentials.py` knows how to read a *declared* credential

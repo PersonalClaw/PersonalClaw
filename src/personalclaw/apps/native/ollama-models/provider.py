@@ -30,6 +30,7 @@ The endpoint is overridable via ``ProviderEntry.options.endpoint``.
 import asyncio
 import json
 import logging
+import sys
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
@@ -721,6 +722,8 @@ class OllamaProvider(ModelProvider):
                     except json.JSONDecodeError:
                         logger.warning("Ollama stream returned non-JSON line: %r", line[:200])
                         continue
+                    # Where the server answered it from, before the turn's price is reckoned.
+                    _heard_one(self._endpoint, model, chunk)
 
                     for ev in reasoning.feed(chunk.get("message") or {}):
                         if ev.kind == EVENT_TEXT_CHUNK:
@@ -860,6 +863,8 @@ class OllamaProvider(ModelProvider):
                     except json.JSONDecodeError:
                         logger.warning("Ollama stream returned non-JSON line: %r", line[:200])
                         continue
+                    # Where the server answered it from, before the turn's price is reckoned.
+                    _heard_one(self._endpoint, body["model"], chunk)
 
                     msg = chunk.get("message") or {}
                     for ev in reasoning.feed(msg):
@@ -1101,9 +1106,95 @@ OLLAMA_CAPABILITY = ProviderCapability(
     # reads such an instance as on this machine exactly as it is.
     default_endpoint=_DEFAULT_ENDPOINT,
     # An Ollama server runs the models it serves on the machine it runs on: an instance at an
-    # endpoint on this machine runs its model here.
+    # endpoint on this machine runs its model here, except a model it answers from Ollama's cloud,
+    # which this app names to core one model at a time (:func:`passes_on`).
     hosts_model=True,
 )
+
+
+# ── Where the server answers a model ─────────────────────────────────────
+#
+# An Ollama server answers most of the models it lists itself, and some from Ollama's cloud: it
+# passes their requests on to a hosted service, so their prompts leave the machine and they are
+# not free. It says which by the host it names for such a model (``remote_host``) in its model
+# list (``GET /api/tags``), a model's record (``POST /api/show``) and each line of an answer
+# (``POST /api/chat``), and names none for a model of its own. Core asks before every call
+# (:func:`passes_on`, the probe this app registers), and that answer may not ask the server, so
+# what the server last said is kept here, by server.
+
+#: The tag Ollama gives the models it answers from its cloud: ``glm-4.6:cloud``, or one with the
+#: size before it, ``gpt-oss:120b-cloud``.
+_CLOUD_TAG = "cloud"
+
+#: What each Ollama server last said about where it answers its models, by server
+#: (:func:`_server_key`): a model's name (:func:`_model_key`) and the host it answers the model
+#: from, ``""`` for a model it runs itself. Read and written through :func:`_said` only.
+_ANSWERED_FROM: dict[str, dict[str, str]] = {}
+
+
+def _said() -> dict[str, dict[str, str]]:
+    """The record of what the servers said, as the copy of this module the process holds now
+    keeps it.
+
+    A process can run this file more than once: loaded again from its files, it is a second copy,
+    while core keeps the provider type, and so the pass-on probe, of the copy that registered it
+    first, and a catalog of the second may be the one that lists next. Every copy keeps its record
+    in the copy ``sys.modules`` holds, so the probe core asks reads what any of them heard."""
+    current = sys.modules.get(__name__)
+    record = getattr(current, "_ANSWERED_FROM", None)
+    return record if isinstance(record, dict) else _ANSWERED_FROM
+
+
+def _server_key(endpoint: object) -> str:
+    """The server an endpoint names, spelled one way; an instance that names none sends to the
+    default, as its factory does."""
+    return (str(endpoint or "").strip() or _DEFAULT_ENDPOINT).rstrip("/").lower()
+
+
+def _model_key(model: object) -> str:
+    """A model's name spelled one way: one named without a tag is its ``latest``, as the server
+    lists it."""
+    name = str(model or "").strip().lower()
+    if name and ":" not in name.rsplit("/", 1)[-1]:
+        name += ":latest"
+    return name
+
+
+def _cloud_tagged(model: object) -> bool:
+    """Whether *model*'s tag is the one Ollama gives a model it answers from its cloud."""
+    tag = _model_key(model).rsplit("/", 1)[-1].partition(":")[2]
+    return tag == _CLOUD_TAG or tag.endswith(f"-{_CLOUD_TAG}")
+
+
+def _heard_list(endpoint: object, models: object) -> None:
+    """Keep where the server at *endpoint* answers each model of its list, in place of what it
+    said before: a model it no longer lists, or now lists as its own, is answered elsewhere no
+    more."""
+    said: dict[str, str] = {}
+    for m in models if isinstance(models, list) else []:
+        if isinstance(m, dict) and m.get("name"):
+            said[_model_key(m["name"])] = str(m.get("remote_host") or "")
+    _said()[_server_key(endpoint)] = said
+
+
+def _heard_one(endpoint: object, model: object, record: object) -> None:
+    """Keep what one record from the server at *endpoint*, a model's record or a line of its
+    answer, says about where it answers *model*: the host it names. A record that names none
+    places nothing; the model list is what says a model is the server's own."""
+    host = record.get("remote_host") if isinstance(record, dict) else None
+    if host and model:
+        _said().setdefault(_server_key(endpoint), {})[_model_key(model)] = str(host)
+
+
+def passes_on(entry: ProviderEntry, model: str) -> bool:
+    """Whether the Ollama server *entry* sends to answers *model* from another machine, which
+    makes it no model of this machine for core (``ProviderRegistry.passes_on``): the server named
+    a host for it the last time it listed, described or answered it, or the model carries the tag
+    Ollama gives its cloud models, which says so before the server has been asked. Either says it;
+    a model with no such tag that the server named no host for runs where the server is."""
+    if _said().get(_server_key(entry.endpoint), {}).get(_model_key(model)):
+        return True
+    return _cloud_tagged(model)
 
 
 # ── Factory ──────────────────────────────────────────────────────────────
@@ -1321,6 +1412,7 @@ class OllamaCatalog(ModelManager):
             raise ModelDiscoveryError(not_ollama, url=url, status=status) from exc
         if not isinstance(data, dict) or not isinstance(data.get("models", []), list):
             raise ModelDiscoveryError(not_ollama, url=url, status=status)
+        _heard_list(self._endpoint, data.get("models", []))
         return data
 
     # ── Discovery ──────────────────────────────────────────────────────
@@ -1391,6 +1483,7 @@ class OllamaCatalog(ModelManager):
             except Exception:  # noqa: BLE001 — one model's show must not fail the listing
                 logger.debug("Ollama /api/show failed for %s", name, exc_info=True)
                 return name, None
+            _heard_one(self._endpoint, name, data)
             caps = data.get("capabilities") if isinstance(data, dict) else None
             return name, [str(c) for c in caps] if isinstance(caps, list) else None
 
@@ -1569,6 +1662,7 @@ class OllamaCatalog(ModelManager):
                 if r.status != 200:
                     raise RuntimeError(f"Ollama returned {r.status}")
                 data = await r.json()
+        _heard_one(self._endpoint, model, data)
 
         details = data.get("details", {}) if isinstance(data, dict) else {}
         model_info = data.get("model_info", {}) if isinstance(data, dict) else {}
@@ -1652,7 +1746,7 @@ def create_catalog(options: dict | None = None, *, model: str = "") -> OllamaCat
 # makes the registration idempotent against module reload in tests; the
 # registry itself remains strict and rejects duplicate types in normal use.
 try:
-    get_default_registry().register_type(OLLAMA_CAPABILITY, _factory)
+    get_default_registry().register_type(OLLAMA_CAPABILITY, _factory, passes_on=passes_on)
 except ProviderResolutionError:
     logger.debug("ollama provider type already registered with default registry")
 

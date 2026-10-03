@@ -371,21 +371,14 @@ class ModelCallGuard(ModelProvider):
         # against those ceilings nor charged to them. Everything else here still applies to it:
         # the breaker, the clock, the attempt audit and the outbound scan.
         self._counted = bool(counted)
-        # Outbound secret/PII scan mode: warn | redact | block. Forced to warn for
-        # local providers by the wrap helper (content never leaves the machine).
-        self._scan_mode = scan_mode if scan_mode in ("warn", "redact", "block") else "warn"
+        # The outbound secret/PII scan mode the setting asks for: warn | redact | block. What a
+        # prompt is scanned at is decided at each call (:meth:`_refresh_scan_mode`): ``warn`` for a
+        # model that runs on this machine, whose prompt never leaves it, and this for any other.
+        self._scan_setting = scan_mode if scan_mode in ("warn", "redact", "block") else "warn"
+        self._scan_mode = self._scan_setting
         # Mirror the wrapped provider's tool support so the loop treats the guard
         # exactly as it would the inner provider.
         self.supports_tools = getattr(inner, "supports_tools", False)
-        # Whether this provider's model runs on this machine: its outbound scan is then forced to
-        # warn, since the prompt never leaves it. Decided once, by the one rule the rate table
-        # prices a local model by and routing orders one by: what its entry's type is and where
-        # it sends. An endpoint here that passes the prompt on (a proxy for a cloud API) is not.
-        self._local = served_on_this_machine(provider_name)
-        # The queue this model's calls take turns in when it runs on this machine
-        # (``guardrails.local_queue``): one call at a time, a call somebody is waiting for first.
-        # ``""`` for a model anywhere else.
-        self._queue_key = queue_key(provider_name, model)
         # The routing query class of the CURRENT call, set by the entry point that has
         # the prompt text (stream/complete/stream_command) and stamped onto each attempt
         # audit row. "" until a call classifies.
@@ -588,17 +581,27 @@ class ModelCallGuard(ModelProvider):
                 logger.warning("%s could not be re-read; keeping the last one", attr, exc_info=True)
 
     def _refresh_scan_mode(self) -> None:
-        """Read the outbound scan mode as it is now. A local provider's stays ``warn`` whatever
-        the setting says (its content never leaves the machine); a failed read keeps the last."""
-        if self._scan_mode_source is None or self._local:
+        """Decide the mode this call's prompt is scanned at: ``warn`` for a model that runs on
+        this machine (``llm.registry.served_on_this_machine``, the rule the rate table prices a
+        local model by and routing orders one by), whose prompt never leaves it, else the setting
+        as it reads now (a failed read keeps the last). An endpoint here that passes the prompt on
+        (a proxy for a cloud API, a model a server here answers from a hosted service) is no model
+        here. Asked at each call, not once: where a model runs is what its server last said about
+        it, and the guard lives as long as the runtime holding it."""
+        if served_on_this_machine(self._provider_name, self._model):
+            self._scan_mode = "warn"
             return
-        try:
-            mode = str(self._scan_mode_source() or "")
-        except Exception:  # noqa: BLE001 - keep the last mode read
-            logger.warning("scan mode could not be re-read; keeping the last one", exc_info=True)
-            return
-        if mode in ("warn", "redact", "block"):
-            self._scan_mode = mode
+        if self._scan_mode_source is not None:
+            try:
+                mode = str(self._scan_mode_source() or "")
+            except Exception:  # noqa: BLE001 - keep the last mode read
+                logger.warning(
+                    "scan mode could not be re-read; keeping the last one", exc_info=True
+                )
+            else:
+                if mode in ("warn", "redact", "block"):
+                    self._scan_setting = mode
+        self._scan_mode = self._scan_setting
 
     # ── The guard pipeline (breaker → hard timeout → audit) ──────────────
 
@@ -681,11 +684,15 @@ class ModelCallGuard(ModelProvider):
         clock = self._clock_secs()
         deadline = loop.time() + clock if clock > 0 else None
         turn: Turn | None = None
+        # The queue calls to the model this call asks for take turns in when it runs on this
+        # machine (``guardrails.local_queue``): one call at a time, a call somebody is waiting for
+        # first. ``""`` for a model anywhere else, a model its server here passes on included.
+        queue = queue_key(self._provider_name, called)
         try:
-            if self._queue_key:
+            if queue:
                 try:
                     turn = await take_turn(
-                        self._queue_key,
+                        queue,
                         provider=self._provider_name,
                         model=called,
                         within=self._turn_wait(deadline, loop.time()),
@@ -1092,16 +1099,15 @@ def wrap_model_call_guard(
     """Wrap ``provider`` in a :class:`ModelCallGuard` for a non-interactive call.
 
     Idempotent: an already-guarded provider is returned unchanged (defends against
-    double-wrapping if two resolution layers both reach for the guard). A local
-    provider's scan mode is forced to ``warn`` regardless of ``scan_mode``: local is a model the
-    entry *provider_name* runs on this machine (``llm.registry.served_on_this_machine``, the rule
-    pricing and routing ask too), so a prompt that leaves the machine gets the scan the setting
-    asks for, one sent through an endpoint here that passes it on included, and one that never
-    does is not redacted for a trip it does not take.
+    double-wrapping if two resolution layers both reach for the guard). A prompt to a model that
+    runs on this machine is scanned at ``warn`` whatever ``scan_mode`` says: local is the model
+    *model* the entry *provider_name* runs on this machine (``llm.registry.served_on_this_machine``,
+    the rule pricing and routing ask too, decided by the guard at each call), so a prompt that
+    leaves the machine gets the scan the setting asks for, one sent through an endpoint here that
+    passes it on included, and one that never does is not redacted for a trip it does not take.
     """
     if isinstance(provider, ModelCallGuard):
         return provider
-    effective_scan = "warn" if served_on_this_machine(provider_name) else scan_mode
     return ModelCallGuard(
         provider,
         use_case=use_case,
@@ -1110,7 +1116,7 @@ def wrap_model_call_guard(
         budget=budget,
         run_budget=run_budget,
         meter=meter,
-        scan_mode=effective_scan,
+        scan_mode=scan_mode,
         breaker=breaker,
         timeout_secs=timeout_secs,
         routed=routed,

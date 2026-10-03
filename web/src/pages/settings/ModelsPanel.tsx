@@ -39,6 +39,7 @@ import { Eyebrow } from '../../ui/Eyebrow'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { reportingWrite } from '../../app/reportingWrite'
 import { DownloadFailure, InlineModelDownload, isDownloadable, modelLabel, useRowDownload } from './InlineModelDownload'
+import { OffMachineChip } from './OffMachineChip'
 import { HELD_CHANGE_REASON } from '../../lib/staleWrite'
 
 /** The `/api/models/available` rows whose type is the use case they serve: one per image- or
@@ -241,13 +242,16 @@ export function chainEntryStatus(
  *   - `deprecated`/`sunset` status → an informational chip (the model stays bindable).
  *   - a non-commercial license → a warning chip surfaced AT BIND TIME (Success Criterion 7).
  *   - `integrity: "truncated"` → a danger chip whose row offers Repair (re-download).
+ *   - `runs_here: false` → a model a model server lists (an Ollama instance) that runs off this
+ *     machine, one it answers from its cloud: its prompts leave this machine and it is not free.
  *  A hosted/remote model (no catalog fields) yields no chips. */
-export type ChipKind = 'status' | 'non-commercial' | 'truncated'
+export type ChipKind = 'status' | 'non-commercial' | 'truncated' | 'off-machine'
 export function modelChips(m: AvailableModel): ChipKind[] {
   const chips: ChipKind[] = []
   if (m.status === 'deprecated' || m.status === 'sunset') chips.push('status')
   if (m.non_commercial) chips.push('non-commercial')
   if (m.integrity === 'truncated') chips.push('truncated')
+  if (m.runs_here === false) chips.push('off-machine')
   return chips
 }
 
@@ -290,6 +294,7 @@ function ModelChips({ model, onRepair, repairing }: {
           </button>
         </>
       )}
+      <OffMachineChip model={model} />
     </span>
   )
 }

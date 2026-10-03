@@ -133,15 +133,16 @@ def moving_on_to() -> str:
 def queue_key(provider: str, model: str) -> str:
     """The queue calls to *model* on the entry *provider* take turns in: one per model on this
     machine, whichever entry or endpoint sends to it (``llm.registry.model_server_here`` says
-    whether *provider* runs here), or ``""`` for a model that runs anywhere else, which needs none.
-    Keyed by the model alone because the machine's compute is one: two entries pointed at one
-    local runtime through two addresses still send it one model's requests, measured as a chat
-    turn on one address sent behind a background call on the other. An unreadable registry
-    answers ``""``: the call goes out as it always did rather than not at all."""
+    whether *provider* runs *model* here), or ``""`` for a model that runs anywhere else, which
+    needs none, a model the server here passes on to a hosted service included. Keyed by the
+    model alone because the machine's compute is one: two entries pointed at one local runtime
+    through two addresses still send it one model's requests, measured as a chat turn on one
+    address sent behind a background call on the other. An unreadable registry answers ``""``:
+    the call goes out as it always did rather than not at all."""
     try:
         from personalclaw.llm.registry import model_server_here
 
-        server = model_server_here(provider)
+        server = model_server_here(provider, model)
     except Exception:  # noqa: BLE001 — fail open: a queue is an ordering, not a permission
         logger.debug("local queue: no server for %r", provider, exc_info=True)
         return ""

@@ -146,7 +146,7 @@ async def test_an_instance_saved_in_settings_sends_to_its_endpoint(registry):
     assert [e.text for e in events if e.text] == ["here"]
     # Where core believes the instance sends is where it sent.
     assert registry.get_entry("gpu-box").endpoint == server.endpoint
-    assert served_on_this_machine("gpu-box") is True
+    assert served_on_this_machine("gpu-box", "m:1b") is True
 
 
 @pytest.mark.asyncio
@@ -200,7 +200,7 @@ def test_base_url_is_not_an_endpoint_to_the_registry(registry):
     assert entry.endpoint == ""
     provider = registry.build("named-otherwise", model="m:1b")
     assert provider._endpoint == registry.capability_of("ollama").default_endpoint
-    assert served_on_this_machine("named-otherwise") is True
+    assert served_on_this_machine("named-otherwise", "m:1b") is True
 
 
 def test_the_protocol_factory_reads_the_endpoint_and_only_it():

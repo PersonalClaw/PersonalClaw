@@ -5818,6 +5818,11 @@ export interface AvailableModel {
   // substitution is an OFFER the UI makes, not a swap the server performs.
   fit?: ModelFitVerdict; fit_reason?: string; fit_need_mb?: number; quoted_size_mb?: number
   fit_step_down?: string | null
+  /** `false` on a row of a model server's card (an Ollama instance) whose model runs off this
+   *  machine: one the server answers from a hosted service, or any model of a server elsewhere.
+   *  Its prompts leave this machine, it is priced as a hosted model, and it carries no fit, since
+   *  it does not run here. Absent on every other row. */
+  runs_here?: false
   // NOT a wire field — the client denormalizes the response's top-level `fit` onto each row.
   // See `api.modelsAvailable` for why.
   host_fit?: HostModelFit
