@@ -22,6 +22,7 @@ nobody consented to?" is answered where it is added.
 from __future__ import annotations
 
 import ast
+import functools
 from pathlib import Path
 
 import pytest
@@ -45,15 +46,15 @@ NOT_A_GRANT = {
 }
 
 
-def _modules() -> list[tuple[str, ast.AST]]:
+@functools.cache
+def _modules() -> tuple[tuple[str, ast.AST], ...]:
+    """Every module of the package, parsed: read when a test first asks, not when pytest imports
+    this file, so a worker that never runs these tests never holds the tree."""
     out = []
     for path in sorted(SRC.rglob("*.py")):
         rel = path.relative_to(SRC).as_posix()
         out.append((rel, ast.parse(path.read_text(encoding="utf-8"), filename=rel)))
-    return out
-
-
-MODULES = _modules()
+    return tuple(out)
 
 
 def _reads_the_agent_field(node: ast.AST) -> bool:
@@ -90,15 +91,15 @@ def _names_from_grants(tree: ast.AST, name: str) -> list[int]:
 
 def test_the_scan_reads_the_tree():
     """The vacuity floor: the walk sees the package, and the one reader it allows is there."""
-    assert len(MODULES) > 500, len(MODULES)
-    grants = dict(MODULES)[GRANTS]
+    assert len(_modules()) > 500, len(_modules())
+    grants = dict(_modules())[GRANTS]
     assert any(_reads_the_agent_field(n) for n in ast.walk(grants)), "the one reader is gone"
 
 
 def test_the_setting_is_read_only_in_approval_grants():
     found = [
         f"{rel}:{node.lineno}"
-        for rel, tree in MODULES
+        for rel, tree in _modules()
         if rel != GRANTS
         for node in ast.walk(tree)
         if _reads_the_agent_field(node)
@@ -113,12 +114,12 @@ def test_only_setting_grant_names_the_grant():
     """`SETTING` is what an audit row says approved a call; only `setting_grant` returns it."""
     found = [
         f"{rel}:{line}"
-        for rel, tree in MODULES
+        for rel, tree in _modules()
         if rel != GRANTS
         for line in _names_from_grants(tree, "SETTING")
     ]
     assert found == [], "approval_grants.SETTING named outside setting_grant: " + str(found)
-    grants = dict(MODULES)[GRANTS]
+    grants = dict(_modules())[GRANTS]
     returns = [
         node.name
         for node in ast.walk(grants)
@@ -134,7 +135,7 @@ def test_only_setting_grant_names_the_grant():
 def test_the_value_is_read_only_where_it_is_not_a_grant():
     found = {
         rel
-        for rel, tree in MODULES
+        for rel, tree in _modules()
         if _names_from_grants(tree, "approval_mode_now")
         or (
             rel == GRANTS

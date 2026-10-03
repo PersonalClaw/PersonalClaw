@@ -205,6 +205,28 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.timeout(_WORKFLOWS_TEST_TIMEOUT_SECONDS))
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _a_modules_own_caches_end_with_its_tests(request):
+    """Clear what a test module cached for its own tests (``functools.cache``, ``lru_cache``) once
+    its tests have run.
+
+    A tree rail parses the whole package once and caches it, which is right for its own tests and
+    wrong for the rest of the run: the module stays imported, so each cache stays alive until the
+    worker exits, and four coverage workers that each kept every rail's tree outgrew a 16 GB
+    runner. Cleared here, a worker holds one rail's tree at a time. A cache the module imported is
+    its owner's, and is left alone.
+    """
+    yield
+    module = request.module
+    for value in list(vars(module).values()):
+        if (
+            getattr(value, "__module__", None) == module.__name__
+            and not isinstance(value, type)
+            and callable(getattr(value, "cache_clear", None))
+        ):
+            value.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _a_test_leaves_the_environment_as_it_found_it(request):
     """Fail the test that changed a ``PERSONALCLAW_*`` variable and did not give it back, and give
