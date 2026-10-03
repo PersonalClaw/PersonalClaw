@@ -412,6 +412,17 @@ def writes_sentence(reach: Reach, within: Sequence[str]) -> str:
     return "; ".join(parts)
 
 
+def past_bounds(reach: Reach, within: Sequence[str] = ()) -> str:
+    """Why an unattended run is refused the call, in a clause: what it reaches past its bounds.
+
+    What the call's card says; :func:`refusal` tells the model the same and what it can do."""
+    reasons = [network_sentence(reach), writes_sentence(reach, within)]
+    return (
+        "this run is unattended, so nobody is here to allow a call past its bounds: "
+        + "; ".join(r for r in reasons if r)
+    )
+
+
 def refusal(
     reach: Reach, within: Sequence[str] = (), *, scratch: str = "", shell_tmpdir: bool = False
 ) -> str:
@@ -419,7 +430,6 @@ def refusal(
 
     *shell_tmpdir*: the run's shell has its *scratch* folder as ``TMPDIR`` (the built-in agent's
     does; an agent CLI's shell keeps its own), so ``mktemp -d`` makes a folder inside it."""
-    reasons = [network_sentence(reach), writes_sentence(reach, within)]
     steps = []
     if reach.network:
         steps.append(
@@ -433,8 +443,7 @@ def refusal(
             + (", the folder `mktemp -d` makes" if scratch and shell_tmpdir else "")
         )
     return (
-        "this run is unattended, so nobody is here to allow a call past its bounds: "
-        + "; ".join(r for r in reasons if r)
+        past_bounds(reach, within)
         + ". To go on, "
         + "; and ".join(steps)
         + ". Otherwise leave the step for the user, and say what it needs"
@@ -641,6 +650,7 @@ __all__ = [
     "attended",
     "network_sentence",
     "outside",
+    "past_bounds",
     "places",
     "reach_note",
     "refusal",

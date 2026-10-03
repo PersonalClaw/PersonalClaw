@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { ChevronRight, Loader2, Check, Zap, Maximize2, Lightbulb, AlertTriangle, ShieldAlert } from 'lucide-react'
+import { ChevronRight, Loader2, Check, Zap, Maximize2, Lightbulb, AlertTriangle, ShieldAlert, Info } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { spring } from '../../design/motion'
 import type { ToolSegment } from './chatTypes'
@@ -15,7 +15,8 @@ import { requestToolResultFull } from './toolResultBridge'
  *
  *  A call the agent CLI ran without anyone asking her (`seg.ungated`) never reads like one she
  *  approved: the gateway's sentence saying so, and why, sits on the card in plain sight, whether
- *  the card is open or not, and in its accessible name. */
+ *  the card is open or not, and in its accessible name. So does what the gateway said about the
+ *  call (`seg.notes`): that a gate refused it before it ran and why, or that it keeps failing. */
 export function ToolCard({ seg }: { seg: ToolSegment }) {
   const [open, setOpen] = useState(false)
   const Icon = iconForTool(seg)
@@ -24,8 +25,9 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
   // Screen-reader label: the status + tool + detail are conveyed only by icon
   // and visual layout, so spell them out for the disclosure button.
   const status = seg.done ? (seg.ok === false ? 'failed' : 'completed') : 'running'
-  const unasked = seg.ungated ? `, ${seg.ungated.charAt(0).toLowerCase()}${seg.ungated.slice(1).replace(/\.$/, '')}` : ''
-  const srLabel = `Tool ${label}${detail ? ` ${detail}` : ''} — ${status}${seg.auto ? ', auto-approved' : ''}${unasked}. ${open ? 'Collapse' : 'Expand'} details`
+  const unasked = seg.ungated ? `, ${clause(seg.ungated)}` : ''
+  const noted = (seg.notes ?? []).map((n) => `, ${clause(n)}`).join('')
+  const srLabel = `Tool ${label}${detail ? ` ${detail}` : ''} — ${status}${seg.auto ? ', auto-approved' : ''}${unasked}${noted}. ${open ? 'Collapse' : 'Expand'} details`
 
   return (
     <div className="my-1 overflow-hidden border border-outline-variant/40 bg-surface-low/40"
@@ -61,6 +63,13 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
           <span>{seg.ungated}</span>
         </p>
       )}
+      {seg.notes?.map((note) => (
+        <p key={note} data-type="caption"
+          className="flex items-start gap-xs border-t border-outline-variant/30 px-m py-xs text-on-surface-var">
+          <Info size={12} className="mt-0.5 shrink-0" aria-hidden />
+          <span>{note}</span>
+        </p>
+      ))}
 
       <AnimatePresence initial={false}>
         {open && (
@@ -143,6 +152,11 @@ export function ToolCard({ seg }: { seg: ToolSegment }) {
       </AnimatePresence>
     </div>
   )
+}
+
+/** A sentence the card says, as a clause of its accessible name: lower-cased, no closing period. */
+function clause(sentence: string): string {
+  return `${sentence.charAt(0).toLowerCase()}${sentence.slice(1).replace(/\.$/, '')}`
 }
 
 /** The secondary line: a short, HUMAN summary of the call — never raw JSON.

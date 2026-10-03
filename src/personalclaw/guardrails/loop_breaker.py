@@ -421,6 +421,30 @@ def repeat_circuit_message(total_repeats: int) -> str:
     )
 
 
+#: What a structural reason tells the model to do about a status poll, and about a read the native
+#: runtime refuses next: guidance for the model, which :func:`seen_looping` leaves out.
+_POLL_GUIDANCE = " (and it looks like a status poll — if you are waiting, say so)"
+_READ_REFUSAL_GUIDANCE = "; calling it this way again will be refused"
+
+
+def seen_failing(streak: int) -> str:
+    """What the ACP host says on a call's card when the call keeps failing the same way (the WARN
+    and BLOCK rungs), in words for the person reading the chat.
+
+    The agent CLI has already run the call, and the host has no seam to refuse its next one, so
+    the card says what happened and no more: the circuit (:meth:`LoopBreaker.stop_sentence`) is
+    what stops the turn.
+    """
+    return f"Failed {streak} times in a row with the same arguments."
+
+
+def seen_looping(reason: str) -> str:
+    """A structural *reason* (:meth:`LoopBreaker.record_structural`) as the ACP host says it on a
+    call's card: what it saw, without the guidance the native runtime gives its model."""
+    seen = reason.removesuffix(_POLL_GUIDANCE).removesuffix(_READ_REFUSAL_GUIDANCE)
+    return f"{seen[:1].upper()}{seen[1:]}."
+
+
 def configured_circuit_threshold() -> int:
     """``guardrails.loop_breaker.circuit_threshold``, or :data:`CIRCUIT_THRESHOLD`.
 
@@ -618,9 +642,9 @@ class LoopBreaker:
             if seen and reason not in self._struct_reported:
                 self._struct_reported.add(reason)
                 if _is_poll_signature(sig):
-                    after = " (and it looks like a status poll — if you are waiting, say so)"
+                    after = _POLL_GUIDANCE
                 elif reads:
-                    after = "; calling it this way again will be refused"
+                    after = _READ_REFUSAL_GUIDANCE
                 else:
                     after = ""
                 return (

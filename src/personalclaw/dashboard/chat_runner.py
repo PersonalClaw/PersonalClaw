@@ -21,6 +21,7 @@ from personalclaw.acp.types import (
 from personalclaw.agents.instructions import agent_instructions
 from personalclaw.answer_rules import over_limit_notice
 from personalclaw.approval_brief import call_blast_radius
+from personalclaw.audit_subject import log_title
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
@@ -36,6 +37,7 @@ from personalclaw.dashboard.chat_persistence import (
 )
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
+    stamp_context_fed,
     stamp_finish_reason,
     stamp_learned,
     stamp_model_substitution,
@@ -82,17 +84,16 @@ from personalclaw.dashboard.state import (
     resolve_effective_risk,
     tool_input_to_str,
 )
+from personalclaw.dashboard.step_notes import note_on_call, note_refusal
 from personalclaw.dashboard.ungated_calls import report_ungated_call
 from personalclaw.guardrails.failure import budget_refusal
 from personalclaw.guardrails.loop_breaker import (
-    BLOCK_THRESHOLD,
     WARN_THRESHOLD,
-    blocked_message,
     only_reads,
     params_key,
     result_digest,
-    structural_note,
-    warn_note,
+    seen_failing,
+    seen_looping,
 )
 from personalclaw.history import model_view
 from personalclaw.hooks import (
@@ -3052,6 +3053,7 @@ async def run_chat(
                 )
 
         _window = None  # the window an assembled turn resolves below
+        _context_fed = ""  # what fed it, said live and stamped on its answer at the end
         if is_slash:
             full_message = message
             sel().log_tool_invocation(
@@ -3345,13 +3347,12 @@ async def run_chat(
                 _mark_skills_joined(state, session, _in_flight_text, nested=_prompt_depth > 0)
             if is_new:
                 ctx_len = _assembled.injected_chars
+                _context_fed = (
+                    f"Injected {ctx_len:,} chars of context (memory, lessons, history, episodic)"
+                )
                 state.broadcast_ws(
                     "activity_event",
-                    {
-                        "session": session.key,
-                        "kind": "context",
-                        "text": f"Injected {ctx_len:,} chars of context (memory, lessons, history, episodic)",  # noqa: E501
-                    },
+                    {"session": session.key, "kind": "context", "text": _context_fed},
                 )
         else:
             full_message = message
@@ -4023,11 +4024,11 @@ async def run_chat(
                 # The native runtime counts failures inside its own dispatch loop and
                 # can refuse the NEXT identical call before it runs. Out here the CLI
                 # has already run the tool by the time we see the result, so the host
-                # does what it can from between the frames: warn, then say plainly
-                # that the call is failing the same way, then abort the turn at the
-                # circuit threshold. Same counter, same wording as native — see
-                # guardrails/loop_breaker; the only difference is the seam, and it is
-                # stated rather than papered over.
+                # does what it can from between the frames: say on the call's card that it
+                # keeps failing the same way, then abort the turn at the circuit threshold.
+                # Same counter as native — see guardrails/loop_breaker; the only difference
+                # is the seam, and it is stated rather than papered over: native refuses the
+                # next call, this host says what it saw (`seen_failing`, `seen_looping`).
                 if _acp_cli:
                     _bkey = _acp_tool_keys.pop(event.tool_call_id, "") or params_key(
                         _tool_name or event.title, ""
@@ -4040,15 +4041,10 @@ async def run_chat(
                     # unconditionally for the same reason.
                     _acp_failed = _tool_ok is False
                     _streak = _acp_breaker.record(_bkey, _acp_failed)
-                    _notice = ""
-                    if _acp_failed:
-                        if _streak >= BLOCK_THRESHOLD:
-                            _notice = blocked_message(_bname, _streak)
-                        elif _streak >= WARN_THRESHOLD:
-                            _notice = warn_note(_bname, _streak).strip()
-                        if _notice:
-                            logger.warning("acp loop breaker (%s): %s", _acp_cli, _notice)
-                    else:
+                    _notice = (
+                        seen_failing(_streak) if _acp_failed and _streak >= WARN_THRESHOLD else ""
+                    )
+                    if not _acp_failed:
                         # Structural (no-progress / ping-pong) detection over SUCCESSFUL
                         # calls — nothing failed, so the failure path is blind to it. The CLI
                         # already ran the call, so a repeated read is counted here rather
@@ -4057,14 +4053,21 @@ async def run_chat(
                             f"{_bkey}\x1f{result_digest(_out)}",
                             reads=_acp_tool_reads.pop(event.tool_call_id, False),
                         )
-                        if _loop_reason:
-                            _notice = structural_note(_loop_reason).strip()
-                            logger.info("acp loop breaker (%s): %s", _acp_cli, _notice)
+                        _notice = seen_looping(_loop_reason) if _loop_reason else ""
                     if _notice:
-                        session.append("tool", _notice, "msg msg-tool")
+                        _line = note_on_call(
+                            session, call_id=event.tool_call_id or "", title=_bname, note=_notice
+                        )
+                        logger.log(
+                            logging.WARNING if _acp_failed else logging.INFO,
+                            "acp loop breaker (%s): %s — %s",
+                            _acp_cli,
+                            log_title(_bname),
+                            _notice,
+                        )
                         state.broadcast_ws(
                             "activity_event",
-                            {"session": session.key, "kind": "status", "text": _notice},
+                            {"session": session.key, "kind": "status", "text": _line},
                         )
                     _abort_msg = _acp_breaker.stop_sentence()
                     if _abort_msg and not _acp_breaker_aborted:
@@ -4160,9 +4163,7 @@ async def run_chat(
                 )
                 if _tm_deny:
                     await _refuse_call(event, why=_tm_deny)
-                    _title, _ = redact_exfiltration_urls(event.title)
-                    _title, _ = redact_credentials(_title)
-                    session.append("tool", f"{_title} ({_tm_deny})", "msg msg-tool")
+                    note_refusal(session, event, _tm_deny)
                     sel().log_tool_invocation(
                         session_key=session_key,
                         agent=_agent_label(session),
@@ -4199,11 +4200,7 @@ async def run_chat(
                         if _cmd_verdict.action == TOOL_DENY:
                             _cmd_reason = getattr(_cmd_verdict, "reason", "") or "security policy"
                             await _refuse_call(event, why=_cmd_reason)
-                            session.append(
-                                "tool",
-                                f"{event.title} (blocked: {_cmd_reason})",
-                                "msg msg-tool",
-                            )
+                            note_refusal(session, event, _cmd_reason)
                             # A control of the shell's own (its denylist, a credential path) is a
                             # `refused` row naming the control and its rule.
                             _control = _cmd_verdict.audit()
@@ -4240,9 +4237,7 @@ async def run_chat(
                         # model as the call's result.
                         _deny_reason = getattr(tool_result, "reason", "") or "policy hook"
                         await _refuse_call(event, why=_deny_reason, kind="hook")
-                        session.append(
-                            "tool", f"{event.title} (blocked: {_deny_reason})", "msg msg-tool"
-                        )
+                        note_refusal(session, event, _deny_reason)
                         _control = tool_result.audit()
                         sel().log_tool_invocation(
                             session_key=session_key,
@@ -4273,7 +4268,7 @@ async def run_chat(
                             validated_tool = _validate_tool_name(event.title, event.tool_kind)
                         except ValueError as e:
                             await _refuse_call(event, why=f"invalid tool name: {e}")
-                            session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
+                            note_refusal(session, event, f"its tool name is invalid ({e})")
                             sel().log_tool_invocation(
                                 session_key=session_key,
                                 agent=_agent_label(session),
@@ -4324,7 +4319,7 @@ async def run_chat(
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
                         await _refuse_call(event, why=f"invalid tool name: {e}")
-                        session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
+                        note_refusal(session, event, f"its tool name is invalid ({e})")
                         sel().log_tool_invocation(
                             session_key=session_key,
                             agent=_agent_label(session),
@@ -4350,7 +4345,7 @@ async def run_chat(
                         )
                     except Exception as hook_exc:
                         await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
-                        session.append("tool", f"{event.title} (hook error)", "msg msg-tool")
+                        note_refusal(session, event, turn_endings.HOOK_FAILED)
                         sel().log_tool_invocation(
                             session_key=session_key,
                             agent=_agent_label(session),
@@ -4367,9 +4362,7 @@ async def run_chat(
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
                         _blk_reason = turn_endings.blocked_reason(pre_hook_results)
                         await _refuse_call(event, why=_blk_reason, kind="hook")
-                        session.append(
-                            "tool", f"{event.title} (hook blocked: {_blk_reason})", "msg msg-tool"
-                        )
+                        note_refusal(session, event, f"a pre-tool hook blocked it ({_blk_reason})")
                         sel().log_tool_invocation(
                             session_key=session_key,
                             agent=_agent_label(session),
@@ -4425,11 +4418,7 @@ async def run_chat(
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
                         await _refuse_call(event, why=f"invalid tool name: {e}")
-                        session.append(
-                            "tool",
-                            f"{event.title} (invalid: {e})",
-                            "msg msg-tool",
-                        )
+                        note_refusal(session, event, f"its tool name is invalid ({e})")
                         continue
                     await client.approve_tool(event.request_id)
                     _tool_title = _broadcast_auto_tool(state, session, event)
@@ -4483,7 +4472,7 @@ async def run_chat(
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
                         await _refuse_call(event, why=f"invalid tool name: {e}")
-                        session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
+                        note_refusal(session, event, f"its tool name is invalid ({e})")
                         sel().log_tool_invocation(
                             session_key=session_key,
                             agent=_agent_label(session),
@@ -4512,7 +4501,7 @@ async def run_chat(
                             )
                         except Exception as hook_exc:
                             await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
-                            session.append("tool", f"{event.title} (hook error)", "msg msg-tool")
+                            note_refusal(session, event, turn_endings.HOOK_FAILED)
                             sel().log_tool_invocation(
                                 session_key=session_key,
                                 agent=_agent_label(session),
@@ -4529,7 +4518,9 @@ async def run_chat(
                         if any(r.startswith("BLOCKED:") for r in pre_hook_results):
                             _blk_reason = turn_endings.blocked_reason(pre_hook_results)
                             await _refuse_call(event, why=_blk_reason, kind="hook")
-                            session.append("tool", f"{event.title} (hook blocked)", "msg msg-tool")
+                            note_refusal(
+                                session, event, f"a pre-tool hook blocked it ({_blk_reason})"
+                            )
                             sel().log_tool_invocation(
                                 session_key=session_key,
                                 agent=_agent_label(session),
@@ -4628,7 +4619,9 @@ async def run_chat(
                             **({"answered": _answer["answered"]} if _answer else {}),
                         },
                     )
-                    logger.warning("AUTO-REJECTED tool=%r (batch rejection)", event.title)
+                    logger.warning(
+                        "AUTO-REJECTED tool=%r (batch rejection)", log_title(event.title)
+                    )
                     continue
                 # §2.3 (gap 3) — UNATTENDED FAIL-FAST, the last gate before the wedge, and
                 # deliberately LAST: see `chat_refusals.refuse_unattended`.
@@ -4640,7 +4633,7 @@ async def run_chat(
                         event,
                         _refuse_call,
                         agent=_agent_label(session),
-                        said="auto-denied: unattended run, no one to approve",
+                        said="an unattended run has nobody to approve it, so it was auto-denied",
                         reason="unattended_fail_fast",
                         decided_by="unattended_no_one_to_ask",
                         risk=effective_risk,
@@ -4796,7 +4789,7 @@ async def run_chat(
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
                     except ValueError as e:
                         await _refuse_call(event, why=f"invalid tool name: {e}")
-                        session.append("tool", f"{event.title} (invalid: {e})", "msg msg-tool")
+                        note_refusal(session, event, f"its tool name is invalid ({e})")
                         sel().log_tool_invocation(
                             session_key=session_key,
                             agent=_agent_label(session),
@@ -4826,7 +4819,7 @@ async def run_chat(
                         )
                     except Exception as hook_exc:
                         await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
-                        session.append("tool", f"{event.title} (hook error)", "msg msg-tool")
+                        note_refusal(session, event, turn_endings.HOOK_FAILED)
                         sel().log_tool_invocation(
                             session_key=session_key,
                             agent=_agent_label(session),
@@ -4843,9 +4836,7 @@ async def run_chat(
                     if any(r.startswith("BLOCKED:") for r in pre_hook_results):
                         _blk_reason = turn_endings.blocked_reason(pre_hook_results)
                         await _refuse_call(event, why=_blk_reason, kind="hook")
-                        session.append(
-                            "tool", f"{event.title} (hook blocked: {_blk_reason})", "msg msg-tool"
-                        )
+                        note_refusal(session, event, f"a pre-tool hook blocked it ({_blk_reason})")
                         sel().log_tool_invocation(
                             session_key=session_key,
                             agent=_agent_label(session),
@@ -4951,7 +4942,7 @@ async def run_chat(
                     session._batch_rejected = ended_as
                     logger.warning(
                         "PERM REJECTED tool=%r outcome=%r — auto-rejecting remaining batch",
-                        event.title,
+                        log_title(event.title),
                         ended_as,
                     )
                     continue
@@ -5349,6 +5340,7 @@ async def run_chat(
             line=_turn_line,
         )
         stamp_turn_telemetry(session, _turn_telemetry)
+        stamp_context_fed(session, _context_fed)
         # Durable per-turn summary LABEL, stamped in the same window and under the
         # same before-the-save constraint. Derived from the session buffer, which already
         # holds the whole turn at this point — the user row, every tool row and every

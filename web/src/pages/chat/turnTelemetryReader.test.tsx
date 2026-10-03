@@ -182,6 +182,7 @@ describe('C — the fold is wired (the reader is not an unreachable component)',
     const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
     const chatPage = read('../ChatPage.tsx')
     const ledger = read('./ContextLedger.tsx')
+    const chatTypes = read('./chatTypes.ts')
 
     it('VACUITY FLOOR — the scan actually reached the page', () => {
       // A `readFileSync` pointed at the wrong relative path throws, but a page that had been
@@ -207,11 +208,11 @@ describe('C — the fold is wired (the reader is not an unreachable component)',
     })
 
     it('keeps the stats line OUT of the inline step flow, so it renders once', () => {
-      // `isProcess` excludes the three folded kinds (`LEDGER_ACTIVITY`, which also says which
-      // segment a turn ends on). Dropping `'stats'` there would count the telemetry line as a
-      // work step and render it inline as well as in the ledger — the duplicate the ledger was
+      // `isProcess` excludes the three folded kinds (`LEDGER_ACTIVITY_KINDS`, which also says
+      // which segment a turn ends on). Dropping `'stats'` there would count the telemetry line as
+      // a work step and render it inline as well as in the ledger — the duplicate the ledger was
       // built to remove.
-      expect(chatPage).toContain("const LEDGER_ACTIVITY = ['context', 'learned', 'stats']")
+      expect(chatTypes).toContain("export const LEDGER_ACTIVITY_KINDS: readonly string[] = ['context', 'learned', 'stats']")
       expect(chatPage).toContain("(s.kind === 'activity' && !inLedger(s))")
     })
 

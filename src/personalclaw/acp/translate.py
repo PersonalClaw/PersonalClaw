@@ -35,6 +35,7 @@ from personalclaw.acp.types import (
     AcpEvent,
     JsonRpcMessage,
 )
+from personalclaw.audit_subject import audit_text, log_title
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 logger = logging.getLogger(__name__)
@@ -562,8 +563,8 @@ def build_permission_event(
                 else str(raw_input)
             )
 
-    logger.info("Permission requested for tool: %s (req=%s)", title, request_id)
-    logger.debug("Permission toolCall payload: %s", tool_call)
+    logger.info("Permission requested for tool: %s (req=%s)", log_title(title), request_id)
+    logger.debug("Permission toolCall payload: %s", audit_text(tool_call))
     return AcpEvent(
         kind=EVENT_PERMISSION_REQUEST,
         request_id=request_id,

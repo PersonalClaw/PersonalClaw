@@ -41,6 +41,7 @@ from personalclaw import (
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
 from personalclaw.approval_grants import ToolDecision
+from personalclaw.audit_subject import log_title
 from personalclaw.cancellation import cancel_and_wait, kill_timed_out
 from personalclaw.channel_history import ChannelHistory
 from personalclaw.config import AppConfig
@@ -806,7 +807,7 @@ class GatewayOrchestrator:
             logger.warning("could not read hooks.auto_approve_sources; asking", exc_info=True)
             sources = []
         if source in sources:
-            logger.info("Auto-approving tool %s from source %s", safe_title, source)
+            logger.info("Auto-approving tool %s from source %s", log_title(event.title), source)
             return approval_grants.SOURCE, None
 
         # CLI --approval flag override (composable test mode).

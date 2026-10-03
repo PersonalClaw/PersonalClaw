@@ -36,6 +36,11 @@ export interface ToolSegment {
    *  request. The gateway's sentence saying so and why (`ungated_call_note`), from the live
    *  card's `tool_call` update frame or the persisted row's `meta.ungated`. */
   ungated?: string
+  /** What the gateway said about this call, in order: that a gate refused it before it ran and
+   *  why, or that it keeps failing the same way (`dashboard/step_notes.py`). Each is a line the
+   *  gateway wrote about the call (`meta.note`, naming it in `meta.about_call`), folded onto its
+   *  card live and after a reload alike (`foldStepLine`). */
+  notes?: string[]
 }
 
 /** The structured error envelope carried on a failed
@@ -114,9 +119,15 @@ export interface ActivitySegment {
   ref?: string
 }
 
+/** The activity kinds a turn's footer ledger says (`ContextLedger`): what fed the turn, what it
+ *  learned, and its telemetry. Never a line of the turn's own: they are pulled out of its inline
+ *  flow, and kept whatever else the turn shows, live as after a reload (`insertActivity`). */
+export const LEDGER_ACTIVITY_KINDS: readonly string[] = ['context', 'learned', 'stats']
+
 /** A line the gateway wrote to say what happened to the conversation (`role: 'notice'`) — a turn
  *  moved to another agent, which is now answering — shown where it happened, live and on reload,
- *  as a quiet activity line: it is not the agent's answer and not an error. */
+ *  as a quiet activity line: it is not the agent's answer and not an error. A line about a call the
+ *  turn shows no card for is said the same way (`foldStepLine`). */
 export const noticeSegment = (text: string): ActivitySegment => ({ kind: 'activity', text, activityKind: 'notice' })
 
 /** A turn-level error (the model/provider rejected the turn, e.g. a Bedrock
@@ -498,7 +509,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], links: [...links.values()] }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; learned?: LearnedRecord[]; ungated?: string } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string }; context_fed?: string; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string } }
 
 /** Re-collapse a persisted user message: the stored content has paste markers
  *  expanded to full text (the model saw that), but meta.pastes lets us swap each
@@ -526,12 +537,36 @@ function recollapsePastes(content: string, pastes: { seq: number; lines: number;
 }
 const markerForSeq = (seq: number) => `[Paste #${seq}]`
 
+/** The sentence a line the gateway wrote about a call carries for its card (`meta.note`), or
+ *  nothing: a line without one is how an approval ended, or one written before notes were. */
+export function noteOf(meta: { note?: unknown } | undefined): string {
+  return typeof meta?.note === 'string' ? meta.note.trim() : ''
+}
+
 /** Fold a line the gateway wrote about a step (a `tool` row with no call id) into the turn's
- *  steps, the same way live and after a reload. It is no step of its own. The one it can add to
- *  is the approval it follows: a refused approval's line says how the call ended, which the
- *  approval's own row already says, and may name the agent's option the refusal was sent as
- *  (`meta.detail`), which goes on the approval's line. */
-export function foldStepLine(segs: Segment[], meta: { detail?: unknown } | undefined): Segment[] {
+ *  steps, the same way live and after a reload. It is no step of its own.
+ *
+ *  A line with a note (`meta.note`) says what happened to the call it names (`meta.about_call`): a
+ *  gate refused it before it ran, or it keeps failing the same way. The note goes on that call's
+ *  card, once however often the line arrives; about a call the turn shows no card for, the *line*
+ *  (which names the call) is said on the turn, where it happened.
+ *
+ *  Any other line can add only to the approval it follows: a refused approval's line says how the
+ *  call ended, which the approval's own row already says, and may name the agent's option the
+ *  refusal was sent as (`meta.detail`), which goes on the approval's line. */
+export function foldStepLine(segs: Segment[], meta: { detail?: unknown; note?: unknown; about_call?: unknown } | undefined, line = ''): Segment[] {
+  const note = noteOf(meta)
+  if (note) {
+    const about = typeof meta?.about_call === 'string' ? meta.about_call : ''
+    const card = about ? segs.find((s): s is ToolSegment => s.kind === 'tool' && s.id === about) : undefined
+    if (card) {
+      if (card.notes?.includes(note)) return segs
+      return segs.map((s) => (s === card ? { ...card, notes: [...(card.notes ?? []), note] } : s))
+    }
+    const said = line.trim() || note
+    const prev = segs[segs.length - 1]
+    return prev?.kind === 'activity' && prev.text === said ? segs : [...segs, noticeSegment(said)]
+  }
   const last = segs[segs.length - 1]
   const detail = typeof meta?.detail === 'string' ? meta.detail.trim() : ''
   if (!detail || last?.kind !== 'approval') return segs
@@ -661,6 +696,10 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // sentence was persisted has none, and the turn shows no telemetry row, as before.
       const statsLine = m.meta?.turn_telemetry?.line
       if (typeof statsLine === 'string' && statsLine) at.segments.push({ kind: 'activity', text: statsLine, activityKind: 'stats' })
+      // What fed the turn ("Injected 1,204 chars of context …"), on the same last message: live it
+      // is the `context` activity line the turn's footer shows, which a reload never replays.
+      const fed = m.meta?.context_fed
+      if (typeof fed === 'string' && fed) at.segments.push({ kind: 'activity', text: fed, activityKind: 'context' })
       // What the turn learned, from the same last message: live it arrives as the learned chip's
       // `activity_event`, which a reload — or a restart mid-turn — never replays, so a preference
       // could be saved with nothing on the page saying so. One segment per entry, in order.
@@ -686,9 +725,11 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       // titled with the line's own words put through the tool-name humanizer, reading
       // "completed". An imported conversation's call lines carry no ids at all, so in its turns
       // they are still its calls.
+      // A line with a note is the gateway's whatever else the turn holds (`foldStepLine`).
+      if (noteOf(m.meta)) ranHere = true
       if (!callId && ranHere) {
         const at = lastAssistant()
-        at.segments = foldStepLine(at.segments, m.meta)
+        at.segments = foldStepLine(at.segments, m.meta, m.content)
         continue
       }
       if (callId) ranHere = true

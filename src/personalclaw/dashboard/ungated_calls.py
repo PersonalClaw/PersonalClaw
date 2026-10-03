@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from personalclaw.acp import permission_authority as acp_permission_authority
+from personalclaw.audit_subject import log_title
 from personalclaw.dashboard.chat_utils import strip_status_sentinel
 from personalclaw.dashboard.state import resolve_effective_risk
 from personalclaw.providers.image_input import agent_label
@@ -111,7 +112,7 @@ def report_ungated_call(
         "%s (acp:%s) ran %r without asking the host (session %s)%s",
         who,
         acp_cli,
-        _title[:120],
+        log_title(title or "?"),
         session.key,
         " — turn stopped" if abort else "",
     )

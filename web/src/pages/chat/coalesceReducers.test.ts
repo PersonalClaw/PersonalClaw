@@ -67,7 +67,13 @@ describe('insertActivity — K42 ordering discipline', () => {
 
   it('tool cards win — activity is dropped when a tool segment is present', () => {
     const start: Segment[] = [tool()]
-    expect(insertActivity(start, 'recalled context', 'context', true)).toBe(start)
+    expect(insertActivity(start, 'Hook context-hook: injected 120 chars', 'hook', true)).toBe(start)
+  })
+
+  it('a line the footer ledger says is kept beside tool cards, as a reload keeps it', () => {
+    const start: Segment[] = [tool()]
+    const out = insertActivity(start, 'Turn complete · 3 tool calls', 'stats', false)
+    expect(out).toEqual([...start, { kind: 'activity', text: 'Turn complete · 3 tool calls', activityKind: 'stats' }])
   })
 })
 

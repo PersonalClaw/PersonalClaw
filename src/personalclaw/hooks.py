@@ -17,6 +17,7 @@ from pathlib import Path
 
 from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
+from personalclaw.audit_subject import log_title
 from personalclaw.safety_flags import strict_bool
 from personalclaw.security import (
     denied_command,
@@ -576,7 +577,7 @@ class HookManager:
                 logger.info(
                     "not auto-approving a chained command on pattern %r: %s",
                     pattern,
-                    normalized[:120],
+                    log_title(normalized),
                 )
                 continue
             return ToolHookResult.auto_approve()

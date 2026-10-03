@@ -590,6 +590,15 @@ from nothing else except a shell command's own text:
   chat's export. The folded work counts such steps, the audit
   row reads `ungated`, and one log line names the runtime and the tool (WARNING; INFO for an
   accepted residual), never the call's arguments.
+- **A gateway log line that names a tool call writes its title masked** (`audit_subject.log_title`).
+  An agent CLI titles a shell call with its command, so a line that named a call by its raw title
+  (a permission asked or refused, a call refused with its batch or on an unattended run, a source's
+  grant, a chained command a pattern would not approve, a call that ran without asking or keeps
+  failing) wrote whatever the command carried, and all of it. Each writes the title as the audit
+  log writes a call's command (`audit_text`): masked, on one line, cut at 160 characters with a
+  marker saying how much it left out. The log sinks' own mask (`MaskingFormatter`) is the floor
+  under every record; `tests/test_a_call_the_log_names_is_written_masked.py` fails a log line that
+  hands an event's title or input over as it came.
 
 ## Governance ceiling (`guardrails/ceiling.py`)
 

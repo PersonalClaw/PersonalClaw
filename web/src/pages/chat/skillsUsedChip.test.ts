@@ -197,7 +197,7 @@ describe('stampActivityOrigin — origin survives the LIVE stream, not just a re
     // insertActivity's early-out returns the SAME array. Stamping anything here would put an
     // origin on an unrelated pre-existing line.
     const withTool: Segment[] = [{ kind: 'tool', id: 't1', tool: 'Read', done: false } as Segment]
-    const next = stampActivityOrigin(withTool, insertActivity(withTool, 'Learned: X', 'learned', false), 'lesson')
+    const next = stampActivityOrigin(withTool, insertActivity(withTool, 'Hook h: injected 9 chars', 'hook', false), 'lesson')
     expect(next).toBe(withTool)
     expect(next.some((s) => s.kind === 'activity')).toBe(false)
   })

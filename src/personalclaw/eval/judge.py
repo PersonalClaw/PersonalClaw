@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from personalclaw.audit_subject import log_title
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
@@ -96,7 +97,7 @@ class LLMJudge:
                 if not event.request_id:
                     logger.warning(
                         "Judge received permission request with falsy request_id for tool %s",
-                        event.title,
+                        log_title(event.title),
                     )
                 sel().log_tool_invocation(
                     session_key="eval_judge",

@@ -55,6 +55,7 @@ from personalclaw.dashboard.chat_persistence import (
 )
 from personalclaw.dashboard.chat_utils import _prepare_messages, full_session_messages
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.dashboard.step_notes import NOTE
 from personalclaw.http_errors import json_error
 from personalclaw.llm.events import is_length_stop
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -112,6 +113,12 @@ MODEL_SUBSTITUTION_KEY = "model_substitution"
 #: assistant message. The live chip is an ``activity_event``; this is the copy a reload reads.
 #: Absent = the turn learned nothing.
 LEARNED_KEY = "learned"
+
+#: The ``meta`` key holding what fed the turn — the sentence saying how much context it was handed
+#: ("Injected 1,204 chars of context …") — on the same last assistant message. The live line is an
+#: ``activity_event`` the turn's footer shows; this is the copy a reload reads. Absent = the turn
+#: said nothing about its context, as a follow-up turn on the same runtime does not.
+CONTEXT_FED_KEY = "context_fed"
 
 #: A summary is a RAIL LABEL, deliberately shorter than :data:`PREVIEW_CAP`: it occupies
 #: the same one-line slot the preview would, and a label that spends the whole preview
@@ -203,6 +210,13 @@ class _Turn:
         self.subs: list[dict[str, Any]] = []
 
 
+def _line_about_a_step(meta: dict[str, Any], ran_here: bool) -> bool:
+    """Whether a ``tool`` row is a line the gateway wrote about a step, which is no step of its own
+    (``hydrateTurns``): it carries no call id, in a turn the gateway ran (one holding a call row
+    with its id, or an approval) or with a note for a call's card (``step_notes``)."""
+    return not meta.get("tool_call_id") and (ran_here or bool(meta.get(NOTE)))
+
+
 def _hydrate_turns(messages: list[dict[str, Any]]) -> list[_Turn]:
     """Fold prepared transcript messages into turns exactly as ``hydrateTurns`` does.
 
@@ -220,6 +234,7 @@ def _hydrate_turns(messages: list[dict[str, Any]]) -> list[_Turn]:
     visible = -1
     last_user_text = ""
     assistant_text_since_user = False
+    ran_here = False
 
     def last_assistant() -> _Turn:
         if turns and turns[-1].role == "assistant":
@@ -248,6 +263,7 @@ def _hydrate_turns(messages: list[dict[str, Any]]) -> list[_Turn]:
             turns.append(turn)
             last_user_text = text
             assistant_text_since_user = False
+            ran_here = False
         elif role == "assistant":
             visible += 1
             turn = last_assistant()
@@ -261,7 +277,11 @@ def _hydrate_turns(messages: list[dict[str, Any]]) -> list[_Turn]:
             assistant_text_since_user = True
         elif role == "tool":
             turn = last_assistant()
+            if _line_about_a_step(meta, ran_here):
+                ran_here = True
+                continue
             tool_id = str(meta.get("tool_call_id") or "")
+            ran_here = ran_here or bool(tool_id)
             if tool_id and tool_id in seen_tool_ids:
                 # A result/completion update for a call already marked — the TS merges it
                 # into the existing segment, so it must NOT mint a second mark.
@@ -284,6 +304,7 @@ def _hydrate_turns(messages: list[dict[str, Any]]) -> list[_Turn]:
             turn.subs.append(sub)
         elif role == "permission":
             turn = last_assistant()
+            ran_here = True
             turn.subs.append(
                 {
                     "kind": "approval",
@@ -508,6 +529,13 @@ def stamp_model_substitution(session: Any, sentence: str) -> bool:
     return _stamp_on_last_assistant(session, MODEL_SUBSTITUTION_KEY, sentence)
 
 
+def stamp_context_fed(session: Any, sentence: str) -> bool:
+    """Record what fed the turn on its last assistant message (:data:`CONTEXT_FED_KEY`), so the
+    turn's footer says after a reload what it said live. Same message, same before-the-save
+    constraint as the telemetry."""
+    return _stamp_on_last_assistant(session, CONTEXT_FED_KEY, sentence)
+
+
 def stamp_learned(session: Any, learned: list[dict[str, Any]]) -> bool:
     """Record what the turn learned on its last assistant message (:data:`LEARNED_KEY`).
 
@@ -660,6 +688,7 @@ def summarize_session_turn(session: Any) -> str | None:
     failed_tools = 0
     errored = False
     seen_tool_ids: set[str] = set()
+    ran_here = False
     for msg in messages[start:]:
         role = msg.get("role", "")
         raw_meta = msg.get("meta")
@@ -670,8 +699,14 @@ def summarize_session_turn(session: Any) -> str | None:
                 request = str(meta.get("ui_label") or meta.get("original") or content)
         elif role == "assistant":
             replies.append(content)
+        elif role == "permission":
+            ran_here = True
         elif role == "tool":
+            if _line_about_a_step(meta, ran_here):
+                ran_here = True
+                continue
             tool_id = str(meta.get("tool_call_id") or "")
+            ran_here = ran_here or bool(tool_id)
             if tool_id and tool_id in seen_tool_ids:
                 continue
             if tool_id:

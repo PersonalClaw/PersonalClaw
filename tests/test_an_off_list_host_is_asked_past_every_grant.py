@@ -240,7 +240,9 @@ async def test_an_unattended_turn_is_refused_a_write_outside_its_folders(tmp_pat
     client.reject_tool.assert_called_once()
     said = " ".join(m["content"] for m in session.messages if m.get("role") == "tool")
     assert "it writes /srv/elsewhere/notes.md, outside the folders this run works in" in said
-    assert "scratch files go in" in said and "mktemp" not in said
+    # Where it may write instead: the folders the run works in, its own temporary folder among
+    # them (the steps to take are the agent's, in its refusal).
+    assert str(tmp_path / "tmp") in said and "mktemp" not in said
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,8 @@ that audits a tool call, which hands the call's arguments to the log (``tool_inp
 
 That text is the call's own, and a command can carry a credential (a token in a header, a login in
 a URL), so what the log keeps of it is :func:`audit_text`: masked the way a call's title is masked
-where it is shown, on one line, and cut at a bound that says how much it cut.
+where it is shown, on one line, and cut at a bound that says how much it cut. A gateway log line
+that names a call writes its title the same way, at a log line's bound (:func:`log_title`).
 """
 
 from __future__ import annotations
@@ -19,6 +20,9 @@ from typing import Any
 
 #: The longest text one field of an audit row keeps, its cut marker included.
 SUBJECT_MAX_CHARS = 500
+
+#: The longest title a gateway log line keeps of the call it names, its cut marker included.
+LOG_TITLE_MAX_CHARS = 160
 
 #: The tool kinds an agent CLI reports for a call that changes a file (the Agent Client Protocol's
 #: ``ToolKind``). A report, not a declaration: here it decides only what the audit row records.
@@ -57,6 +61,20 @@ def audit_text(text: object, limit: int = SUBJECT_MAX_CHARS) -> str:
     while keep > 0 and keep + len(cut_marker(len(line) - keep)) > limit:
         keep -= 1
     return line[:keep] + cut_marker(len(line) - keep)
+
+
+def log_title(title: object) -> str:
+    """A tool call's title as a gateway log line writes it: :func:`audit_text`, at
+    :data:`LOG_TITLE_MAX_CHARS`.
+
+    An agent CLI titles a shell call with its command, and a native call's title can be the text it
+    was asked to run, so a line naming the call by its title would write whatever the command
+    carries, a token in a header or a login in a URL, and all of it: a heredoc's body is part of its
+    title. The line names the call, so it keeps the masked start of the title on one line. The log's
+    own masking (``security.MaskingFormatter``) is the floor under every record; this is what every
+    sink a record reaches is handed in the first place.
+    """
+    return audit_text(title, LOG_TITLE_MAX_CHARS)
 
 
 def _arguments(tool_input: object) -> dict[str, Any]:
@@ -144,9 +162,11 @@ __all__ = [
     "COMMAND",
     "FILE_CHANGE_KINDS",
     "FILE_PATH",
+    "LOG_TITLE_MAX_CHARS",
     "SUBJECT_MAX_CHARS",
     "audit_text",
     "cut_marker",
     "kind_of_subject",
+    "log_title",
     "subject_of",
 ]

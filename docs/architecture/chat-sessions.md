@@ -200,13 +200,19 @@ chat, channel thread, loop worker, webhook, subagent).
   steps from the gateway's frames (`web/src/pages/chat/liveToolFrames.ts`) and a
   reload rebuilds them from the persisted rows (`hydrateTurns`), so what one
   shows the other must. A call's row carries its call's id; a `tool` row without
-  one, in a turn the gateway ran, is a line it wrote ABOUT a step (how its
-  approval ended, why a gate refused it, a loop-breaker warning), which the live
-  page draws no card for, and neither does a reload (`foldStepLine`: a refused
+  one, in a turn the gateway ran, is a line it wrote ABOUT a step, which neither
+  the live page nor a reload draws as a step (`foldStepLine`). A refused
   approval's line puts the agent's option the refusal was sent as on the
-  approval's own line). An imported conversation's call lines carry no ids at
-  all and stay its calls. A call an agent CLI ran without asking is said on its
-  own card (`docs/architecture/security.md`), never on a row of its own.
+  approval's own line. A line about what happened to a call (a gate refused it
+  before it ran: the chat's task mode, the shell denylist, a hook, an unattended
+  run's bounds, a tool name that does not validate; or it keeps failing the same
+  way, the loop breaker) names the call in `meta.about_call` and carries its
+  sentence in `meta.note` (`dashboard/step_notes.py`), and the sentence is said on
+  that call's card, live from the row's frame and after a reload from the row; a
+  line about a call the turn shows no card for is said on the turn. An imported
+  conversation's call lines carry no ids at all and stay its calls. A call an
+  agent CLI ran without asking is said on its own card
+  (`docs/architecture/security.md`), never on a row of its own.
 - **Who started a conversation.** `_ChatSession.created_by_app` is the app whose
   token started it, or empty for yours, and it is the one thing an app's reach
   into a conversation is decided on (`apps/permissions.ROUTE_AUTHZ` rows that
@@ -539,7 +545,13 @@ sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
   or a subagent report's row; the message each skill joined): no new file and no new
   channel. Absent = the turn reported nothing; `priced: false` means the
   model has no price row (never "free"); `context_pct: null` means the provider measured
-  nothing (never 0%).
+  nothing (never 0%). What fed the turn rides the same message as `meta.context_fed`: the
+  sentence its footer says ("Injected 1,204 chars of context …"), which a runtime's first
+  turn says live, so a reload's footer says it too. Absent = the turn said nothing about
+  its context. The footer ledger (`ContextLedger`) says what fed the turn, what it learned
+  and its telemetry, live from their activity lines and after a reload from these keys; its
+  lines are never drawn in the turn itself, and a turn's tool cards never keep them out
+  (`LEDGER_ACTIVITY_KINDS`, `insertActivity`).
 
 ## Channel-linked sessions
 

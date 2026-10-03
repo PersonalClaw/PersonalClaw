@@ -27,7 +27,9 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import auto_denials, run_bounds, security
+from personalclaw.audit_subject import log_title
 from personalclaw.dashboard import turn_endings
+from personalclaw.dashboard.step_notes import note_refusal
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.task_modes import tool_input_to_str
@@ -52,17 +54,15 @@ async def refuse_unattended(
 ) -> None:
     """Refuse *event*'s call on an unattended turn (*refuse* is the runner's own refusal, which
     tells the agent *why*, a ``security.DENY_KIND_*`` *kind* of reason, never her decline), saying
-    *said* in the transcript, with its audit row and its Inbox note."""
+    on the call's card that it did not run and *said* why (``step_notes.note_refusal``), with its
+    audit row and its Inbox note."""
     await refuse(event, why=why, kind=kind)
     title, _ = redact_exfiltration_urls(event.title)
     title, _ = redact_credentials(title)
-    session.append(
-        "tool",
-        f"{title} ({said})",
-        "msg msg-tool",
-        meta=({"tool_call_id": event.tool_call_id} if event.tool_call_id else None),
+    note_refusal(session, event, said)
+    logger.warning(
+        "unattended: refused %r on %s (%s)", log_title(event.title), session.key, decided_by
     )
-    logger.warning("unattended: refused %r on %s (%s)", event.title, session.key, decided_by)
     sel().log_tool_invocation(
         session_key=session_key,
         agent=agent,
@@ -128,7 +128,7 @@ async def refuse_past_bounds(
         event,
         refuse,
         agent=agent,
-        said=f"refused: {why}",
+        said=run_bounds.past_bounds(reach, within),
         reason="run_bounds",
         decided_by="run_bounds",
         why=why,

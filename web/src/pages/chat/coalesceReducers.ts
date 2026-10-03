@@ -1,4 +1,4 @@
-import { stampActivityOrigin, type Segment } from './chatTypes'
+import { LEDGER_ACTIVITY_KINDS, stampActivityOrigin, type Segment } from './chatTypes'
 
 /** A transcript update for the trailing assistant turn's segments. */
 export type SegmentsUpdate = (segs: Segment[]) => Segment[]
@@ -77,14 +77,19 @@ export function applyCoalescedFlush(segs: Segment[], revealed: string, replace: 
  *  never after — so the coalescer's active text stays the tail and the next flush replaces
  *  it in place rather than pushing a duplicate. Also the correct reading order (a preamble
  *  belongs above the answer). De-dupes against the adjacent activity line. Returns the same
- *  array (by identity) when nothing changes. */
+ *  array (by identity) when nothing changes.
+ *
+ *  A turn with tool cards drops its activity noise, but never a line its footer ledger says
+ *  (`LEDGER_ACTIVITY_KINDS`): the ledger draws no line of its own in the turn, and a reload
+ *  shows what the turn learned and its telemetry from the reply's own record. */
 export function insertActivity(
   segs: Segment[],
   text: string,
   activityKind: string,
   live: boolean,
 ): Segment[] {
-  if (segs.some((sg) => sg.kind === 'tool')) return segs // ACP tool cards win — no activity noise
+  // ACP tool cards win over activity noise.
+  if (!LEDGER_ACTIVITY_KINDS.includes(activityKind) && segs.some((sg) => sg.kind === 'tool')) return segs
   const insertAt = (live && segs[segs.length - 1]?.kind === 'text') ? segs.length - 1 : segs.length
   const neighbor = segs[insertAt - 1] ?? segs[insertAt]
   if (neighbor && neighbor.kind === 'activity' && neighbor.text === text) return segs

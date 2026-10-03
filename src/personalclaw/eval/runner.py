@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw.audit_subject import log_title
 from personalclaw.eval.scenario import (
     Assertion,
     AssertionType,
@@ -453,7 +454,7 @@ class EvalRunner:
         ):
             reason, decided_by = "refused_by_ceiling", approval_grants.NOBODY
         if reason:
-            logger.warning("Refused tool in eval (%s): %s", reason, title)
+            logger.warning("Refused tool in eval (%s): %s", reason, log_title(title))
             await provider.reject_tool(event.request_id)
         else:
             await provider.approve_tool(event.request_id)

@@ -33,6 +33,7 @@ from personalclaw.guardrails.loop_breaker import (
     CIRCUIT_THRESHOLD,
     WARN_THRESHOLD,
     params_key,
+    seen_failing,
 )
 from personalclaw.history import ConversationLog
 from personalclaw.hooks import ToolHookResult
@@ -449,6 +450,20 @@ def _texts(session):
     return [str(m.get("content", "")) for m in session.messages]
 
 
+def _failing_notes(session):
+    """What the host said on the cards of calls that keep failing: ``{call id: note}``.
+
+    Read off the line's own row: the call it names (``about_call``) and its sentence (``note``),
+    the two things the chat draws it from (``dashboard.step_notes``).
+    """
+    return {
+        m["meta"]["about_call"]: m["meta"]["note"]
+        for m in session.messages
+        if m.get("role") == "tool"
+        and str((m.get("meta") or {}).get("note", "")).startswith("Failed ")
+    }
+
+
 async def _drive(state, session):
     with patch("personalclaw.dashboard.chat_runner.sel", MagicMock()):
         await run_chat(state, session, "hello")
@@ -643,11 +658,11 @@ class TestAcpLoopBreaker:
         _set_stream(client, _fail_cycle(WARN_THRESHOLD))
         session = _session()
         await _drive(state, session)
-        # Assert the FAILURE path's own wording, not the shared "change approach"
-        # tail: the structural (no-progress) note ends the same way, so matching on
-        # that alone would also pass if the failure signal never arrived and three
-        # identical SUCCESSES tripped the structural detector instead.
-        assert any("this is failure #" in t for t in _texts(session))
+        # Assert the FAILURE path's own words, on the call that reached the threshold: the
+        # structural (no-progress) note is said on a card too, so matching on any note would also
+        # pass if the failure signal never arrived and three identical SUCCESSES tripped the
+        # structural detector instead.
+        assert _failing_notes(session) == {"t2": seen_failing(WARN_THRESHOLD)}
 
     @pytest.mark.asyncio
     async def test_block_rung_names_the_repeated_failure(self, tmp_path):
@@ -655,7 +670,12 @@ class TestAcpLoopBreaker:
         _set_stream(client, _fail_cycle(BLOCK_THRESHOLD))
         session = _session()
         await _drive(state, session)
-        assert any("was blocked" in t for t in _texts(session))
+        # The CLI already ran each call, so the card says what happened and never that it was
+        # blocked: every call from the warning on, on its own card, with its own count.
+        notes = _failing_notes(session)
+        assert notes[f"t{BLOCK_THRESHOLD - 1}"] == seen_failing(BLOCK_THRESHOLD), notes
+        assert sorted(notes) == [f"t{i}" for i in range(WARN_THRESHOLD - 1, BLOCK_THRESHOLD)]
+        assert not any("was blocked" in t for t in _texts(session))
 
     @pytest.mark.asyncio
     async def test_circuit_trips_and_aborts_the_turn(self, tmp_path):
@@ -761,7 +781,7 @@ class TestAcpLoopBreaker:
         session = _session()
         await _drive(state, session)
         texts = " ".join(_texts(session))
-        assert "was blocked" not in texts
+        assert _failing_notes(session) == {}
         assert "Run aborted by the loop breaker" not in texts
         client.cancel.assert_not_awaited()
 
@@ -793,7 +813,7 @@ class TestAcpLoopBreaker:
         _set_stream(client, events)
         session = _session()
         await _drive(state, session)
-        assert not any("was blocked" in t for t in _texts(session))
+        assert _failing_notes(session) == {}
 
     @pytest.mark.asyncio
     async def test_a_success_clears_the_streak(self, tmp_path):
@@ -821,7 +841,7 @@ class TestAcpLoopBreaker:
         _set_stream(client, events)
         session = _session()
         await _drive(state, session)
-        assert not any("was blocked" in t for t in _texts(session))
+        assert _failing_notes(session) == {}
 
 
 # ── the CALL SITE: a real CLI's frames, through the real decoder, into the breaker ──
@@ -845,7 +865,7 @@ class TestBreakerFiresOnRealRuntimeFrames:
         _set_stream(client, _real_frame_cycle(WARN_THRESHOLD, KIRO_FAILED_FRAME))
         session = _session()
         await _drive(state, session)
-        assert any("this is failure #" in t for t in _texts(session)), _texts(session)
+        assert _failing_notes(session) == {"t2": seen_failing(WARN_THRESHOLD)}, _texts(session)
 
     @pytest.mark.asyncio
     async def test_kiro_frames_reach_the_block_rung(self, tmp_path):
@@ -853,7 +873,8 @@ class TestBreakerFiresOnRealRuntimeFrames:
         _set_stream(client, _real_frame_cycle(BLOCK_THRESHOLD, KIRO_FAILED_FRAME))
         session = _session()
         await _drive(state, session)
-        assert any("was blocked" in t for t in _texts(session)), _texts(session)
+        notes = _failing_notes(session)
+        assert notes[f"t{BLOCK_THRESHOLD - 1}"] == seen_failing(BLOCK_THRESHOLD), notes
 
     @pytest.mark.asyncio
     async def test_kiro_frames_trip_the_circuit_and_abort_the_turn(self, tmp_path):
@@ -873,7 +894,7 @@ class TestBreakerFiresOnRealRuntimeFrames:
         _set_stream(client, _real_frame_cycle(WARN_THRESHOLD, CODEX_FAILED_FRAME))
         session = _session()
         await _drive(state, session)
-        assert any("this is failure #" in t for t in _texts(session)), _texts(session)
+        assert _failing_notes(session) == {"t2": seen_failing(WARN_THRESHOLD)}, _texts(session)
 
     @pytest.mark.asyncio
     async def test_kiro_passing_frames_produce_no_breaker_text(self, tmp_path):
@@ -886,7 +907,7 @@ class TestBreakerFiresOnRealRuntimeFrames:
         session = _session()
         await _drive(state, session)
         texts = _texts(session)
-        assert not any("this is failure #" in t for t in texts), texts
+        assert _failing_notes(session) == {}, texts
         assert not any("Run aborted by the loop breaker" in t for t in texts), texts
 
 
@@ -967,7 +988,7 @@ class TestBreakerIdentityIgnoresAdapterNarration:
         _set_stream(client, _kiro_narrated_cycle(WARN_THRESHOLD))
         session = _session()
         await _drive(state, session)
-        assert any("this is failure #" in t for t in _texts(session)), _texts(session)
+        assert _failing_notes(session) == {"t2": seen_failing(WARN_THRESHOLD)}, _texts(session)
 
     @pytest.mark.asyncio
     async def test_narrated_kiro_calls_reach_the_block_rung(self, tmp_path):
@@ -975,7 +996,8 @@ class TestBreakerIdentityIgnoresAdapterNarration:
         _set_stream(client, _kiro_narrated_cycle(BLOCK_THRESHOLD))
         session = _session()
         await _drive(state, session)
-        assert any("was blocked" in t for t in _texts(session)), _texts(session)
+        notes = _failing_notes(session)
+        assert notes[f"t{BLOCK_THRESHOLD - 1}"] == seen_failing(BLOCK_THRESHOLD), notes
 
 
 # ── An ``acp:<cli>`` binding resolves THAT CLI, never a model ──

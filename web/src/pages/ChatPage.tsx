@@ -76,7 +76,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './chat/liveToolFrames'
@@ -1470,9 +1470,14 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             return last?.kind === 'text' && last.text === text ? segs : [...segs, { kind: 'text', text }]
           })
         } else if (d.role === 'tool' && !(d.meta as { tool_call_id?: string } | undefined)?.tool_call_id) {
-          // A line the gateway wrote about a step, folded as a reload folds it (`foldStepLine`).
-          // A call's own row is drawn from its `tool_call` frames, never from this one.
-          patchLastAssistant((segs) => foldStepLine(segs, d.meta as { detail?: unknown } | undefined))
+          // A line the gateway wrote about a step, folded as a reload folds it (`foldStepLine`): a
+          // note on the call it names, or on the turn. A call's own row is drawn from its
+          // `tool_call` frames, never from this one. A note can land on the turn itself, so the
+          // text run ends first, as it does for a notice.
+          const meta = d.meta as Parameters<typeof foldStepLine>[1]
+          if (noteOf(meta)) endTextRun()
+          const line = String(d.content ?? '')
+          patchLastAssistant((segs) => foldStepLine(segs, meta, line))
         }
         break
       }
@@ -4563,9 +4568,6 @@ function SelectionQuote({ scrollRef, onQuote, attributionFor }: {
   )
 }
 
-/** The activity kinds a turn's footer ledger shows instead of its body (`ContextLedger`). */
-const LEDGER_ACTIVITY = ['context', 'learned', 'stats']
-
 /** Render an assistant turn's ordered segments. Legacy `[OPTIONS: …]` markers in
  *  historical messages get stripped from the prose (they are never rendered as
  *  buttons — follow-up chips are the single suggestion surface) and referenced
@@ -4617,7 +4619,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
   }
   const hasLedger = Boolean(ledger.fed || ledger.learned || ledger.stats)
   // The last segment the turn shows in its body: the ledger's rows are pulled out into its footer.
-  const inLedger = (s: Segment) => s.kind === 'activity' && LEDGER_ACTIVITY.includes((s as ActivitySegment).activityKind || '')
+  const inLedger = (s: Segment) => s.kind === 'activity' && LEDGER_ACTIVITY_KINDS.includes((s as ActivitySegment).activityKind || '')
   const lastShown = [...segments].reverse().find((s) => !inLedger(s))
 
   // Render one segment as its own card/line. Tool/approval/error cards carry their
@@ -4708,7 +4710,9 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
   const isWorkflow = (s: Segment) => liveCards.has(s)
   const isLiveCard = (s: Segment) => isSdlc(s) || isWorkflow(s) || waitsPastItsTurn(s)
   const sdlcNodes = segments.filter(isLiveCard).map(renderItem).filter(Boolean)
-  const workNodes = workSegs.filter((s) => !isLiveCard(s)).map(renderItem).filter(Boolean)
+  // The ledger's rows are said in the footer only. What fed the turn arrives as the turn starts,
+  // inside the work's span, and was drawn there too, live: a line a reload never showed.
+  const workNodes = workSegs.filter((s) => !isLiveCard(s) && !inLedger(s)).map(renderItem).filter(Boolean)
   const finalNodes = finalSegs.map(renderItem).filter(Boolean)
   const hasFinal = finalNodes.length > 0
   // Collapse the work only when the turn is done AND produced a final answer to
