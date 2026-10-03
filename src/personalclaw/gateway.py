@@ -197,7 +197,9 @@ _NUDGE_TURN_TIMEOUT = 1800.0
 # continuation (up to _MAX_CYCLE_REPROMPTS, each one shown on the loop's page) so the agent
 # actually executes the work + writes. The re-prompt loop runs inside the turn task and
 # suppresses autonudge re-arm so the idle timer can't fire a competing next-cycle nudge mid-loop.
-# Native workers write in one turn so their finding is counted at once and this never fires.
+# Native workers write in one turn so their finding is counted at once and this never fires. A
+# turn she ended with a Deny is never re-prompted: the loop waits for her instead
+# (`LoopWatchdog.hold_after_decline`).
 _MAX_CYCLE_REPROMPTS = 3
 
 # Conservative per-message chunk limit for channel delivery (fits Slack's
@@ -3120,10 +3122,10 @@ class GatewayOrchestrator:
                     for attempt in range(_MAX_CYCLE_REPROMPTS):
                         if getattr(_sess, "_last_turn_errored", False):
                             break
-                        # Asked again only for a finding still owed (never a finished task's):
-                        # a check that fails asks nothing.
+                        # Asked again only for a finding still owed (never a finished task's,
+                        # never after her Deny): a check that fails asks nothing.
                         try:
-                            due, _title = await _loop_manager.reprompt_due(_sess.key, before)
+                            due, _title = await _loop_manager.reprompt_due(_sess, before)
                         except Exception:
                             logger.warning(
                                 "re-prompt check failed for %s", _sess.key, exc_info=True
@@ -3185,6 +3187,9 @@ class GatewayOrchestrator:
                         # stop (`manager.halt_turn`): the re-prompt then ran on to its end.
                         _sess.task = asyncio.current_task()
                         await _run_one(_sess, retry_msg, turn_timeout)
+                    # A cycle she ended with a Deny says so, and its loop waits for her.
+                    if _loop_manager.declined_in_turn(_sess) and self.loop_watchdog is not None:
+                        await self.loop_watchdog.hold_after_decline(_sess, before)
                 finally:
                     _sess._suppress_autonudge_rearm = False
                     # Re-arm the idle timer ONCE now the logical cycle is done. A turn that ended

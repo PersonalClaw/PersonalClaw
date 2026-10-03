@@ -3395,9 +3395,10 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
   const findings = project.findings ?? []
   const missingCommands = missingCommandNotices(project.command_runnability)
   // The worker asked something only when the pause is its question: a merge waiting, a conflict and
-  // a spend cap are the scheduler's, each answered on its own card above, not in the steer box.
+  // a spend cap are the scheduler's, each answered on its own card above, not in the steer box; a
+  // wait after your Deny is the loop's, which your steer settles.
   const pq = project.pending_question
-  const workerAsks = project.status === 'needs_input' && !pq?.merge && !pq?.conflict && !pq?.spend_cap
+  const workerAsks = project.status === 'needs_input' && !pq?.merge && !pq?.conflict && !pq?.spend_cap && !pq?.declined
 
   // Resume a loop a spend cap paused, from the notice that says so (the header's Resume does the same).
   const [resuming, setResuming] = useState(false)

@@ -31,6 +31,7 @@ import shutil
 import time
 from dataclasses import dataclass
 
+from personalclaw.declined_calls import under
 from personalclaw.guardrails.failure import BudgetExceededError
 from personalclaw.guardrails.incident import incident_active
 from personalclaw.loop import posture as loop_posture
@@ -53,6 +54,7 @@ WROTE = "wrote"  # the file appeared; ``text`` is what it holds
 TIMED_OUT = "timed_out"  # the pass ran out of time before the file appeared
 STOPPED = "stopped"  # the planner's loop stopped (its cycles spent, an error) without writing it
 REFUSED = "refused"  # a spend ceiling refused the planner's turn; ``refusal`` is its refusal
+DECLINED = "declined"  # its owner declined a call of the planner's, which then wrote nothing
 FAILED = "failed"  # the pass itself could not run
 
 
@@ -60,13 +62,16 @@ FAILED = "failed"  # the pass itself could not run
 class PlannerPass:
     """What one planner pass came back with: the file's text, and how the pass ended — so the
     caller tells the planner and its owner what really happened (a file it cannot read is not a
-    file never written, and neither is a pass that ran out of time, or one a spend ceiling
-    refused, whose ``refusal`` says which ceiling and where it is lifted)."""
+    file never written, and neither is a pass that ran out of time, one a spend ceiling refused,
+    whose ``refusal`` says which ceiling and where it is lifted, or one its owner ended with a
+    Deny, whose ``declined`` says which calls, as ``declined_calls.declined_step`` keeps them, what
+    they name in the loop's own folder said by its place there)."""
 
     text: str = ""
     ended: str = FAILED
     limit_secs: float = 0.0
     refusal: BudgetExceededError | None = None
+    declined: tuple[dict, ...] = ()
 
 
 def read_sentinel(files_dir: str, sentinel: str) -> str:
@@ -247,8 +252,10 @@ async def run_planner_pass(
             first_idle_secs=PLANNER_FIRST_IDLE,
             stop_sentinel_path=stop_path,
         )
-        # A refusal is this pass's only when one of its own turns met it (the first fires later).
+        # A refusal or a Deny is this pass's only when one of its own turns met it (the first
+        # fires later).
         session._last_turn_refusal = None
+        session._last_turn_declined = []
         limit = timeout_secs if timeout_secs is not None else PLANNER_TIMEOUT_SECS
         deadline = time.time() + limit
         # Once the planner loop is gone OR deactivated (it exhausted PLANNER_MAX_CYCLES
@@ -293,6 +300,13 @@ async def run_planner_pass(
                     except OSError:
                         pass
                 return PlannerPass(raw, WROTE, limit)
+            declined = tuple(getattr(session, "_last_turn_declined", None) or ())
+            if declined and not session.running:
+                # Its owner declined one of the planner's calls and its turn ended with no file:
+                # her answer stands. Its next cycle would send the same brief, asking her again.
+                logger.info("run_planner_pass: %s ended after its owner's Deny", skey)
+                said_here = tuple(under(files_dir, list(declined)))
+                return PlannerPass(ended=DECLINED, limit_secs=limit, declined=said_here)
             loop = svc.get_by_session(skey)
             if loop is None or not getattr(loop, "active", True):
                 # A spend ceiling refused the planner's turn, and its nudge loop is switched off

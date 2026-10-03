@@ -35,6 +35,8 @@ export const RUN_LIFECYCLE = [
   'stage_advance', 'stage_stalled', 'gate_check', 'task_started', 'task_done', 'blocked',
   // A worker asked again for the finding its turn ended without (`loop/manager.announce_reprompt`).
   'reprompt',
+  // A cycle its owner ended with a Deny: the loop waits for her (`LoopWatchdog.hold_after_decline`).
+  'declined',
   // LOOPS-EVOLUTION R4/R14 middleware events. These MUST be listed here: EventSource
   // silently DROPS event types it has no listener for, so an unregistered event is not a
   // rendering bug you can see — it is an event that never arrives.

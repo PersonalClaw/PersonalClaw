@@ -25,6 +25,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from personalclaw.declined_calls import said
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import store
 from personalclaw.loop.loop import PRELAUNCH_STATUSES, LoopStatus
@@ -42,6 +43,9 @@ logger = logging.getLogger(__name__)
 # artifact.
 STEPS_SENTINEL = "plan_steps.json"
 ARTIFACT_SENTINEL = "step_artifact.json"
+#: Why a walkthrough is paused (``PlanSession.paused["by"]``) when its owner declined a call of the
+#: planner's and the pass wrote nothing: no poll or restart runs the pass again, only her Retry.
+DECLINED_PAUSE = "declined"
 
 
 @runtime_checkable
@@ -259,6 +263,8 @@ def _no_draft_reason(result: PlannerPass, sentinel: str, *, needs: str) -> str:
         return f"The planner ended its turn without writing {sentinel}."
     if result.ended == runner.REFUSED and result.refusal is not None:
         return result.refusal.sentence()
+    if result.ended == runner.DECLINED and result.declined:
+        return f"The planner did not write {sentinel}: you declined {said(list(result.declined))}."
     return f"The planner pass failed before it wrote {sentinel}; the gateway log says why."
 
 
@@ -356,7 +362,14 @@ async def run_design_pass(state, svc, loop_id: str) -> PlanSession | None:
             session.design_error = reason
             _hold_for_spend_cap(state, loop, session, result)
             return None
-        session.design_error = f"{reason} Retry planning, or edit the task to be more concrete."
+        # Her Deny is not the task's vagueness: she is told what she declined, and the design
+        # pass runs again only on her Retry (a design error is never re-run by itself).
+        advice = (
+            "Retry planning when you want it to try again."
+            if result.ended == runner.DECLINED
+            else "Retry planning, or edit the task to be more concrete."
+        )
+        session.design_error = f"{reason} {advice}"
         loop_files.write_plan_session(session)
         return None
     _summary, steps = parsed
@@ -409,8 +422,9 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
     if not _still_planning(loop_id):
         return None  # stopped or deleted while the planner worked: no retry, nothing written
     # A pass a spend ceiling refused is not retried: the same pass again would meet the same
-    # ceiling, so the walkthrough pauses (below) until its owner resumes it.
-    if artifact is None and result.ended != runner.REFUSED:
+    # ceiling, so the walkthrough pauses (below) until its owner resumes it. Nor is one its owner
+    # ended with a Deny: the retry's brief would tell the planner to write what she declined.
+    if artifact is None and result.ended not in (runner.REFUSED, runner.DECLINED):
         # Nothing usable came back: the planner narrated the artifact instead of writing it,
         # wrote a file that is not valid JSON, or ran out of time. Retry the pass ONCE, telling
         # it which — a planner that wrote the file and is told it never did writes the same
@@ -435,7 +449,8 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
         # stays honest and an explicit retry cleanly re-runs it, with the reason on the step.
         reason = _no_draft_reason(result, ARTIFACT_SENTINEL, needs=_ARTIFACT_NEEDS)
         refused = result.ended == runner.REFUSED
-        if not refused:
+        declined = result.ended == runner.DECLINED
+        if not (refused or declined):
             logger.warning(
                 "planning %s %s: no usable artifact after a retry: %s", loop_id, step_id, reason
             )
@@ -444,6 +459,9 @@ async def run_step_pass(state, svc, loop_id: str, step_id: str) -> PlanStep | No
             if refused:
                 _hold_for_spend_cap(state, loop, session, result)
             else:
+                if declined:
+                    # Paused, so neither a poll nor a restart runs the step again: only her Retry.
+                    session.paused = {"by": DECLINED_PAUSE}
                 loop_files.write_plan_session(session)
         return None
     session = loop_files.read_plan_session(loop_id) or session
@@ -503,16 +521,17 @@ def mark_design_error(loop_id: str, message: str = "") -> None:
 
 
 def clear_design_error(loop_id: str) -> None:
-    """Clear a recorded design failure, and a spend ceiling's pause, so the NEXT advance re-runs
-    the pass. Called only on an EXPLICIT user retry (FE 'Retry planning', 'Resume'), never on a
-    passive poll — which is what makes the repeated-pass guard hold."""
+    """Clear a recorded design failure, and a pause (a spend ceiling's refusal, its owner's Deny),
+    so the NEXT advance re-runs the pass. Called only on an EXPLICIT user retry (FE 'Retry
+    planning', 'Resume'), never on a passive poll — which is what makes the repeated-pass guard
+    hold."""
     session = loop_files.read_plan_session(loop_id)
     if session is None or not (session.design_error or session.paused):
         return
     was_paused = bool(session.paused)
     if was_paused:
-        # The paused step's "error" is the ceiling's refusal, not something the planner got
-        # wrong: its next pass is not told it failed.
+        # The paused step's "error" is why it paused (the ceiling's refusal, her Deny), not
+        # something the planner got wrong: its next pass is not told it failed.
         current = PS.current_step(session)
         if current is not None:
             current.error = ""
@@ -543,8 +562,8 @@ async def advance_plan(state, svc, loop_id: str) -> str:
             return "failed"
         session = loop_files.read_plan_session(loop_id)
         if session is not None and session.paused:
-            # A spend ceiling refused the planner: it stays paused, with nothing run again,
-            # until its owner resumes it (an explicit retry clears the pause).
+            # A spend ceiling refused the planner, or its owner declined its call: it stays
+            # paused, with nothing run again, until she resumes it (an explicit retry clears it).
             return "paused"
         if wt.step_mode == "dynamic":
             # A persisted design failure (no usable steps) must NOT silently re-run —

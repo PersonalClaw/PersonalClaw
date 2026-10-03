@@ -370,6 +370,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       // contract instead of a per-cockpit switch.
       setRunFlags((f) => foldReducer(f, event, data))
       loadReport.current()
+      // A cycle she ended with a Deny: the loop now waits for her, so its question is read at once.
+      if (event === 'declined') reloadLoop.current()
     },
   })
 
@@ -850,13 +852,14 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
           )}
           {c.status === 'needs_input' && question && !question.spend_cap && (
             <div data-type="body-s" className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
-              <div className="flex items-center gap-1.5 text-info mb-1" style={fvs(500)}><HelpCircle size={14} /> The agent needs your input</div>
+              {/* A wait after her Deny is the loop's, not a question its agent asked. */}
+              <div className="flex items-center gap-1.5 text-info mb-1" style={fvs(500)}><HelpCircle size={14} /> {question.declined ? 'Waiting for you after your Deny' : 'The agent needs your input'}</div>
               <div className="text-on-surface">{question.question}</div>
               {/* Offer the answer inline — the question IS the call to action, so
                   open the nudge composer right here instead of just naming it. */}
               {!nudgeOpen && (
                 <Button size="sm" className="mt-2" onClick={() => setNudgeOpen(true)}>
-                  <MessageSquarePlus size={14} /> Answer & resume
+                  <MessageSquarePlus size={14} /> {question.declined ? 'Steer & resume' : 'Answer & resume'}
                 </Button>
               )}
             </div>
@@ -949,6 +952,14 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
                    <div data-type="body-s" className="rounded-lg px-m py-2" style={{ background: 'color-mix(in srgb, var(--color-info) 8%, transparent)', border: '1px dashed color-mix(in srgb, var(--color-info) 30%, transparent)' }}>
                      <Eyebrow tone="info" className="flex items-center gap-1.5 mb-1"><MessageSquarePlus size={12} /> {pendingNudgeLabel(c.status)}</Eyebrow>
                      {pending.map((n, i) => <p key={i} className="text-on-surface-var">{n.text}</p>)}
+                   </div>
+                 )}
+                 {/* The cycles she ended with a Deny wrote no finding, so no cycle row below
+                     names them: said here, after the wait they began is over too. */}
+                 {(c.declined?.length ?? 0) > 0 && (
+                   <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-s">
+                     <Eyebrow className="flex items-center gap-xs mb-xs"><XCircle size={12} /> Declined by you</Eyebrow>
+                     {c.declined!.map((d, i) => <p key={i} className="text-on-surface-var">{d.reason}</p>)}
                    </div>
                  )}
                  {(() => {

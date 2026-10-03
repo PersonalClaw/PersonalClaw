@@ -266,6 +266,7 @@ class _ChatSession(ChatQueue):
         "created_by_app",
         "_last_turn_errored",
         "_last_turn_refusal",
+        "_last_turn_declined",
         "_last_turn_outcome",
         "context_usage",
         "_followups_task",
@@ -482,6 +483,9 @@ class _ChatSession(ChatQueue):
         # The spend cap's refusal the latest turn ended on (`failure.budget_refusal`), or None: what
         # retries an errored turn by itself reads it, and does not re-run a refused call.
         self._last_turn_refusal: "BudgetExceededError | None" = None
+        # The calls she declined in the latest turn (`declined_calls.declined_step`), cleared when a
+        # turn starts: what would ask the agent again after the turn (a loop's cycle) reads them.
+        self._last_turn_declined: list[dict[str, Any]] = []
         # How the latest turn that left this session idle ended ("complete" | "stopped" | "error"
         # | "interrupted", `chat_runner.terminal_outcome_for_turn`), or "" while none has since
         # this process started it. Served as session detail's `last_turn_outcome`, and cleared

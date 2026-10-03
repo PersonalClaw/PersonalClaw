@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 
 from personalclaw.config.loader import AppConfig
+from personalclaw.declined_calls import named, said, under
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, posture, store
 from personalclaw.loop.loop import Loop, LoopStatus, LoopStopReason
@@ -62,8 +63,41 @@ def worker_finding_count(key: str) -> int:
     return len(loop_files.get_findings(loop_id))
 
 
-async def reprompt_due(key: str, before: int) -> tuple[bool, str]:
-    """Whether worker *key*, whose turn just ended, is asked again for its cycle's finding, and
+async def _read_task(task_id: str):
+    """A task worker's task, or None when it is gone or cannot be read."""
+    from personalclaw.tasks import registry
+
+    try:
+        return await registry.get_task(task_id, provider_name="native")
+    except Exception:
+        logger.warning("loop: task %s could not be read", task_id)
+        return None
+
+
+async def owed_task_title(task_id: str) -> str | None:
+    """The title of a task worker's task while it is open (``""`` when it has none), or None when
+    nothing is owed for it: it is done or cancelled, gone, or cannot be read."""
+    from personalclaw.loop import tasks_link
+
+    task = await _read_task(task_id)
+    if task is None or tasks_link._is_resolved(task.status):
+        return None
+    return str(getattr(task, "title", "") or "")
+
+
+async def task_name(task_id: str) -> str:
+    """A task worker's task's title, or ``""``."""
+    task = await _read_task(task_id)
+    return str(getattr(task, "title", "") or "") if task is not None else ""
+
+
+def declined_in_turn(session) -> list[dict]:
+    """The calls she declined in worker *session*'s latest turn (``declined_calls`` records)."""
+    return list(getattr(session, "_last_turn_declined", None) or [])
+
+
+async def reprompt_due(session, before: int) -> tuple[bool, str]:
+    """Whether worker *session*, whose turn just ended, is asked again for its cycle's finding, and
     its task's title (``""`` for a stage worker).
 
     Only a worker that still owes the finding is: none since *before*
@@ -71,23 +105,44 @@ async def reprompt_due(key: str, before: int) -> tuple[bool, str]:
     is done (or cancelled) is NEVER re-prompted, whatever the count says: asking a finished task
     again only re-checks finished work, a whole model turn over its context and, on an Attended
     loop, an approval its owner has to answer. A task that cannot be read is not re-prompted
-    either, because a re-prompt is sent only for work known to be owed."""
-    if worker_finding_count(key) > before:
+    either, because a re-prompt is sent only for work known to be owed.
+
+    Nor is a worker whose turn she ended with a Deny (:func:`declined_in_turn`): her answer stands
+    for the cycle. Asked again, the worker is told to write what she declined, or, on a fresh
+    agent session, runs the cycle over and asks her the same thing (``LoopWatchdog.
+    hold_after_decline`` ends the cycle saying so)."""
+    if worker_finding_count(session.key) > before or declined_in_turn(session):
         return False, ""
-    _loop_id, task_id = worker_ids(key)
+    _loop_id, task_id = worker_ids(session.key)
     if not task_id:
         return True, ""
-    from personalclaw.loop import tasks_link
-    from personalclaw.tasks import registry
+    title = await owed_task_title(task_id)
+    return title is not None, title or ""
 
-    try:
-        task = await registry.get_task(task_id, provider_name="native")
-    except Exception:
-        logger.warning("loop: task %s could not be read, so it is not re-prompted", task_id)
-        return False, ""
-    if task is None or tasks_link._is_resolved(task.status):
-        return False, ""
-    return True, str(getattr(task, "title", "") or "")
+
+def _in_its_folder(loop_id: str, declined: list[dict]) -> list[dict]:
+    """*declined* with what it names in the loop's own folder said by its place there."""
+    return under(str(loop_files.safe_loop_dir(loop_id) or ""), declined)
+
+
+def declined_sentence(loop_id: str, cycle: int, title: str, declined: list[dict]) -> str:
+    """What a cycle that ended at her Deny without its finding says, on the loop's page and its
+    ledger: which cycle (a task worker's: its task, *title*) and what she declined, named as every
+    surface names a declined call (``declined_calls.said``), a file in the loop's own folder by
+    its place there: ``Cycle 1 ended without its finding: you declined write_file
+    (findings/cycle_001.json).``"""
+    whose = f"The worker on “{title}”" if title else f"Cycle {cycle}"
+    steps = said(_in_its_folder(loop_id, declined))
+    return f"{whose} ended without its finding: you declined {steps}."
+
+
+def declined_names(loop_id: str, declined: list[dict]) -> list[str]:
+    """The calls she declined, each once, as a sentence names them (``declined_calls.named``)."""
+    return list(dict.fromkeys(named(step) for step in _in_its_folder(loop_id, declined)))
+
+
+#: Why a loop that waits after its owner's Deny runs no next cycle by itself, beside its question.
+DECLINED_WHY = "Nothing you declined is asked for again until you steer or resume the loop."
 
 
 def cycle_reprompt(key: str) -> str:
@@ -503,6 +558,13 @@ async def _switch_off_workers(svc, loop_id: str, *, keep: bool) -> None:
             await svc.update(row.id, active=False)
         else:
             await svc.remove(row.id)
+
+
+async def hold_workers(svc, loop_id: str) -> None:
+    """Switch off the nudge loop of every worker of *loop_id*, kept, so no cycle starts while the
+    loop waits for its owner; her Resume or steer (:func:`start`) switches them back on. A turn in
+    flight is left to end: what waits is the loop's next cycle, not its work."""
+    await _switch_off_workers(svc, loop_id, keep=True)
 
 
 async def pause(state, svc, loop_id: str) -> Loop:

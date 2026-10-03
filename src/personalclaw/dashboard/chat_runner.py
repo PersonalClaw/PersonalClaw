@@ -86,6 +86,7 @@ from personalclaw.dashboard.state import (
 )
 from personalclaw.dashboard.step_notes import note_on_call, note_refusal
 from personalclaw.dashboard.ungated_calls import report_ungated_call
+from personalclaw.declined_calls import declined_step
 from personalclaw.guardrails.failure import budget_refusal
 from personalclaw.guardrails.loop_breaker import (
     WARN_THRESHOLD,
@@ -2243,6 +2244,7 @@ async def run_chat(
     """
     # Reset the per-turn error flag; the except block sets it True on a crash.
     session._last_turn_errored, session._last_turn_refusal = False, None
+    session._last_turn_declined = []  # what she declines this turn (`declined_calls.declined_step`)
     # No stop has been asked of this turn yet (`_ChatSession._stop_asked`).
     session._stop_asked = False
     # This turn has not ended, so no outcome describes it yet. A reader of session detail must
@@ -4568,6 +4570,9 @@ async def run_chat(
                 # above clears it; a stopped turn's lasts until the turn ends.
                 refused_as = getattr(session, "_batch_rejected", "")
                 if refused_as:
+                    if refused_as == "rejected":  # her Deny refused it too
+                        _declined = declined_step(event.title, event.tool_input)
+                        session._last_turn_declined.append(_declined)
                     await _refuse_call(event, refused_as)
                     _answer = turn_endings.refusal_answered(client, event.request_id)
                     _title, _ = redact_exfiltration_urls(event.title)
@@ -4911,6 +4916,8 @@ async def run_chat(
                             _turn_agent, _redact_text(event.title)
                         )
                         _you_denied = True
+                        _declined = declined_step(event.title, event.tool_input)
+                        session._last_turn_declined.append(_declined)
                     sel().log_tool_invocation(
                         session_key=session_key,
                         agent=_agent_label(session),

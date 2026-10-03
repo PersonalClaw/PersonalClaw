@@ -3,7 +3,10 @@
 A Deny is her answer for the work it stopped. Whatever would put work back in front of her once
 that work is over reads this record, so it does not ask her the same thing again by itself, and
 says what she declined in words she recognises: a workflow loop's next cycle and the run's page
-(`workflows.declines`), from what a subagent's calls came to (`subagent_tier`).
+(`workflows.declines`), from what a subagent's calls came to (`subagent_tier`); a loop's cycle,
+its page and its planner's pass (`loop.watchdog.LoopWatchdog.hold_after_decline`,
+`planning.runner`), from what a chat turn kept (`_ChatSession._last_turn_declined`). Every one of
+them says what she can do while the work waits for her the same way (:func:`waits_for_you`).
 
 The record is the tool, as its approval card named it, and the first line of each of the first
 eight values its input carries (a path, a command), masked as the card showed them and each cut
@@ -72,3 +75,35 @@ def said(steps: list[Any]) -> str:
     if len(shown) == 1:
         return shown[0]
     return f"{', '.join(shown[:-1])} and {shown[-1]}"
+
+
+def under(folder: str, steps: list[Any]) -> list[Any]:
+    """*steps* with what each names inside *folder* said by its place there
+    (``findings/cycle_001.json``): a sentence about the work of one folder does not spell the
+    folder out each time."""
+    base = str(folder or "").rstrip("/")
+    if not base:
+        return list(steps)
+    inside = f"{base}/"
+
+    def _short(text: Any) -> str:
+        return str(text or "").replace(inside, "")
+
+    return [
+        (
+            {
+                **step,
+                "tool": _short(step.get("tool")),
+                "names": [_short(n) for n in step.get("names") or []],
+            }
+            if isinstance(step, dict)
+            else step
+        )
+        for step in steps
+    ]
+
+
+def waits_for_you(noun: str = "loop", stop: str = "stop") -> str:
+    """What work that waits for its owner after her Deny asks of her: ``The loop waits for you:
+    tell it what to do instead, or resume or stop it.``"""
+    return f"The {noun} waits for you: tell it what to do instead, or resume or {stop} it."

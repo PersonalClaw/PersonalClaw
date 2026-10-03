@@ -27,6 +27,7 @@ from typing import Any
 from personalclaw import concurrency, notification_kinds, shutdown_event
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
+from personalclaw.declined_calls import waits_for_you
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import gates, instrument, kinds, manager, spend_cap, store, supervisor
 from personalclaw.loop.loop import (
@@ -351,6 +352,62 @@ class LoopWatchdog:
         self._publish(loop_id, "spend_cap", {"loop_id": loop_id, "reason": sentence})
         return True
 
+    async def hold_after_decline(self, session: Any, before: int) -> bool:
+        """The cycle of worker *session* (a loop's stage worker or a task worker) ended after its
+        owner's Deny, without its finding: the cycle ends saying so, and the loop waits for her.
+
+        Her Deny is her answer for the cycle, so the cycle driver asked the worker nothing more
+        (``manager.reprompt_due``), and a next cycle would put the same call to her again. The
+        cycle goes on the loop's ledger (``step_skipped`` by the user: what she declined, and the
+        sentence), the loop waits (``needs_input``) with that sentence as its question and one
+        Inbox item, and every worker's nudge loop is switched off, kept, so nothing runs until she
+        steers it, resumes it or stops it. A cycle that wrote its finding, one whose turn errored,
+        and one whose loop stopped running meanwhile are left as they are. Returns whether the
+        loop was put on hold. Never raises: a hold that cannot be made is logged, and the loop goes
+        on as it would have."""
+        try:
+            return await self._hold_after_decline(session, before)
+        except Exception:
+            key = getattr(session, "key", "?")
+            logger.warning("loop: holding %s after a Deny failed", key, exc_info=True)
+            return False
+
+    async def _hold_after_decline(self, session: Any, before: int) -> bool:
+        key = str(getattr(session, "key", "") or "")
+        loop_id, task_id = manager.worker_ids(key)
+        declined = manager.declined_in_turn(session)
+        loop = store.get(loop_id) if loop_id and declined else None
+        if loop is None or loop.status != LoopStatus.RUNNING.value:
+            return False
+        if getattr(session, "_last_turn_errored", False) or (
+            manager.worker_finding_count(key) > before
+        ):
+            return False
+        title = await manager.task_name(task_id) if task_id else ""
+        cycle = loop_files.cycles_completed(loop_id) + 1
+        sentence = manager.declined_sentence(loop_id, cycle, title, declined)
+        loop_files.record_declined_cycle(
+            loop_id,
+            cycle,
+            task_id=task_id,
+            reason=sentence,
+            steps=manager.declined_names(loop_id, declined),
+        )
+        loop_files.write_question(
+            loop_id, f"{sentence} {waits_for_you()}", why=manager.DECLINED_WHY, declined=True
+        )
+        try:
+            store.update_status(loop_id, LoopStatus.NEEDS_INPUT)
+        except (KeyError, store.TransitionError):
+            return False
+        await manager.hold_workers(self._svc, loop_id)
+        self._consec_errors.pop(loop_id, None)
+        logger.info("loop %s waits for its owner after her Deny: %s", loop_id, sentence)
+        self._publish(
+            loop_id, "declined", {"loop_id": loop_id, "task_id": task_id, "reason": sentence}
+        )
+        return True
+
     # ── publishing ──
 
     #: event → (notification wire kind, title).
@@ -363,7 +420,7 @@ class LoopWatchdog:
     #: is SEV_ERROR and `loop/complete` SEV_INFO in the registry, exactly what `error`/`success`
     #: ranked — which is what makes this a routing fix rather than a delivery change.
     #:
-    #: The three events in `_ATTENTION_EVENTS` below take the durable-item path instead, so only
+    #: The events in `_ATTENTION_EVENTS` below take the durable-item path instead, so only
     #: their TITLE is read from here; their kind comes from that map.
     _NOTIFY_EVENTS = {
         "complete": (notification_kinds.LOOP_COMPLETE, "Loop complete"),
@@ -372,6 +429,7 @@ class LoopWatchdog:
         "blocked": ("warning", "Loop blocked — needs you"),
         "needs_input": ("info", "Loop needs your input"),
         "spend_cap": ("warning", spend_cap.TITLE),
+        "declined": ("info", "Loop waiting — you declined one of its steps"),
         # A code loop advancing an SDLC stage is visible progress worth a heads-up
         # while the user is away (only the code strategy emits stage_advance, so the
         # "stage" wording is always accurate). Ported from the legacy code watchdog.
@@ -394,6 +452,7 @@ class LoopWatchdog:
         "blocked": "needs_input",
         "stagnant": "needs_input",
         "spend_cap": "needs_input",
+        "declined": "needs_input",
     }
 
     def _attention_dedup_key(self, loop_id: str, event: str) -> str:
@@ -565,7 +624,7 @@ class LoopWatchdog:
 
     # ── question handling ──
 
-    def _handle_question(self, loop_id: str, *, attended: bool) -> bool:
+    def _handle_question(self, loop_id: str, *, attended: bool, since: float) -> bool:
         """True iff the loop should pause to NEEDS_INPUT. Unattended NEVER pauses —
         a stray question is discarded so 'unattended' is code-enforced."""
         q = loop_files.pending_question(loop_id)
@@ -573,7 +632,13 @@ class LoopWatchdog:
             return False
         # A question the scheduler asked is asked again while it still holds (a merge waiting, no
         # git identity), so a running loop drops it rather than stopping on one already settled.
-        if not attended or q.get("asked_by") == loop_files.SCHEDULER_QUESTION:
+        # One asked before this running stretch began (*since*) was answered by the Resume that
+        # began it: kept, it paused the loop again on what its owner had just resumed it from.
+        try:
+            settled = float(q.get("ts") or 0.0) < since
+        except (TypeError, ValueError):
+            settled = False
+        if not attended or settled or q.get("asked_by") == loop_files.SCHEDULER_QUESTION:
             loop_files.clear_question(loop_id)
             return False
         return True
@@ -1240,7 +1305,7 @@ class LoopWatchdog:
                 continue
 
             # 2. Needs input — attended pause vs unattended discard.
-            if self._handle_question(cid, attended=asks):
+            if self._handle_question(cid, attended=asks, since=float(loop.started_at or 0.0)):
                 store.update_status(cid, LoopStatus.NEEDS_INPUT)
                 self._publish(cid, "needs_input")
                 continue

@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.declined_calls import named, said
+from personalclaw.declined_calls import named, said, waits_for_you
 from personalclaw.workflows import (
     attention,
     ending_sentence,
@@ -140,8 +140,7 @@ def waiting_words(ctl: RunController) -> str:
     if not isinstance(wait, dict):
         return ""
     noun, stop = ("loop", "stop") if ctl.run.loop_kind else ("run", "cancel")
-    ask = f"The {noun} waits for you: tell it what to do instead, or resume or {stop} it."
-    return f"{wait.get('said') or ''} {ask}".strip()
+    return f"{wait.get('said') or ''} {waits_for_you(noun, stop)}".strip()
 
 
 def waits(run: Any) -> bool:

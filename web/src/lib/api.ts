@@ -6289,6 +6289,7 @@ export interface GoalLoop {
   status: UnifiedLoopStatus; total_cycles: number; error_message: string | null
   created_at: number; started_at: number | null; completed_at: number | null; elapsed_seconds?: number
   findings?: LoopFinding[]; verdicts?: LoopVerdict[]; pending_question?: LoopQuestion | null; nudges?: LoopNudge[]
+  declined?: LoopDeclinedCycle[]
   feedback_producer?: FeedbackProducer
   linked_task_ids?: string[]
   // The containing Project this loop scopes under (Projects native entity).
@@ -6634,7 +6635,7 @@ export interface Loop {
   // A finding is goal-shaped OR code-shaped (union, not intersection — they have
   // conflicting `evidence` types: goal string vs code unknown), keyed by loop.kind.
   findings?: (LoopFinding | CodeFinding)[]; verdicts?: LoopVerdict[]; marginal_scores?: number[]
-  nudges?: LoopNudge[]; pending_question?: LoopQuestion | string | null
+  nudges?: LoopNudge[]; pending_question?: LoopQuestion | string | null; declined?: LoopDeclinedCycle[]
   /** While incident mode holds a `running` loop, the sentence that says so (`loop.held_reason`);
    *  `''` otherwise. The status stays `running` — `effectiveLoopStatus` reads this to say "Held". */
   held?: string
@@ -6733,7 +6734,13 @@ export interface LoopQuestion {
   /** A finished task's work that conflicts with the workspace's branch: nothing of it was merged, and
    *  the loop waits for its owner to redo the task, resolve the conflict herself, or drop the work. */
   conflict?: LoopMergeConflict
+  /** The loop waits because its owner ended a cycle with a Deny (`LoopWatchdog.hold_after_decline`). */
+  declined?: boolean
 }
+
+/** A cycle its owner ended with a Deny, which wrote no finding (`files.get_declined_cycles`): the
+ *  sentence the loop's page shows, and the steps she declined. */
+export interface LoopDeclinedCycle { cycle: number; task_id: string; reason: string; declined: string[]; ts?: string }
 
 export interface PlanSession {
   project_id: string; created_at: number; steps: PlanStep[]

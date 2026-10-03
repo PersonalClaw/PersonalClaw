@@ -568,14 +568,15 @@ def test_resume_after_setting_an_identity_does_not_stop_on_the_settled_question(
     _git(repo, "config", "user.email", OWNER[1])
 
     wd = watchdog.LoopWatchdog(SimpleNamespace(_sessions={}), SimpleNamespace())
-    store.update_status(loop.id, LoopStatus.RUNNING)  # the owner's Resume
-    assert wd._handle_question(loop.id, attended=True) is False
+    resumed = store.update_status(loop.id, LoopStatus.RUNNING)  # the owner's Resume
+    since = float(resumed.started_at or 0.0)
+    assert wd._handle_question(loop.id, attended=True, since=since) is False
     assert loop_files.pending_question(loop.id) is None
     assert _schedule(code, loop, _Ctx()) is True  # on to the merge review, under her name
     assert loop_files.pending_question(loop.id)["merge"]["tasks"][0]["task_id"] == TASK
 
     loop_files.write_question(loop.id, "Which feed format should the digest keep?")
-    assert wd._handle_question(loop.id, attended=True) is True
+    assert wd._handle_question(loop.id, attended=True, since=since) is True
 
 
 def test_an_approval_file_in_the_loops_folder_merges_nothing(tmp_path, code):

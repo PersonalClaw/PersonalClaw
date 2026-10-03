@@ -274,7 +274,8 @@ def test_a_task_that_cannot_be_read_is_not_re_prompted(monkeypatch):
 
     monkeypatch.setattr("personalclaw.tasks.registry.get_task", _unreadable)
 
-    due, _title = asyncio.run(manager.reprompt_due(task_session_key(loop.id, tid), 0))
+    worker = _Session(task_session_key(loop.id, tid))
+    due, _title = asyncio.run(manager.reprompt_due(worker, 0))
 
     assert due is False
 

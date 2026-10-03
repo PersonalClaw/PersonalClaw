@@ -841,6 +841,9 @@ def get_redacted(loop_id: str) -> dict | None:
     # ("loop_judge", kind) — the FE thumbs attribute a verdict with no lookup.
     view["feedback_producer"] = {"producer_kind": "loop_judge", "producer_id": loop.kind}
     view["pending_question"] = files.pending_question(loop_id)
+    # The cycles its owner ended with a Deny, which wrote no finding: the page says so after the
+    # wait they began is over.
+    view["declined"] = files.get_declined_cycles(loop_id)
     # What the loop's scheduler merged into the workspace's branch, by whom, oldest first: a code
     # loop's page says what landed on the owner's branch (its working tree is clean after a merge).
     view["merges"] = files.get_merges(loop_id)

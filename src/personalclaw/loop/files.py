@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.atomic_write import atomic_json_write, atomic_write
 from personalclaw.config import loader as config_loader
-from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED
+from personalclaw.ledger import EVENTS_FILE, JUDGE_VERDICT, STEP_COMPLETED, STEP_SKIPPED
 from personalclaw.security import redact_for_display, redact_values_for_display
 
 
@@ -464,6 +464,32 @@ def record_breaker_trip(loop_id: str, cycle: int, reason: str) -> None:
     LoopJournal.open(loop_id).breaker_trip(cycle, reason)
 
 
+def record_declined_cycle(
+    loop_id: str, cycle: int, *, task_id: str, reason: str, steps: list[str]
+) -> None:
+    """A cycle its owner ended with a Deny → a `step_skipped` ledger event by the user."""
+    from personalclaw.loop.journal import LoopJournal
+
+    LoopJournal.open(loop_id).declined(cycle, task_id=task_id, reason=reason, steps=steps)
+
+
+def get_declined_cycles(loop_id: str) -> list[dict]:
+    """The cycles its owner ended with a Deny (:func:`record_declined_cycle`), oldest first, as
+    the loop's page lists them: the cycle, the task, the sentence and what she declined, its words
+    masked for display as a question's are."""
+    return [
+        {
+            "cycle": rec.get("cycle"),
+            "task_id": rec.get("task_id") or "",
+            "reason": redact_for_display(str(rec.get("reason") or "")),
+            "declined": [redact_for_display(str(s)) for s in rec.get("declined") or []],
+            "ts": rec.get("ts"),
+        }
+        for rec in read_jsonl(loop_id, EVENTS_FILE)
+        if rec.get("kind") == STEP_SKIPPED and rec.get("actor") == "user"
+    ]
+
+
 def record_watcher_reaped(loop_id: str, *, cycles: int, reason: str) -> None:
     """A reap → a `watcher_reaped` ledger event (PP-5): a running watcher cut off early."""
     from personalclaw.loop.journal import LoopJournal
@@ -532,10 +558,13 @@ def pending_question(loop_id: str) -> dict | None:
         return None
     try:
         q = json.loads(f.read_text())
+        asked_at = f.stat().st_mtime
     except (json.JSONDecodeError, OSError):
         return None
     if not isinstance(q, dict):
         return None
+    # When it was asked: a worker's own question carries no time, so its file's is read.
+    q.setdefault("ts", asked_at)
     for k in ("question", "why"):
         if isinstance(q.get(k), str):
             q[k] = redact_for_display(q[k])

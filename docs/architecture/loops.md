@@ -199,6 +199,30 @@ is done is not asked again, the re-prompt names the file the worker's own prompt
 loop's folder (`files.finding_file`), and each re-prompt is told to the loop's page (a `reprompt`
 event: which worker, the file it owes, how many asks are left).
 
+A turn its owner ended with a Deny is never re-prompted (`manager.reprompt_due`): her answer stands
+for the cycle. The chat runner keeps what she declined in the turn, her Deny and the requests it
+refused with it, as the record a workflow cycle's Deny leaves (`_ChatSession._last_turn_declined`,
+each a `declined_calls.declined_step`; an approval that expired or was cancelled is not hers).
+Asked again, the worker would be told to write what she declined, or, on a fresh agent session, run
+the cycle over and ask her the same thing, and so would its next cycle. So a cycle that ended after
+her Deny without its finding ends saying so (`LoopWatchdog.hold_after_decline`), naming what she
+declined as a workflow cycle's sentence does (`declined_calls.said`), a file in the loop's folder
+by its place there: "Cycle 1 ended without its finding: you declined write_file
+(findings/cycle_001.json)." (a task worker's names its task). The sentence goes on the loop's ledger
+as a `step_skipped` by the `user` (neither a completed cycle nor a failure), and the loop waits for
+her (`needs_input`) with it and the wait every Deny's work says ("The loop waits for you: tell it
+what to do instead, or resume or stop it.", `declined_calls.waits_for_you`) as its question, one
+Inbox item ("Loop waiting — you declined one of its steps") and a `declined` event, and every
+worker's nudge loop is switched off, kept, so nothing runs until she steers, resumes or stops it.
+The loop's page lists every such cycle under "Declined by you" (`declined` on the loop's view),
+after the wait is over too. A cycle that wrote its finding despite a Deny (she declined only its
+log, say) is credited as any other.
+
+A question the loop waits on is answered by her Resume: the watchdog drops a question asked before
+the loop's current running stretch began (its `ts`, else its file's time), so a resumed loop does
+not stop again on the question it was resumed from, whether its pause was her Deny's, a spend
+cap's or a restore's. A question its worker asks while it runs still pauses it.
+
 Every ending also ends what the loop STARTED (`manager.end_run` calls `loop/children.py`'s
 `end_children`, after the status and before the turns). A worker's `subagent_run` of two or more
 tasks runs as a workflow run, and one task as a background subagent; each records the
@@ -438,7 +462,14 @@ The supervisor does not take the worker's word for it:
   (`runner.PlannerPass`): a file the kind cannot read is named for what is wrong with it (where
   its JSON breaks), and a pass that ran out of time or ended without writing says that. The one
   automatic retry tells the planner which, and a step that still has no draft keeps the reason
-  (`PlanStep.error`), which the walkthrough shows with its Retry. "Cancel and edit the task"
+  (`PlanStep.error`), which the walkthrough shows with its Retry. A pass its owner ended with a
+  Deny (`runner.DECLINED`: a planner turn ended after she declined one of its calls, with no file)
+  ends at once, so its nudge row does not send the brief again; it is not retried, it says what
+  she declined ("The planner did not write step_artifact.json: you declined write_file
+  (step_artifact.json)."), and neither a
+  poll nor a restart runs it again, only her Retry: a step pass pauses the walkthrough
+  (`PlanSession.paused`, `by: declined`), and a design pass keeps the sentence as its design error,
+  which never re-runs by itself. "Cancel and edit the task"
   deletes the draft and opens the composer with the task, project, codebase and Mode it had; Stop
   ends the loop with its plan kept. Both end the planner for good: the walkthrough pass in flight
   is cancelled, the planner's nudge row is removed and its turn stopped (`manager.end_run`),

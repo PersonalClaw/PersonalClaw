@@ -3,15 +3,15 @@
 `workflows/journal.py` made the workflow engine the first producer of
 :mod:`personalclaw.ledger`; this module makes the loop engine the second. Every property is
 inherited from :class:`~personalclaw.ledger.writer.LedgerWriter` — append-only, `redact()` on
-every write, deterministic `event_id`, the `events.jsonl` mirror — and the only loop-shaped thing
-here is the four typed emitters and the store binding.
+every write, deterministic `event_id`, the `events.jsonl` mirror — and the only loop-shaped things
+here are the typed emitters and the store binding.
 
 Why this exists. `learning/mining.py` derives from *"the run's own journal"*, so the outer
 improvement loop learned from workflow runs and nothing else — the loop kinds, which carry the
 long-horizon autonomous work, were a blind spot because their findings/verdicts lived in their own
 file store with no event vocabulary. A loop that emits the SAME kinds a workflow does
-(`step_started`/`step_completed`, `judge_verdict`, `breaker_trip`, `watcher_reaped`) is visible to
-the flywheel through the same reader.
+(`step_started`/`step_completed`, `step_skipped`, `judge_verdict`, `breaker_trip`,
+`watcher_reaped`) is visible to the flywheel through the same reader.
 
 The vocabulary is imported from :mod:`personalclaw.ledger`, never re-minted: a loop that emitted
 its own `cycle_finished` would be the fifth dialect the extraction and the verdict
@@ -37,6 +37,7 @@ from personalclaw.ledger import (  # noqa: F401 — re-exported for this module'
     JUDGE_VERDICT,
     STEP_COMPLETED,
     STEP_FAILED,
+    STEP_SKIPPED,
     STEP_STARTED,
     WATCHER_REAPED,
     LedgerStore,
@@ -73,7 +74,7 @@ def _node_id(finding: dict[str, Any], cycle: int) -> str:
 
 @dataclass
 class LoopJournal(LedgerWriter):
-    """The loop engine's ledger: the shared writer plus the loop's four typed emitters.
+    """The loop engine's ledger: the shared writer plus the loop's typed emitters.
 
     Constructed per emit through :meth:`open`, which recovers `seq` from the existing journal so a
     poll (or a restart) never re-mints an `event_id` the file already holds — the property that
@@ -133,6 +134,20 @@ class LoopJournal(LedgerWriter):
         implies, so a refiner reading cycle counts does not conclude the template under-performed.
         """
         self.write(WATCHER_REAPED, cycles=int(cycles), reason=reason)
+
+    def declined(self, cycle: int, *, task_id: str, reason: str, steps: list[str]) -> None:
+        """A cycle its owner ended with a Deny, without its finding — `step_skipped` by the user
+        (``actor``), with the calls she declined and the sentence the loop's page shows. Neither a
+        completed cycle (``cycles_completed`` counts none) nor a failure: her decision."""
+        self.write(
+            STEP_SKIPPED,
+            cycle=cycle,
+            node_id="cycle",
+            task_id=task_id,
+            actor="user",
+            reason=reason,
+            declined=steps,
+        )
 
 
 # ── read side (the projection + the mining reader) ──
