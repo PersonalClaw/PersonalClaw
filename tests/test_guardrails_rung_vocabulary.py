@@ -140,14 +140,16 @@ def test_the_NARROWED_branch_names_both_rungs_in_user_words(monkeypatch) -> None
         "profile_for_session",
         lambda *a, **k: pol.SafetyProfile(name="cautious", approval="reads"),
     )
-    reason = rg.route_action_type("action.artifact_write", session_key="s").reason
+    # An action that can be undone: the profile's "runs with undo" bound binds only such an
+    # action, so this is the type whose route takes the narrowing branch.
+    reason = rg.route_action_type("action.create_task", session_key="s").reason
 
     assert "narrowed" in reason, f"the narrowing branch was not taken: {reason!r}"
     assert _keys_in(reason) == [], f"code name in user copy — {reason!r}"
     # 🪤 Found by mutation: reverting ONLY this branch to name the action type changed no test.
     # The sweep above exercises the unnarrowed branch (the default profile does not narrow), so the
     # narrowed half needs its own assertion for both vocabularies.
-    assert "action.artifact_write" not in reason, f"the reason renames the action: {reason!r}"
+    assert "action.create_task" not in reason, f"the reason renames the action: {reason!r}"
     assert reason.startswith("this action "), reason
     # Both halves, in user words: what it would have been, and what it was narrowed to.
     assert rg.rung_label(rg.RUNG_AUTONOMOUS) in reason

@@ -242,20 +242,31 @@ function AutonomyLadderSection() {
  *
  *  The undo is offered from a PERSISTED record, so this list is the same source the
  *  notification's undo button uses — one place decides whether an undo is still available,
- *  rather than a page holding a handle it hopes is still good. */
-function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChange: () => void }) {
+ *  rather than a page holding a handle it hopes is still good.
+ *
+ *  An undo also demotes the action's type to its floor (`ladder.reverse_action`), and the list
+ *  says what that changes only where it changes something: the core actions that keep an undo
+ *  already sit at their floor, so "it will ask again from now on" was false for every one of
+ *  them. Exported for its render test. */
+export function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChange: () => void }) {
   const [busy, setBusy] = useState('')
   const pending = ladder.reversals.filter((r) => !r.reversed_at)
+  /** The rung the undo's demotion puts this action back at, or '' when it already runs there. */
+  const backTo = (r: AutonomyReversal): string => {
+    const t = ladder.types.find((x) => x.key === r.action_type)
+    return t && ladder.rungs.indexOf(t.floor) < ladder.rungs.indexOf(t.granted_rung) ? t.floor : ''
+  }
 
   const undo = async (r: AutonomyReversal) => {
     setBusy(r.id)
+    const floor = backTo(r)
     try {
       // A refused undo comes back as a non-2xx and lands in `catch` carrying the server's
       // named reason, so there is no in-band failure branch to write here — and the list
       // reloads either way, because the record's state is what decides whether the button
       // should still be offered.
       await api.autonomyUndo(r.id)
-      notify(`Undone. ${r.action_type} will ask again from now on.`, 'success')
+      notify(floor ? `Undone. ${r.action_type} is back at ${rungMeta(floor, ladder).label}.` : 'Undone.', 'success')
     } catch (e) {
       notify(`Couldn't undo: ${String((e as Error)?.message || e)}`, 'error')
     } finally { setBusy(''); onChange() }
@@ -266,13 +277,16 @@ function UndoList({ ladder, onChange }: { ladder: AutonomyLadder; onChange: () =
       <div data-type="caption" className="mb-s text-on-surface-low uppercase tracking-wide">Automatic actions you can still undo</div>
       <RowGroup>
         {pending.length === 0 ? (
-          <div data-type="body-s" className="py-3 text-on-surface-low">Nothing is waiting to be undone — no action has run at the “runs with undo” rung yet.</div>
-        ) : pending.map((r) => (
-          <Row key={r.id} label={r.label || r.action_type}
-            hint={`Ran ${r.created_at.slice(0, 16).replace('T', ' ')}. Undoing it also stops ${r.action_type} from doing this on its own.`}>
-            <Button size="xs" variant="secondary" loading={busy === r.id} onClick={() => undo(r)}>Undo</Button>
-          </Row>
-        ))}
+          <div data-type="body-s" className="py-3 text-on-surface-low">Nothing is waiting to be undone.</div>
+        ) : pending.map((r) => {
+          const floor = backTo(r)
+          return (
+            <Row key={r.id} label={r.label || r.action_type}
+              hint={`Ran ${r.created_at.slice(0, 16).replace('T', ' ')}.${floor ? ` Undoing it also puts ${r.action_type} back so it ${rungMeta(floor, ladder).label}.` : ''}`}>
+              <Button size="xs" variant="secondary" loading={busy === r.id} onClick={() => undo(r)}>Undo</Button>
+            </Row>
+          )
+        })}
       </RowGroup>
     </div>
   )

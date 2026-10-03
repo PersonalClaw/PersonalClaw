@@ -1552,7 +1552,7 @@ class GatewayOrchestrator:
         # relaxes a block, an incident, or a budget pause.
         from personalclaw.guardrails.denylist import enforce_action
         from personalclaw.guardrails.policy import unattended_dispatch_key
-        from personalclaw.guardrails.rungs import announce_withheld, record_reversal
+        from personalclaw.guardrails.rungs import announce_withheld, record_execution
         from personalclaw.guardrails.rungs import route_provider_action as _route_action
 
         # 🔴 THE SESSION IDENTITY, now shared by BOTH gates on this seam (the shape the
@@ -1748,10 +1748,10 @@ class GatewayOrchestrator:
                     get_meter().end_run(run_key)
                 except Exception:  # noqa: BLE001 - bookkeeping must not mask a fire's outcome
                     logger.debug("end_run failed for %s", run_key, exc_info=True)
-            # `auto_with_undo`: persist the provider's reversal handle + passively notify. Only
-            # for an action that succeeded — a failed action has nothing to take back.
-            if route.records_reversal and bool(getattr(result, "success", False)):
-                record_reversal(
+            # The run's audit row at the rung it took, and at `auto_with_undo` its undo. Only for
+            # an action that succeeded — a failed action has nothing to take back.
+            if bool(getattr(result, "success", False)):
+                record_execution(
                     route,
                     result,
                     label=provider_name,

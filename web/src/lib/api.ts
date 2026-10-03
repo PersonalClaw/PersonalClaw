@@ -211,6 +211,8 @@ export interface AutonomyType {
   ceiling: string
   leaves_machine: boolean
   providers: ActionProviderName[]
+  /** The rung an automated run of it takes (nobody watching): the route the dispatch seams give a
+   *  trigger fire or a hook's action, so the rung the security log records its runs at. */
   resolved_rung: string
   granted_rung: string
   /** Granted higher than it currently resolves, because the incident kill switch is on. */

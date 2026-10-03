@@ -154,6 +154,12 @@ class ActionTypeSpec:
     Carrying it on the DECLARATION is what keeps the seams free of per-action branching:
     a seam asks :func:`action_type_for_provider` and gets whatever the declaration said,
     so an app-contributed action is routed by the same three lines that route ``bash``.
+
+    ``runs_code`` marks a type whose action runs code someone wrote (a command, a script),
+    so that running it IS the effect. Its every run is recorded in the security log,
+    whatever the code reports about itself: a script that answers "nothing to do" still
+    ran, and its own answer must never be what keeps it out of the log
+    (:func:`~personalclaw.guardrails.rungs.record_execution`).
     """
 
     key: str
@@ -162,6 +168,7 @@ class ActionTypeSpec:
     leaves_machine: bool = False
     promotion: PromotionRule = field(default_factory=PromotionRule)
     providers: tuple[str, ...] = ()
+    runs_code: bool = False
 
 
 # Process-global registry, the ``_PROFILES`` pattern from ``policy.py``. Populated at

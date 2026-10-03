@@ -8,10 +8,12 @@ ladder, and the only place the ladder writes anything a user asked for.
 **Three things live here.**
 
 *The inventory* (:func:`ladder_view`) — one row per declared action type carrying the rung
-it resolves at, where that rung came from (a declared floor, a grant you clicked, an
-incident holding it down), the recomputed track record, and the demotion history. This is
-what ``GET /api/autonomy`` serialises and the Settings panel renders, and it is
-:func:`~personalclaw.guardrails.autonomy.promotion_eligibility`'s read-path caller.
+an automated run of it takes (the route the dispatch seams give it, so the rung the security
+log records), where that rung came from (a declared floor, a grant you clicked, an incident
+holding it down, the posture of a run nobody watches), the recomputed track record, and the
+demotion history. This is what ``GET /api/autonomy`` serialises and the Settings panel
+renders, and it is :func:`~personalclaw.guardrails.autonomy.promotion_eligibility`'s
+read-path caller.
 
 *The proposal* (:func:`propose_promotions`) — the ladder's upward path is a click, so a
 type that has EARNED its next rung has to say so somewhere the user already looks. This
@@ -230,7 +232,7 @@ def _save_records(records: list[ReversalRecord]) -> None:
 def record_reversal_handle(*, action_type: str, rung: str, handle: str, label: str = "") -> str:
     """Persist one reversible execution and return its record id (``""`` when refused).
 
-    Called from :func:`~personalclaw.guardrails.rungs.record_reversal` — the seam path an
+    Called from :func:`~personalclaw.guardrails.rungs.record_execution` — the seam path an
     ``auto_with_undo`` action already goes through — so the record has a production writer
     at every dispatch point rather than only in a test.
 
@@ -446,8 +448,12 @@ async def reverse_action(record_id: str) -> ReversalOutcome:
 
 # ── the inventory the panel renders ───────────────────────────────────────────
 
+#: Who the panel's route is asked for: a run with nobody watching, the posture every trigger
+#: fire and every hook without a parent session resolves (`policy.unattended_dispatch_key`).
+_LADDER_DISPATCH = "autonomy-ladder"
 
-def _authority_sentence(spec, resolved: str, granted: str, state, held: bool) -> str:
+
+def _authority_sentence(spec, resolved: str, granted: str, state, held: bool, runs_at: str) -> str:
     """WHERE this type's current rung came from, in one sentence.
 
     The chip's whole job (done_when 3) is to answer "why is this allowed to run by itself?"
@@ -456,7 +462,22 @@ def _authority_sentence(spec, resolved: str, granted: str, state, held: bool) ->
     rung down, you granted it (and here is the record you were shown), or nobody has
     promoted it and it is running at the rung it was declared with. Composed here so the
     chip, its tooltip and the ladder panel cannot describe the same authority differently.
+
+    ``runs_at`` is the rung an automated run takes (:func:`_type_row`). When the posture of a
+    run nobody watches moved it off ``resolved`` — an action that can be undone keeps its undo
+    there, and an operator ceiling of "ask" holds everything — the sentence says so, because
+    the chip shows that rung.
     """
+    sentence = _provenance(spec, resolved, granted, state, held)
+    if runs_at != resolved:
+        from personalclaw.guardrails.rungs import rung_label as _label
+
+        sentence += f" When it runs with nobody watching, it {_label(runs_at)}."
+    return sentence
+
+
+def _provenance(spec, resolved: str, granted: str, state, held: bool) -> str:
+    """The type's own rung and where it came from: its floor, your grant, or the kill switch."""
     from personalclaw.guardrails.rungs import rung_label as _label
 
     # 🪤 A RUNG LABEL IS A PREDICATE, NOT A NOUN. `RUNG_LABELS` is declared "in terms of
@@ -482,24 +503,36 @@ def _authority_sentence(spec, resolved: str, granted: str, state, held: bool) ->
 
 
 def _type_row(spec) -> dict:
-    """One action type, as the panel needs it: the rung, WHERE it came from, the record."""
+    """One action type, as the panel needs it: the rung, WHERE it came from, the record.
+
+    ``resolved_rung`` is the rung an automated run of it takes, from the route the dispatch
+    seams give a trigger fire or a hook's action (``rungs.route_action_type``, nobody watching).
+    So the chip shows the rung the security log records its runs at, from the one place that
+    decides it, rather than the type's own rung beside a log that said another.
+    """
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+    from personalclaw.guardrails.rungs import route_action_type
+
     resolved = resolve_rung(spec.key)
     granted = granted_rung(spec.key)
     state = rung_state(spec.key)
     el = promotion_eligibility(spec.key)
     held = rung_rank(granted) > rung_rank(resolved)
+    runs_at = route_action_type(
+        spec.key, session_key=unattended_dispatch_key(_LADDER_DISPATCH)
+    ).rung
     return {
         "key": spec.key,
         "floor": spec.floor,
         "ceiling": spec.ceiling,
         "leaves_machine": spec.leaves_machine,
         "providers": list(spec.providers),
-        "resolved_rung": resolved,
+        "resolved_rung": runs_at,
         "granted_rung": granted,
         # The one derived flag the panel cannot compute from the two rungs without
         # re-deriving the incident clamp: "granted higher, held here for now".
         "held_by_incident": held,
-        "authority": _authority_sentence(spec, resolved, granted, state, held),
+        "authority": _authority_sentence(spec, resolved, granted, state, held, runs_at),
         "granted_at": state.granted_at if state else "",
         "evidence_window": state.evidence_window if state else "",
         "demotions": [

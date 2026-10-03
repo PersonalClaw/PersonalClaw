@@ -377,7 +377,9 @@ def test_rung_router_narrows_under_the_ceiling(home):
         )
     )
     key = unattended_dispatch_key("trigger:t1")
-    assert route_provider_action("ceiling-probe", session_key=key).rung == "auto_with_undo"
+    # Nothing can undo this probe, so the unattended posture leaves it at its own rung (its audit
+    # row is the record) instead of calling it "runs with undo" with no undo behind the name.
+    assert route_provider_action("ceiling-probe", session_key=key).rung == "autonomous"
     _write_ceiling(home, {"approval": {"value": "ask"}})
     route = route_provider_action("ceiling-probe", session_key=key)
     # Nobody watches an unattended run, so under `ask` the action raises a request for a person

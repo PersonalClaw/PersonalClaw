@@ -5,7 +5,7 @@ const doc: UiDoc = {
   name: 'RungChip',
   keywords: ['autonomy', 'rung', 'ladder', 'unattended', 'guardrails', 'undo', 'permission', 'chip'],
   description:
-    'A compact chip stating how much an automation may do on its own: drafts only, asks first, runs with undo, or runs on its own. The visible label is the rung in behaviour words; the tooltip carries the server-composed provenance sentence (a declared floor, a promotion the user clicked with the evidence record, or a granted rung the incident kill switch is holding down). Draws the rung the action type ACTUALLY resolves to and appends "· held" while an incident clamps it.',
+    'A compact chip stating how much an automation may do on its own: drafts only, asks first, runs with undo, or runs on its own. The visible label is the rung in behaviour words; the tooltip carries the server-composed provenance sentence (a declared floor, a promotion the user clicked with the evidence record, or a granted rung the incident kill switch is holding down). Draws the rung an automated run of the action ACTUALLY takes, the one the security log records it at, and appends "· held" while an incident clamps it.',
   props: [
     { name: 'type', description: 'One AutonomyType row from GET /api/autonomy — the chip reads its resolved rung, its held_by_incident flag and its authority sentence.' },
     { name: 'ladder', description: 'The fetched ladder, for the server-owned rung wording. Omit (or pass null) and the chip falls back to the humanized rung key rather than inventing a second phrase.' },

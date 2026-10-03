@@ -272,7 +272,7 @@ def test_the_HELD_row_names_the_action_ONCE_and_never_by_its_type_key(_isolated_
 def test_the_undo_record_is_what_the_notification_carries(_isolated_home):
     """The affordance is rendered from a persisted record id, not from a raw handle.
 
-    `record_reversal` stamps `reversal_id` into the notification meta; the frontend sends
+    `record_execution` stamps `reversal_id` into the notification meta; the frontend sends
     that id back. A page that held the provider's handle instead could ask to reverse
     something the system never recorded doing.
     """
@@ -788,8 +788,9 @@ def test_EVERY_authority_sentence_gives_the_rung_label_a_subject(_isolated_home)
     to read *"Runs at runs on its own because that is the rung it was declared with"*.
 
     This sweeps all three provenance branches — declared, granted, incident-held — because the
-    defect was in one and the shape was in all three. The rule asserted is the one a reader can
-    check without knowing the wording: **the label never directly follows a preposition.**
+    defect was in one and the shape was in all three, plus the clause a run nobody watches adds
+    when its posture moves the rung. The rule asserted is the one a reader can check without
+    knowing the wording: **the label never directly follows a preposition.**
     """
     from personalclaw.guardrails.incident import activate, resume
 
@@ -830,8 +831,13 @@ def test_EVERY_authority_sentence_gives_the_rung_label_a_subject(_isolated_home)
     finally:
         resume()
 
+    # 4. moved by the posture of a run nobody watches: the action can be undone, so its
+    #    unattended run keeps its undo, and the sentence names that rung too.
+    seen.append(_row(_ladder(), APP_KEY)["authority"])
+    assert "nobody watching" in seen[-1], seen[-1]
+
     # Vacuity floor: a sweep over sentences that contain no label proves nothing.
-    assert len(seen) == 3
+    assert len(seen) == 4
     for sentence in seen:
         assert any(v in sentence for v in rg.RUNG_LABELS.values()), f"no label in {sentence!r}"
         assert offenders(sentence) == [], f"{sentence!r} → {offenders(sentence)}"

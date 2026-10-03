@@ -59,4 +59,12 @@ describe('the guardrails reads state their failure instead of inventing one', ()
     expect(src).toMatch(/Couldn't check provider health/)
     expect(src, 'and it announces, because it replaces content the user was reading').toMatch(/role="alert"/)
   })
+
+  it('an empty undo list says nothing is waiting, never that nothing has run', () => {
+    // The list shows PENDING records only. An action you already undid, or a run that came back
+    // with nothing to undo, leaves it empty while the security log records the run, so "no action
+    // has run at the 'runs with undo' rung yet" was a claim about history it cannot make.
+    expect(src).toContain('Nothing is waiting to be undone.</div>')
+    expect(src).not.toMatch(/no action has run at/)
+  })
 })

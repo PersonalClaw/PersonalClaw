@@ -343,6 +343,9 @@ def rung_ceiling_for_profile(profile: SafetyProfile, *, unattended: bool = False
       watching. ``autonomous`` (silent, no undo handle) would mean an action ran and left
       no trace a user would notice, so it narrows to ``auto_with_undo`` — execute, but
       keep the reversal handle and the passive notification that let the user find it.
+      The route applies this bound only to an action that can be undone
+      (``rungs.route_action_type``): one with no handle to keep runs at its own rung, and
+      the audit row every execution writes is its trace.
     * ``ask`` on an unattended run — only the operator ceiling puts it there
       (``{"approval": {"value": "ask"}}``: a person decides every action on this machine),
       and nobody is watching to decide. It narrows to ``one_tap``: the action does not run,

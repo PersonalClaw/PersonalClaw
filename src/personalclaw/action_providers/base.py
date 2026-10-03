@@ -69,7 +69,10 @@ class ActionResult:
     blocked: bool = False
     # Optional success refinement for scheduled runs:
     #   ""        — normal synchronous success (the action's work completed)
-    #   "skip"    — succeeded silently; suppress delivery (run-script skip status)
+    #   "skip"    — succeeded silently with nothing to do; suppress delivery (run-script
+    #               skip status). The run writes no execution row to the security log
+    #               (`guardrails.rungs.record_execution`), except an action that runs code:
+    #               a script that answers "skip" still ran.
     #   "done"    — one-shot; remove the job after this run (run-script done status)
     #   "launched"— the action only STARTED background work (a fire-and-forget
     #               spawn: run-prompt / run-workflow / invoke-agent). The turn's
@@ -118,7 +121,7 @@ class ActionResult:
     # Provider-supplied because only the provider knows what "undo" means for its own
     # effect (``create-task`` returns the task row it filed). A provider that cannot
     # reverse itself leaves it EMPTY, and the seam then records the execution without
-    # offering an undo: `guardrails.rungs.record_reversal` skips the notification
+    # offering an undo: `guardrails.rungs.record_execution` skips the notification
     # entirely rather than promise a reversal that cannot happen.
     reversal: str = ""
     # Why a FAILED action failed, decided by the provider that saw the cause, in the workflow

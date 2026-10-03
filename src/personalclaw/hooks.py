@@ -1053,7 +1053,7 @@ async def run_script_hook(
     # The route comes from the provider NAME alone — the name→type mapping lives on the
     # declaration (`ActionTypeSpec.providers`), so an app-contributed provider is routed by
     # these same lines with no branch of its own here.
-    from personalclaw.guardrails.rungs import announce_withheld, record_reversal
+    from personalclaw.guardrails.rungs import announce_withheld, record_execution
     from personalclaw.guardrails.rungs import route_provider_action as _route_action
 
     route = _route_action(hook.provider, session_key=_session_key)
@@ -1121,10 +1121,10 @@ async def run_script_hook(
         _status = "error"
     _record(_status)
 
-    # `auto_with_undo`: persist the provider's reversal handle + passively notify. Only for
-    # an action that actually did something — a failed action has nothing to take back.
-    if route.records_reversal and result.success:
-        record_reversal(
+    # The run's audit row at the rung it took, and at `auto_with_undo` its undo. Only for an
+    # action that succeeded — a failed action has nothing to take back.
+    if result.success:
+        record_execution(
             route,
             result,
             label=hook.name or hook.provider,
