@@ -2195,15 +2195,13 @@ class VectorMemoryStore(MemoryProvider):
         one hybrid rule, and only the RELATED ones: a lesson that shares a word with the question
         or whose meaning is close to it, never merely the nearest there is.
         """
-        lessons = self.lessons_visible_in(workspace)
-        standings = self.lesson_standings(lessons)
-        shown = [
-            row
-            for row in lessons
-            if (v := standings.get(str(row.get("key") or ""))) is None or v.injected
-        ]
         return self._rank_rows(
-            query_text, shown, limit=limit, arms=None, related_only=True, query_vector=query_vector
+            query_text,
+            self.shown_lessons(workspace),
+            limit=limit,
+            arms=None,
+            related_only=True,
+            query_vector=query_vector,
         )
 
     def _rank_rows(
@@ -2708,9 +2706,107 @@ class VectorMemoryStore(MemoryProvider):
                 except (TypeError, ValueError):
                     value = r["value_json"]
                 texts.append(value if isinstance(value, str) else json.dumps(value))
+        self._drop_records(episodic, semantic)
+        return texts
+
+    def chats_with_records(self) -> set[str]:
+        """The sessions this store holds live records of their own for, each named by the key the
+        record is filed under: an episode's conversation (consolidation and sealing file one under
+        its chat's key) and a session-scoped record's session (its summary, the working memory)."""
+        found: set[str] = set()
+        for sql in (
+            "SELECT DISTINCT conversation_id FROM episodic_memories "
+            "WHERE is_deleted = 0 AND conversation_id <> ''",
+            "SELECT DISTINCT scope_ref FROM semantic_memory "
+            "WHERE is_deleted = 0 AND scope = 'session' AND scope_ref <> ''",
+        ):
+            found.update(str(r[0]) for r in self.db.execute(sql).fetchall() if r[0])
+        return found
+
+    def hand_over_chat_records(
+        self, moves: Iterable[tuple["VectorMemoryStore", Iterable[str]]]
+    ) -> int:
+        """Move the live records sessions left here to the stores they belong in: for each
+        ``(dest, chats)``, each episode filed under one of *chats* and each one's session-scoped
+        records (its summary). Returns how many moved.
+
+        Copied as they were written (id, text, vector, tags, dates, who wrote it and the session it
+        derives from), linked in the destination's graph as a record written there is, and then
+        removed here as :meth:`purge_records_from` removes one, all at once, so this store's vector
+        index is rebuilt once. A record a destination already holds keeps its copy there. One that
+        cannot take its records, said in the log, leaves them here.
+        """
+        episodes: list[str] = []
+        semantic: list[str] = []
+        for dest, chats in moves:
+            try:
+                copied = self._copy_chat_records(dest, chats)
+            except sqlite3.Error:
+                dest.db.rollback()
+                logger.warning("Could not move chat records into %s", dest.db_path, exc_info=True)
+                continue
+            episodes += copied[0]
+            semantic += copied[1]
+        self._drop_records(episodes, semantic)
+        return len(episodes) + len(semantic)
+
+    def _copy_chat_records(
+        self, dest: "VectorMemoryStore", chats: Iterable[str]
+    ) -> tuple[list[str], list[str]]:
+        """Copy into *dest* the live records the sessions *chats* left here (see
+        :meth:`hand_over_chat_records`). Returns the ids of the episodes and the keys of the
+        semantic rows copied."""
+        keys = sorted({key for key in chats if key})
+        episodes: list[tuple[str, str]] = []
+        semantic: list[str] = []
+        for start in range(0, len(keys), 400):
+            batch = keys[start : start + 400]
+            marks = ",".join("?" * len(batch))
+            for row in self._copy_rows(
+                dest, "episodic_memories", f"conversation_id IN ({marks})", batch
+            ):
+                episodes.append((str(row["id"]), str(row["text"] or "")))
+            for row in self._copy_rows(
+                dest, "semantic_memory", f"scope = 'session' AND scope_ref IN ({marks})", batch
+            ):
+                semantic.append(str(row["key"]))
+        if not episodes and not semantic:
+            return [], []
+        dest.db.commit()
+        if episodes:
+            dest.rebuild_faiss_index()
+            for ref, text in episodes:
+                dest.link_written_record(from_kind="episodic", from_ref=ref, text=text)
+        return [ref for ref, _text in episodes], semantic
+
+    def _copy_rows(
+        self, dest: "VectorMemoryStore", table: str, where: str, params: list[str]
+    ) -> list[Any]:
+        """Copy this store's live *table* rows matching *where* into *dest*'s, every column both
+        tables have, leaving a row *dest* already holds as it is. Returns the rows copied."""
+
+        def columns(store: "VectorMemoryStore") -> list[str]:
+            return [str(r["name"]) for r in store.db.execute(f"PRAGMA table_info({table})")]
+
+        theirs = set(columns(dest))
+        shared = [name for name in columns(self) if name in theirs]
+        listed = ", ".join(shared)
+        rows = self.db.execute(
+            f"SELECT {listed} FROM {table} WHERE is_deleted = 0 AND {where}", params
+        ).fetchall()
+        dest.db.executemany(
+            f"INSERT OR IGNORE INTO {table} ({listed}) VALUES ({', '.join('?' * len(shared))})",
+            [tuple(row[name] for name in shared) for row in rows],
+        )
+        return rows
+
+    def _drop_records(self, episodic: list[str], semantic: list[str]) -> None:
+        """Remove the episodes *episodic* and the semantic rows *semantic* outright: with every
+        history event about them, their links and their reflex log rows, and the vector index
+        rebuilt without them."""
         refs = episodic + semantic
         if not refs:
-            return []
+            return
         for start in range(0, len(refs), 400):
             batch = refs[start : start + 400]
             marks = ",".join("?" * len(batch))
@@ -2735,7 +2831,6 @@ class VectorMemoryStore(MemoryProvider):
         self.db.commit()
         if episodic:
             self.rebuild_faiss_index()
-        return texts
 
     def rotate_events(self, max_rows: int = _MAX_EVENTS) -> int:
         """Delete the oldest events by ``created_at`` if over limit (``bounded_log``). Returns
@@ -4279,8 +4374,25 @@ class VectorMemoryStore(MemoryProvider):
             restored.append(str(row["memory_key"]))
         return restored
 
+    def shown_lessons(self, workspace: str | None = None, limit: int | None = None) -> list[dict]:
+        """The lessons a session in ``workspace`` is shown: visible there
+        (:meth:`lessons_visible_in`) and past the confidence gate the prompt block applies."""
+        lessons = self.lessons_visible_in(workspace, limit=limit)
+        if not lessons:
+            return []
+        standings = self.lesson_standings(lessons)
+        return [
+            row
+            for row in lessons
+            if (v := standings.get(str(row.get("key") or ""))) is None or v.injected
+        ]
+
     def get_lessons_context(
-        self, workspace: str | None = None, *, citations_out: list[dict] | None = None
+        self,
+        workspace: str | None = None,
+        *,
+        citations_out: list[dict] | None = None,
+        beside: "VectorMemoryStore | None" = None,
     ) -> str:
         """Format lessons for prompt injection — scope-filtered AND confidence-gated.
 
@@ -4294,21 +4406,24 @@ class VectorMemoryStore(MemoryProvider):
         the whole point of the atom: injection is gated on evidence rather than on the
         row existing, so one unrepeated inference cannot steer every future turn.
 
+        *beside* is another store whose lessons a session here follows too: a chat working in
+        a folder follows its folder's own lessons and, from the global memory's lesson list, the
+        ones taught for every chat and for that folder. A lesson both hold is listed once.
+
         When *citations_out* is supplied (a chat turn), each lesson is listed as
         ``[Lesson N]``, the header says to cite by that number, and one manifest entry per
         lesson is appended — ``{"kind": "lesson", "n", "id", "preview"}``, ``id`` being the
         rule as the Memory studio lists it — so a reply's ``[Lesson N]`` can open the lesson.
         Left None, the block is byte-identical to the uncited format.
         """
-        lessons = self.lessons_visible_in(workspace, limit=50)
-        if not lessons:
-            return ""
-        standings = self.lesson_standings(lessons)
-        lessons = [
-            row
-            for row in lessons
-            if (v := standings.get(str(row.get("key") or ""))) is None or v.injected
-        ]
+        lessons = self.shown_lessons(workspace, limit=50)
+        if beside is not None and beside is not self:
+            held = {str(row.get("key") or "") for row in lessons}
+            lessons += [
+                row
+                for row in beside.shown_lessons(workspace, limit=50)
+                if str(row.get("key") or "") not in held
+            ]
         if not lessons:
             return ""
         header = (

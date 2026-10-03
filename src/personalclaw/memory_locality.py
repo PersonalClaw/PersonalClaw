@@ -6,16 +6,23 @@ shared ``_ext/_default`` partition. §1.6 builds project locality **on that seam
 beside it**: a project-owned session runs with cwd = the project's ``context_dir``, so
 everything it remembers lands in that project's partition with no second mechanism.
 
-Three things live here, and only these three:
+What lives here:
 
+* :func:`chat_folder` and :func:`partition_for` — which partition a chat's memory is in. A chat
+  records the folder it works in under one field (:data:`CHAT_FOLDER`), and every reader and
+  writer of its memory asks :func:`chat_folder` for it: the turn's own recall, the after-turn
+  review, consolidation and its seal, and the memory tools. The gateway's own workspace, where
+  every chat starts, shares the global partition.
 * :func:`project_memory_cwd` — the cwd a project-owned run binds so its memory is local.
   Read by the run controller before the first node dispatches.
 * :func:`compose_recall` — partition-first recall for a project-local session: its own
   partition, then the GLOBAL partition, whose hits are source-labeled and fenced.
-* :func:`drop_partition` and :func:`settle_partitions` — a partition's end. A folder of
-  PersonalClaw's own that sessions run in (a task's git worktree, a loop's folder) takes its
-  partition with it when it goes; nothing can run in it again, so a partition left behind is
-  memory no session reads, carried by every snapshot.
+* :func:`drop_partition`, :func:`settle_partitions` and :func:`folder_is_gone` — a partition's
+  end. A folder of PersonalClaw's own that sessions run in (a task's git worktree, a loop's
+  folder) takes its partition with it when it goes; nothing can run in it again, so a partition
+  left behind is memory no session reads, carried by every snapshot.
+* :func:`move_what_folder_chats_left` — once at the start, what an earlier version filed in the
+  global memory for a chat working in a folder moves to that folder's partition.
 
 **Ordering only, never admission.** The cross-partition half changes only WHERE a hit
 appears in the block (after the local hits) and HOW it is framed (labeled + fenced). It
@@ -32,16 +39,23 @@ import os
 import re
 import shutil
 import stat
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.config.loader import memory_dir_for_cwd
+from personalclaw.config.loader import memory_dir_for_cwd, resolve_workspace_root
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from personalclaw.context import ContextBuilder
+    from personalclaw.history import ConversationLog
+    from personalclaw.vector_memory import VectorMemoryStore
 
 logger = logging.getLogger(__name__)
+
+#: The field a chat records the folder it works in under: its live session's attribute, and the
+#: key of the metadata its saved transcript carries (``chat_persistence`` writes it, a restore
+#: reads it back). That folder names the chat's memory partition.
+CHAT_FOLDER = "workspace_dir"
 
 #: What a cross-partition hit is labeled as. The label names the SOURCE partition from the
 #: reading session's point of view — "not this project" — because that is the only fact the
@@ -77,9 +91,31 @@ def project_memory_cwd(project_id: str) -> str:
         return ""
 
 
+def chat_folder(chat: Mapping[str, Any] | object) -> str:
+    """The folder chat *chat* works in, whose partition holds its memory: "" for none.
+
+    *chat* is its live session or the metadata its saved transcript carries, which both record
+    the folder under :data:`CHAT_FOLDER`. The one place a chat's folder is read for its memory:
+    consolidation read it from a key no chat writes, and filed every folder chat's memory in the
+    global partition, where every other chat recalled it.
+    """
+    value = chat.get(CHAT_FOLDER) if isinstance(chat, Mapping) else getattr(chat, CHAT_FOLDER, "")
+    return value.strip() if isinstance(value, str) else ""
+
+
 def partition_for(cwd: str | None) -> Path:
-    """The memory partition directory a cwd resolves to."""
-    return memory_dir_for_cwd(cwd or None)
+    """The memory partition directory a session working in *cwd* reads and writes.
+
+    The global one for no folder, and for the gateway's own workspace, where every chat starts
+    (``config.loader.default_workspace_dir``): those chats and the Memory page share one memory.
+    Every other folder has its own. Worked out without making anything.
+    """
+    if not cwd:
+        return memory_dir_for_cwd(None)
+    own = memory_dir_for_cwd(cwd)
+    if own == memory_dir_for_cwd(str(resolve_workspace_root())):
+        return memory_dir_for_cwd(None)
+    return own
 
 
 def is_local_partition(cwd: str | None) -> bool:
@@ -90,6 +126,19 @@ def is_local_partition(cwd: str | None) -> bool:
     receive a "cross-partition" label pointing at itself.
     """
     return partition_for(cwd) != partition_for(None)
+
+
+def folder_is_gone(folder: str) -> bool:
+    """Whether *folder* was one of PersonalClaw's own, inside its home (a task's worktree, a
+    loop's folder, a project's context folder), and is gone. Its partition went with it
+    (:func:`drop_partition`): nothing can work there again, so nothing more is kept for it."""
+    if not folder:
+        return False
+    from personalclaw.config.loader import resolve_config_dir
+
+    home = os.path.realpath(resolve_config_dir())
+    real = os.path.realpath(os.path.expanduser(folder))
+    return real.startswith(home + os.sep) and not os.path.lexists(real)
 
 
 def drop_partition(folder: str) -> bool:
@@ -208,6 +257,73 @@ def _make_private(partition: Path) -> None:
                 os.chmod(path, PRIVATE_DIR_MODE if stat.S_ISDIR(mode) else PRIVATE_FILE_MODE)
         except OSError:
             logger.debug("memory: could not make %s private", path, exc_info=True)
+
+
+def move_what_folder_chats_left(store: "VectorMemoryStore", log: "ConversationLog") -> int:
+    """Move to each folder's partition what a chat working in that folder left in the global
+    memory *store*: its episodes and its session summary. Returns how many records moved.
+
+    An earlier version consolidated every chat into the global memory, where every chat recalled
+    it. A record moves when it names the one chat it came from, as an episode names the
+    conversation consolidation and the seal file it under and a session summary names the session
+    it sums up, and that chat's transcript names a folder with a partition of its own
+    (:func:`chat_folder`). A fact names only the last chat that stated it (every chat that learns
+    the same thing writes the same row), and a lesson, a persona note and the daily history name
+    none, so they stay where they are; so does what a chat left whose folder was one of
+    PersonalClaw's own and is gone (:func:`folder_is_gone`). Run when the gateway starts, before
+    anything recalls. Idempotent: a moved record is no longer here, and one already in the
+    partition is not copied over it.
+    """
+    from personalclaw.context import ContextBuilder
+
+    moved = 0
+    try:
+        moves: list[tuple[VectorMemoryStore, list[str]]] = []
+        for folder, keys in _folder_chats_in(store, log):
+            dest = ContextBuilder.get_memory_for(folder, writes=True).vector_store
+            if dest is not None and dest is not store:
+                moves.append((dest, keys))
+        moved = store.hand_over_chat_records(moves) if moves else 0
+    except Exception:  # noqa: BLE001 - a failed pass must not stop the gateway; it runs again
+        logger.warning("Could not move what folder chats left in the global memory", exc_info=True)
+    if moved:
+        logger.warning(
+            "Moved %d memory record(s) chats working in a folder had left in the global memory "
+            "to that folder's memory",
+            moved,
+        )
+    return moved
+
+
+def _folder_chats_in(
+    store: "VectorMemoryStore", log: "ConversationLog"
+) -> list[tuple[str, list[str]]]:
+    """Each folder with a partition of its own, with the chats working in it that *store* holds
+    records of: ``(folder, chat keys)``.
+
+    It runs at every start, over every chat the global memory holds records of, so it reads their
+    metadata through the log's listing, which a start loads from the home's saved listing and
+    which then costs one ``stat`` per transcript. Read chat by chat, each metadata line opened its
+    transcript: 12,000 chats took 2 to 3.6 s that way and 0.2 to 0.6 s this way (measured). Each
+    folder is worked out once.
+    """
+    chats = sorted(store.chats_with_records())
+    if not chats:
+        return []
+    log.list_sessions_with_metadata()
+    partitions: dict[str, Path | None] = {}
+    by_partition: dict[Path, tuple[str, list[str]]] = {}
+    for key in chats:
+        folder = chat_folder(log.get_metadata(key))
+        if not folder:
+            continue
+        if folder not in partitions:
+            kept_apart = is_local_partition(folder) and not folder_is_gone(folder)
+            partitions[folder] = partition_for(folder) if kept_apart else None
+        partition = partitions[folder]
+        if partition is not None:
+            by_partition.setdefault(partition, (folder, []))[1].append(key)
+    return list(by_partition.values())
 
 
 def cross_partition_block(recalled: str) -> str:

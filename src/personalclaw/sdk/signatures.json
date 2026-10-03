@@ -1022,7 +1022,8 @@
     "kind": "staticmethod",
     "params": [
      {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "cwd"},
-     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "memory_store"}
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "memory_store"},
+     {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "writes"}
     ]
    }
   }
@@ -1731,7 +1732,8 @@
     "kind": "method",
     "params": [
      {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "workspace"},
-     {"annotation": "list[dict] | None", "default": "None", "kind": "keyword_only", "name": "citations_out"}
+     {"annotation": "list[dict] | None", "default": "None", "kind": "keyword_only", "name": "citations_out"},
+     {"annotation": "MemoryService | None", "default": "None", "kind": "keyword_only", "name": "beside"}
     ],
     "returns": "str"
    },

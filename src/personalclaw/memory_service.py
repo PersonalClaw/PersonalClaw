@@ -485,7 +485,11 @@ class MemoryService:
         return vs.get_semantic_context(query_text=query_text, cap=cap, query_vector=query_vector)
 
     def lessons_context(
-        self, workspace: str | None = None, *, citations_out: list[dict] | None = None
+        self,
+        workspace: str | None = None,
+        *,
+        citations_out: list[dict] | None = None,
+        beside: "MemoryService | None" = None,
     ) -> str:
         """The lessons block for injection (empty if none / no vector store).
 
@@ -494,14 +498,20 @@ class MemoryService:
         grill-tree recall, the debug preview) gets GLOBAL lessons only, which is why a
         workspace lesson cannot leak through a path that has no workspace identity.
 
+        *beside* is the global memory's service when this one is a folder's: a chat working in
+        the folder follows the lessons the global lesson list holds for every chat and for that
+        folder too (:meth:`VectorMemoryStore.get_lessons_context`).
+
         With *citations_out*, each lesson is listed as ``[Lesson N]`` and the manifest is
         filled — see :meth:`VectorMemoryStore.get_lessons_context`.
         """
-        vs = self._vs
+        vs, other = self._vs, (beside._vs if beside is not None else None)
+        if vs is None:
+            vs, other = other, None
         if vs is None:
             return ""
         ws = normalize_workspace_ref(workspace) or None
-        return vs.get_lessons_context(ws, citations_out=citations_out) or ""
+        return vs.get_lessons_context(ws, citations_out=citations_out, beside=other) or ""
 
     def search_episodic(
         self,

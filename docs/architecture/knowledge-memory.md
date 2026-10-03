@@ -487,11 +487,54 @@ item vector).
   `memory_dir_for_cwd(cwd)` maps a session's cwd onto
   `~/.personalclaw/workspace/_ext/<slug(cwd)>`, and an empty cwd onto the shared
   `_ext/_default` partition. `context.py::ContextBuilder.get_memory_for` resolves
-  and caches one store per partition (the gateway's own workspace is aliased
-  onto the main store, so a dashboard chat and the Memory UI share one). A
+  and caches one store per partition through `memory_locality.partition_for`, which
+  gives the gateway's own workspace, where every chat starts, the global partition
+  (so a dashboard chat and the Memory UI share one main store), worked out without
+  making anything (`config.loader.resolve_workspace_root`), so a process with no
+  context builder (`personalclaw consolidate`) agrees with the gateway. A
   partition gets its vector index once an embedding model is bound, asked at each
   use, so the first binding reaches a directory already open, or once it holds
-  memories one wrote, so a clear leaves them searchable by keyword.
+  memories one wrote, so a clear leaves them searchable by keyword. A writer is
+  handed the partition with its record store (`get_memory_for(..., writes=True)`),
+  so what it keeps is kept before any embedding model is bound, read by keyword
+  until the re-index embeds it.
+- **A chat's partition is its folder's.** A chat records the folder it works in as
+  `workspace_dir`, on its live session and in its transcript's metadata
+  (`dashboard/chat_persistence.py`), and `memory_locality.chat_folder` is the one
+  place that is read for its memory: the turn's own recall, the after-turn review,
+  consolidation and its seal, and `memory_recall`. A project chat records there the
+  folder its project binds, when it binds one, a loop's worker the folder its loop
+  binds, and a Code loop's task worker its task's worktree.
+- **Consolidation keeps a folder chat's memory in that folder's partition**
+  (`HistoryConsolidator._kept_in`): the daily history entry and the session summary,
+  the facts, the episodes, the persona notes, the seal, and the per-store
+  maintenance it runs (category TTL, heat promotion, failure synthesis, daily
+  digest, the reflex log's retention, topology). Two things are kept in the global
+  memory: a lesson joins the global lesson list with the folder's reach
+  (`scope=workspace`, `scope_ref` the folder), the list Settings → Memory → Lessons
+  and `memory_remember` keep, and a proactive check-in, which the heartbeat
+  delivers from the global memory and no prompt recalls. A chat whose folder was one
+  of PersonalClaw's own and is gone (`memory_locality.folder_is_gone`) keeps nothing
+  more: no model call, and no partition brought back.
+- A folder chat follows its partition's lessons and, beside them, the global lesson
+  list's for every chat and for its folder (`VectorMemoryStore.get_lessons_context`,
+  `beside=`): a rule taught in Settings or with `memory_remember` reaches it.
+  `memory_recall` from a chat (its `X-Session-Key`) reads that chat's partition first,
+  then the global memory, labeled and fenced as cross-partition recall; a subagent's
+  reads the global memory, as its first prompt does.
+- **What an earlier version filed in the global memory for a folder chat moves** to
+  its folder's partition at each start (`memory_locality.move_what_folder_chats_left`,
+  idempotent), before anything recalls. An episode is filed under the conversation it
+  came from (consolidation and the seal set it to the chat's key) and a session
+  summary under its session, so each moves whole (id, text, vector, dates) to the
+  folder the chat's transcript names. A fact names only the last chat that stated it
+  (every chat that learns the same thing writes the same row), and a lesson, a
+  persona note and the daily history name none, so they stay in the global memory;
+  so does what a chat left whose PersonalClaw folder is gone. The pass reads the chats'
+  metadata through the conversation log's listing (a `stat` per transcript once the
+  home's saved listing is loaded), and removes what moved from the global memory in one
+  go, its vector index rebuilt once; a folder whose memory cannot take its records
+  leaves them in the global memory for the next start.
 - A partition's `memory_index.db` holds that folder's memories (its vector store and
   its full-text index share the file), so the state manifest declares it a partition
   of `memory.db` (`StateEntry.partitions`): a snapshot and an export copy it through

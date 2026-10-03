@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.concurrency import single_flight
@@ -1351,6 +1351,15 @@ def _kept_lines(rewrite: object, stored: str) -> str:
         return ""
 
 
+class _KeptMemory(NamedTuple):
+    """The memory a chat keeps, as consolidation writes it (:meth:`HistoryConsolidator._kept_in`):
+    its markdown store, the service over its record store, and that record store."""
+
+    markdown: "MemoryStore"
+    service: "MemoryService"
+    records: "VectorMemoryStore | None"
+
+
 class HistoryConsolidator:
     """Summarize old messages into structured memory via LLM.
 
@@ -1525,13 +1534,14 @@ class HistoryConsolidator:
         return ran
 
     def _seal(self, key: str) -> None:
-        """Seal the ended session *key* and mirror memory to the vault
-        (:meth:`consolidate_session`). The seal is the session's own work."""
-        from personalclaw import memory_writes
+        """Seal the ended session *key* in the memory it keeps (:meth:`_kept_in`) and mirror
+        memory to the vault (:meth:`consolidate_session`). The seal is the session's own work."""
+        from personalclaw import memory_locality, memory_writes
 
+        kept = self._kept_in(memory_locality.chat_folder(self._log.get_metadata(key)))
         with memory_writes.derived_from(key, memory_mode=self._log.recorded_memory_mode(key)):
             try:
-                swept = self._svc.seal_session(key)
+                swept = kept.service.seal_session(key) if kept is not None else 0
                 if swept:
                     logger.info("Sealed session %s — swept %d unpromoted record(s)", key, swept)
             except Exception:
@@ -1641,22 +1651,44 @@ class HistoryConsolidator:
                     return
                 await self._consolidate_locked(key, include_history=include_history)
 
+    def _kept_in(self, folder: str) -> _KeptMemory | None:
+        """The memory a chat working in *folder* keeps (``memory_locality.chat_folder``): the
+        folder's own partition, as every turn of the chat reads it, or the global memory, this
+        consolidator's own, for no folder or the gateway's workspace. None when the folder was one
+        of PersonalClaw's own and is gone: its partition went with it, so nothing more is kept."""
+        from personalclaw import memory_locality
+
+        if not memory_locality.is_local_partition(folder):
+            return _KeptMemory(self._memory, self._svc, self._vector_store)
+        if memory_locality.folder_is_gone(folder):
+            return None
+        from personalclaw.context import ContextBuilder
+        from personalclaw.memory_service import service_for
+
+        memory = ContextBuilder.get_memory_for(folder, writes=True)
+        return _KeptMemory(memory, service_for(memory), memory.vector_store)
+
     async def _consolidate_locked(self, key: str, include_history: bool = True) -> None:
-        """Run LLM consolidation for a session (holding the single-flight lock)."""
+        """Run LLM consolidation for a session (holding the single-flight lock).
+
+        Everything the pass keeps goes to the memory the chat keeps (:meth:`_kept_in`), which
+        the chat's own turns read, except a lesson, which joins the global lesson list with the
+        chat's reach (:meth:`_save_lessons`), and a proactive check-in, which the heartbeat
+        delivers from the global memory (:meth:`_write_commitments`)."""
+        from personalclaw import memory_locality
+
         try:
             unconsolidated, total = self._log.get_unconsolidated(key)
             if not unconsolidated:
                 return
 
-            # Resolve workspace-scoped memory from session metadata
             meta = self._log.get_metadata(key)
-            ws_name = meta.get("workspace")
-            if ws_name:
-                from personalclaw.context import ContextBuilder
-
-                memory = ContextBuilder.get_memory_for(ws_name)
-            else:
-                memory = self._memory
+            folder = memory_locality.chat_folder(meta)
+            kept = self._kept_in(folder)
+            if kept is None:
+                logger.info("Not consolidating %s: the folder it worked in is gone", key)
+                return
+            memory, svc, vs = kept
 
             conversation = "\n".join(consolidation_line(m) for m in unconsolidated)
 
@@ -1673,7 +1705,7 @@ class HistoryConsolidator:
                 keys.append(render_snippet_block("consolidation-key-history"))
 
             # Structured memory extraction (when the record store is available)
-            has_vector = self._svc.has_vector
+            has_vector = svc.has_vector
             if has_vector:
                 from personalclaw.vector_memory import is_fact_key
 
@@ -1681,7 +1713,7 @@ class HistoryConsolidator:
                 # current, and a row another writer owns (a procedural prior, the self-model's
                 # evidence, a lesson, a slot) is not its to rewrite.
                 current_semantic = [
-                    e for e in self._svc.get_all_semantic() if is_fact_key(str(e.get("key") or ""))
+                    e for e in svc.get_all_semantic() if is_fact_key(str(e.get("key") or ""))
                 ]
                 semantic_json = (
                     json.dumps(
@@ -1785,7 +1817,7 @@ class HistoryConsolidator:
                 # pass, not a second summarizer (decision #5). scope=session, so
                 # it's injected every turn for THIS session and swept on seal.
                 try:
-                    self._svc.write_working_memory(key, entry)
+                    svc.write_working_memory(key, entry)
                 except Exception:
                     logger.debug("working-memory write failed for %s", key, exc_info=True)
 
@@ -1796,9 +1828,9 @@ class HistoryConsolidator:
             # with an undo rather than a second row nobody reconciles. Episodic writes are
             # unchanged — an episodic fragment is an event, and two accounts of the same
             # event do not contradict each other.
-            if self._svc.has_vector:
-                await self._form_semantic_memory(result, key)
-                self._write_episodic_memory(result, key)
+            if svc.has_vector:
+                await self._form_semantic_memory(result, key, vs)
+                self._write_episodic_memory(result, key, svc)
 
             # Markdown writes (skipped when migrated to structured memory). The model read both
             # files masked (a chore's prompt is masked, ``chores.run_chore``), so a rewrite keeps
@@ -1814,20 +1846,22 @@ class HistoryConsolidator:
                         memory.write_projects(projects)
 
             if self._svc.has_vector and (raw_lessons := result.get("lessons")):
-                self._save_lessons(raw_lessons)
+                self._save_lessons(raw_lessons, folder)
 
             # Agent self-persona + commitments (M5e) — agent-scoped. The agent
             # name is normalized to the canonical default when the session didn't
             # pin one (the common dashboard case), so capture keys on the SAME
             # string the context read path uses — otherwise writes and reads
             # disagree and nothing is ever surfaced. Best-effort; never blocks the
-            # rest of consolidation.
-            if self._svc.has_vector and include_history:
+            # rest of consolidation. A check-in is delivered by the heartbeat from the global
+            # memory and never recalled into a prompt, so it is kept there.
+            if include_history:
                 from personalclaw.agents.defaults import normalize_agent_name
 
                 agent = normalize_agent_name(meta.get("agent"))
-                self._write_self_persona(result, agent)
-                if self._proactive_commitments:
+                if svc.has_vector:
+                    self._write_self_persona(result, agent, svc)
+                if self._svc.has_vector and self._proactive_commitments:
                     self._write_commitments(result, agent, key)
 
             # Auto skill creation / refinement.
@@ -1849,11 +1883,13 @@ class HistoryConsolidator:
                     self._maybe_promote_episodic(memory)
                 except Exception:
                     logger.warning("Episodic promotion failed for %s", key, exc_info=True)
+                # The maintenance below runs over the memory this pass kept: the records it
+                # ages, promotes, collapses and digests are the ones the chat's turns read.
                 # Category-TTL sweep: age out short-lived categorized memories
                 # (debug/event/decision) on the same maintenance cadence. Durable
                 # facts/prefs + user_explicit globals are never touched.
                 try:
-                    expired = self._svc.expire_by_category()
+                    expired = svc.expire_by_category()
                     if expired:
                         logger.info("Category-TTL expired %d memory record(s)", expired)
                 except Exception:
@@ -1863,7 +1899,7 @@ class HistoryConsolidator:
                 # Runs HERE (maintenance cadence), never at session-end, so global
                 # never fills with one-off session noise.
                 try:
-                    promoted_scope = self._svc.promote_by_heat()
+                    promoted_scope = svc.promote_by_heat()
                     if promoted_scope:
                         logger.info("Heat-promoted %d record(s) to global scope", promoted_scope)
                 except Exception:
@@ -1872,7 +1908,7 @@ class HistoryConsolidator:
                 # cause procedural failures into one prior so the class never
                 # bloats into a tool-call log. The anti-noise mechanism.
                 try:
-                    synth = self._svc.synthesize_failures()
+                    synth = svc.synthesize_failures()
                     if synth:
                         logger.info("Synthesized %d procedural failure prior(s)", synth)
                 except Exception:
@@ -1882,7 +1918,7 @@ class HistoryConsolidator:
                 # Idempotent (keyed by date) + extractive by default, so it adds no
                 # LLM cost to the maintenance cadence.
                 try:
-                    digested = self._svc.build_daily_digest()
+                    digested = svc.build_daily_digest()
                     if digested:
                         logger.info("Built %d daily-digest node(s)", digested)
                 except Exception:
@@ -1891,7 +1927,7 @@ class HistoryConsolidator:
                 # retention on the same cadence. The log exists to compute a precision
                 # ratio, not to be a permanent record of every turn's entity matches.
                 try:
-                    pruned_vol = self._svc.prune_volunteer_events(keep_days=90)
+                    pruned_vol = svc.prune_volunteer_events(keep_days=90)
                     if pruned_vol:
                         logger.info("Pruned %d volunteer event(s)", pruned_vol)
                 except Exception:
@@ -1923,7 +1959,7 @@ class HistoryConsolidator:
                 # only when a display flag is on is how a "topology is empty" bug gets
                 # blamed on Louvain instead of on the flag.
                 try:
-                    communities = self._svc.refresh_topology()
+                    communities = svc.refresh_topology()
                     if communities:
                         logger.info("Topology: assigned %d entity communit(ies)", communities)
                 except Exception:
@@ -2133,13 +2169,27 @@ class HistoryConsolidator:
             except Exception:
                 logger.debug("SEL audit failed for auto-promotion", exc_info=True)
 
-    def _save_lessons(self, raw: object) -> None:
+    def _save_lessons(self, raw: object, folder: str) -> None:
         """Save extracted lessons from consolidation into memory.db ``lesson.*``.
 
-        The record store is the sole lesson store (dedup-aware; a store with no
-        embedder still persists). Nothing to do when no store is wired."""
+        The global lesson list, where Settings → Memory → Lessons and ``memory_remember`` keep
+        lessons too, with the reach of the chat working in *folder*: one in a folder of its own
+        teaches that folder (``scope=workspace``), where its chats follow it, and any other chat
+        teaches every chat. The record store is the sole lesson store (dedup-aware; a store with
+        no embedder still persists). Nothing to do when no store is wired."""
         if not isinstance(raw, list) or not self._svc.has_vector:
             return
+        from personalclaw import memory_locality
+
+        reach: dict[str, Any] = {}
+        if memory_locality.is_local_partition(folder):
+            from personalclaw.memory_record import MemoryScope
+            from personalclaw.memory_service import normalize_workspace_ref
+
+            ref = normalize_workspace_ref(folder)
+            if not ref:
+                return  # a folder no absolute path names is matched by no reader
+            reach = {"scope": MemoryScope.WORKSPACE, "scope_ref": ref}
         count = 0
         for item in raw:
             if isinstance(item, dict) and item.get("rule"):
@@ -2148,14 +2198,18 @@ class HistoryConsolidator:
                     category=item.get("category", "knowledge"),
                     negative=item.get("negative"),
                     source="consolidation",
+                    **reach,
                 )
                 if ok:
                     count += 1
         if count:
             logger.info("Extracted %d lesson(s) from chat (record store)", count)
 
-    async def _form_semantic_memory(self, result: dict, key: str) -> None:
-        """The Gather → Decide → apply half of memory formation (§4.1 — MGAV-5).
+    async def _form_semantic_memory(
+        self, result: dict, key: str, vs: "VectorMemoryStore | None"
+    ) -> None:
+        """The Gather → Decide → apply half of memory formation (§4.1 — MGAV-5), over the
+        record store *vs* of the memory chat *key* keeps (:meth:`_kept_in`).
 
         Extract already happened: ``result["semantic"]`` is its output. This method adds
         the deterministic Gather pass, ONE structured Decide call for the whole batch, and
@@ -2171,7 +2225,6 @@ class HistoryConsolidator:
         * no Decide prompt (snippet unresolvable) or no model → ADD everything;
         * unparseable/garbled verdicts → ADD everything, per candidate.
         """
-        vs = self._vector_store
         if vs is None:
             return
         from personalclaw import memory_formation
@@ -2215,9 +2268,10 @@ class HistoryConsolidator:
         report.degraded = report.degraded or degraded
         logger.info("Memory formation for %s: %s", key, report.summary())
 
-    def _write_episodic_memory(self, result: dict, key: str) -> None:
-        """Write episodic entries from a consolidation result (unchanged by MGAV-5)."""
-        if not self._svc.has_vector:
+    def _write_episodic_memory(self, result: dict, key: str, svc: "MemoryService") -> None:
+        """Write episodic entries from a consolidation result (unchanged by MGAV-5) through
+        *svc*, the memory chat *key* keeps (:meth:`_kept_in`)."""
+        if not svc.has_vector:
             return
         from personalclaw.vector_memory import _MAX_EPISODIC_PER_CONSOLIDATION
 
@@ -2228,7 +2282,7 @@ class HistoryConsolidator:
             for item in episodic_items[:_MAX_EPISODIC_PER_CONSOLIDATION]:
                 if not isinstance(item, dict) or "text" not in item:
                     continue
-                ep_ok = self._svc.write_episodic(
+                ep_ok = svc.write_episodic(
                     item["text"],
                     conversation_id=key,
                     tags=item.get("tags", []),
@@ -2240,8 +2294,9 @@ class HistoryConsolidator:
             if written:
                 logger.info("Wrote %d episodic entries from consolidation", written)
 
-    def _write_self_persona(self, result: dict, agent: str) -> None:
-        """Write extracted agent self-persona traits (M5e), scoped to ``agent``.
+    def _write_self_persona(self, result: dict, agent: str, svc: "MemoryService") -> None:
+        """Write extracted agent self-persona traits (M5e), scoped to ``agent``, through *svc*:
+        the memory the chat keeps, whose turns read them (:meth:`_kept_in`).
 
         Best-effort: a positive self-model injected always-on for this agent.
         Each trait is redacted + bounded; recurrence reinforces heat via the
@@ -2258,7 +2313,7 @@ class HistoryConsolidator:
             if not safe:
                 continue
             try:
-                if self._svc.record_persona(agent=agent, trait=safe):
+                if svc.record_persona(agent=agent, trait=safe):
                     written += 1
             except Exception:
                 logger.debug("self_persona write failed", exc_info=True)

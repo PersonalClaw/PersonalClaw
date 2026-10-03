@@ -140,6 +140,21 @@ def workspace_override() -> Path | None:
     return Path(value) if value else None
 
 
+def _saved_workspace_root() -> Path | None:
+    """The folder ``personalclaw setup`` saved as the workspace, or None when it saved none."""
+    try:
+        saved = _workspace_dir_file().read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return Path(saved) if saved else None
+
+
+def resolve_workspace_root() -> Path:
+    """Where :func:`workspace_root` puts the workspace, worked out without making anything: for
+    what must know the folder and must not create it (which memory the chats there share)."""
+    return workspace_override() or _saved_workspace_root() or default_workspace_root()
+
+
 def workspace_root() -> Path:
     """Return the top-level workspace root for LLM sessions and tasks.
 
@@ -153,13 +168,11 @@ def workspace_root() -> Path:
     if override is not None:
         override.mkdir(parents=True, exist_ok=True)
         return override
-    if _workspace_dir_file().is_file():
+    saved = _saved_workspace_root()
+    if saved is not None:
         try:
-            saved = _workspace_dir_file().read_text(encoding="utf-8").strip()
-            if saved:
-                root = Path(saved)
-                root.mkdir(parents=True, exist_ok=True)
-                return root
+            saved.mkdir(parents=True, exist_ok=True)
+            return saved
         except OSError:
             pass
     root = default_workspace_root()

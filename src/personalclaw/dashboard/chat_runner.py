@@ -8,7 +8,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import approval_grants, auto_denials, memory_reads, memory_writes, run_bounds
+from personalclaw import (
+    approval_grants,
+    auto_denials,
+    memory_locality,
+    memory_reads,
+    memory_writes,
+    run_bounds,
+)
 from personalclaw.acp import permission_authority as acp_permission_authority
 from personalclaw.acp import ungated as acp_ungated
 from personalclaw.acp.errors import AcpError, AcpProcessDied
@@ -437,9 +444,11 @@ def _maybe_after_turn_review(
     correction = atr.is_correction_signal(user_message)
     from personalclaw.memory_service import service_for
 
-    memory = state.context_builder.get_memory_for(
-        session.workspace_dir or None, getattr(session, "memory_store", None)
-    )
+    # The memory this chat's turns read (``memory_locality.chat_folder``), handed over with its
+    # record store: what a folder chat learns stays in its folder, kept before any embedding model
+    # is bound.
+    folder = memory_locality.chat_folder(session) or None
+    memory = state.context_builder.get_memory_for(folder, writes=True)
     svc = service_for(memory)
     # Preference-facet capture is a cheap no-LLM heuristic and the passive-learning
     # core — it must run on EVERY (non-ephemeral) turn, NOT be gated behind the
@@ -492,9 +501,7 @@ def _maybe_after_turn_review(
     if callable(drain):
         try:
             tool_outcomes = list(drain() or [])
-            atr.record_procedural_outcomes(
-                svc, tool_outcomes, scope_ref=session.workspace_dir or None
-            )
+            atr.record_procedural_outcomes(svc, tool_outcomes, scope_ref=folder)
         except Exception:
             logger.debug("procedural outcome capture failed", exc_info=True)
     learned = atr.run_after_turn_review(
@@ -3237,7 +3244,7 @@ async def run_chat(
                 session_key=session_key,
                 agent=provider_agent or session.agent or None,
                 resumed=resumed,
-                cwd=session.workspace_dir or None,
+                cwd=memory_locality.chat_folder(session) or None,
                 memory_store=memory_store,
                 compressed_history=compressed,
                 # The session's own prior turns — what a fresh runtime is restored FROM

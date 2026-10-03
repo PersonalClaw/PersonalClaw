@@ -26,6 +26,7 @@ from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 if TYPE_CHECKING:
     from personalclaw.channel_history import ChannelHistory
     from personalclaw.history import ConversationLog
+    from personalclaw.memory_providers.base import MemoryProvider
     from personalclaw.skills.allocation import SkillDecision
     from personalclaw.vector_memory import VectorMemoryStore
 
@@ -58,10 +59,12 @@ def forget_memory_store(ws_path: Path) -> bool:
     return True
 
 
-def _attach_vector_store(store: MemoryStore, ws_path) -> None:
+def _attach_vector_store(store: MemoryStore, ws_path, *, writes: bool = False) -> None:
     """Give a cwd-scoped MemoryStore its own semantic/episodic vector index, once an embedding
     model is bound in Settings → Models or the directory already holds memories one wrote; until
-    then the store stays text-only.
+    then the store stays text-only. A caller that *writes* to the directory gets it now: a store
+    with no embedding model still keeps what is written, read by keyword until the re-index
+    embeds it, and the text-only store kept nothing at all.
 
     The index lives inside the partition dir so each working directory has isolated semantic
     memory, and it embeds with the model bound at each use (``VectorMemoryStore.embed_fn``). It
@@ -77,14 +80,21 @@ def _attach_vector_store(store: MemoryStore, ws_path) -> None:
         from personalclaw.vector_memory import VectorMemoryStore
 
         db = ws_path / "memory_index.db"
-        if bound_embedding().ref() is None and not (db.exists() and _holds_memory(db)):
+        if (
+            not writes
+            and bound_embedding().ref() is None
+            and not (db.exists() and _holds_memory(db))
+        ):
             return  # no embedding model bound and none ever wrote here — text-only
         vs = VectorMemoryStore(db_path=db)
         vs.init()
         vs.contradiction_judge = _make_contradiction_judge()
         store.vector_store = vs
     except Exception:
-        logger.debug("Could not attach vector store for %s", ws_path, exc_info=True)
+        # A writer that cannot open the record store keeps nothing there, which is said.
+        (logger.warning if writes else logger.debug)(
+            "Could not open the memory database in %s", ws_path, exc_info=True
+        )
 
 
 def _holds_memory(db: Path) -> bool:
@@ -1130,14 +1140,18 @@ class ContextBuilder:
     """
 
     @staticmethod
-    def get_memory_for(cwd: str | None = None, memory_store: str | None = None):
+    def get_memory_for(
+        cwd: str | None = None, memory_store: str | None = None, *, writes: bool = False
+    ):
         """Return the memory provider for a session.
 
         When *memory_store* names a registered memory provider (an agent's
         explicit ``memory_store`` binding), that provider is returned. Otherwise
         the filesystem-fallback ``MemoryStore`` is used, partitioned by the
-        session's working directory (see ``memory_dir_for_cwd``) and cached per
-        partition.
+        session's working directory (``memory_locality.partition_for``: the global
+        partition for no folder and for the gateway's own workspace) and cached per
+        partition. A caller that *writes* to it is handed it with its record store
+        (``_attach_vector_store``).
 
         ``memory_store`` is TWO namespaces that share the string: a registered
         *provider* name (e.g. ``"native"``) OR a ``config.memory_stores`` *tuning-
@@ -1159,7 +1173,9 @@ class ContextBuilder:
                     "memory_store %r not registered; using filesystem fallback", memory_store
                 )
 
-        ws_path = memory_dir_for_cwd(cwd)
+        from personalclaw.memory_locality import partition_for
+
+        ws_path = partition_for(cwd)
         key = str(ws_path)
         if key not in _memory_stores:
             store = MemoryStore(workspace=ws_path)
@@ -1167,7 +1183,7 @@ class ContextBuilder:
             _memory_stores[key] = store
         store = _memory_stores[key]
         if store.vector_store is None:
-            _attach_vector_store(store, ws_path)
+            _attach_vector_store(store, ws_path, writes=writes)
         return store
 
     def __init__(
@@ -1191,24 +1207,14 @@ class ContextBuilder:
         # effect on the next message, not the next restart — same live-read
         # semantic as widget_density in _widget_block.
         self._bot_name_override = bot_name
-        # Register this builder's memory in the cwd-partition cache under BOTH
-        # the no-cwd "_default" key AND the running workspace key. The gateway
-        # builds ContextBuilder with the MAIN vector store (~/.personalclaw/
-        # memory.db — the one the Memory UI + consolidator read/write); without
-        # the workspace-key registration, a dashboard chat (whose workspace_dir is
-        # PERSONALCLAW_WORKSPACE) resolved a DIFFERENT, near-empty cwd partition,
-        # so user-saved + consolidated memory was invisible to the agent in chat.
-        # Genuinely different cwds (other projects, remote subagents) still get
-        # their own partition via get_memory_for — only the gateway's own
-        # workspace is unified onto the main store here.
+        # Register this builder's memory as the global partition's store. The gateway
+        # builds ContextBuilder with the MAIN vector store (~/.personalclaw/memory.db —
+        # the one the Memory UI + consolidator read/write), and a dashboard chat in the
+        # gateway's own workspace resolves to that partition too
+        # (`memory_locality.partition_for`), so user-saved + consolidated memory is the
+        # memory it reads. Genuinely different cwds (other projects, remote subagents)
+        # get their own partition via get_memory_for.
         _memory_stores[str(memory_dir_for_cwd(None))] = self.memory
-        try:
-            from personalclaw.config.loader import default_workspace_dir
-
-            _ws_key = str(memory_dir_for_cwd(default_workspace_dir()))
-            _memory_stores.setdefault(_ws_key, self.memory)
-        except Exception:
-            logger.debug("Could not register memory under the workspace key", exc_info=True)
 
     @property
     def _bot_name(self) -> str:
@@ -1677,14 +1683,21 @@ class ContextBuilder:
             # is the ONE read path that can supply it: a workspace IS the working
             # directory (see the workspace-identity block above, which tells the agent
             # exactly that). Global lessons come back regardless; a lesson scoped to a
-            # different directory does not.
-            lessons_ctx = (
-                _guarded_recall(
-                    "lessons",
-                    lambda: service_for(memory).lessons_context(cwd, citations_out=lesson_cites),
-                )
-                or ""
-            )
+            # different directory does not. A chat working in a folder reads that
+            # folder's own lessons beside the global lesson list's (the rules taught for
+            # every chat, and for this folder): the list Settings → Memory → Lessons and
+            # `memory_remember` write.
+            def _lessons() -> str:
+                own = service_for(memory)
+                if isinstance(memory, MemoryStore) and memory is not self.memory:
+                    return own.lessons_context(
+                        cwd,
+                        citations_out=lesson_cites,
+                        beside=service_for(cast("MemoryProvider", self.memory)),
+                    )
+                return own.lessons_context(cwd, citations_out=lesson_cites)
+
+            lessons_ctx = _guarded_recall("lessons", _lessons) or ""
 
         # ONE budget for the named ambient blocks (§2.4 / §7 crit 5). Replaces four
         # independent per-block character caps that summed to ~9× the budget the

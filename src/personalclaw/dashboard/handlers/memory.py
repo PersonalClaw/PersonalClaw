@@ -10,7 +10,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import memory_service, memory_writes
+from personalclaw import memory_locality, memory_service, memory_writes
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import ConfigWriteError
@@ -351,6 +351,32 @@ def _get_service(state: DashboardState):
     from personalclaw.memory_service import MemoryService
 
     return MemoryService.over_vector_store(_get_provider(state))
+
+
+def _asking_chat_folder(state: DashboardState, request: web.Request) -> str:
+    """The folder the chat a call is made for works in (its ``X-Session-Key``), read where every
+    reader of a chat's memory reads it (``memory_locality.chat_folder``): its live session, else
+    its saved transcript. "" for the Memory page and for work that is not a chat (a subagent, an
+    app's run, a workflow step), whose prompt is assembled from the global memory."""
+    caller = request.headers.get("X-Session-Key", "")
+    if not caller:
+        return ""
+    session = state._sessions.get(caller.split(":", 1)[-1])
+    if session is not None:
+        return memory_locality.chat_folder(session)
+    log = state.conversation_log
+    return memory_locality.chat_folder(log.get_metadata(caller)) if log is not None else ""
+
+
+def _folder_memory(folder: str) -> Any:
+    """The service over the memory of *folder*'s own partition, or None when a chat working in
+    *folder* reads the global memory (``memory_locality.is_local_partition``)."""
+    if not memory_locality.is_local_partition(folder):
+        return None
+    from personalclaw.context import ContextBuilder
+    from personalclaw.memory_service import service_for
+
+    return service_for(ContextBuilder.get_memory_for(folder))
 
 
 async def api_memory_semantic(request: web.Request) -> web.Response:
@@ -783,7 +809,13 @@ async def api_memory_recall(request: web.Request) -> web.Response:
         return web.json_response(
             {"result": refusal, "withheld": refusal, "query": "", "deep": False, "ranking": None}
         )
-    svc = _get_service(request.app["state"])
+    svc = _get_service(state)
+    # The asking chat's own memory when it works in a folder of its own: read first, as its turns
+    # read it, then the global memory, labeled as coming from outside that folder
+    # (`memory_locality.compose_recall`). None for the global memory's own chats and the Memory
+    # page, which read the global memory alone.
+    folder = _asking_chat_folder(state, request)
+    own = _folder_memory(folder)
     query = request.query.get("q", "")[:500]
     if not query:
         return web.json_response({"error": "q (query) is required"}, status=400)
@@ -805,24 +837,9 @@ async def api_memory_recall(request: web.Request) -> web.Response:
         stage["now"] = now
         return not gave_up.is_set()
 
-    def _recall() -> tuple[str, dict[str, Any]]:
-        """The recall block and its ranking disclosure; nothing once the route stopped waiting
-        (it has answered by then, so what this returns is read by nobody)."""
-        if not _next("embedding the question"):
-            return "", {}
-        asked = svc.embed_query(query)
-        if gave_up.is_set():
-            return "", {}  # the route's own WARNING already said this is where it was
-        unembedded = ""
-        if asked.timed_out:
-            secs = f"{memory_service.QUERY_EMBED_BUDGET_SECS:g}"
-            unembedded = f"the embedding model did not answer within {secs} s"
-            logger.warning(
-                "Memory recall answered by keyword: embedding the question did not finish "
-                "within %s s (%s)",
-                secs,
-                asked.model or "the bound model",
-            )
+    def _arms(memory: Any, asked: Any) -> tuple[list[str], list[str]] | None:
+        """What *memory* holds that answers the question (its facts, lessons and episodes, each
+        a block) and the fact keys it surfaced; None once the route stopped waiting."""
         parts: list[str] = []
         # Semantic (query-scored) — and bump recall_count on what surfaces, once the recall is
         # answered. Masked like the episodic half below and like the fact list it recalls from
@@ -830,8 +847,8 @@ async def api_memory_recall(request: web.Request) -> web.Response:
         # agent's `memory_recall` is handed it. The keys are read off the stored block, so a
         # masked key still counts its fact.
         if not _next("ranking saved facts"):
-            return "", {}
-        semantic_ctx = svc.semantic_context(query, cap=sem_cap, query_vector=asked.vector)
+            return None
+        semantic_ctx = memory.semantic_context(query, cap=sem_cap, query_vector=asked.vector)
         recalled_keys: list[str] = []
         if semantic_ctx:
             parts.append(redact_for_display(semantic_ctx))
@@ -843,10 +860,14 @@ async def api_memory_recall(request: web.Request) -> web.Response:
         # Lessons — the rules the user taught that answer the query. Each rides its own block
         # into every prompt, so the fact ranking above leaves `lesson.*` out, and without this no
         # recall found one: "dishwasher" never reached the lesson that names it (`rank_lessons`).
+        # The ones taught for the asking chat's folder are its to see too.
         if not _next("ranking lessons"):
-            return "", {}
-        lessons = svc.recall_lessons(
-            query_text=query, limit=10 if deep else 5, query_vector=asked.vector
+            return None
+        lessons = memory.recall_lessons(
+            query_text=query,
+            limit=10 if deep else 5,
+            workspace=folder or None,
+            query_vector=asked.vector,
         )
         if lessons:
             parts.append(
@@ -858,8 +879,8 @@ async def api_memory_recall(request: web.Request) -> web.Response:
         # returned WITH provenance (source · session · date) so the agent can see where
         # and when each fragment came from (mem-tree provenance-first retrieval).
         if not _next("searching past conversations"):
-            return "", {}
-        epi = svc.recall_with_provenance(
+            return None
+        epi = memory.recall_with_provenance(
             query_text=query, limit=epi_limit, query_vector=asked.vector
         )
         if epi:
@@ -890,6 +911,40 @@ async def api_memory_recall(request: web.Request) -> web.Response:
                     + "\n".join(epi_lines)
                     + "\n[End of recalled episodes]"
                 )
+        return parts, recalled_keys
+
+    def _recall() -> tuple[str, dict[str, Any]]:
+        """The recall block and its ranking disclosure; nothing once the route stopped waiting
+        (it has answered by then, so what this returns is read by nobody)."""
+        if not _next("embedding the question"):
+            return "", {}
+        asked = svc.embed_query(query)
+        if gave_up.is_set():
+            return "", {}  # the route's own WARNING already said this is where it was
+        unembedded = ""
+        if asked.timed_out:
+            secs = f"{memory_service.QUERY_EMBED_BUDGET_SECS:g}"
+            unembedded = f"the embedding model did not answer within {secs} s"
+            logger.warning(
+                "Memory recall answered by keyword: embedding the question did not finish "
+                "within %s s (%s)",
+                secs,
+                asked.model or "the bound model",
+            )
+        parts: list[str] = []
+        recalled: list[tuple[Any, list[str]]] = []
+        for memory in (own, svc):
+            if memory is None:
+                continue
+            arms = _arms(memory, asked)
+            if arms is None:
+                return "", {}
+            found, keys = arms
+            recalled.append((memory, keys))
+            if memory is svc and own is not None:
+                block = memory_locality.cross_partition_block("\n\n".join(found))
+                found = [block] if block else []
+            parts.extend(found)
         if unembedded:
             parts.append(
                 f"Searched by keyword only: {unembedded}, so a memory that matches the question "
@@ -898,12 +953,13 @@ async def api_memory_recall(request: web.Request) -> web.Response:
         text = "\n\n".join(parts) if parts else "No matching memory found."
         if gave_up.is_set():
             return "", {}
-        if recalled_keys:
-            try:
-                svc.record_recall([k for k in recalled_keys if k])
-            except Exception:
-                logger.debug("record_recall from memory_recall failed", exc_info=True)
-        return text, _ranking_payload(svc, question_unembedded=unembedded)
+        for memory, keys in recalled:
+            if keys:
+                try:
+                    memory.record_recall([k for k in keys if k])
+                except Exception:
+                    logger.debug("record_recall from memory_recall failed", exc_info=True)
+        return text, _ranking_payload(own or svc, question_unembedded=unembedded)
 
     budget = memory_service.RECALL_BUDGET_SECS
     try:
