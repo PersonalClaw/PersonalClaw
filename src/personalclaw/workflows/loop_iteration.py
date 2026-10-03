@@ -5,20 +5,19 @@ consumed between iterations, the long-run seen-set
 and the continue/stop decision. Both settle paths reach it — `RunController._apply` for an awaited
 dispatch and `stage_settlement.reconcile_dispatched_stages` for a spawned stage — which is why
 `advance_loop` takes the settled leaf's path and id rather than a `ReadyNode`. What a TRIPPED
-breaker means is `loop_convergence`'s question.
+breaker means is `loop_convergence`'s question, and what a cycle its owner ended with a Deny means
+is `declines`'.
 """
 
 from __future__ import annotations
 
-import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.workflows import ending_sentence, iteration_context
+from personalclaw.workflows import declines, ending_sentence, iteration_context
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import longrun, loop_convergence, node_bindings, supervisor_policy
 from personalclaw.workflows.bindings import BindingContext
-from personalclaw.workflows.loop_middleware import InterruptQueue
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     TERMINAL_STATES,
@@ -42,52 +41,6 @@ from personalclaw.workflows.tick import derive_state, loop_should_continue
 
 if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
-
-
-def _consume_steering(ctl: RunController, parent_path: str, node: Node, iteration: int) -> None:
-    """Consume mid-run steering at the loop boundary (LOOPS-EVOLUTION R14).
-
-    The durable queue (`run.extra["steering_queue"]`, written by `service.steer_run`) is
-    drained HERE — under the lock, between iterations, exactly like `mid_flight.drain_mutations`.
-    Mid- iteration injection would race the worker's own state; the boundary is where the next
-    iteration can actually act on the instruction. Single-use: the queue is cleared and the rendered
-    block parked on `_steering_inject` for the next iteration's prompt, so a resume cannot replay
-    it. Journaled so a refiner can tell a human-steered verdict from an autonomous one — without the
-    event the two are indistinguishable (see journal.STEERING).
-    """
-    pending = ctl.run.extra.get("steering_queue")
-    if not isinstance(pending, list) or not pending:
-        return
-    ctl.run.extra["steering_queue"] = []
-    queue = InterruptQueue()
-    for entry in pending:
-        text = entry.get("text", "") if isinstance(entry, dict) else str(entry)
-        queue.push(text, now=time.time())
-    consumed = queue.consume(now=time.time())
-    texts = [i.text for i in consumed]
-    if not texts:
-        ctl._save_run()
-        return
-    block = queue.as_steering_prompt(consumed)
-    # Append if a block is already parked (two steers before the next iteration read either):
-    # the newest instruction goes last, the same order `consume` preserves.
-    existing = ctl._steering_inject.get(parent_path)
-    ctl._steering_inject[parent_path] = f"{existing}\n\n{block}" if existing else block
-    ctl.journal.write(
-        journal_mod.STEERING,
-        instance_path=parent_path,
-        node_id=node.id,
-        iteration=iteration,
-        count=len(texts),
-        texts=texts,
-    )
-    ctl._publish(
-        "workflow_steering_consumed",
-        {"instance_path": parent_path, "node_id": node.id, "count": len(texts)},
-    )
-    # Persist the drained queue immediately: a crash between here and the next tick must not
-    # resurrect an instruction the ledger already records as consumed.
-    ctl._save_run()
 
 
 def _loop_node_under_overlay(ctl: RunController, node: Node) -> Node:
@@ -133,6 +86,10 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         # iteration's path — where nothing had produced its inputs.
         return
     output = ctl._outputs.get(node_id)
+    if declines.end_cycle(ctl, parent_path, node, iteration, output):
+        # Her Deny ended this cycle: the next one would put the same call to her again, so the
+        # loop waits for her instead, and neither its dry streak nor its breaker reads the cycle.
+        return
     if _iteration_is_dry(ctl, node, parent_path, iteration, output):
         ctl._dry_streaks[parent_path] = ctl._dry_streaks.get(parent_path, 0) + 1
     else:
@@ -179,7 +136,7 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     # iteration's prompt (R14). Drained even when the loop is about to end — a dropped
     # instruction the user cannot see is indistinguishable from one that was silently ignored,
     # so the STEERING event is journaled regardless; only the injection needs a next iteration.
-    _consume_steering(ctl, parent_path, node, iteration)
+    iteration_context.consume_steering(ctl, parent_path, node, iteration)
 
     # ONE definition of `{{last.output}}`, shared with the body (`node_bindings._last_output`). The
     # loop's own `condition` used to read the LAST SETTLED LEAF's output instead, which is a

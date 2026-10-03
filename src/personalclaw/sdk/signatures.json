@@ -3249,7 +3249,8 @@
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "may_change"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "refused"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "app"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "held_back"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "held_back"},
+    {"annotation": "list[dict[str, Any]]", "default": "<factory>", "kind": "positional_or_keyword", "name": "declined_calls"}
    ],
    "returns": "None"
   },

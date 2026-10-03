@@ -12,7 +12,12 @@ turns on calls that could only be refused.
 its reply says: a read-only review subagent that could not read the repository it was sent to
 answered with an apology, and ended "completed". :class:`CallTally` counts each call once, where it
 was decided (refused when it was asked, or refused or run at its result), and
-:func:`refused_every_call` is the error such a subagent ends with, naming the tools and why.
+:func:`refused_every_call` is the error such a subagent ends with, naming the tools and why. A call
+its owner answered with Deny is not one of those refusals: it is her decision for the work, kept as
+hers (``SubagentInfo.declined_calls``, :mod:`personalclaw.declined_calls`), so what would run the
+work again (a workflow loop's next cycle) does not put the same call to her by itself, and its
+page says what she declined. Only her Deny is: an ask nobody answered, or one with nowhere to be
+put to her, is refused as the run's own limits refuse a call.
 One whose model ran into its output cap before it wrote its answer did nothing it was asked either:
 two review subagents stopped at 8,192 output tokens on every call, wrote nothing, and ended
 "completed" with "_No response._". :func:`ran_out_of_room` is that ending.
@@ -57,6 +62,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.approval_grants import YOU, ToolDecision
+from personalclaw.declined_calls import declined_step
 from personalclaw.guardrails.policy import (
     TOOL_READ_WRITE,
     SafetyProfile,
@@ -203,26 +210,33 @@ class CallBudget:
 @dataclass
 class CallTally:
     """What one subagent's tool calls came to: the ones refused, by call id, with the tool and why,
-    and how many ran. A call counts once, where it was decided: refused when it was asked
-    (:meth:`refuse`), or at its result (:meth:`result`). :class:`SubagentTier` leaves out the
-    runtime's own discovery calls (`tool_search`, `tool_schema`), which do none of the task."""
+    the ones its owner declined, and how many ran. A call counts once, where it was decided:
+    refused or declined when it was asked (:meth:`refuse`, :meth:`decline`), or at its result
+    (:meth:`result`). :class:`SubagentTier` leaves out the runtime's own discovery calls
+    (`tool_search`, `tool_schema`), which do none of the task."""
 
     refused: dict[str, tuple[str, str]] = field(default_factory=dict)
     ran: int = 0
     #: The refused calls the run's own limits refused: its tier, or an approval nobody was there to
     #: give. Not a call the model sent malformed, nor one the owner's answer declined.
     limited: list[str] = field(default_factory=list)
+    #: The calls its owner answered with Deny, by call id, as `declined_calls.declined_step` keeps
+    #: them: her answer, not a refusal, so they alone never make the run one that did nothing.
+    declined: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def refuse(self, call_id: str, tool: str, why: str, *, limit: bool = False) -> None:
         self.refused[call_id] = (tool, why)
         if limit and call_id not in self.limited:
             self.limited.append(call_id)
 
+    def decline(self, call_id: str, step: dict[str, Any]) -> None:
+        self.declined[call_id] = step
+
     def result(self, call_id: str, tool: str, meta: dict[str, Any], *, grant_said: str) -> None:
         """Count a call at its result: refused when its runtime stamped a refusal on it, ran
         otherwise (a call that ran and failed ran). A dry run's write is not run by design, and a
         stopped call ends the agent, so neither is a refusal."""
-        if call_id in self.refused:
+        if call_id in self.refused or call_id in self.declined:
             return
         not_run = str(meta.get(TOOL_META_NOT_RUN) or "")
         refused_by = str(meta.get(TOOL_META_REFUSED_BY) or "")
@@ -241,13 +255,16 @@ class CallTally:
         self.refuse(call_id, tool, why, limit=limit)
 
     def verdict(self) -> str:
-        """:func:`refused_every_call` when the agent made calls and none of them ran, else ""."""
+        """:func:`refused_every_call` when none of the agent's calls ran and at least one was
+        refused, else "". A call its owner declined is named in it as hers, but makes none: her
+        Deny is her decision for the work, not something its tools could not do."""
         if self.refused and not self.ran:
-            return refused_every_call(list(self.refused.values()))
+            yours = [(step["tool"], "you declined it") for step in self.declined.values()]
+            return refused_every_call([*self.refused.values(), *yours])
         return ""
 
 
-#: Why the owner's answer refused a call, by how the ask ended.
+#: Why a call was refused whose ask ended with nobody answering it, by how the ask ended.
 _DECLINED_WHY = {
     "expired": "nobody answered it in time",
     "cancelled": "its approval ended before anyone answered",
@@ -367,9 +384,18 @@ class SubagentTier:
         (its tier, or nobody to approve it)."""
         self._tally.refuse(call_id, tool, why, limit=limit)
 
-    def declined(self, call_id: str, tool: str, outcome: str) -> None:
-        """A call that asked, refused by the answer to its ask (*outcome*, as the ask ended)."""
-        self._tally.refuse(call_id, tool, _DECLINED_WHY.get(outcome, "it was declined"))
+    def declined(self, call_id: str, event: AgentEvent, decision: ToolDecision) -> None:
+        """A call that asked, refused by how its ask ended (*decision*). Her Deny is kept as hers
+        (:meth:`declined_steps`). An ask nobody answered in time, or one that ended first, is
+        refused for that; one there was nowhere to put to her is refused by the run's own limits,
+        as a call nobody could approve is."""
+        tool = event.title or ""
+        if decision.outcome == "rejected" and decision.decided_by == YOU:
+            self._tally.decline(call_id, declined_step(tool, event.tool_input))
+        elif decision.outcome in _DECLINED_WHY:
+            self._tally.refuse(call_id, tool, _DECLINED_WHY[decision.outcome])
+        else:
+            self._tally.refuse(call_id, tool, "nobody could approve it", limit=True)
 
     def result(self, call_id: str, tool: str, meta: dict[str, Any]) -> None:
         """A call's result, with what its runtime stamped on it (nothing, for an agent CLI)."""
@@ -377,12 +403,26 @@ class SubagentTier:
             self._tally.result(call_id, tool, meta, grant_said=self._said.get(tool, ""))
 
     def verdict(self) -> str:
-        """:func:`refused_every_call` when the agent made calls and none of them ran, else ""."""
+        """:meth:`CallTally.verdict`."""
         return self._tally.verdict()
 
     def limited(self) -> list[str]:
         """The tools of the calls the run's own limits refused, in the order they were made."""
         return [self._tally.refused[call_id][0] for call_id in self._tally.limited]
+
+    def declined_steps(self) -> list[dict[str, Any]]:
+        """The calls its owner declined, in the order she declined them."""
+        return list(self._tally.declined.values())
+
+    def settle(self, info: SubagentInfo, ending: AgentEvent | None, reply: str) -> tuple[str, str]:
+        """Put on *info* how its run ended: its error when it did nothing it was asked
+        (:func:`ended_without_answering`; an error it already had stands), the calls its own
+        limits refused (``refused``) and the calls its owner declined (``declined_calls``).
+        Returns the ``(error, cause)`` it ended without answering with, else ``("", "")``."""
+        couldnt, cause = ended_without_answering(self, ending, reply)
+        info.error = info.error or couldnt
+        info.refused, info.declined_calls = self.limited(), self.declined_steps()
+        return couldnt, cause
 
 
 def tier_for(info: SubagentInfo) -> SubagentTier:

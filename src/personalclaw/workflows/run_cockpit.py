@@ -15,6 +15,7 @@ from typing import Any
 
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import store
+from personalclaw.workflows.models import RunStatus
 from personalclaw.workflows.service import _nodes_of, _ok, _service_failure
 
 
@@ -464,7 +465,9 @@ _TIMELINE_KINDS = (
 
 #: The prefix `loop_iteration.advance_loop` writes into an `iteration` row's `outcome` when
 #: `check_breaker` tripped. Everything else it writes (`continue`, `dry_streak`, `condition_met`, …)
-#: is bookkeeping a reader does not need one row per round of.
+#: is bookkeeping a reader does not need one row per round of — except a cycle its owner ended
+#: with a Deny, whose row carries what she declined (`declines.end_cycle`) and says so in its own
+#: sentence.
 _TRIPPED_ITERATION = "breaker:"
 
 
@@ -487,7 +490,8 @@ def introspection_timeline(events: list[dict[str, Any]]) -> list[dict[str, Any]]
         if kind not in _TIMELINE_KINDS:
             continue
         outcome = str(event.get("outcome") or "")
-        if kind == "iteration" and not outcome.startswith(_TRIPPED_ITERATION):
+        told = outcome.startswith(_TRIPPED_ITERATION) or bool(event.get("declined"))
+        if kind == "iteration" and not told:
             continue
         row = {
             "kind": str(event.get("kind") or ""),
@@ -524,6 +528,14 @@ def _next_if_silent(
 
     if run.status in TERMINAL_RUN_STATUSES:
         return {"action": "nothing", "detail": f"this run is {run.status.value}", "queued": []}
+    if run.status == RunStatus.PAUSED:
+        # A paused run runs nothing until it is resumed, whatever it has queued: its pause's own
+        # words say why when it has them (a loop waiting for you after your Deny, a budget).
+        return {
+            "action": "waits",
+            "detail": run.error_message or "this run is paused — nothing runs until it is resumed",
+            "queued": [],
+        }
     if open_asks:
         return {
             "action": "waits",

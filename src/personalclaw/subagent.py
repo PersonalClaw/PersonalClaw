@@ -63,7 +63,6 @@ from personalclaw.subagent_persistence import (
 from personalclaw.subagent_tier import (
     CAPABILITY_TEXT,
     CallBudget,
-    ended_without_answering,
     give_up_files_on_a_cli,
     refuse_unheld,
     run_agent,
@@ -539,6 +538,8 @@ class SubagentInfo:
     app: str = ""
     # Why it may do less than its step asks (`AgentRunPolicy.held_back`); its ending says so first.
     held_back: str = ""
+    # The calls its owner declined (`declined_calls.declined_step`), hers, not refusals. Last.
+    declined_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -2271,7 +2272,7 @@ class SubagentManager:
         # other call is audited once, at its result (`llm.events.unasked_outcome`).
         asked: set[str] = set()
         spent = functools.partial(self._record_subagent_usage, info, session_key)
-        # The turn's terminal event, which says how it stopped (`ended_without_answering`).
+        # The turn's terminal event, which says how it stopped (`SubagentTier.settle`).
         ending: LLMEvent | None = None
         async for event in spent_rows(client.stream(full_message), spent):
             if event.kind == EVENT_TEXT_CHUNK:
@@ -2420,7 +2421,7 @@ class SubagentManager:
                     )
                     continue
                 if not decision:
-                    tier.declined(call_id, event.title or "", decision.outcome)
+                    tier.declined(call_id, event, decision)
                     await self._reject_and_log(
                         client,
                         event.request_id,
@@ -2549,10 +2550,9 @@ class SubagentManager:
                 info.result = info.result[:3000]
             evict_completed_agents(self._agents)
         # Every call refused, or its model out of output room before it answered: it did nothing it
-        # was asked, so it ends not done, with why, and its reply stays its result. Set with
-        # `done`, so nothing reads it finished without the reason.
-        couldnt, cause = ended_without_answering(tier, ending, result_text)
-        info.error, info.refused = info.error or couldnt, tier.limited()
+        # was asked, so it ends not done, with why, and its reply stays its result; what its owner
+        # declined is kept as hers. Set with `done`, so nothing reads it finished without them.
+        couldnt, cause = tier.settle(info, ending, result_text)
         info.done = True
         self._sessions.record_success(session_key)
         # Fold this child's cost into the run-scoped budget and stop the fan-out

@@ -71,16 +71,10 @@ class TestSteeringConsumedAtBoundary:
         async def recorder(prompt, *, use_case="background", output_type=None):
             prompts.append(prompt)
             # Queue a steer while the first iteration is running, so it is pending at the boundary.
+            # The queue is the run's own folder (`store.queue_steering`), which the live
+            # controller's saves of its row cannot write over.
             if len(prompts) == 1:
-                store_run = store.get(run.id)
-                store_run.extra["steering_queue"] = [
-                    {"text": "focus on the login flow", "queued_at": "t"}
-                ]
-                store.save(store_run)
-                # The live controller holds its own run object; write through to it too.
-                c.run.extra["steering_queue"] = [
-                    {"text": "focus on the login flow", "queued_at": "t"}
-                ]
+                store.queue_steering(run.id, "focus on the login flow")
             return f"out{len(prompts)}"
 
         spec = {
@@ -105,7 +99,7 @@ class TestSteeringConsumedAtBoundary:
         assert any("re-rank your remaining sub-goals" in p for p in prompts)
 
         # Single-use: the durable queue is empty after consumption.
-        assert store.get(run.id).extra.get("steering_queue") == []
+        assert store.pending_steering(run.id) == []
 
 
 class TestJudgeVerdictLedger:

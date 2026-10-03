@@ -817,11 +817,13 @@ async def api_def_refine(request: web.Request) -> web.Response:
 _RUN_TEXT: frozenset[str] = frozenset({"title", "intent", "inputs", "error_message", "attention"})
 
 #: The same text as the status read names it (`service.status` sends `error_message` as `error`).
-_STATUS_TEXT: frozenset[str] = frozenset({"title", "error", "attention"})
+_STATUS_TEXT: frozenset[str] = frozenset({"title", "error", "attention", "declined"})
 
-#: What a status row says about one step in words: why it failed, why it ran degraded, and the
-#: model it ran on instead.
-_NODE_TEXT: frozenset[str] = frozenset({"failure", "degraded_reason", "model_substituted"})
+#: What a status row says about one step in words: why it failed, why it ran degraded, the
+#: model it ran on instead, and what its owner declined while it worked.
+_NODE_TEXT: frozenset[str] = frozenset(
+    {"failure", "degraded_reason", "model_substituted", "declined"}
+)
 
 
 def _shown(value: dict[str, Any], fields: frozenset[str]) -> dict[str, Any]:

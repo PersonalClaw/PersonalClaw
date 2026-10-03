@@ -414,10 +414,18 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
     # because `bad-status`/`digest-mismatch`/`over-budget` are hyphenated and `_OUTCOME_WORD`
     # rejects them while `unreachable`/`cancelled` are passed positionally. So a "Failed" pill
     # would offer one arbitrary seventh of one subsystem's return enum and match nothing.
+    # `counted_complete` and `max_iterations` are a loop's `iteration` row in its run's journal:
+    # the word a loop ends with, written where a cycle its owner ended with a Deny ends the loop
+    # (`declines.end_cycle`). No audit row carries either.
     "not an audit record at all — an internal ledger row, or a function's return-value "
     "discriminator, whose field is also called `outcome` and which the deliberately tree-wide "
     "scan therefore also sees. Recorded rather than excluded, because narrowing the scan is "
-    "the same make-a-word-invisible move #3443 is about": ("scope_violation", "truncated"),
+    "the same make-a-word-invisible move #3443 is about": (
+        "counted_complete",
+        "max_iterations",
+        "scope_violation",
+        "truncated",
+    ),
 }
 
 

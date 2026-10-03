@@ -13,7 +13,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.workflows import effect_boundary, ending_sentence, gate_answers, loop_iteration
+from personalclaw.workflows import (
+    declines,
+    effect_boundary,
+    ending_sentence,
+    gate_answers,
+    loop_iteration,
+)
 from personalclaw.workflows.engine import (
     NodeResult,
     apply_declared_schema,
@@ -243,6 +249,9 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
         # anyone is told the step is done — on either outcome: a failed stage's document is still
         # the document as it stands.
         _keep_what_it_wrote(ctl, inst, info, node_id or path)
+        # What its owner declined in it is the step's to say, and inside a loop's cycle it ends the
+        # cycle there (`declines`): read before the iteration boundary below reads the cycle.
+        declines.keep(ctl, path, inst, info)
         # 🔴 The ITERATION COUNTER, which this method used to leave behind. `_apply` advances
         # the loop for an awaited dispatch, and for a spawned `stage` it returns at the RUNNING
         # branch above — so a loop whose body ENDS in a stage settled here, journalled

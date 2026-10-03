@@ -285,5 +285,5 @@ def test_a_nudge_steers_the_run() -> None:
         body={"text": "use verbs only"},
     )
     assert status == 200, body
-    queued = (store.get(run.id).extra or {}).get("steering_queue") or []
+    queued = store.pending_steering(run.id)
     assert [q["text"] for q in queued] == ["use verbs only"], queued

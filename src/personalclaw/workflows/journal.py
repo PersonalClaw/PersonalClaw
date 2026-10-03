@@ -357,9 +357,15 @@ class Journal(LedgerWriter):
         outcome: str,
         error_signature: str = "",
         tokens: int = 0,
+        detail: str = "",
+        declined: list[str] | None = None,
     ) -> None:
         """Feeds the deterministic circuit breaker: N identical `error_signature`s in a
-        row is a thrash, detectable at zero LLM cost."""
+        row is a thrash, detectable at zero LLM cost.
+
+        A cycle its owner ended with a Deny (`declines.end_cycle`) also carries the sentence its
+        run says it with (`detail`) and the calls she declined (`declined`). Both are written only
+        when there is one, so every other row is byte-identical to before."""
         self.write(
             ITERATION,
             instance_path=path,
@@ -368,6 +374,8 @@ class Journal(LedgerWriter):
             outcome=outcome,
             error_signature=error_signature,
             tokens=int(tokens),
+            **({"detail": detail} if detail else {}),
+            **({"declined": list(declined)} if declined else {}),
         )
 
     def run_started(

@@ -126,9 +126,29 @@ The loop surfaces do not care which home a loop has:
 - **Pause** stops the step in flight: the controller reads a sticky `PAUSE` intent in the run dir,
   cancels the dispatched stage's subagent and re-queues it at the same epoch, and a paused run is
   not re-adopted after a restart. Resume clears the intent and wakes the controller.
+- **Steer** queues an instruction as a sticky intent in the run dir too (`store.queue_steering`),
+  taken at the next iteration boundary into the next cycle's prompt
+  (`iteration_context.consume_steering`). It was a key on the run's row, which the live
+  controller's next save wrote over, so a steer never reached a running loop.
+- **A cycle you declined.** A cycle's stage whose call you answered with Deny carries your Deny
+  (`SubagentInfo.declined_calls`, kept on the step as `NodeInstance.declined`), and the cycle ends
+  at it (`workflows/declines.py`): the rest of the cycle is not run ("not run: you declined
+  write_file (notes/plan.md) in “work”"), so no judge rules on work you declined, and the cycle is
+  journaled `declined` with "Cycle 2 ended at “work”: you declined write_file (notes/plan.md)."
+  Neither the dry streak nor the breaker reads it. The loop then waits for you instead of running
+  its next cycle into the same ask: the run pauses with that sentence and "The loop waits for you:
+  tell it what to do instead, or resume or stop it.", one Inbox item ("Loop waiting — you declined
+  one of its steps"), and Resume runs the next cycle with what you steered it with while it
+  waited. A loop with no cycle left ends instead: at its cycle budget it stops at the budget,
+  saying the last cycle ended at your Deny, and a counted loop that ran its count is done. The run
+  page lists every step you declined something in under "Declined by you"; the cycle its loop
+  waits on is said once, by the line that says why it waits, and listed there once the wait is
+  over. A Deny only counts as one when you gave it: an ask nobody answered, or one with nowhere
+  to put to you, is a refusal as before, and a cycle you declined nothing in goes on with the
+  judge's critique.
 - **Restart.** A resumed controller rebuilds each loop's iteration counter from the ledger's
-  `continue` iteration rows (`iteration_context.rehydrate_loop_progress`) and re-queues a
-  dispatched stage whose subagent this process does not know
+  `continue` and `declined` iteration rows (`iteration_context.rehydrate_loop_progress`) and
+  re-queues a dispatched stage whose subagent this process does not know
   (`stage_settlement.requeue_orphaned_stages`) — without both, a run past its first iteration
   failed "run deadlocked" after a restart.
 - **Ending.** A loop's own exit test is asked before its cycle budget

@@ -3,18 +3,21 @@
 A `session: fresh` iteration starts clean, so what the previous one learned has to be handed over
 explicitly: its `handoff`, the merged `carryover` buckets and its `decisions`. This module captures
 them from an iteration's OWN output, journals every write, rebuilds them — and each loop's iteration
-counter — from the ledger on start and resume, and renders the block a fresh iteration's prompt
-starts from, together with any steering parked for it.
+counter — from the ledger on start and resume, takes the steering queued for the next iteration
+(`consume_steering`), and renders the block a fresh iteration's prompt starts from, together with
+any steering parked for it.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import journal as journal_mod
-from personalclaw.workflows import longrun
+from personalclaw.workflows import longrun, store
+from personalclaw.workflows.loop_middleware import InterruptQueue
 from personalclaw.workflows.models import Node, loop_parent, walk
 from personalclaw.workflows.tick import ReadyNode
 
@@ -22,6 +25,56 @@ if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
 
 logger = logging.getLogger(__name__)
+
+#: The outcome an `iteration` row carries for a cycle its owner ended with a Deny, after which the
+#: loop waits for her (`declines.end_cycle`): it went on past the cycle, as past a `continue`, and
+#: its counter moved on. A loop that ends with such a cycle writes the word it ends with instead.
+DECLINED_CYCLE = "declined"
+
+
+def consume_steering(ctl: RunController, parent_path: str, node: Node, iteration: int) -> None:
+    """Consume mid-run steering at the loop boundary.
+
+    The durable queue (`store.queue_steering`, written by `service.steer_run`) is taken HERE —
+    under the lock, between iterations, exactly like `mid_flight.drain_mutations`. Mid-iteration
+    injection would race the worker's own state; the boundary is where the next iteration can
+    actually act on the instruction. Single-use: the queue is emptied and the rendered block parked
+    on `_steering_inject` for the next iteration's prompt, so a resume cannot replay it. Journaled
+    so a refiner can tell a human-steered verdict from an autonomous one — without the event the
+    two are indistinguishable (see journal.STEERING). A loop that waited for its owner after her
+    Deny is at that boundary again when she resumes it (`declines.carry_on`), so what she queued
+    while it waited reaches the cycle her Resume runs.
+
+    The queue is taken before the event is journaled: a crash between the two loses an
+    instruction rather than replaying one the ledger already records as consumed.
+    """
+    pending = store.take_steering(ctl.run.id)
+    if not pending:
+        return
+    queue = InterruptQueue()
+    for entry in pending:
+        queue.push(str(entry.get("text", "") or ""), now=time.time())
+    consumed = queue.consume(now=time.time())
+    texts = [i.text for i in consumed]
+    if not texts:
+        return
+    block = queue.as_steering_prompt(consumed)
+    # Append if a block is already parked (two steers before the next iteration read either):
+    # the newest instruction goes last, the same order `consume` preserves.
+    existing = ctl._steering_inject.get(parent_path)
+    ctl._steering_inject[parent_path] = f"{existing}\n\n{block}" if existing else block
+    ctl.journal.write(
+        journal_mod.STEERING,
+        instance_path=parent_path,
+        node_id=node.id,
+        iteration=iteration,
+        count=len(texts),
+        texts=texts,
+    )
+    ctl._publish(
+        "workflow_steering_consumed",
+        {"instance_path": parent_path, "node_id": node.id, "count": len(texts)},
+    )
 
 
 def with_carried_context(ctl: RunController, node: Node, item: ReadyNode) -> Node:
@@ -208,10 +261,11 @@ def rehydrate_loop_progress(ctl: RunController) -> None:
     process ended had the same fate.
 
     The counter advances exactly when ``loop_iteration.advance_loop`` journals a ``continue``
-    iteration, so that record is its durable form: the next iteration of each loop is one past the
-    last one that continued. Replayed like ``rehydrate_context`` — a rewind archives the rows it
-    undoes, so only live history counts — and never raises, for the same reason. ``max`` keeps a
-    same-process restart of the tick loop (a resume) from moving a counter backwards.
+    iteration, or a cycle its owner ended with a Deny (:data:`DECLINED_CYCLE`), so those records
+    are its durable form: the next iteration of each loop is one past the last one that went on.
+    Replayed like ``rehydrate_context`` — a rewind archives the rows it undoes, so only live
+    history counts — and never raises, for the same reason. ``max`` keeps a same-process restart
+    of the tick loop (a resume) from moving a counter backwards.
 
     The dry streak and breaker evidence are NOT journaled and start empty: a resumed
     ``until_dry`` loop may run up to ``streak`` more iterations before it can stop dry, which
@@ -225,7 +279,8 @@ def rehydrate_loop_progress(ctl: RunController) -> None:
     for rec in rows:
         path = str(rec.get("instance_path", "") or "")
         iteration = rec.get("iteration")
-        if not path or not isinstance(iteration, int) or rec.get("outcome") != "continue":
+        went_on = rec.get("outcome") in ("continue", DECLINED_CYCLE)
+        if not path or not isinstance(iteration, int) or not went_on:
             continue
         ctl._iterations[path] = max(int(ctl._iterations.get(path, 0)), iteration + 1)
 

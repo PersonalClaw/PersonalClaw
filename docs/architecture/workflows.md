@@ -49,8 +49,9 @@ while not terminal:
 | `stage_settlement.py` | settling `stage` nodes, whose work runs in a spawned subagent the controller polls rather than awaits: the one out-of-band predicate, the settle, re-queueing after a restart, stopping on cancel and pause. A stage whose answer ignored its declared `schema` settles `failed` (`protocol`), naming what was asked for and what came (`engine.apply_declared_schema`, the same gate every node kind meets at the dispatch seam; a judge is held to its contract instead of every key); one whose time limit ended a wait for the owner's answer settles `timeout` with the typed reason the run's ending reads (`approval_timeout`). The owner's Allow of an attempt's start is kept on its instance (`approved_request`, `approved_at`), so the attempt a restart re-queues starts on it when it asks the same thing (`engine.stage_request_key`) within the step's time limit; a settle or a rewind drops it |
 | `step_dispatch.py` | running one node's dispatcher under its knobs: the retry correction and carried context on a copy of the node, the write-scope snapshot, `timeout_total` as a real kill, `success_when` |
 | `node_bindings.py` | the `BindingContext` a node's `{{…}}` resolve against, built per dispatch from durable run state: outputs, artifacts, `last`, `previous`, siblings, the Session Brief, the secret resolver |
-| `iteration_context.py` | the handoff / carryover / decisions lifecycle across a loop's iterations: captured from an iteration's own output, journaled, rehydrated on resume, rendered into a fresh iteration's prompt |
+| `iteration_context.py` | the handoff / carryover / decisions lifecycle across a loop's iterations: captured from an iteration's own output, journaled, rehydrated on resume, rendered into a fresh iteration's prompt; and the steering queued for the next iteration, taken at the boundary (`consume_steering`) |
 | `loop_iteration.py` | a loop's iteration boundary: the counter, the `until_dry` streak, the breaker fed and asked, steering, the long-run seen-set, and the continue/stop decision |
+| `declines.py` | a Deny of a call inside a `stage`: kept on the step (`NodeInstance.declined`, from `SubagentInfo.declined_calls`), the rest of its loop cycle not run, the cycle journaled `declined` and the loop waiting for its owner (a paused run, its sentence, one Inbox item) instead of running the next cycle into the same ask; her Resume carries her steering into that cycle. What the run page lists under "Declined by you" |
 | `loop_convergence.py` | what a tripped loop does next: one decision through `loop.tick.evaluate` on the node's `SupervisorPolicy`, the ladder position persisted on the run row, a replan as a real mutation, or a hand-off to a human |
 | `gate_answers.py` | a step waiting on a human — a gate, or an action that parked: its durable continuation, the typed confirmation, the escalation's outcome question, the `revise` verb, judge/human divergence, what answering a parked step does, a decline and ending the run at an approval it did not get, closing an ended run's waits, and withdrawing an ask nobody answered |
 | `ending_sentence.py` | the sentence a run ends with when a step's failure is the reason: how a step is named (a fan-out item by its item), a failure's cause as one clause, the steps after a step in each sequence that holds it, and the ending of a run that went on past a failed step (`for_failures`). Also WHY a step or a loop handed the run to a person, decided once: the closed cause vocabulary (`CAUSES`: budget, judge, approval_timeout, approval, refusal, step), each stop's sentence and its remedy (`loop_stop`, `step_stop`), read in the order of what is most true — a failed cycle's first failed step, then the judge's own ruling on the cycle the loop ended on, then the budget |
@@ -66,7 +67,7 @@ while not terminal:
 | `execution_hints.py` | the `runtime_hints.execution` half — today, WIP=1 (`single_active_feature`) |
 | `journal.py` | the resume cache and the Run Ledger (one append-only file, read two ways) |
 | `replay.py` | `workflow replay <run_id>` — re-drives the PURE `frontier()` against a run's OWN recorded responses (keyed by `output_ref`) and its recorded clock (the `clock_read` envelope), and diffs the resulting trajectory against the one the run took, reporting the first divergent node. Divergence is a first-class outcome, not a failure |
-| `store.py` | persistence — runs, specs, state, outputs |
+| `store.py` | persistence — runs, specs, state, outputs, and the sticky intents a request leaves in a run's folder for its controller (pause, cancel, steering) |
 | `versions.py` | the monotonic template version store: append-only per-version snapshots + a pinned pointer, re-pin/rollback, the typed-op diff, and the L0–L3 maturity computation |
 | `mutations.py` | the typed edit grammar and its structural rules |
 | `checkpoints.py` | fork, revert, prune |
@@ -582,6 +583,19 @@ container holding it (`tick.container_outcome`) and makes even a plain `needs`
 onto it unreachable. The engine has no construct for an author to declare a path
 taken on a decline — a denied gate's answer never entered the binding namespace,
 and `on_error` is a failure policy — so a decline always stops the run.
+
+**A Deny inside a step is the step's to say, not a gate.** A `stage`'s subagent asks before a
+call it may not make on its own, and the owner's Deny of one is kept as hers
+(`SubagentInfo.declined_calls`; an ask nobody answered, or one with nowhere to put to her, is a
+refusal as before). The step settles as its subagent ended, its row saying "You declined
+write_file (notes/plan.md).", and the run page lists it under "Declined by you". Outside a loop
+the run goes on: nothing runs the step again to ask her the same thing. Inside a loop's cycle the
+next cycle would, with the judge's critique of work she declined, so the cycle ends at her Deny
+(`declines.end_cycle`): the rest of it is not run, the cycle is journaled `declined` ("Cycle 2
+ended at “work”: you declined write_file (notes/plan.md)."), and the loop waits for her — the run
+pauses with that sentence and one Inbox item until she steers, resumes or cancels it, and her
+Resume runs the next cycle with what she steered it with. A loop with no cycle left after it
+ends instead, at its budget or, counted, done.
 
 **A failure the run went on past says so.** Outside a gate, `on_error:
 null_continue` — the default — lets the steps after a failed step run, and the run

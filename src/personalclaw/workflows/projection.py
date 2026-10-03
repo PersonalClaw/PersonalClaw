@@ -46,6 +46,8 @@ RUN_FIELDS: tuple[tuple[str, tuple[type, ...], bool], ...] = (
     ("escalations", (list,), False),
     ("tokens", (int,), False),
     ("elapsed_secs", (int, float), False),
+    # What its owner declined in the run, one sentence per step (`declines.listed`).
+    ("declined", (list,), False),
     ("nodes", (list,), True),
 )
 
@@ -65,6 +67,8 @@ NODE_FIELDS: tuple[tuple[str, tuple[type, ...], bool], ...] = (
     ("item_index", (int,), False),
     ("item_total", (int,), False),
     ("item_label", (str,), False),
+    # What its owner declined while the step worked, as its row says it (`declines.caption`).
+    ("declined", (str,), False),
 )
 
 _RUN_STATUSES = frozenset(s.value for s in RunStatus)

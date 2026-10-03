@@ -219,6 +219,47 @@ def resolve_gate_item(state: Any, run_id: str, node_id: str = "") -> int:
     return resolve_attention_items(state, refs)
 
 
+def raise_declined_wait(state: Any, run: Any, *, cycle: int, said: str) -> str:
+    """One Inbox item, and its one notification, for a run that waits for its owner because she
+    declined a call cycle *cycle* of its loop made (`declines.end_cycle`): titled as a loops-table
+    loop's wait after her Deny is, its body the run's name and the sentence *said*, deep-linked to
+    the run (and, for a run started as a loop, to the loop). Closed as handled when she resumes it
+    (:func:`resolve_declined_wait`), and with the run's other rows when it ends
+    (:func:`expire_run_items`). Best-effort like everything here. Returns the item id or ""."""
+    if state is None:
+        return ""
+    try:
+        from personalclaw.inbox import ItemKind, emit_attention_item
+
+        name = str(getattr(run, "title", "") or getattr(run, "workflow_name", "") or run.id)
+        loop_kind = str(getattr(run, "loop_kind", "") or "")
+        refs = {"workflow": run.id, "declined_wait": str(cycle)}
+        if loop_kind:
+            refs.update({"loop": run.id, "loop_kind": loop_kind})
+        return emit_attention_item(
+            state,
+            source=SOURCE,
+            kind=KIND,
+            item_kind=ItemKind.NEEDS_INPUT.value,
+            title=f"{'Loop' if loop_kind else 'Run'} waiting — you declined one of its steps",
+            body=f"{name} — {said}",
+            refs=refs,
+            dedup_key=f"workflow-run:{run.id}:declined:{cycle}",
+        )
+    except Exception:
+        logger.debug("workflow %s: could not raise its wait after a Deny", run.id, exc_info=True)
+    return ""
+
+
+def resolve_declined_wait(state: Any, run_id: str, *, cycle: int) -> int:
+    """Close the Inbox item a run's wait after its owner's Deny raised, now that she resumed it."""
+    if state is None:
+        return 0
+    from personalclaw.inbox import resolve_attention_items
+
+    return resolve_attention_items(state, {"workflow": run_id, "declined_wait": str(cycle)})
+
+
 def expire_run_items(state: Any, run_id: str, *, ended: str) -> int:
     """Close every open attention row for a run that has ended. Returns how many were closed.
 

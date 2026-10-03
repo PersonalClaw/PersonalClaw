@@ -34,6 +34,7 @@ from personalclaw.stale_write import revision_of
 from personalclaw.workflows import (
     attention,
     blocks,
+    declines,
 )
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import (
@@ -1142,6 +1143,11 @@ def status(run_id: str) -> dict[str, Any]:
         # Why a running run is doing nothing while incident mode holds it (`incident_hold`), so the
         # page does not read "Running" through the hold.
         held=incident_hold.held_reason(run.status),
+        # What its owner declined in the run, step by step (`declines.listed`): the page's
+        # "Declined by you", after the run has ended too. And whether it is paused because its
+        # loop waits for her after one, so the page says so as her wait and not as a fault.
+        declined=declines.listed(run_id),
+        declined_wait=run.status == RunStatus.PAUSED and declines.waits(run),
         nodes=_nodes_of(run_id),
     )
 
@@ -1943,11 +1949,13 @@ def pause_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
 def steer_run(run_id: str, text: str) -> dict[str, Any]:
     """Queue a mid-run steering instruction (LOOPS-EVOLUTION R14).
 
-    Recorded ON THE RUN and consumed at the next iteration boundary, exactly like a pause:
-    the tick loop is the single writer, and injecting mid-iteration would race the worker's
-    own state. Queued rather than applied, so the user can steer a run that is busy without
-    waiting for it — the alternative today is cancel-and-restart, which loses the cycle
-    context that made steering worth doing.
+    Recorded as an intent in the run's folder (`store.queue_steering`) and consumed at the next
+    iteration boundary, exactly like a pause: the tick loop is the single writer, and injecting
+    mid-iteration would race the worker's own state. Queued rather than applied, so the user can
+    steer a run that is busy without waiting for it — the alternative is cancel-and-restart,
+    which loses the cycle context that made steering worth doing. A run waiting for its owner
+    after her Deny takes what she queued while it waited into the cycle her Resume runs
+    (`declines.carry_on`).
     """
     run = store.get(run_id)
     if run is None:
@@ -1959,14 +1967,7 @@ def steer_run(run_id: str, text: str) -> dict[str, Any]:
     cleaned = (text or "").strip()
     if not cleaned:
         return _service_failure("WF_STEER_EMPTY", "a steering instruction needs text")
-
-    pending = run.extra.get("steering_queue")
-    if not isinstance(pending, list):
-        pending = []
-    pending.append({"text": cleaned[:4000], "queued_at": _now()})
-    run.extra["steering_queue"] = pending
-    store.save(run)
-    return _ok(run_id=run_id, queued=len(pending))
+    return _ok(run_id=run_id, queued=store.queue_steering(run_id, cleaned[:4000]))
 
 
 def pending_steering(run_id: str) -> dict[str, Any]:
@@ -1975,11 +1976,9 @@ def pending_steering(run_id: str) -> dict[str, Any]:
     A queued instruction the user cannot see is indistinguishable from one that was
     dropped, and they will queue it again.
     """
-    run = store.get(run_id)
-    if run is None:
+    if store.get(run_id) is None:
         return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
-    pending = run.extra.get("steering_queue")
-    items = pending if isinstance(pending, list) else []
+    items = store.pending_steering(run_id)
     return _ok(run_id=run_id, pending=items, count=len(items))
 
 
@@ -2461,6 +2460,8 @@ def _nodes_of(run_id: str) -> list[dict[str, Any]]:
             row["label"] = labels[base]
         if inst.model_substituted:  # "ran on X instead of Y: why", omitted when there is none
             row["model_substituted"] = list(inst.model_substituted)
+        if inst.declined:  # "You declined write_file (notes/plan.md).", omitted when she did not
+            row["declined"] = declines.caption(inst.declined)
         # Cache-origin (WF2-A1), so "did my edit actually re-run anything?" is answerable from
         # the run's own node list rather than by opening a per-node drawer on each row in turn.
         #

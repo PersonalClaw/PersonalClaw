@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, Play, RotateCcw, ScanSearch, Scale, SkipForward, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, Play, RotateCcw, ScanSearch, Scale, SkipForward, X, XCircle } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Segmented } from '../../ui/Segmented'
@@ -303,6 +303,10 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   const atBudget = run ? stoppedAtBudget(run.status, run.attention) : false
   const look = run ? runLook(run.status, run.held, atBudget) : null
   const StatusIcon = look?.icon
+  // What you declined, less what the line a loop waiting on your Deny shows already says.
+  const declinedListed = (run?.declined ?? []).filter(
+    (line) => !(run?.declined_wait && run.error?.startsWith(line)),
+  )
 
   // Sorted by instance path so the list reads in the spec's own order, and indented to its
   // tree shape — a flat list of twenty node ids is unreadable on a real workflow. Numerically,
@@ -546,7 +550,9 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 {run.status === 'paused' ? (
                   <HeaderControl icon={Play} label="Resume" priority="primary"
                     onClick={() => act('Resume', () => api.resumeWorkflowRun(runId, {}))}
-                    title="Resume — the step the pause stopped runs again" />
+                    title={run.declined_wait
+                      ? 'Resume — its next cycle runs, with anything you told it'
+                      : 'Resume — the step the pause stopped runs again'} />
                 ) : run.pause_requested ? (
                   <HeaderControl icon={Pause} label="Pausing…" priority="primary" title="Pausing"
                     disabled disabledReason="the step in flight is being stopped" />
@@ -588,10 +594,26 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
 
             {/* A declined run's line is why it ended, not a fault: it names the approval and who
                 said no, in the informational tone its status takes (`runLook('declined')`). A run
-                that stopped at its budget is not a fault either, and nor is one whose loop's stop
-                ended it ("Stopped because its loop … was stopped."). */}
+                that stopped at its budget is not a fault either, nor one whose loop's stop ended it
+                ("Stopped because its loop … was stopped."), nor one whose loop waits for you after
+                your Deny. */}
             {run.error && (
-              <p data-type="body-s" className={run.status === 'declined' || run.status === 'cancelled' || atBudget ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
+              <p data-type="body-s" className={run.status === 'declined' || run.status === 'cancelled' || atBudget || run.declined_wait ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
+            )}
+
+            {/* What you declined in the run, in one list: each loop cycle that ended at your Deny
+                (it ran nothing more of itself and asked you nothing again) and each step you
+                declined part of. The cycle a loop waits on is said once, by the line above; it is
+                listed here once the wait is over. */}
+            {declinedListed.length > 0 && (
+              <section aria-labelledby="declined-heading" className="flex flex-col gap-xs rounded-lg bg-surface-container px-m py-s">
+                <h2 id="declined-heading" data-type="label-s" className="flex items-center gap-xs text-on-surface">
+                  <XCircle size={14} className="shrink-0 text-on-surface-low" /> Declined by you
+                </h2>
+                {declinedListed.map((line, i) => (
+                  <p key={i} data-type="body-s" className="text-on-surface-var">{line}</p>
+                ))}
+              </section>
             )}
 
             {/* Incident mode holds a running run: its status stays `running`, so without this the
@@ -737,6 +759,12 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                       {(n.degraded_reason || n.failure?.cause_plain) && (
                         <div data-type="caption" className="truncate text-on-surface-low">
                           {n.degraded_reason || n.failure?.cause_plain}
+                        </div>
+                      )}
+                      {/* What you declined while it worked, on the step it stopped. */}
+                      {n.declined && (
+                        <div data-type="caption" className="truncate text-on-surface-low" title={n.declined}>
+                          {n.declined}
                         </div>
                       )}
                       {/* The remediation is a DIFFERENT fact from the cause — it is the next

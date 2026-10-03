@@ -22,7 +22,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from personalclaw.atomic_write import atomic_write
+from personalclaw import record_files
+from personalclaw.atomic_write import atomic_json_write, atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.record_ids import is_path_in_store
 from personalclaw.sqlite_compat import connect, sqlite3
@@ -764,6 +765,51 @@ def pause_requested(run_id: str) -> bool:
 
 def clear_pause(run_id: str) -> None:
     (run_dir(run_id) / "PAUSE").unlink(missing_ok=True)
+
+
+#: The run's queue of steering instructions not yet taken (:func:`queue_steering`).
+STEERING_FILE = "STEERING.json"
+
+
+def _queued(path: Path) -> list[dict[str, Any]]:
+    """The instructions in the queue file at *path*; one that cannot be read holds none."""
+    try:
+        queued = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return (
+        [entry for entry in queued if isinstance(entry, dict)] if isinstance(queued, list) else []
+    )
+
+
+def queue_steering(run_id: str, text: str) -> int:
+    """Queue one steering instruction on the run — an INTENT, in the run's folder, for the reason
+    a pause is (:func:`request_pause`): the live controller rewrites the whole row from its own copy
+    on every save, so an instruction a request handler wrote into ``extra`` was gone at the
+    controller's next step, and steering a running loop did nothing. Appended under the queue's
+    lock, so two at once both land, in order. Returns how many are queued."""
+    path = run_dir(run_id) / STEERING_FILE
+    with record_files.locked(path):
+        queued = [*_queued(path), {"text": text, "queued_at": _now()}]
+        atomic_json_write(path, queued)
+    return len(queued)
+
+
+def pending_steering(run_id: str) -> list[dict[str, Any]]:
+    """The steering instructions queued on the run and not yet taken, oldest first."""
+    return _queued(run_dir(run_id) / STEERING_FILE)
+
+
+def take_steering(run_id: str) -> list[dict[str, Any]]:
+    """Take every queued steering instruction, oldest first, leaving the queue empty: what the
+    tick loop does at the iteration boundary that acts on them."""
+    path = run_dir(run_id) / STEERING_FILE
+    if not path.is_file():
+        return []
+    with record_files.locked(path):
+        taken = _queued(path)
+        path.unlink(missing_ok=True)
+    return taken
 
 
 #: Why a restore holds a run it brought back running, and one it brought back queued to start.

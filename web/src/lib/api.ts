@@ -2198,6 +2198,9 @@ export interface WorkflowNodeState {
   // because the model this step asked for could not. The row's `done` is true, and so is the
   // model it names — this says it is not the model that was asked for. Absent when there is none.
   model_substituted?: string[]
+  /** What you declined while this step worked ("You declined write_file (notes/plan.md)."),
+   *  absent when you declined nothing (`declines.caption`). */
+  declined?: string
 }
 export interface WorkflowRunSummary {
   id: string; workflow_name: string; status: WorkflowRunStatus; spec_version: number
@@ -2254,6 +2257,14 @@ export interface WorkflowRunDetailData {
   /** Why a `running` run is doing nothing while incident mode holds it: it starts no step and
    *  makes no model call, and carries on by itself once the switch is off. Empty otherwise. */
   held?: string
+  /** What you declined in the run, one sentence per step, oldest first (`declines.listed`):
+   *  "Cycle 2 ended at “work”: you declined write_file (notes/plan.md)." Listed under "Declined
+   *  by you", after the run has ended too; while its loop waits, `error` says the cycle it
+   *  waits on instead. */
+  declined?: string[]
+  /** The run is paused because its loop waits for you after one of those Denies: `error` is the
+   *  sentence, said as your wait rather than a fault, and Resume runs its next cycle. */
+  declined_wait?: boolean
   nodes: WorkflowNodeState[]
 }
 // One pending human-input gate. `ask` is the typed payload ONE renderer covers

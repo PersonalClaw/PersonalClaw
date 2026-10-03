@@ -19,13 +19,13 @@ So the accept is re-checked against the diff as it is NOW, and a finding that we
 is REFUSED rather than dispatched. Without that second check this endpoint would be a TOCTOU hole
 in the one property the change is built around.
 
-**Dispatch is the run's own steering queue.** `service.steer_run` parks the brief on
-`run.extra["steering_queue"]`, which `loop_iteration._consume_steering` drains at the next iteration
-boundary and injects into the worker's prompt. That IS "follow-up instructions to the originating
-session" for a workflow run — no new delivery channel, no second dialect. A run that has already
-reached a terminal status has no boundary left to drain at, so the brief is PARKED for the user to
-start a follow-up run with, and the receipt says so. Auto-spawning a fresh run off a review
-acceptance would be unattended execution the user never asked for.
+**Dispatch is the run's own steering queue.** `service.steer_run` parks the brief on the run's
+queue (`store.queue_steering`), which `iteration_context.consume_steering` drains at the next
+iteration boundary and injects into the worker's prompt. That IS "follow-up instructions to the
+originating session" for a workflow run — no new delivery channel, no second dialect. A run that
+has already reached a terminal status has no boundary left to drain at, so the brief is PARKED for
+the user to start a follow-up run with, and the receipt says so. Auto-spawning a fresh run off a
+review acceptance would be unattended execution the user never asked for.
 """
 
 from __future__ import annotations

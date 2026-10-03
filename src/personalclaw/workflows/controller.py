@@ -56,6 +56,7 @@ from personalclaw.workflows import (
 )
 from personalclaw.workflows import context as context_mod
 from personalclaw.workflows import (
+    declines,
     effect_boundary,
     ending_sentence,
     execution_hints,
@@ -304,10 +305,10 @@ class RunController:
         #: `_wip_logged`: this record's payload is a COUNT of failed items, and a resumed run
         #: that wrote it twice would tell a reader the fan-out failed twice.
         self._items_collected: set[str] | None = None
-        #: Steering, keyed by the iterated container's path. The durable
-        #: queue lives on `run.extra["steering_queue"]` (written by `service.steer_run`); the tick
-        #: consumes it at the iteration boundary and parks the rendered re-plan block HERE until
-        #: the next iteration's prompt picks it up. Single-use: cleared once injected, so a resume
+        #: Steering, keyed by the iterated container's path. The durable queue lives in the run's
+        #: folder (`store.queue_steering`, from `service.steer_run`); the tick consumes it at the
+        #: iteration boundary and parks the rendered re-plan block HERE until the next
+        #: iteration's prompt picks it up. Single-use: cleared once injected, so a resume
         #: cannot replay a mid-run instruction — the same discipline the human-input continuations
         #: follow.
         self._steering_inject: dict[str, str] = {}
@@ -643,6 +644,9 @@ class RunController:
         async with self._lock:
             if not self.run.started_at:
                 self.run.started_at = now_stamp()
+            # Her Resume of a loop that waited after her Deny: what she steered it with reaches
+            # the cycle it now runs, and the wait's Inbox item and words go.
+            declines.carry_on(self)
             self.run.status = RunStatus.RUNNING
             self._save_run()
         self.journal.run_started(
@@ -689,8 +693,7 @@ class RunController:
         # request handler recorded is applied by the ONE writer, on a step, with the lock held.
         # PAUSED is not terminal — the loop simply stops here, and `wake()` restarts it on resume.
         if store.pause_requested(self.run.id):
-            await self._withdraw_inflight(reason="Stopped: the run was paused")
-            await self._finish(RunStatus.PAUSED)
+            await self._pause()
             return True
 
         # Incident mode holds the run (`incident_hold`): after a cancel and a pause, so either still
@@ -714,6 +717,11 @@ class RunController:
         # second would delay every reap by a tick. And before the gate check below, because a
         # stage settles DECLINED when its owner denied its start, and that stops the run there.
         stage_settlement.reconcile_dispatched_stages(self)
+        # A cycle its owner ended with a Deny asks for a pause as it settles (`declines`): applied
+        # NOW, before the frontier could start the loop's next cycle and put the same call to her.
+        if store.pause_requested(self.run.id):
+            await self._pause()
+            return True
 
         # A gate that did not pass ENDS the run: a person's Deny ends it `declined`, an approval
         # nobody gave or a check that failed ends it `failed`, a judge that would not rule ends it
@@ -1407,6 +1415,7 @@ class RunController:
         # re-run after a rewind cannot leave the previous epoch's `cached` behind.
         inst.cached = False
         inst.model_substituted = []
+        inst.declined = []
         if item.has_item and not inst.item_label:
             # Stamped once, at first launch. The items list is re-resolved from a binding on
             # every tick, so after an upstream output changes the label would be unrecoverable
@@ -2198,6 +2207,12 @@ class RunController:
             inst.started_at = None
             inst.attempt = max(0, inst.attempt - 1)
         self._persist_state()
+
+    async def _pause(self) -> None:
+        """Apply the run's sticky pause: the work in flight is withdrawn and the run is PAUSED,
+        saying why when its loop waits for its owner after her Deny (`declines.waiting_words`)."""
+        await self._withdraw_inflight(reason="Stopped: the run was paused")
+        await self._finish(RunStatus.PAUSED, error=declines.waiting_words(self))
 
     def wake(self) -> None:
         """Restart the tick loop of a controller whose loop has exited (a paused run).

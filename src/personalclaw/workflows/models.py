@@ -1422,6 +1422,12 @@ class NodeInstance:
     #: persisted, because `run.attention` is one slot for the whole run: two steps waiting at once
     #: (parallel gates) both asked what the later one had written there.
     ask: dict[str, Any] = field(default_factory=dict)
+    #: The calls its owner answered with Deny while this step's current attempt worked
+    #: (`SubagentInfo.declined_calls`, as `declined_calls.declined_step` keeps them), for a
+    #: `stage`: her decision for the work, which its loop's next cycle must not put to her again by
+    #: itself (`declines`). PERSISTED, so a run opened tomorrow, or adopted after a restart, still
+    #: says what she declined; cleared at every dispatch, like `cached`.
+    declined: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1447,6 +1453,7 @@ class NodeInstance:
             "cached": self.cached,
             "model_substituted": list(self.model_substituted),
             "ask": dict(self.ask),
+            "declined": [dict(step) for step in self.declined],
         }
 
     @classmethod
@@ -1480,4 +1487,5 @@ class NodeInstance:
             cached=bool(d.get("cached", False)),
             model_substituted=[str(s) for s in (d.get("model_substituted") or []) if s],
             ask=dict(d.get("ask") or {}) if isinstance(d.get("ask"), dict) else {},
+            declined=[dict(s) for s in (d.get("declined") or []) if isinstance(s, dict)],
         )
