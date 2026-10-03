@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp import FormData, web
@@ -450,20 +450,15 @@ class TestInterruptSel:
 # ── 7. Follow-up chips ───────────────────────────────────────────────────────────────
 
 
-def _mock_bg_stream(state, text):
-    client = MagicMock()
-    client.reject_tool = AsyncMock()
-    client._history = MagicMock()
+def _mock_bg_stream(monkeypatch, text):
+    """Answer the follow-up chore (``chores.run_chore``) with *text*."""
 
-    async def _stream(prompt):
-        yield __import__("personalclaw.llm.base", fromlist=["LLMEvent"]).LLMEvent(
-            kind="text_chunk", text=text
-        )
-        yield __import__("personalclaw.llm.base", fromlist=["LLMEvent"]).LLMEvent(kind="complete")
+    async def _run_chore(prompt, **_kw):
+        _run_chore.last_prompt = prompt
+        return text
 
-    client.stream = _stream
-    state.sessions.get_or_create = AsyncMock(return_value=(client, False, False))
-    state.sessions.release = MagicMock()
+    monkeypatch.setattr("personalclaw.chores.run_chore", _run_chore)
+    return _run_chore
 
 
 class TestFollowupChipsSel:
@@ -479,7 +474,7 @@ class TestFollowupChipsSel:
         session.append("user", "how do I read a file?", "msg msg-u", broadcast=False)
         session.append("assistant", "use open().", "msg msg-a", broadcast=False)
         session.drain()
-        _mock_bg_stream(state, '["Show an example", "How do I test it?"]')
+        _mock_bg_stream(monkeypatch, '["Show an example", "How do I test it?"]')
 
         assert _count("chat_followups") == 0
         await _maybe_followups(state, session)
@@ -498,7 +493,7 @@ class TestFollowupChipsSel:
         session.append("user", "hi", "msg msg-u", broadcast=False)
         session.append("assistant", "hello", "msg msg-a", broadcast=False)
         session.drain()
-        _mock_bg_stream(state, "not json at all")
+        _mock_bg_stream(monkeypatch, "not json at all")
         await _maybe_followups(state, session)
         assert _count("chat_followups") == 0
 

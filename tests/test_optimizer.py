@@ -107,6 +107,7 @@ class TestOptimizerEndpoint:
         mock_sessions = MagicMock()
         mock_sessions.get_or_create = AsyncMock(return_value=(mock_client, True, False))
         mock_sessions.release = MagicMock()
+        mock_sessions.reset = AsyncMock()
 
         mock_state = MagicMock()
         mock_state.sessions = mock_sessions
@@ -140,6 +141,7 @@ class TestOptimizerEndpoint:
         mock_sessions = MagicMock()
         mock_sessions.get_or_create = AsyncMock(return_value=(mock_client, True, False))
         mock_sessions.release = MagicMock()
+        mock_sessions.reset = AsyncMock()
 
         mock_state = MagicMock()
         mock_state.sessions = mock_sessions
@@ -173,6 +175,7 @@ class TestOptimizerEndpoint:
         mock_sessions = MagicMock()
         mock_sessions.get_or_create = AsyncMock(return_value=(mock_client, True, False))
         mock_sessions.release = MagicMock()
+        mock_sessions.reset = AsyncMock()
 
         mock_state = MagicMock()
         mock_state.sessions = mock_sessions
@@ -218,6 +221,7 @@ class TestOptimizerEndpoint:
         mock_sessions = MagicMock()
         mock_sessions.get_or_create = AsyncMock(return_value=(mock_client, True, False))
         mock_sessions.release = MagicMock()
+        mock_sessions.reset = AsyncMock()
 
         mock_state = MagicMock()
         mock_state.sessions = mock_sessions
@@ -250,6 +254,7 @@ class TestOptimizerEndpoint:
         mock_sessions = MagicMock()
         mock_sessions.get_or_create = AsyncMock(return_value=(mock_client, True, False))
         mock_sessions.release = MagicMock()
+        mock_sessions.reset = AsyncMock()
 
         mock_state = MagicMock()
         mock_state.sessions = mock_sessions
@@ -293,6 +298,7 @@ def _stub_request(prompt: str, context: str = "", reply: str = "optimized result
     mock_sessions = MagicMock()
     mock_sessions.get_or_create = AsyncMock(return_value=(mock_client, True, False))
     mock_sessions.release = MagicMock()
+    mock_sessions.reset = AsyncMock()
     mock_state = MagicMock()
     mock_state.sessions = mock_sessions
 

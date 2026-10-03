@@ -693,7 +693,7 @@ async def test_a_mutating_shell_call_must_name_the_tier(monkeypatch):
     _disable(monkeypatch)
 
     resp = await tools_mod.api_tool_invoke(
-        _InvokeRequest({"tool": "bash", "arguments": {"command": "rm -rf /tmp/whatever"}})
+        _InvokeRequest({"tool": "bash", "arguments": {"command": "rm -r /tmp/whatever"}})
     )
     assert resp.status == 403
     assert prov.invoked == []
@@ -795,7 +795,11 @@ async def test_a_shell_call_whose_command_was_never_received_fails_closed(monkey
     _disable(monkeypatch)
 
     resp = await tools_mod.api_tool_invoke(_InvokeRequest({"tool": "bash"}))
-    assert resp.status == 403
+    # The tool's own pre-flight, asked before the gate, refuses a shell call with no command: it
+    # cannot run, so nobody is asked to confirm it, and nothing runs.
+    assert resp.status == 200
+    assert _payload(resp)["not_run"] == "refused_by_tool", _payload(resp)
+    assert _payload(resp)["ok"] is False
     assert prov.invoked == []
 
 
@@ -991,7 +995,7 @@ async def test_a_destructive_platform_call_still_fails_closed(workspace, monkeyp
     victim.mkdir()
 
     resp = await tools_mod.api_tool_invoke(
-        _InvokeRequest({"tool": "bash", "arguments": {"command": f"rm -rf {victim}"}})
+        _InvokeRequest({"tool": "bash", "arguments": {"command": f"rm -r {victim}"}})
     )
     assert resp.status == 403, _payload(resp)
     assert _payload(resp)["error"]["code"] == "risk_confirmation_required"

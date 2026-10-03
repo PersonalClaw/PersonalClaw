@@ -128,7 +128,9 @@ async def test_a_refused_destructive_call_is_not_audited_as_completed(monkeypatc
         "the SEL recorded a refused DESTRUCTIVE call as completed — "
         f"outcome={row['outcome']!r}, wire={payload!r}"
     )
-    assert row["outcome"] == "error", row
+    # Refused by the tool before it ran (its pre-flight, asked before the risk gate).
+    assert row["outcome"] == "denied", row
+    assert row["metadata"]["not_run"] == "refused_by_tool", row
 
 
 @pytest.mark.asyncio

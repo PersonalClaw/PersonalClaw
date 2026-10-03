@@ -17,24 +17,17 @@ from personalclaw.dashboard.chat_followups import (
     _maybe_followups,
     _parse_followups,
 )
-from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 
 
-def _mock_bg_stream(state, text):
-    """Wire state.sessions.get_or_create to a background client streaming *text*."""
-    client = MagicMock()
-    client.reject_tool = AsyncMock()
-    client._history = MagicMock()
+def _mock_bg_stream(monkeypatch, text):
+    """Answer the follow-up chore (``chores.run_chore``) with *text*."""
 
-    async def _stream(prompt):
-        _stream.last_prompt = prompt
-        yield LLMEvent(kind=EVENT_TEXT_CHUNK, text=text)
-        yield LLMEvent(kind=EVENT_COMPLETE)
+    async def _run_chore(prompt, **_kw):
+        _run_chore.last_prompt = prompt
+        return text
 
-    client.stream = _stream
-    state.sessions.get_or_create = AsyncMock(return_value=(client, False, False))
-    state.sessions.release = MagicMock()
-    return _stream
+    monkeypatch.setattr("personalclaw.chores.run_chore", _run_chore)
+    return _run_chore
 
 
 def _seeded_session(state):
@@ -75,7 +68,7 @@ class TestMaybeFollowups:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = _seeded_session(state)
-        _mock_bg_stream(state, '["Show a code example", "How do I handle errors?"]')
+        _mock_bg_stream(monkeypatch, '["Show a code example", "How do I handle errors?"]')
         events: list[tuple[str, object]] = []
         monkeypatch.setattr(state, "broadcast_ws", lambda t, d: events.append((t, d)), raising=True)
 
@@ -163,7 +156,7 @@ class TestMaybeFollowups:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = _seeded_session(state)
-        _mock_bg_stream(state, "[]")
+        _mock_bg_stream(monkeypatch, "[]")
         events: list[tuple[str, object]] = []
         monkeypatch.setattr(state, "broadcast_ws", lambda t, d: events.append((t, d)), raising=True)
 

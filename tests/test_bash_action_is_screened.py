@@ -74,12 +74,17 @@ def test_the_refusal_is_audited(monkeypatch):
         def log(self, event):  # noqa: D102
             logged.append(event)
 
+    import personalclaw.command_audit as command_audit
+
     monkeypatch.setattr(sel_mod, "SecurityEventLog", lambda *a, **k: _Capture())
+    # Every path that refuses a command writes its row through `command_audit`.
+    monkeypatch.setattr(command_audit, "SecurityEventLog", lambda *a, **k: _Capture())
     result = _run("cat ~/.ssh/id_rsa")
     assert result.success is False
     assert logged, "the refusal wrote no SEL row"
     ev = logged[0]
-    assert getattr(ev, "outcome", "") == "denied"
+    # The shell denylist refused it, not a person: the security log says `refused`.
+    assert getattr(ev, "outcome", "") == "refused"
     assert "bash" in str(getattr(ev, "metadata", {}))
 
 
@@ -90,7 +95,10 @@ def test_an_audit_fault_does_not_turn_a_refusal_into_a_run(monkeypatch):
     def _boom(*a, **k):
         raise RuntimeError("sel down")
 
+    import personalclaw.command_audit as command_audit
+
     monkeypatch.setattr(sel_mod, "SecurityEventLog", _boom)
+    monkeypatch.setattr(command_audit, "SecurityEventLog", _boom)
     result = _run("cat ~/.ssh/id_rsa")
     assert result.success is False, "an audit failure must not let the command run"
 
