@@ -520,6 +520,22 @@ def drop_spec_key(store: TriggerStore, kind: str, key: str) -> list[str]:
     return dropped
 
 
+def drop_field(store: TriggerStore, name: str) -> list[str]:
+    """Take the field *name* out of every row in *store* that carries it, re-reading under the
+    store's lock: the ids of the rows it came out of. For a field `Trigger` no longer has, so no
+    row keeps it; a second call finds nothing. A boot pass's, as :func:`drop_spec_key` is."""
+    with store._file_lock():
+        rows = store._read_rows()
+        dropped: list[str] = []
+        for row in rows:
+            if name in row:
+                del row[name]
+                dropped.append(str(row.get("id") or ""))
+        if dropped:
+            store._write(rows)
+    return dropped
+
+
 def what_it_is(row: dict[str, Any]) -> dict[str, Any]:
     """A trigger row as a person made it: without :data:`RUNTIME_FIELDS`, and without the step
     keys that loosen whether its agent asks (``legacy_import.without_loosened_keys``), which like a

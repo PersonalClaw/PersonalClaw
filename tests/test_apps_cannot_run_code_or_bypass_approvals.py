@@ -526,8 +526,9 @@ class TestTheOwnerConsentsToAWorkflowStepThatApprovesItself:
         run.status = RunStatus.DRAFT  # the one phase whose overlay is editable
         run.policy_overrides = {}
         applied: list[dict] = []
+        spec = {"root": _loop_spec(3)}
         monkeypatch.setattr(store, "get", lambda run_id: run)
-        monkeypatch.setattr(store, "read_spec", lambda run_id: {"root": _loop_spec(3)})
+        monkeypatch.setattr(store, "read_spec", lambda run_id: spec)
         monkeypatch.setattr(
             service,
             "set_policy_overrides",
@@ -542,22 +543,31 @@ class TestTheOwnerConsentsToAWorkflowStepThatApprovesItself:
             req.headers["If-Match"] = revision_of(run.policy_overrides)
             return req
 
-        # 0 removes the cap the template declared (3): asked, and nothing is applied.
-        refused = await handlers.api_run_policy_overrides(put({"max_cycles": 0}))
+        # Above the cap the template declared (3): asked, and nothing is applied.
+        refused = await handlers.api_run_policy_overrides(put({"max_cycles": 10}))
         assert refused.status == 400
         detail = json.loads(refused.body)["error"]["detail"]
         assert detail["field"] == "workflows.runs.r1.policy_overrides.max_cycles"
-        assert detail["change"] == "3 → No limit", "the cap the template declared, and none"
+        assert detail["change"] == "3 → 10", "the cap the run stops at, and the one asked for"
         assert not applied
 
         assert (
-            await handlers.api_run_policy_overrides(put({"max_cycles": 0, "confirm": True}))
+            await handlers.api_run_policy_overrides(put({"max_cycles": 10, "confirm": True}))
         ).status == 200
-        assert applied[-1] == {"max_cycles": 0}, "the consent flag is not persisted as a knob"
+        assert applied[-1] == {"max_cycles": 10}, "the consent flag is not persisted as a knob"
 
-        # A tighter cap, or a knob the engine does not act on, is never asked.
+        # A tighter cap, 0 (which keeps the template's own cap on a run), or a knob the engine does
+        # not act on, is never asked.
         assert (await handlers.api_run_policy_overrides(put({"max_cycles": 2}))).status == 200
+        assert (await handlers.api_run_policy_overrides(put({"max_cycles": 0}))).status == 200
         assert (await handlers.api_run_policy_overrides(put({"autopilot": True}))).status == 200
+
+        # The cap a loop's own `max_iterations` sets is judged the same way: the check read only a
+        # declared supervisor budget, so raising a loop of 3 iterations to 50 was never asked.
+        spec["root"] = {**_loop_spec(0), "config": {"max_iterations": 3}}
+        raised = await handlers.api_run_policy_overrides(put({"max_cycles": 50}))
+        assert raised.status == 400
+        assert json.loads(raised.body)["error"]["detail"]["change"] == "3 → 50"
 
 
 # ── 3. The agent sync applies #3602's check ──────────────────────────────────────────

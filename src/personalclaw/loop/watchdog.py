@@ -1540,44 +1540,10 @@ class LoopWatchdog:
                     )
                     continue
 
-                # `AG-14` ceilings — both opt-in (0 = uncapped), both NON-genuine (the
-                # goal may be unmet; a monitor's "budget is the plan" carve-out is about
-                # its cycle window, not about running out of money or time).
-                #
-                # Deadline bounds ACTIVE runtime: banked elapsed_seconds + the current
-                # running stretch — the same clock the cockpit displays — so a paused
-                # loop is not charged for the pause.
-                if (active := deadline_reached(loop, time.time())) is not None:
-                    await self._complete(
-                        cid,
-                        reason=(
-                            f"deadline reached ({int(active)}s active "
-                            f">= {int(loop.deadline_secs)}s)"
-                        ),
-                        genuine=False,
-                        stop_reason=LoopStopReason.DEADLINE,
-                    )
+                # The time and dollar ceilings, after the cycle budget on a poll that credited a
+                # cycle, so a loop that reached both ends on the one its plan set.
+                if await self._stop_at_a_ceiling(loop):
                     continue
-                # Cost reads the usage ledger's spend for the loop's worker sessions —
-                # a FLOOR when any turn lacked a price row, so an unpriced loop stops
-                # late rather than early; the gate keeps the two ledger queries off
-                # every uncapped loop's poll.
-                if loop.max_cost_usd > 0:
-                    try:
-                        spent = float(manager.loop_spend(cid)["dollars_est"])
-                    except Exception:
-                        spent = 0.0  # an unreadable ledger never stops a loop
-                    if spent >= loop.max_cost_usd:
-                        await self._complete(
-                            cid,
-                            reason=(
-                                f"cost budget reached (${spent:.2f} "
-                                f">= ${loop.max_cost_usd:.2f})"
-                            ),
-                            genuine=False,
-                            stop_reason=LoopStopReason.COST_BUDGET,
-                        )
-                        continue
 
                 self._notify_progress(cid, count, loop.max_cycles)
                 # Stagnation — disabled for monitor goals (a quiet cycle is a valid
@@ -1595,6 +1561,12 @@ class LoopWatchdog:
                     logger.info("loop %s stalled: %s", cid, why)
                     self._publish(cid, "stagnant", {"loop_id": cid, "reason": why})
             else:
+                # The same ceilings on a poll that credited nothing: a cycle still running,
+                # or a worker spending without writing a finding, is still held to its time and
+                # its money. They were read only when a finding landed, so a loop that kept
+                # working without one never reached its deadline or its dollar limit.
+                if await self._stop_at_a_ceiling(loop):
+                    continue
                 # 4a. Loop exhausted — autonudge fired its full budget but some
                 # cycles produced no finding (a turn errored before writing one).
                 if session is None or not getattr(session, "running", False):
@@ -1658,6 +1630,43 @@ class LoopWatchdog:
                     await manager.end_run(self._state, self._svc, cid)
                     self._clear_liveness(cid)
                     self._publish(cid, "failed")
+
+    async def _stop_at_a_ceiling(self, loop) -> bool:
+        """End a running loop at its time or dollar ceiling: True when it ended.
+
+        Both opt-in (0 = uncapped), both NON-genuine (the goal may be unmet; a monitor's "budget
+        is the plan" carve-out is about its cycle window, not about running out of money or time).
+        Asked on every poll of a running loop.
+
+        Deadline bounds ACTIVE runtime: banked elapsed_seconds + the current running stretch —
+        the same clock the cockpit displays — so a paused loop is not charged for the pause. Cost
+        reads the usage ledger's spend for the loop's worker sessions — a FLOOR when any turn
+        lacked a price row, so an unpriced loop stops late rather than early; the gate keeps the
+        two ledger queries off every uncapped loop's poll.
+        """
+        cid = loop.id
+        if (active := deadline_reached(loop, time.time())) is not None:
+            await self._complete(
+                cid,
+                reason=f"deadline reached ({int(active)}s active >= {int(loop.deadline_secs)}s)",
+                genuine=False,
+                stop_reason=LoopStopReason.DEADLINE,
+            )
+            return True
+        if loop.max_cost_usd > 0:
+            try:
+                spent = float(manager.loop_spend(cid)["dollars_est"])
+            except Exception:
+                spent = 0.0  # an unreadable ledger never stops a loop
+            if spent >= loop.max_cost_usd:
+                await self._complete(
+                    cid,
+                    reason=f"cost budget reached (${spent:.2f} >= ${loop.max_cost_usd:.2f})",
+                    genuine=False,
+                    stop_reason=LoopStopReason.COST_BUDGET,
+                )
+                return True
+        return False
 
     async def _hold_for_incident(self, cid: str) -> None:
         """Hold running loop *cid* while incident mode is on — the switch every runner honours.

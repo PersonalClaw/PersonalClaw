@@ -139,10 +139,18 @@ The loop surfaces do not care which home a loop has:
   one attempt, so no resume from `failed`, and a gate is answered on the run page.
 - **Unattended.** `attended: false` in the overlay is the explicit grant that lets the run's stages
   spawn without a per-stage approval (`approval_mode: auto`), still inside the operator's safety
-  ceiling; anything else asks per stage. `max_cycles` bounds the root loop's iterations. The grant
+  ceiling; anything else asks per stage. `max_cycles` bounds the root loop's iterations; without
+  it the loop stops at the tighter of its `max_iterations` and the cycle budget its `supervisor`
+  declares (`budget.max_cycles`), and an overlay that raises the cap past that asks the owner first
+  (`supervisor_policy.loop_cycle_cap`, read by the engine and the consent check alike). The grant
   reaches the worker's own tool calls because `SessionManager.get_or_create` hands a session's
   approval policy to its provider (a native runtime gates tools itself), and a native session
   spawned with no cwd works in the validated workspace root — never the gateway process's cwd.
+- **Budget.** A General loop's dollar limit (`max_cost_usd`) is its run's dollar budget
+  (`RunBudget.max_cost`, written at create by the loop door): the run pauses once its steps have
+  spent it, and Resume asks for a higher one ([workflows.md](workflows.md#a-runs-budget)). A time
+  limit (`deadline_secs`) is refused at the door (`loop/validation.py`), since a run is held to
+  tokens and dollars but not to a time.
 - **Pause** stops the step in flight: the controller reads a sticky `PAUSE` intent in the run dir,
   cancels the dispatched stage's subagent and re-queues it at the same epoch, and a paused run is
   not re-adopted after a restart. Resume clears the intent and wakes the controller.
@@ -487,7 +495,10 @@ The supervisor does not take the worker's word for it:
 - **`loop/watchdog.py`** detects stalls, and its own first poll re-arms loops left
   RUNNING/PLANNING by a gateway restart so an interrupted loop resumes rather than
   zombifying (`LoopWatchdog._boot_sweep`). A turn running on ANY of a loop's workers — its stage
-  worker or a task worker — counts as the loop working, so a long model call is not a stall.
+  worker or a task worker — counts as the loop working, so a long model call is not a stall. A
+  loop's time limit (`deadline_secs`, active time) and dollar limit (`max_cost_usd`, what the usage
+  ledger booked to its worker sessions) are asked on every poll, a cycle still running or a worker
+  that writes no finding included (`LoopWatchdog._stop_at_a_ceiling`).
   **Every ending goes through one function**, `manager.end_run`, once the loop's status says how it
   ended: a completion (a spent cycle, cost or time budget included), a failure (two failed turns in
   a row, an exhausted budget with nothing to show, a stall), a Stop, and a delete. It switches off

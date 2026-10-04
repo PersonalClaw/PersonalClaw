@@ -275,3 +275,46 @@ def test_the_cost_cap_stops_a_loop_on_the_turns_its_worker_really_ran(tmp_path, 
     assert after.status == LoopStatus.COMPLETE.value
     assert after.stop_reason == LoopStopReason.COST_BUDGET.value
     assert "$1.25" in (after.error_message or ""), after.error_message
+
+
+def test_the_cost_cap_stops_a_loop_whose_worker_spends_without_writing_a_finding(
+    tmp_path, monkeypatch
+):
+    """The cap was read only on a poll that credited a cycle, so a worker that kept spending
+    without writing a finding was never stopped by it."""
+    from test_loop_watchdog import _FakeSession, _run, _running, _wd
+
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import LoopStatus, LoopStopReason
+
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
+    capped = _running(kind="general", kind_config={}, max_cycles=20, max_cost_usd=1.0)
+    watchdog = _wd()
+    worker = session_key(capped.id)
+    watchdog._state._sessions[worker] = _FakeSession(worker, running=True)
+    _run(watchdog._poll_once())  # seeds liveness
+    _turn(worker, 1.25)
+    _run(watchdog._poll_once())  # no finding written
+
+    after = store.get(capped.id)
+    assert after.status == LoopStatus.COMPLETE.value
+    assert after.stop_reason == LoopStopReason.COST_BUDGET.value
+
+
+def test_the_deadline_stops_a_loop_mid_cycle(tmp_path, monkeypatch):
+    from test_loop_watchdog import _FakeSession, _run, _running, _wd
+
+    from personalclaw.loop import store
+    from personalclaw.loop.loop import LoopStatus, LoopStopReason
+
+    monkeypatch.setattr("personalclaw.loop.files.config_dir", lambda: tmp_path)
+    late = _running(kind="general", kind_config={}, deadline_secs=60, elapsed_seconds=600)
+    watchdog = _wd()
+    worker = session_key(late.id)
+    watchdog._state._sessions[worker] = _FakeSession(worker, running=True)
+    _run(watchdog._poll_once())  # seeds liveness
+    _run(watchdog._poll_once())  # still working on its first cycle
+
+    after = store.get(late.id)
+    assert after.status == LoopStatus.COMPLETE.value
+    assert after.stop_reason == LoopStopReason.DEADLINE.value

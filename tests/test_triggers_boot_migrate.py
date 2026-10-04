@@ -423,3 +423,43 @@ def test_a_first_import_keeps_a_legacy_job_that_was_off_OFF(tmp_path):
     _crons(tmp_path, _job("j-new", enabled=False))
     BM.migrate_and_arm(tmp_path, now=NOW)
     assert TriggerStore(base_dir=tmp_path).get("j-new").trigger.enabled is False
+
+
+def test_a_start_takes_the_retry_nothing_read_out_of_every_automation(tmp_path):
+    """Every row an earlier release wrote carries `retry`, which nothing ever read: a step's
+    retries are its own. The next start takes it out and leaves the rest of each row as it was,
+    so no automation reads on the Triggers page as carrying a field nothing knows; the start after
+    finds nothing to take."""
+    from personalclaw.triggers.models import Trigger
+
+    store = TriggerStore(base_dir=tmp_path)
+    for tid in ("clock:nightly", "clock:weekly"):
+        store.upsert(
+            Trigger(
+                id=tid,
+                name=tid,
+                kind="clock",
+                created_by="user",
+                spec={"kind": "cron", "expr": "0 9 * * *"},
+                workflow={"inline": _ACTION},
+            )
+        )
+    path = tmp_path / "triggers.json"
+    stored = json.loads(path.read_text())
+    for row in stored["triggers"]:
+        row["retry"] = {}
+    path.write_text(json.dumps(stored))
+    assert all(r.warnings for r in TriggerStore(base_dir=tmp_path).load())
+    before = {r.trigger.id: r.trigger.to_dict() for r in TriggerStore(base_dir=tmp_path).load()}
+
+    BM.migrate_and_arm(tmp_path, now=NOW)
+    BM.migrate_and_arm(tmp_path, now=NOW)
+
+    assert all("retry" not in row for row in json.loads(path.read_text())["triggers"])
+    after = TriggerStore(base_dir=tmp_path).load()
+    assert sorted(r.trigger.id for r in after) == sorted(before)
+    for row in after:
+        assert row.ok and not row.warnings, row.issues
+        assert {k: v for k, v in row.trigger.to_dict().items() if k != "next_fire_at"} == {
+            k: v for k, v in before[row.trigger.id].items() if k != "next_fire_at"
+        }

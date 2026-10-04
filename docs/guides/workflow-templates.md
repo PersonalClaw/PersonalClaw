@@ -313,6 +313,33 @@ spend a template must hold to a budget: a model step's calls, and those of an ac
 that runs in the gateway, are booked to the run and shown on its page, while a model
 call made by a command that a `bash` step runs is not.
 
+## A run's caps: `defaults.budget`
+
+A template can cap what each of its runs spends:
+
+```json
+"defaults": {"budget": {"max_tokens": 200000, "max_cost": 2.00}}
+```
+
+`max_tokens` is the tokens its steps' model calls use and `max_cost` the dollars
+they cost, each a number of 0 or more, `0` for no cap. A run starts with them and
+pauses once its steps have spent one, saying which: "Paused at its dollar budget:
+$2.04 of $2.00 spent." Nothing new starts once a cap is reached, and the steps
+already running finish first, so a run can pass a cap by what they spent. On the
+run page, Resume asks for the cap it reached and goes on with it raised, and only
+you can raise it.
+
+A step on a model with no price pauses a run that has a dollar cap, because the
+cap cannot count what it spent: give the model a price in **Settings → Usage →
+Model prices**, $0 for one that costs nothing, or press Resume, which goes on past
+that step and leaves it out of the run's dollar figure. A run with no dollar cap is
+not stopped by one.
+
+A run that another run starts, or an automation's action, is held inside what
+that one has left, in tokens and in dollars: its own caps can narrow what it
+spends and never widen it. A cap that is not a number of 0 or more is refused when
+you save, and a key that names no cap is warned of, since it holds nothing.
+
 ## Concurrency
 
 `max_concurrency` on a `foreach` caps how many *items* are in flight. Set it when
@@ -339,7 +366,8 @@ Inputs are resolved against the *parent* before the child is created, because
 the child cannot interpret `{{nodes.…}}` from a graph it is not part of. Depth is
 capped at 3, and a workflow that references itself is refused before anything is
 created. Bind to the result via `{{nodes.nested.output.status}}` and
-`{{nodes.nested.output.outputs}}`.
+`{{nodes.nested.output.outputs}}`. The child run is held inside what the parent's
+budget has left, and what it spends is booked on the step that waits for it.
 
 ## Before you ship it
 

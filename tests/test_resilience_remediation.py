@@ -576,29 +576,39 @@ def test_judgment_job_spend_accrues_under_the_doctor_run_key(tmp_path, monkeypat
 
 
 def test_max_cost_usd_stops_the_judgment_lane_before_running(tmp_path, monkeypatch):
-    # Doctor spend already at/over the cap must stop the judgment lane BEFORE the next
-    # judgment job runs — the third stop condition, alongside target_score and exhausted.
-    meter = _isolated_meter(tmp_path, monkeypatch)
-    meter.charge(0, 0.60, run_key="doctor")  # already over a $0.50 cap
+    # Doctor spend at/over the cap must stop the judgment lane BEFORE the next judgment job
+    # runs — the third stop condition, alongside target_score and exhausted. The cap holds ONE
+    # run ("Max Cost / Run"), so it is this run's first job that spends past it.
+    from personalclaw.guardrails.budgets import current_run_key
 
-    ran = {"n": 0}
-    rem.register_job(
-        RemediationJob(
-            id="fix.j",
-            title="Judge",
-            run=lambda: ran.__setitem__("n", ran["n"] + 1) or "judged",
-            fixes_deficit="a",
-            lane="judgment",
+    meter = _isolated_meter(tmp_path, monkeypatch)
+    ran: list[str] = []
+
+    def _spend(job_id: str):
+        def run() -> str:
+            ran.append(job_id)
+            meter.charge(0, 0.60, run_key=current_run_key() or None)
+            return "judged"
+
+        return run
+
+    for job_id, deficit in (("fix.j1", "a1"), ("fix.j2", "a2")):
+        rem.register_job(
+            RemediationJob(
+                id=job_id, title="Judge", run=_spend(job_id), fixes_deficit=deficit, lane="judgment"
+            )
         )
-    )
     monkeypatch.setattr(
         rem,
         "measure_deficits",
-        lambda: [Deficit(key="a", count=20, weight=1.0, max_penalty=20.0, job_id="fix.j")],
+        lambda: [
+            Deficit(key="a1", count=20, weight=1.0, max_penalty=20.0, job_id="fix.j1"),
+            Deficit(key="a2", count=20, weight=1.0, max_penalty=20.0, job_id="fix.j2"),
+        ],
     )
     result = rem.run_remediation(target_score=90, max_cost_usd=0.50, now=1000.0)
     assert result.stopped_reason == "max_cost_usd $0.5 reached"
-    assert ran["n"] == 0  # the cap stopped it before it ran
+    assert len(ran) == 1  # the cap stopped the second before it ran
 
 
 def test_deterministic_jobs_ignore_the_doctor_cost_cap(tmp_path, monkeypatch):

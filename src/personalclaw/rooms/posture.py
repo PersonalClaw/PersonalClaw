@@ -89,15 +89,7 @@ from personalclaw import approval_grants, session_keys
 from personalclaw.approval_grants import ToolDecision
 from personalclaw.approval_source import ROOM_SOURCE
 from personalclaw.audit_subject import log_title
-from personalclaw.guardrails.budgets import (
-    Budget,
-    BudgetVerdict,
-    get_meter,
-    reset_current_run_budget,
-    reset_current_run_key,
-    set_current_run_budget,
-    set_current_run_key,
-)
+from personalclaw.guardrails.budgets import Budget, BudgetVerdict, get_meter, held_within
 from personalclaw.guardrails.ceiling import widening_scopes
 from personalclaw.guardrails.policy import (
     READ_ONLY_REASON,
@@ -859,11 +851,10 @@ def member_spend_scope(key: str, profile: SafetyProfile) -> Iterator[None]:
     ``ModelCallGuard`` reads ``current_run_budget()`` on every call and raises
     ``BudgetExceededError`` once the run total passes it. Without it the key would only accrue
     a total :func:`spend_verdict` reads on the NEXT turn.
+
+    The member's ceiling is held inside any run scope the turn already runs within
+    (``budgets.held_within``): an automation's per-run ceiling still holds its calls, and its
+    total counts what the turn spent. The member's own account is kept across its turns.
     """
-    key_token = set_current_run_key(key)
-    budget_token = set_current_run_budget(profile.budget)
-    try:
+    with held_within(key, profile.budget):
         yield
-    finally:
-        reset_current_run_budget(budget_token)
-        reset_current_run_key(key_token)

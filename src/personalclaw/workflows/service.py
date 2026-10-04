@@ -47,6 +47,7 @@ from personalclaw.workflows import (
     models,
     mutations,
     provisioning,
+    run_budget,
     secrets,
     store,
     template_lint,
@@ -61,6 +62,7 @@ from personalclaw.workflows.models import (
     LifecyclePhase,
     Node,
     OriginKind,
+    RunBudget,
     RunOrigin,
     RunStatus,
     WorkflowDef,
@@ -744,6 +746,7 @@ async def start_run(
     policy_overrides: dict[str, Any] | None = None,
     document: str = "",
     extra: dict[str, Any] | None = None,
+    budget: RunBudget | None = None,
 ) -> dict[str, Any]:
     """Instantiate a def and start driving it.
 
@@ -765,6 +768,9 @@ async def start_run(
     written at create for the same reason: a batch's Allow (`batch_start.CONSENT_KEY`), which its
     first step's spawn reads. Whose work the run is, when *session_key* is an app's work
     (`apps.app_work.RUN_KEY`), is recorded beside them, unless ``extra`` already says.
+
+    ``budget`` is the caps this start sets for its run (a loop's dollar limit), each one it sets
+    in place of the cap its definition declares (`defaults.budget`) and the rest as declared.
     """
     from personalclaw.workflows.effects import START_DEDUPE
     from personalclaw.workflows.supervisor_policy import OVERRIDABLE_POLICY_KEYS
@@ -911,6 +917,10 @@ async def start_run(
 
         run_extra[RUN_DOCUMENT_KEY] = document
 
+    try:
+        caps = run_budget.declared(spec, over=budget)
+    except ValueError as exc:
+        return _service_failure("WF_RUN_BUDGET_INVALID", f"the run cannot start: {exc}")
     run = store.create(
         WorkflowRun(
             id="",
@@ -921,6 +931,9 @@ async def start_run(
             mode=mode if mode in ("blocking", "background") else "background",
             project_id=project_id,
             origin=RunOrigin(kind=origin_kind, session_key=session_key),
+            # The caps its definition declares (`defaults.budget`), which it pauses at, with any
+            # this start sets in their place.
+            budget=run_budget.for_run(caps),
             policy_overrides=overrides,
             loop_kind=loop_kind,
             title=title,
@@ -1180,6 +1193,11 @@ def status(run_id: str) -> dict[str, Any]:
         # each escalation overwrote it, so a run whose two steps both gave up showed one.
         escalations=_escalations(run_id),
         tokens=run.total_tokens,
+        # What it is held to and what it has spent against that, as the run page shows them: its
+        # caps (`0` = none), what its steps and the runs they started booked, how many of its
+        # steps no price covered (the dollar figure is then a floor), and whether it is paused at
+        # a cap, which its owner lifts by raising it as she resumes (`resume_run`).
+        **run_budget.shown(run),
         elapsed_secs=run.elapsed_seconds,
         # The containing project, so the run view can offer per-project controls (the R14
         # judge-guidance override writes through the project, which is what reaches this
@@ -2117,12 +2135,19 @@ def resume_run(
     answer: Any = None,
     channel: str = "",
     always_allow: bool = False,
+    budget: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Answer a gate, or clear a pause.
 
     *by* is who is asking. Anyone who may resume the run may clear its pause; only you answer
     its gate (`controller.resume`, which refuses anyone else before the token is touched). An
     `event` gate is the exception: the trigger it waits for answers it too.
+
+    *budget* is the caps a cleared pause goes on with (``max_tokens`` / ``max_cost``, ``0`` for
+    none; a cap it leaves out stays as it is): how a run paused at its budget is resumed
+    (`run_budget.resume_refusal`). Only you raise a run's caps, or let it go on past a step its
+    dollar cap could not count, and a resume that would only pause again at the same cap is
+    refused rather than answered `resumed`.
 
     When no token is given the newest pending continuation is used — a chat user says
     "approve it", not a 32-character token. If several gates are pending, the token becomes
@@ -2158,7 +2183,17 @@ def resume_run(
             status=run.status.value,
         )
 
+    if budget is not None and (answer is not None or token):
+        return _service_failure(
+            "WF_RUN_BUDGET_INVALID",
+            "a budget goes with a resume that clears a pause, not with a gate's answer",
+        )
     if answer is None and not token:
+        # Within its budget first: a run that would pause again at the cap it stopped at is told
+        # so, with what it spent, instead of being woken to stop where it stands.
+        held = run_budget.resume_refusal(run, by=by, budget=budget)
+        if held is not None:
+            return held
         # Clear the pause, then restart the loop that was stopped by it. A controller that is
         # still registered has an EXITED tick loop (that is what a pause is), so it must be woken;
         # with none (a restart), the watchdog adopts the run on its next poll now that no pause

@@ -43,7 +43,6 @@ DEFINITION_FIELDS = frozenset(
         "model_tier",
         "delivery",
         "failure_delivery",
-        "retry",
         "failure_policy",
         "yield_to_user",
         "resource_slots",

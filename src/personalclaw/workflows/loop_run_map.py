@@ -357,17 +357,19 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "max_cost_usd",
         RUN,
         "WorkflowRun.budget.max_cost",
-        "Same 0-=-uncapped money ceiling (`AG-14`). SEMANTICS DIFFER at the breach: the loop "
-        "completes non-genuine with stop_reason=cost_budget, while a run's budget breach PAUSES "
-        "resumably — the migration must pick one posture, and that choice is the row's decision.",
+        "Same 0-=-uncapped money ceiling (`AG-14`), written at create by the loop door "
+        "(`loop_routes`): a run-backed loop's dollar limit is its run's dollar budget. The breach "
+        "PAUSES the run resumably (`controller._step`) where a loop completed non-genuine with "
+        "stop_reason=cost_budget, so its owner raises the limit and goes on.",
     ),
     FieldHome(
         "deadline_secs",
         NONE,
         "",
         "NO HOME. `AG-14`'s active-runtime ceiling (banked elapsed + current stretch). RunBudget "
-        "caps tokens/cost/retries and RunDefaults bounds only per-node timeouts — no run-wide "
-        "wall/active-time budget exists, so a silent migration drops the time ceiling entirely.",
+        "caps tokens and cost and RunDefaults bounds only per-node timeouts — no run-wide "
+        "wall/active-time budget exists, so the loop door refuses a time limit for a run-backed "
+        "kind (`loop.validation`) rather than drop it silently.",
     ),
     FieldHome(
         "stop_reason",

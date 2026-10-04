@@ -36,7 +36,7 @@ from personalclaw.workflows.models import (
     spec_path,
     walk,
 )
-from personalclaw.workflows.step_usage import subagent_usage
+from personalclaw.workflows.step_usage import charge, subagent_usage
 
 if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
@@ -134,8 +134,7 @@ def reconcile_dispatched_stages(ctl: RunController) -> None:
         # `total_tokens: 0`. Charged and journaled for BOTH outcomes, as `_apply` does: a
         # reaped stage burned its whole deadline.
         usage = subagent_usage(info)
-        inst.tokens = usage.billable()
-        ctl.run.total_tokens += inst.tokens
+        inst.tokens = charge(ctl.run, usage)
         if getattr(info, "declined", False) is True:
             # She pressed Deny on the approval its start asked for: her decision, not a failure.
             # The step is DECLINED, saying so, with no failure class and no remedy — there is

@@ -359,6 +359,16 @@ class RunWorkflowActionProvider(ActionProvider):
         extra = input_secrets.stamp(extra, coerced, handed)
         if carried is not None:
             extra = automation_version.stamp(extra, carried)
+        from personalclaw.workflows import run_budget
+
+        caps, unreadable = run_budget.child_caps(spec, parent=parent)
+        if unreadable:
+            return ActionResult(
+                success=False,
+                error=f"run-workflow: did not start {name!r}: {unreadable}",
+                stderr="the workflow's definition declares a budget no run can be held to",
+                failure_class="user",
+            )
         run = store.create(
             WorkflowRun(
                 id="",
@@ -368,6 +378,8 @@ class RunWorkflowActionProvider(ActionProvider):
                 # traced to the spec it read, an older version included.
                 spec_version=fire.version,
                 inputs=run_inputs,
+                # Its definition's caps, inside what the run whose step started it has left.
+                budget=caps,
                 mode=str((action_config or {}).get("mode", "background") or "background"),
                 project_id=project,
                 # The trigger whose fire this is, so the run says how it went on the trigger's

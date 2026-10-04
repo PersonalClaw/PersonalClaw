@@ -12,6 +12,7 @@ is checked here (:func:`runtime_errors`), against the runtimes registered when i
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import asdict, dataclass
 
@@ -26,6 +27,22 @@ _MIN_TASK_LEN = 12
 # server enforces it too. Ported from the legacy code validator's _MAX_TASK_LEN, which
 # the unified-validator cutover dropped (FE still referenced "the server cap").
 _MAX_TASK_LEN = 100_000
+
+
+def run_dollar_cap(config: dict) -> float | None:
+    """A run-backed loop's dollar limit (``max_cost_usd``) as its run's dollar budget: ``0.0``
+    when it sets none, ``None`` when it is not a number of 0 or more. A numeric string reads as
+    its number, as :func:`_as_int` reads one."""
+    raw = config.get("max_cost_usd")
+    if raw is None or raw == "":
+        return 0.0
+    if isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw.strip() if isinstance(raw, str) else raw)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
 
 
 def _as_int(value) -> int | None:
@@ -511,6 +528,20 @@ def validate(config: dict, *, agent_exists: bool = True) -> ValidationResult:
             "folder (or the default workspace), so there is no scratch folder to reclaim. "
             "Untick Scratch to start it."
         )
+    # Its dollar limit is the run's dollar budget, which pauses it when its steps have spent it
+    # (`workflows.run_budget`), so it is read as one: a number of 0 or more. A time limit has no
+    # home on a run, which is held to tokens and dollars only: refused for the reason Scratch is,
+    # rather than dropped.
+    if kind in PORTED_LOOP_KINDS:
+        if run_dollar_cap(config) is None:
+            errors.append("The dollar limit must be a number of 0 or more (0 is no limit).")
+        deadline = config.get("deadline_secs")
+        if deadline not in (None, "", 0) and deadline != "0":
+            errors.append(
+                f"A time limit isn't available for a {kind} loop: it runs as a workflow run, "
+                "which is held to a token and a dollar budget but not to a time. Clear the time "
+                "limit to start it."
+            )
 
     # An uncapped loop (max_cycles=0) estimates against the hard cap — and the duration
     # must derive from the SAME effective count, never N cycles but 0 minutes.

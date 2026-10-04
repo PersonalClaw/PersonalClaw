@@ -74,6 +74,7 @@ from personalclaw.workflows import (
     mutations,
     node_bindings,
     run_admission,
+    run_budget,
     run_finish,
     run_start,
     stage_settlement,
@@ -96,6 +97,7 @@ from personalclaw.workflows.models import (
     Node,
     NodeInstance,
     NodeKind,
+    RunBudget,
     RunStatus,
     WorkflowRun,
     cancelled_because,
@@ -109,11 +111,12 @@ from personalclaw.workflows.models import (
 from personalclaw.workflows.resilience import (
     Attempt,
     BreakerState,
+    BudgetVerdict,
     attempt_from_failure,
     check_budget,
     escalation_artifact,
 )
-from personalclaw.workflows.step_usage import NOT_RECORDED, NOTHING_SENT, measured
+from personalclaw.workflows.step_usage import NOT_RECORDED, NOTHING_SENT, charge, measured
 from personalclaw.workflows.tick import (
     Frontier,
     Limits,
@@ -662,6 +665,7 @@ class RunController:
         # Budget pre-charge (WF2-R4 #1): a resumed run inherits its own spend. Without
         # this a crash loop mints a fresh budget each time and spends without bound.
         tokens_recorded = self._inherit_ledger_tokens(totals)
+        self._inherit_ledger_spend(totals)
         token_cap = int(getattr(self.run.budget, "max_tokens", 0) or 0)
         if resumed and token_cap and not tokens_recorded:
             # UNKNOWN is not free. A capped resume whose earlier steps never recorded their token
@@ -723,6 +727,16 @@ class RunController:
         self.run.total_tokens = max(self.run.total_tokens, int(tokens))
         return True
 
+    def _inherit_ledger_spend(self, totals: dict[str, Any]) -> None:
+        """Carry the ledger's dollars onto the run row, and how many of its steps no price
+        covered, the way :meth:`_inherit_ledger_tokens` carries tokens: a resumed run's dollar cap
+        is held to everything it already spent, and a dollar figure that is a floor (``priced``
+        false) still counts each step it leaves out."""
+        self.run.total_cost_usd = max(self.run.total_cost_usd, float(totals.get("cost_usd") or 0))
+        if totals.get("priced") is False:
+            unpriced = int(totals.get("unpriced_steps") or 0)
+            self.run.unpriced_steps = max(self.run.unpriced_steps, unpriced)
+
     async def _step(self) -> bool:
         """One scheduling step under the lock. Returns True when the run is terminal.
 
@@ -739,6 +753,10 @@ class RunController:
         if store.pause_requested(self.run.id):
             await self._pause()
             return True
+
+        # The caps its owner set as she resumed it (`service.resume_run`): an intent like the two
+        # above, taken here, before anything below is held to them.
+        self._take_budget_request()
 
         # Incident mode holds the run (`incident_hold`): after a cancel and a pause, so either still
         # ends or parks a held run, and before anything below starts work.
@@ -792,12 +810,16 @@ class RunController:
             await self._finish(status, error=ending_sentence.for_failures(self))
             return True
 
-        self._check_budget_warning()
-
-        if self._budget_exceeded():
-            # SOFT budget: pause resumably rather than fail. The user can extend and
-            # resume; killing the run would discard completed work.
-            await self._finish(RunStatus.PAUSED, error="budget cap reached")
+        budget = self._budget_verdict()
+        self._warn_of(budget)
+        if budget.over:
+            # SOFT budget: pause resumably rather than fail; its owner raises the cap and resumes,
+            # and killing the run would discard completed work. Nothing new starts, and what is
+            # already running finishes and is booked before the run pauses: a step stopped
+            # mid-way would leave what it had spent uncounted, and be paid for again on resume.
+            if self._inflight or stage_settlement.awaiting_out_of_band_work(self):
+                return False
+            await self._finish(RunStatus.PAUSED, error=budget.reason)
             return True
 
         # Untaken branch paths become SKIPPED before scheduling. A skipped node is
@@ -1715,8 +1737,11 @@ class RunController:
             return
 
         # What this attempt's model calls used, for the row that ends it and the run's charge —
-        # whichever way it ended, a retried attempt included (`step_usage`).
+        # whichever way it ended, a retried attempt included (`step_usage`). A subworkflow's is
+        # what the run it waited for booked (`run_budget.child_usage`).
         usage = measured(entry.calls, estimate=result.tokens)
+        if item.node.kind == NodeKind.SUBWORKFLOW:
+            usage = run_budget.child_usage(usage, result.output)
         inst.model_substituted = list(usage.substitutions)  # "ran on X instead of Y", for the row
         # Retry, when the failure class says it is worth spending on. The attempt is
         # RECORDED before the retry so the next one can be corrected rather than blind —
@@ -1752,7 +1777,7 @@ class RunController:
                     attempt=inst.attempt,
                     retries_exhausted=False,
                 )
-                self.run.total_tokens += usage.billable(result.tokens)
+                charge(self.run, usage, estimate=result.tokens)
                 return
 
         inst.state = result.state
@@ -1849,7 +1874,7 @@ class RunController:
                 self._outputs[item.node.id] = preview
             # The run row keeps the dispatcher's estimate as a FLOOR when the provider reported no
             # usage — a budget must still see the spend — while the ledger says "not recorded".
-            self.run.total_tokens += int(inst.tokens)
+            charge(self.run, usage, estimate=result.tokens)
             self.journal.step_completed(
                 item.path,
                 item.node.id,
@@ -1889,7 +1914,7 @@ class RunController:
                 # lines below, and shadowing it made every failing node crash the tick.
                 ref, _unused = self.journal.store_output(item.path, result.output)
                 inst.output_ref = ref
-            self.run.total_tokens += int(inst.tokens)
+            charge(self.run, usage, estimate=result.tokens)
             self.journal.step_failed(
                 item.path,
                 item.node.id,
@@ -1978,21 +2003,37 @@ class RunController:
             {"node_id": node_id, "kind": "escalation", "ask": artifact},
         )
 
-    def _check_budget_warning(self) -> None:
-        """Emit the 80% warning ONCE per run, so a user can extend before work stops."""
-        cap = getattr(self.run.budget, "max_tokens", 0) or 0
-        verdict = check_budget(self.run.total_tokens, int(cap))
+    def _budget_verdict(self) -> BudgetVerdict:
+        """Where the run stands against its caps (`resilience.check_budget`), counting what the
+        runs its steps started booked too (`run_budget.spent`). A run with no caps reads none."""
+        if self.run.budget.is_unlimited:
+            return BudgetVerdict()
+        return check_budget(self.run.budget, run_budget.spent(self.run))
+
+    def _warn_of(self, verdict: BudgetVerdict) -> None:
+        """Emit the 80% warning ONCE per run, so a user can extend before work stops. Caps its
+        owner raises arm it again."""
         if verdict.warn and not self._budget_warned:
             self._budget_warned = True
             self._publish(
                 "workflow_run_update",
-                {
-                    "status": self.run.status.value,
-                    "budget_warning": verdict.reason,
-                    "spent": verdict.spent,
-                    "cap": verdict.cap,
-                },
+                {"status": self.run.status.value, "budget_warning": verdict.reason},
             )
+
+    def _take_budget_request(self) -> None:
+        """Take the caps the run's owner set as she resumed it (`store.request_budget`), and the
+        steps no price covered that she let it go on past."""
+        requested = store.budget_request(self.run.id)
+        if requested is None:
+            return
+        self.run.budget = RunBudget.from_dict(requested)
+        allowed = int(requested.get("unpriced_allowed", 0) or 0)
+        self.run.unpriced_allowed = max(
+            self.run.unpriced_allowed, min(allowed, self.run.unpriced_steps)
+        )
+        self._budget_warned = False
+        store.clear_budget_request(self.run.id)
+        self._save_run()
 
     def _decline(self, inst: NodeInstance, edges: list[str]) -> None:
         if not edges:
@@ -2124,10 +2165,6 @@ class RunController:
             return None
         return max(0.05, min(TICK_WAKE_SECS, min(deadlines) - time.time()))
 
-    def _budget_exceeded(self) -> bool:
-        cap = getattr(self.run.budget, "max_tokens", 0) or 0
-        return bool(cap) and self.run.total_tokens >= int(cap)
-
     def _instance(self, path: str) -> NodeInstance:
         inst = self.instances.get(path)
         if inst is None:
@@ -2175,7 +2212,7 @@ class RunController:
             # the finished ones reported is then a floor. Without the row a run cancelled
             # mid-generation had no ledger events at all, and Introspect said nothing cost money.
             usage = measured(entry.calls)
-            self.run.total_tokens += usage.billable()
+            charge(self.run, usage)
             self.journal.step_cancelled(
                 entry.ready.path, entry.ready.node.id, epoch=inst.epoch, usage=usage
             )
@@ -2303,6 +2340,7 @@ class RunController:
             gate_answers.close_waits(self, status)
         totals = journal_mod.run_totals(self.run.id)
         self._inherit_ledger_tokens(totals)
+        self._inherit_ledger_spend(totals)
         self._save_run()
         self._persist_state()
         self.journal.run_finished(
@@ -2318,6 +2356,7 @@ class RunController:
             # paused) is not left behind to read as "paused" by anything that checks it — nor an
             # edit it queued, which a finished run never applies.
             store.clear_pause(self.run.id)
+            store.clear_budget_request(self.run.id)
             store.write_pending_mutations(self.run.id, [])
             # Give the resources back. A lease that outlives its run strands the resource
             # until the TTL runs down, and the next run would sit held by a holder that no longer

@@ -191,9 +191,10 @@ def test_a_non_dict_gates_block_is_survived():
 
 
 def test_the_doctor_names_an_UNMETERED_cap():
-    """🔴 The honest half. `cost_cap` needs per-run spend attribution and `max_runs_per_hour` needs a
-    windowed history query — neither meter exists on this path. Inventing one to satisfy the cap
-    would be the inverted dependency S119 and S129 both refused, so the doctor says so instead."""
+    """🔴 The honest half. A stored row can still carry a cap nothing reads — here the per-window
+    `cost_cap`, which is no gate any more and which its row says is never enforced — and an
+    automation that sets one is NOT bounded by it, so the doctor says so instead of implying it
+    works."""
     from personalclaw.triggers.calendar import diagnose
 
     rows = [{"id": "schedule:clock:x", "gates": {"cost_cap": 5.0, "max_cost_usd_per_run": 1.0}}]
@@ -224,9 +225,9 @@ def test_MAX_FIRES_is_not_in_the_unmetered_set():
 
 def test_the_STORM_SPACING_gates_are_named_too():
     """🔴 S150. A `GATE_KEYS` sweep found five declared gate keys with no reader on the fire path,
-    and the asymmetry made it worth a session: a user setting `cost_cap` was honestly told it is
-    unmetered, while one setting `debounce_secs: 300` got SILENCE — and believed their automation
-    was spacing its fires.
+    and the asymmetry made it worth a session: a user setting a per-window cost cap was honestly
+    told it is unmetered, while one setting `debounce_secs: 300` got SILENCE — and believed their
+    automation was spacing its fires.
 
     `firepath`'s own module docstring names the order as "debounce/quiet/cooldown/condition", so
     three of the four gates it advertises are absent from `GATE_ORDER`.

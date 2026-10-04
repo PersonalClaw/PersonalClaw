@@ -843,7 +843,7 @@ _NOT_CONSUMED = (
 POLICY_OVERRIDE_SECURITY: dict[str, SecurityControl | NotASecurityControl] = {
     "max_cycles": SecurityControl(
         loosens_when_raised(unlimited=0),
-        "The run's loop may repeat more times before it stops — 0 removes the limit.",
+        "The run's loop may repeat more times before it stops.",
     ),
     "autopilot": NotASecurityControl(_NOT_CONSUMED),
     "attended": NotASecurityControl(_NOT_CONSUMED),
@@ -851,9 +851,13 @@ POLICY_OVERRIDE_SECURITY: dict[str, SecurityControl | NotASecurityControl] = {
     "success_criteria": NotASecurityControl(_NOT_CONSUMED),
 }
 
-#: How to read each control's value off a resolved policy, so a write is judged on what the run
-#: would actually get — the template's declared default when the overlay leaves the knob unset.
-_OVERRIDE_READERS: dict[str, Any] = {"max_cycles": lambda policy: policy.budget_max_cycles}
+#: How to read each control's value for one loop node of the run, from the node's config and an
+#: overlay, so a write is judged on what the run would actually get: the cycles the engine stops
+#: the node at (:func:`loop_cycle_cap`), the template's own cap when the overlay leaves the knob
+#: unset or at ``0``.
+_OVERRIDE_READERS: dict[str, Any] = {
+    "max_cycles": lambda config, overrides: loop_cycle_cap(config, overrides)
+}
 
 
 def unconsented_override_loosening(
@@ -867,10 +871,11 @@ def unconsented_override_loosening(
     """``(field, what the owner is asked)`` when replacing the overlay *current* with *new* loosens
     a control on any loop node of the run's spec without ``confirm: true``; ``None`` otherwise.
 
-    Per loop node, because each declares its own ``supervisor:`` block and one overlay applies to
-    all of them: an overlay of ``max_cycles: 10`` tightens a node declaring ``0`` (uncapped) and
-    loosens one declaring ``3``. Removing a knob can loosen too (REPLACE semantics fall back to the
-    template's value), so every control is judged, present in *new* or not.
+    Per loop node, because each declares its own cap and one overlay applies to all of them: an
+    overlay of ``max_cycles: 10`` tightens a node that stops at 20 and loosens one that stops at
+    3, whether its ``max_iterations`` or its ``supervisor`` budget sets that. Removing a knob can
+    loosen too (REPLACE semantics fall back to the template's value), so every control is judged,
+    present in *new* or not.
     """
     from personalclaw.config.edit_spec import unconsented_loosening
     from personalclaw.workflows.models import Node, NodeKind, walk
@@ -885,16 +890,17 @@ def unconsented_override_loosening(
     for _path, node in walk(tree):
         if node.kind is not NodeKind.LOOP:
             continue
-        declared = parse_supervisor_policy((node.config or {}).get("supervisor"))
-        before = apply_policy_overrides(declared, current)
-        after = apply_policy_overrides(declared, new)
         for knob, control in POLICY_OVERRIDE_SECURITY.items():
             if not isinstance(control, SecurityControl):
                 continue
             read = _OVERRIDE_READERS[knob]
             field = f"workflows.runs.{run_id}.policy_overrides.{knob}"
             loosening = unconsented_loosening(
-                field, {"security": control}, current=read(before), new=read(after), body=body
+                field,
+                {"security": control},
+                current=read(node.config, current),
+                new=read(node.config, new),
+                body=body,
             )
             if loosening is not None:
                 return field, loosening
@@ -961,6 +967,26 @@ def loop_iteration_cap(overrides: dict[str, Any] | None) -> int:
     if isinstance(raw, bool) or not isinstance(raw, int):
         return 0
     return max(0, raw)
+
+
+def loop_cycle_cap(config: dict[str, Any] | None, overrides: dict[str, Any] | None) -> int:
+    """The cycles a loop node runs at most on the run path, ``0`` for none: the run's
+    ``max_cycles`` override (:func:`loop_iteration_cap`), else the tighter of the node's own
+    ``max_iterations`` and its supervisor's declared ``budget.max_cycles``.
+
+    The one reader both the engine (`loop_iteration._loop_node_under_overlay`) and the loop
+    surfaces (`loop_view.run_loop_view`) ask, so what a list counts toward is what the engine
+    stops at. The declared ``budget.max_cycles`` used to reach only the convergence tick, which
+    the run path never hands a cycle count, so a template's budget bounded nothing.
+    """
+    cap = loop_iteration_cap(overrides)
+    if cap:
+        return cap
+    cfg = config if isinstance(config, dict) else {}
+    own = cfg.get("max_iterations")
+    own = own if isinstance(own, int) and not isinstance(own, bool) and own > 0 else 0
+    declared = parse_supervisor_policy(cfg.get("supervisor")).budget_max_cycles
+    return min(own, declared) if own and declared else own or declared
 
 
 def policy_for_run(

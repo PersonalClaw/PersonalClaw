@@ -1106,6 +1106,13 @@ async def dispatch_subworkflow(
             "name an earlier run of this workflow in `continue_from`, or leave it blank",
         )
 
+    from personalclaw.workflows import run_budget
+
+    caps, unreadable = run_budget.child_caps(spec, parent=parent)
+    if unreadable:
+        return _fail(
+            FailureClass.USER, f"cannot start {name!r}: {unreadable}", run_budget.UNREADABLE_FIX
+        )
     child = store.create(
         WorkflowRun(
             id="",
@@ -1113,6 +1120,8 @@ async def dispatch_subworkflow(
             status=RunStatus.DRAFT,
             inputs=child_inputs,
             mode="background",
+            # Its definition's caps, inside what its parent has left: never more than that.
+            budget=caps,
             parent_run_id=run_id or None,
             # The ROOT, not the parent: "everything this user request did" is the query that
             # matters, and at depth 3 the parent alone cannot answer it.

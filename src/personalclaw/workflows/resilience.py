@@ -35,6 +35,7 @@ from personalclaw.workflows.models import (
     FailureClass,
     Node,
     NodeKind,
+    RunBudget,
     walk,
 )
 
@@ -335,40 +336,91 @@ def escalation_artifact(
 WARN_FRACTION = 0.8
 
 
-@dataclass
-class BudgetVerdict:
-    over: bool = False
-    warn: bool = False
-    reason: str = ""
-    spent: int = 0
-    cap: int = 0
+@dataclass(frozen=True)
+class RunSpend:
+    """What a run has booked against its caps: the sums of its step rows (`step_usage.charge`),
+    with what the runs its steps started and left running booked (`run_budget.spent`).
+
+    ``unpriced`` is the steps whose spend no price covered, which makes ``dollars`` a floor, and
+    ``unpriced_allowed`` how many of them its owner let it go on past
+    (``WorkflowRun.unpriced_allowed``). A dollar cap cannot count what the others spent.
+    """
+
+    tokens: int = 0
+    dollars: float = 0.0
+    unpriced: int = 0
+    unpriced_allowed: int = 0
 
     @property
-    def fraction(self) -> float:
-        return (self.spent / self.cap) if self.cap else 0.0
+    def unpriced_waiting(self) -> int:
+        """The steps no price covered that its owner has not let it go on past."""
+        return max(0, self.unpriced - self.unpriced_allowed)
 
 
-def check_budget(
-    spent_tokens: int, cap_tokens: int, *, spent_cost: float = 0.0, cap_cost: float = 0.0
-) -> BudgetVerdict:
-    """Evaluate a soft budget. `cap == 0` means unbounded, which is the default: a cap the
-    user did not ask for that silently halts a run is worse than no cap.
+@dataclass(frozen=True)
+class BudgetVerdict:
+    """Whether a run is at a cap (``over``) or past 80% of one (``warn``), and which cap and where
+    the run stands against it (``at``): "its dollar budget: $2.04 of $2.00 spent"."""
+
+    over: bool = False
+    warn: bool = False
+    at: str = ""
+
+    @property
+    def reason(self) -> str:
+        """The sentence: what a run paused at its budget says (its words, whichever cap it
+        reached), or what its warning says; ``""`` while it is inside its caps."""
+        if self.over:
+            return f"Paused at {self.at}."
+        return f"Nearing {self.at}." if self.warn else ""
+
+
+def _money(value: float) -> str:
+    """Dollars as a person reads them: to the cent, or to four figures below a cent."""
+    amount = float(value)
+    return f"${amount:.2f}" if amount >= 0.01 or amount == 0 else f"${amount:.4g}"
+
+
+def _steps(count: int) -> str:
+    return "1 step" if count == 1 else f"{count} steps"
+
+
+def check_budget(budget: RunBudget, spent: RunSpend) -> BudgetVerdict:
+    """Hold a run's spend to its caps, both dimensions by one rule. ``0`` is no cap, which is the
+    default: a cap the user did not ask for that silently halts a run is worse than no cap.
+
+    A step whose spend no price covered blocks a dollar cap rather than counting as $0.00: the
+    cap cannot say whether the run is inside it, so the run pauses there, saying so, until its
+    owner lets it go on past that step (the steps after it count again once the model has a
+    price). A run with no dollar cap is never stopped by one.
 
     `warn` is set whenever the 80% line has been crossed — INCLUDING when already over.
     The two are not mutually exclusive on purpose: a single large node can jump from 40%
     straight past the cap, and treating `over` as "no warning needed" is how a user ends up
     with a paused run and no notice that it was coming.
     """
-    warn = bool(cap_tokens) and spent_tokens >= int(cap_tokens * WARN_FRACTION)
-    if cap_tokens and spent_tokens >= cap_tokens:
-        return BudgetVerdict(True, warn, "token budget reached", spent_tokens, cap_tokens)
-    if cap_cost and spent_cost >= cap_cost:
+    tokens, dollars = budget.max_tokens, budget.max_cost
+    near_tokens = tokens > 0 and spent.tokens >= tokens * WARN_FRACTION
+    near_dollars = dollars > 0 and spent.dollars >= dollars * WARN_FRACTION
+    used = f"its token budget: {spent.tokens:,} of {tokens:,} tokens used"
+    paid = f"its dollar budget: {_money(spent.dollars)} of {_money(dollars)} spent"
+    waiting = spent.unpriced_waiting
+    if tokens > 0 and spent.tokens >= tokens:
+        return BudgetVerdict(True, True, used)
+    if dollars > 0 and waiting:
         return BudgetVerdict(
-            True, warn, f"cost budget reached (${spent_cost:.2f})", spent_tokens, cap_tokens
+            True,
+            True,
+            f"its dollar budget: {_steps(waiting)} ran on a model with no price, so the "
+            f"{_money(dollars)} budget cannot count what {'it' if waiting == 1 else 'they'} spent",
         )
-    if warn:
-        return BudgetVerdict(False, True, "approaching token budget", spent_tokens, cap_tokens)
-    return BudgetVerdict(False, False, "", spent_tokens, cap_tokens)
+    if dollars > 0 and spent.dollars >= dollars:
+        return BudgetVerdict(True, True, paid)
+    if near_tokens:
+        return BudgetVerdict(False, True, used)
+    if near_dollars:
+        return BudgetVerdict(False, True, paid)
+    return BudgetVerdict()
 
 
 def estimate_calls(root: Node) -> dict[str, int]:

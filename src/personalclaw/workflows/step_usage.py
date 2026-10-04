@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from personalclaw.guardrails.calls import CallLog
+    from personalclaw.workflows.models import WorkflowRun
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,33 @@ class StepUsage:
         a budget must still see spend the ledger records as unknown.
         """
         return int(self.tokens) if self.tokens is not None else int(estimate)
+
+    @property
+    def priced(self) -> bool:
+        """Whether a dollar figure covers all of what the attempt spent: no call that had no
+        price, and none cut off before it reported. The row's own ``cost_usd`` is then a floor
+        (`ledger.reader.run_totals` folds it the same way)."""
+        return self.cost_usd is not None and not self.calls_cut_off
+
+
+def charge(run: WorkflowRun, usage: StepUsage, *, estimate: int = 0) -> int:
+    """Charge one ended attempt to its run's row, beside the step row that records it: its tokens
+    (:meth:`StepUsage.billable`), its dollars, and whether a price covered them. Returns the
+    tokens charged, for the instance that keeps them.
+
+    The ONE place a run's spend grows, so what its budget is held to (`resilience.check_budget`)
+    is the sum of its step rows: a dispatched stage's subagent, a stall kill and a cancel are
+    charged by the same rule as an awaited step. An attempt no price covered adds what was priced
+    as a floor and counts as unpriced: a dollar cap cannot count it, and a cut-off or unpriced call
+    is never a free one.
+    """
+    tokens = usage.billable(estimate)
+    run.total_tokens += tokens
+    if usage.cost_usd is not None:
+        run.total_cost_usd = round(run.total_cost_usd + float(usage.cost_usd), 6)
+    if not usage.priced:
+        run.unpriced_steps += 1
+    return tokens
 
 
 #: An attempt that sent nothing to a model: refused before it dispatched, or a gate that timed
@@ -108,12 +136,15 @@ def subagent_usage(info: Any) -> StepUsage:
 
     A 0/0 report stays zero rather than `null`: `SubagentInfo` has no flag like a guarded call's
     `usage_reported`, so a subagent that never reported cannot be told apart from one that failed
-    before its first turn. `getattr` with defaults, because the manager is injected and a stand-in
-    that does not model usage has to read as zero rather than crash the tick.
+    before its first turn. Its cost is `null` when nothing priced its turn (`SubagentInfo.priced`):
+    its `0.0` is then not a price, and booked as one it read as a free step. `getattr` with
+    defaults, because the manager is injected and a stand-in that does not model usage has to read
+    as zero rather than crash the tick.
     """
+    priced = getattr(info, "priced", True) is not False
     return StepUsage(
         tokens=int(getattr(info, "input_tokens", 0) or 0)
         + int(getattr(info, "output_tokens", 0) or 0),
-        cost_usd=float(getattr(info, "cost_usd", 0.0) or 0.0),
+        cost_usd=float(getattr(info, "cost_usd", 0.0) or 0.0) if priced else None,
         model=str(getattr(info, "model", "") or ""),
     )

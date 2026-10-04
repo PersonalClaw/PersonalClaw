@@ -1762,64 +1762,24 @@ class GatewayOrchestrator:
             # `last_failure_at` and `enabled: True` — criterion 3's "autopause after 5" could not
             # possibly hold, because the whole `autopause` module (13 functions) was imported by NO
             # production code and the counter it spends had no writer.
-            # 🔴 BIND the per-fire run scope so model spend is ATTRIBUTABLE.
-            # `SpendMeter.charge` has accepted `run_key=` since guardrails landed and its only
-            # production caller never passed one, so `run_totals` was permanently empty — which is
-            # why `cost_cap`/`max_cost_usd_per_run` sat in `UNMETERED_CAPS` for twenty sessions. A
-            # ContextVar rather than a parameter: the guard is built by `provider_bridge` from
-            # provider config and has no run identity, and threading one in would touch all 33 call
-            # sites that reach the bridge.
-            #
-            # Keyed per FIRE, not per trigger: `max_cost_usd_per_run` is a per-run cap, and a
-            # trigger-scoped key would accumulate across fires and make the second fire of a
-            # healthy automation look over budget. Reset in a `finally` so a raising
-            # provider cannot leak the scope into the next fire on this task.
-            #
-            # 🔴 S154 completes it: binding the KEY made spend attributable, and binding the
-            # CEILING beside it makes `max_cost_usd_per_run` enforceable. Both are ambient for
-            # the same reason — the guard is built from provider config and never sees the
-            # trigger. `run_budget_for` reads only `max_cost_usd_per_run`; `cost_cap` is a
-            # per-window promise with no durable per-window store, so it stays unmetered
-            # rather than being silently re-defined as per-run.
-            from personalclaw.guardrails.budgets import (
-                get_meter,
-                reset_current_run_budget,
-                reset_current_run_key,
-                set_current_run_budget,
-                set_current_run_key,
-            )
-            from personalclaw.triggers.calendar import run_budget_for
-
-            run_key = f"trigger:{trigger.id}:{int(time.time() * 1000)}"
-            run_token = set_current_run_key(run_key)
-            # `getattr` rather than `trigger.gates`, matching this path's house style (`kind`,
-            # `id`, `delivery` are all read the same way): the fire path is driven with partial
-            # trigger shapes, and a ceiling lookup must never be what turns a fire into an error.
-            budget_token = set_current_run_budget(run_budget_for(getattr(trigger, "gates", None)))
+            # 🔴 BIND the fire's run scope (`calendar.run_scope`), so its model spend is
+            # ATTRIBUTABLE and held to the automation's `max_cost_usd_per_run`. A ContextVar
+            # rather than a parameter: the guard is built by `provider_bridge` from provider
+            # config and has no run identity, and threading one in would touch all 33 call sites
+            # that reach the bridge. A run by hand binds the same scope
+            # (`trigger_runs._dispatch_store_action`).
             from personalclaw.net.policy import egress_held_to
+            from personalclaw.triggers.calendar import run_scope
 
-            try:
-                running = True
-                # What the action reaches is held to the egress tier of the identity both gates
-                # above judged it under. Nothing else names the fire's run to the guard: without
-                # this, a ceiling that gives no run on this machine any network let a fire's
-                # webhook or fetch go out. What it writes itself as it runs (an audit row, a log
-                # line) is masked of each value filled in (`filled_secrets.handed`).
-                with egress_held_to(dispatch_key), handed(filled):
-                    result = await provider.execute(config, ctx, timeout=timeout)
-                running, result = False, masked_answer(result, filled)
-            finally:
-                reset_current_run_budget(budget_token)
-                reset_current_run_key(run_token)
-                # 🔴 DROP the per-fire counter. `SpendMeter.end_run` shipped with the module and
-                # had NO caller, and the per-FIRE keying turned that into a real leak:
-                # measured 5000 distinct keys retained after 5000 fires, held for the life of a
-                # gateway process that is meant to run for months. The cap is enforced DURING
-                # the run, so the total has no reader once the fire is over.
-                try:
-                    get_meter().end_run(run_key)
-                except Exception:  # noqa: BLE001 - bookkeeping must not mask a fire's outcome
-                    logger.debug("end_run failed for %s", run_key, exc_info=True)
+            running = True
+            # What the action reaches is held to the egress tier of the identity both gates
+            # above judged it under. Nothing else names the fire's run to the guard: without
+            # this, a ceiling that gives no run on this machine any network let a fire's
+            # webhook or fetch go out. What it writes itself as it runs (an audit row, a log
+            # line) is masked of each value filled in (`filled_secrets.handed`).
+            with run_scope(trigger), egress_held_to(dispatch_key), handed(filled):
+                result = await provider.execute(config, ctx, timeout=timeout)
+            running, result = False, masked_answer(result, filled)
             # The run's audit row at the rung it took, and at `auto_with_undo` its undo. Only for
             # an action that succeeded — a failed action has nothing to take back.
             if bool(getattr(result, "success", False)):

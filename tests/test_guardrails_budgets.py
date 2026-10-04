@@ -730,18 +730,35 @@ def test_the_guard_charges_the_ambient_scope():
     )
 
 
-def test_remediation_binds_the_doctor_scope_its_own_cap_reads():
+def test_remediation_binds_the_doctor_scope_its_own_cap_reads(monkeypatch):
     """🔴 A live reader of an unwritten key. `run_remediation`'s docstring always said it "charges
     the guardrails SpendMeter under run_key `doctor`", and its judgment-lane cap reads
     `run_totals("doctor").dollars >= max_cost_usd` — while nothing ever charged that key, so the cap
-    never bound."""
-    import inspect
+    never bound. Driven: a judgment job's calls are made under `doctor`, held to the cap, and the
+    scope does not outlive the job."""
+    from personalclaw.guardrails.budgets import current_run_budget, current_run_key
+    from personalclaw.resilience import remediation as rem
+    from personalclaw.resilience.remediation import Deficit, RemediationJob
 
-    from personalclaw.resilience import remediation
+    seen: list[tuple[str, Budget]] = []
 
-    source = inspect.getsource(remediation)
-    assert 'set_current_run_key("doctor")' in source
-    assert "reset_current_run_key(token)" in source, "and it must not leak the scope"
+    def judge() -> str:
+        seen.append((current_run_key(), current_run_budget()))
+        return "judged"
+
+    rem.register_job(
+        RemediationJob(id="fix.scope", title="J", run=judge, fixes_deficit="s", lane="judgment")
+    )
+    monkeypatch.setattr(
+        rem,
+        "measure_deficits",
+        lambda: [Deficit(key="s", count=20, weight=1.0, max_penalty=20.0, job_id="fix.scope")],
+    )
+    monkeypatch.setattr(rem, "_load_job_state", lambda: {})
+    monkeypatch.setattr(rem, "_save_job_state", lambda state: None)
+    rem.run_remediation(target_score=90, max_cost_usd=0.75, now=1000.0)
+    assert seen == [("doctor", Budget(max_dollars=0.75))]
+    assert current_run_key() == "" and current_run_budget().is_unlimited, "it leaked the scope"
 
 
 # ── the ENFORCEMENT read: a verdict nobody asked for ──
@@ -900,14 +917,13 @@ def test_the_ambient_ceiling_beats_the_config_default():
 
 
 def test_run_budget_for_reads_only_the_per_run_key():
-    """`cost_cap` is NOT folded in, deliberately. §3.6 defines it per-WINDOW against a persistent
-    table and `ScheduleRun` carries no cost column, so enforcing it off the in-memory per-run meter
-    would quietly enforce a different promise than the one the user wrote down — a control that runs
-    but answers the wrong question, which is worse than one that admits it is unmetered."""
+    """`max_cost_usd_per_run` is the one per-run cap key: a stored per-window `cost_cap`, which is
+    no gate any more, is not read as one — a control that runs but answers a different question
+    is worse than one the doctor names as unread."""
     from personalclaw.triggers.calendar import run_budget_for
 
     assert run_budget_for({"max_cost_usd_per_run": 0.5}).max_dollars == 0.5
-    assert run_budget_for({"cost_cap": 5.0}).is_unlimited, "cost_cap is per-window, not per-run"
+    assert run_budget_for({"cost_cap": 5.0}).is_unlimited, "no per-run cap is set"
     # FAIL-OPEN on a malformed value (§1.4 classifies the per-trigger cap keys fail-open): a typo
     # must not become a $0 ceiling that refuses the trigger's very first model call.
     assert run_budget_for({"max_cost_usd_per_run": "ten"}).is_unlimited
@@ -915,21 +931,29 @@ def test_run_budget_for_reads_only_the_per_run_key():
     assert run_budget_for(None).is_unlimited and run_budget_for({}).is_unlimited
 
 
-def test_the_fire_seam_binds_the_ceiling_and_drops_the_counter():
-    """Two wirings at one seam. The CEILING makes `max_cost_usd_per_run` enforceable; `end_run`
-    fixes a leak the per-FIRE keying created — `SpendMeter.end_run` shipped with no caller, and
-    measured, 5000 fires retained 5000 counters for the life of a gateway meant to run for months.
-    """
-    import inspect
+def test_the_fire_seam_binds_the_ceiling_and_drops_the_counter(monkeypatch):
+    """Two wirings at one seam (`calendar.run_scope`, which a fire and a run by hand both bind). The
+    CEILING makes `max_cost_usd_per_run` enforceable; dropping the counter fixes a leak the per-FIRE
+    keying created — `SpendMeter.end_run` shipped with no caller, and measured, 5000 fires retained
+    5000 counters for the life of a gateway meant to run for months."""
+    from types import SimpleNamespace
 
-    from personalclaw import gateway
+    from personalclaw.guardrails import budgets
+    from personalclaw.triggers.calendar import run_scope
 
-    source = inspect.getsource(gateway)
-    assert 'set_current_run_budget(run_budget_for(getattr(trigger, "gates", None)))' in source
-    assert "reset_current_run_budget(budget_token)" in source, "and it must not leak the ceiling"
-    assert (
-        "get_meter().end_run(run_key)" in source
-    ), "a per-fire run counter has no reader once the fire ends; retaining it grows without bound"
+    meter = budgets.SpendMeter()
+    monkeypatch.setattr(budgets, "get_meter", lambda: meter)
+    trigger = SimpleNamespace(id="clock:x", gates={"max_cost_usd_per_run": 0.5})
+    with run_scope(trigger):
+        key = budgets.current_run_key()
+        assert key.startswith("trigger:clock:x:")
+        assert budgets.current_run_budget() == Budget(max_dollars=0.5)
+        meter.charge_run(key, 100, 0.25)
+    assert budgets.current_run_key() == "" and budgets.current_run_budget().is_unlimited
+    assert meter.run_totals(key).dollars == 0.0, "a per-fire counter has no reader once it ends"
+    # Keyed per RUN: the next run of the same automation starts with nothing spent.
+    with run_scope(trigger):
+        assert meter.run_totals(budgets.current_run_key()).dollars == 0.0
 
 
 def test_end_run_drops_a_counter():

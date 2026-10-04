@@ -258,7 +258,11 @@ def fork_run(
             },
             project_id=parent.project_id,
             mode=parent.mode,
+            # Its parent's caps, and the steps no price covered that its owner let the parent go
+            # on past: the fork carries their rows over with the journal, and is charged them again
+            # from it when it starts.
             budget=parent.budget,
+            unpriced_allowed=parent.unpriced_allowed,
             # It continues its parent's work: a Temporary or Incognito origin's run keeps its mode
             # and the model its work stays on, and the inputs it was handed a secret reference in.
             extra={**ownership.inherited_extra(parent), **input_secrets.carried(parent)},

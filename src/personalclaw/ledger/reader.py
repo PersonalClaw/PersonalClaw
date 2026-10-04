@@ -105,6 +105,9 @@ def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
     model calls used (``workflows.step_usage``). A failed attempt is not free, and a crash loop's
     failed attempts are exactly the spend the resume pre-charge exists to carry. A row with calls
     cut off before they finished (``model_calls_open``) is a floor.
+
+    ``unpriced_steps`` counts the rows that make ``priced`` false: the attempts a dollar cap
+    cannot count in full (``WorkflowRun.unpriced_steps``, which a resume is pre-charged from).
     """
     tokens = 0
     tokens_recorded = True
@@ -112,7 +115,7 @@ def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
     steps = 0
     failures = 0
     cached = 0
-    priced = True
+    unpriced = 0
     for rec in store.read_jsonl(run_id, EVENTS_FILE):
         kind = rec.get("kind")
         if kind == STEP_CACHED:
@@ -132,13 +135,14 @@ def run_totals(store: LedgerStore, run_id: str) -> dict[str, Any]:
             tokens_recorded = False
         tokens += int(rec.get("tokens") or 0)
         if rec.get("cost_usd") is None or cut_off:
-            priced = False
+            unpriced += 1
         cost += float(rec.get("cost_usd") or 0.0)
     return {
         "tokens": tokens if tokens_recorded else None,
         "tokens_recorded": tokens_recorded,
         "cost_usd": round(cost, 6),
-        "priced": priced,
+        "priced": unpriced == 0,
+        "unpriced_steps": unpriced,
         "steps_completed": steps,
         "steps_failed": failures,
         "steps_cached": cached,

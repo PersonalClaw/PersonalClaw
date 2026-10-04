@@ -61,10 +61,13 @@ class TestRunCrud:
                 status=RunStatus.RUNNING,
                 intent="find the latency cause",
                 origin=RunOrigin(kind=OriginKind.CHAT, session_key="s1", tool_call_id="t1"),
-                budget=RunBudget(max_tokens=5000, max_cost=1.5, max_retries=2),
+                budget=RunBudget(max_tokens=5000, max_cost=1.5),
                 inputs={"topic": "checkout"},
                 pinned=True,
                 total_tokens=1234,
+                total_cost_usd=0.42,
+                unpriced_steps=2,
+                unpriced_allowed=1,
             )
         )
         got = st.get(run.id)
@@ -78,6 +81,7 @@ class TestRunCrud:
         assert got.inputs == {"topic": "checkout"}
         assert got.pinned is True
         assert got.total_tokens == 1234
+        assert (got.total_cost_usd, got.unpriced_steps, got.unpriced_allowed) == (0.42, 2, 1)
 
     def test_save_updates_in_place(self) -> None:
         run = st.create(_run())

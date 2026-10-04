@@ -603,15 +603,15 @@ def run_remediation(
     score after each step, stops at target/cost/exhausted. Charges the guardrails
     SpendMeter under run_key ``doctor`` for judgment jobs; deterministic jobs are free.
 
+    ``max_cost_usd`` holds ONE run: the ``doctor`` account starts empty with each run, and a
+    judgment job's calls are held to what is left of it, inside any ceiling the run is already
+    within (``budgets.held_within``, an automation's per-run one), whose account counts them too.
+
     ``dry_run`` computes the plan + score without running any job (the Doctor preview).
     ``deficits`` passes a measurement the caller already took, so a preview beside a score does
     not measure (and run every Doctor check) twice.
     """
-    from personalclaw.guardrails.budgets import (
-        get_meter,
-        reset_current_run_key,
-        set_current_run_key,
-    )
+    from personalclaw.guardrails.budgets import Budget, get_meter, held_within
 
     deficits = measure_deficits() if deficits is None else deficits
     score_before = health_score(deficits)
@@ -627,6 +627,9 @@ def run_remediation(
 
     state = _load_job_state()
     meter = get_meter()
+    if not dry_run:
+        # This run's account: what an earlier run spent is not this one's to stop at.
+        meter.end_run("doctor")
     # Only run jobs whose deficit is present + reachable + non-zero.
     candidates = [
         j
@@ -655,12 +658,11 @@ def run_remediation(
             # did: `run_totals("doctor").dollars` was 0.0 on a fresh meter and stayed 0.0 after any
             # number of model calls, so the judgment-lane cap never bound. A live reader of a
             # total nothing writes. Binding it here means a judgment job's model spend actually
-            # accrues, so the `max_cost_usd` break becomes real.
-            token = set_current_run_key("doctor")
-            try:
+            # accrues, so the `max_cost_usd` break becomes real; and its calls are held to what
+            # is left of it. A deterministic job is free and never blocked by it.
+            ceiling = Budget(max_dollars=max_cost_usd) if job.lane == "judgment" else Budget()
+            with held_within("doctor", ceiling):
                 detail = job.run()
-            finally:
-                reset_current_run_key(token)
             state.setdefault(job.id, {})["last_success_ts"] = now
             result.jobs.append({"id": job.id, "status": "ok", "cost": 0.0, "detail": detail[:200]})
         except Exception as exc:

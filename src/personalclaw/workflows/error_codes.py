@@ -81,6 +81,15 @@ WF_ERROR_CODES: dict[str, str] = {
         "The spec's `name` is not lowercase alphanumeric with hyphens, 1-63 characters."
     ),
     "WF_MISSING_ROOT": "The spec has no `root` node, so there is no tree to run.",
+    "WF_BAD_BUDGET": (
+        "The spec's `defaults.budget`, the caps its runs start with and pause at, is not an "
+        "object, or one of its caps (`max_tokens`, `max_cost`) is not a number of 0 or more "
+        "(`max_tokens` a whole one): a run could not be held to it."
+    ),
+    "WF_BUDGET_UNKNOWN_CAP": (
+        "The spec's `defaults.budget` has a key that names no cap, so it holds nothing: its caps "
+        "are `max_tokens` and `max_cost`."
+    ),
     "WF_UNKNOWN_NODE_KIND": (
         "A node declares a `kind` the node model does not know, so the tree cannot be built."
     ),
@@ -400,6 +409,18 @@ WF_ERROR_CODES: dict[str, str] = {
     ),
     "WF_DROP_LIMIT": "The run already holds the maximum number of dropped files.",
     "WF_DROP_WRITE_FAILED": "Storing the dropped file failed; the message carries the cause.",
+    # ── workflows/run_budget.py — the caps a run is held to ────────────────
+    "WF_RUN_AT_BUDGET": (
+        "A resume would leave the run at a cap of its budget, so it would pause again at once: "
+        "refused with what it has spent, and the run stays paused. Resume it with that cap "
+        "raised above its spend, or set to 0 for none."
+    ),
+    "WF_RUN_BUDGET_INVALID": (
+        "The caps a run would be held to cannot be applied: one a resume asks for, or one its "
+        "definition declares (`defaults.budget`) for a start, is not a number of 0 or more, a key "
+        "a resume names is no cap (`max_tokens`, `max_cost`), or caps came with a gate's answer "
+        "rather than with a resume that clears a pause. Nothing is started or resumed."
+    ),
     # ── workflows/mid_flight.py — an edit's posture screen ─────────────────
     "WF_MUT_NEEDS_OWNER_YES": (
         "The edit of a running workflow would let a step do more than it does (approve its own "
@@ -473,7 +494,8 @@ WF_ERROR_CODES: dict[str, str] = {
         "Only the owner answers a gate: an agent's tool, a trigger, an app or the run itself "
         "cannot, and a remote reply must come from the run's owner (`approval_answer`). Checked "
         "before the token is touched, and deliberately terse — echoing the gate's content to a "
-        "shared channel would leak it to everyone in it."
+        "shared channel would leak it to everyone in it. The same holds for a resume that raises "
+        "a run's caps or lets it go on past a step its dollar cap could not count."
     ),
     "WF_RESUME_UNKNOWN_TOKEN": "No continuation exists for that resume token on this run.",
     "WF_RESUME_EXPIRED": (

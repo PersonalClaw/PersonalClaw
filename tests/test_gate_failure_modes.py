@@ -143,7 +143,8 @@ def test_IDEMPOTENCY_is_never_fail_open():
 
 
 @pytest.mark.parametrize(
-    "cap", ["cost_cap", "rate_cap", "max_runs_per_hour", "max_actions_per_hour", "condition"]
+    "cap",
+    ["max_cost_usd_per_run", "rate_cap", "max_runs_per_hour", "max_actions_per_hour", "condition"],
 )
 def test_a_STORM_GUARD_cap_stays_fail_open(cap):
     """R3's amendment: a budget probe that hangs must not silently stop every automation on the

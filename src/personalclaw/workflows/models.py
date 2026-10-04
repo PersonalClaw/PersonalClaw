@@ -781,28 +781,65 @@ class InputParam:
 
 @dataclass
 class RunBudget:
-    """Soft caps. A breach PAUSES the run resumably rather than killing it — the user
-    can extend and continue, which is the difference between a budget and a bomb."""
+    """A run's caps: tokens (``max_tokens``) and dollars (``max_cost``), ``0`` for no cap.
 
-    max_tokens: int = 0  # 0 = unlimited
+    Soft caps, held where the run books what each attempt at a step used
+    (`step_usage.charge`). Reaching one PAUSES the run resumably rather than killing it: its
+    owner raises the cap and resumes, which is the difference between a budget and a bomb
+    (`resilience.check_budget`). A definition declares them as `defaults.budget`; a run that
+    another run starts is held inside what that run has left (:meth:`within`).
+
+    A step's retries are its own `retry.max_attempts`, not a run-wide count.
+    """
+
+    max_tokens: int = 0
     max_cost: float = 0.0
-    max_retries: int = 3
+
+    @property
+    def is_unlimited(self) -> bool:
+        return self.max_tokens <= 0 and self.max_cost <= 0.0
+
+    def left_after(self, tokens: int, dollars: float) -> RunBudget:
+        """What these caps leave once *tokens* and *dollars* are spent: the rest of each cap,
+        held at the least amount there is when nothing is left, since ``0`` reads as no cap."""
+        return RunBudget(
+            max_tokens=max(1, self.max_tokens - int(tokens)) if self.max_tokens > 0 else 0,
+            max_cost=(
+                round(max(MIN_COST_CAP, self.max_cost - float(dollars)), 6)
+                if self.max_cost > 0
+                else 0.0
+            ),
+        )
+
+    def within(self, outer: RunBudget) -> RunBudget:
+        """The tighter of these caps and *outer*'s in each dimension, where no cap loses to any
+        cap: what a run another run starts is held to (:meth:`left_after` of the other's)."""
+
+        def tighter(own: float, theirs: float) -> float:
+            return min(own, theirs) if own > 0 and theirs > 0 else max(own, theirs)
+
+        return RunBudget(
+            max_tokens=int(tighter(self.max_tokens, outer.max_tokens)),
+            max_cost=round(tighter(self.max_cost, outer.max_cost), 6),
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "max_tokens": self.max_tokens,
-            "max_cost": self.max_cost,
-            "max_retries": self.max_retries,
-        }
+        return {"max_tokens": self.max_tokens, "max_cost": self.max_cost}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> RunBudget:
+        """Tolerant of a stored shape: a negative cap reads as none. A definition's own values
+        are checked where it is saved (`validator`), so a malformed one never reaches here."""
         d = d or {}
         return cls(
-            max_tokens=int(d.get("max_tokens", 0) or 0),
-            max_cost=float(d.get("max_cost", 0.0) or 0.0),
-            max_retries=int(d.get("max_retries", 3) or 3),
+            max_tokens=max(0, int(d.get("max_tokens", 0) or 0)),
+            max_cost=max(0.0, float(d.get("max_cost", 0.0) or 0.0)),
         )
+
+
+#: The least dollar cap a run is held to when what holds it has nothing left: a millionth of a
+#: dollar, the precision a step row books cost at. ``0`` would read as no cap at all.
+MIN_COST_CAP = 0.000001
 
 
 @dataclass
@@ -1173,6 +1210,15 @@ class WorkflowRun:
     completed_at: str | None = None
     elapsed_seconds: float = 0.0
     total_tokens: int = 0
+    #: What the run's steps booked in dollars (`step_usage.charge`), beside `total_tokens`: what a
+    #: dollar cap is held to, and a floor whenever `unpriced_steps` is above zero.
+    total_cost_usd: float = 0.0
+    #: Attempts whose spend no price covered, in full or at all: a model nothing prices, or calls
+    #: cut off before they reported. A dollar cap cannot count what they spent.
+    unpriced_steps: int = 0
+    #: How many of those its owner let the run go on past (`service.resume_run`). A dollar cap
+    #: pauses the run on each one beyond these.
+    unpriced_allowed: int = 0
     agent_count: int = 0
     error_message: str = ""
     attention: dict[str, Any] | None = None
@@ -1240,6 +1286,9 @@ class WorkflowRun:
             "completed_at",
             "elapsed_seconds",
             "total_tokens",
+            "total_cost_usd",
+            "unpriced_steps",
+            "unpriced_allowed",
             "agent_count",
             "error_message",
             "attention",
@@ -1291,6 +1340,9 @@ class WorkflowRun:
             "completed_at": self.completed_at,
             "elapsed_seconds": self.elapsed_seconds,
             "total_tokens": self.total_tokens,
+            "total_cost_usd": self.total_cost_usd,
+            "unpriced_steps": self.unpriced_steps,
+            "unpriced_allowed": self.unpriced_allowed,
             "agent_count": self.agent_count,
             "error_message": self.error_message,
             "attention": self.attention,
@@ -1332,6 +1384,9 @@ class WorkflowRun:
             completed_at=d.get("completed_at"),
             elapsed_seconds=float(d.get("elapsed_seconds", 0.0) or 0.0),
             total_tokens=int(d.get("total_tokens", 0) or 0),
+            total_cost_usd=float(d.get("total_cost_usd", 0.0) or 0.0),
+            unpriced_steps=int(d.get("unpriced_steps", 0) or 0),
+            unpriced_allowed=int(d.get("unpriced_allowed", 0) or 0),
             agent_count=int(d.get("agent_count", 0) or 0),
             error_message=str(d.get("error_message", "") or ""),
             attention=d.get("attention"),

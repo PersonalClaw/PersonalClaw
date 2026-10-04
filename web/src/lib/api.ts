@@ -2328,6 +2328,15 @@ export interface WorkflowRunDetailData {
    *  current-decision slot, which each escalation overwrote. */
   escalations?: Array<Record<string, unknown>>
   tokens?: number; elapsed_secs?: number
+  /** The caps the run is held to (`0` = none): its definition's `defaults.budget`, inside what
+   *  the run or automation that started it had left, or what its owner raised them to. */
+  budget?: { max_tokens: number; max_cost: number }
+  /** What its steps and the runs they started booked against those caps. `unpriced_steps` counts
+   *  the steps no price covered: the dollar figure leaves each out, so it is a floor. */
+  spend?: { tokens: number; dollars: number; unpriced_steps: number }
+  /** Paused at a cap: Resume raises what it reached, or, where its dollar cap could not count a
+   *  step that had no price, goes on without counting that step. */
+  at_budget?: boolean
   // The containing project (empty when unscoped) — the run view scopes its per-project
   // judge-guidance control on this, since that guidance writes through the project and is
   // what reaches this run's worker and judge sessions.
@@ -10878,7 +10887,9 @@ export const api = {
     body: { decisions: Array<{ key: string; outcome: 'accept' | 'reject'; reason?: string }>; dry_run?: boolean },
   ) =>
     post<WorkflowTriageResult>(`/api/workflows/runs/${encodeURIComponent(id)}/review/triage`, body),
-  resumeWorkflowRun: (id: string, body: { answer?: unknown; resume_token?: string; always_allow?: boolean }) =>
+  // `budget` is the caps a cleared pause goes on with: how a run paused at its budget is resumed
+  // (only its owner raises them; a resume still at a cap is refused 409 `at_budget`).
+  resumeWorkflowRun: (id: string, body: { answer?: unknown; resume_token?: string; always_allow?: boolean; budget?: { max_tokens?: number; max_cost?: number } }) =>
     post<{ ok?: boolean; approved?: boolean; node_id?: string; resumed?: boolean }>(`/api/workflows/runs/${encodeURIComponent(id)}/resume`, body),
   rewindWorkflowRun: (id: string, body: { node_id: string; redo_effects?: boolean; force?: boolean; confirm_cascade?: boolean }) =>
     post<{ ok?: boolean; preview: WorkflowCascadePreview }>(`/api/workflows/runs/${encodeURIComponent(id)}/rewind`, body),

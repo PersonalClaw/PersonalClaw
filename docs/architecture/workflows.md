@@ -68,7 +68,7 @@ while not terminal:
 | `execution_hints.py` | the `runtime_hints.execution` half — today, WIP=1 (`single_active_feature`) |
 | `journal.py` | the resume cache and the Run Ledger (one append-only file, read two ways) |
 | `replay.py` | `workflow replay <run_id>` — re-drives the PURE `frontier()` against a run's OWN recorded responses (keyed by `output_ref`) and its recorded clock (the `clock_read` envelope), and diffs the resulting trajectory against the one the run took, reporting the first divergent node. Divergence is a first-class outcome, not a failure |
-| `store.py` | persistence — runs, specs, state, outputs, and the sticky intents a request leaves in a run's folder for its controller (pause, cancel, steering) |
+| `store.py` | persistence — runs, specs, state, outputs, and the sticky intents a request leaves in a run's folder for its controller (pause, cancel, steering, a raised budget) |
 | `versions.py` | the monotonic template version store: append-only per-version snapshots, each saying who saved it (set by the door the save came through), a digest of what a version runs, the typed-op diff, and the L0–L3 maturity computation. Each machine keeps its own history: a sync never carries it |
 | `automation_version.py` | which version of a workflow an automation runs: the one its owner's Allow recorded (kept in the automation's grant), or a newer one she saved in the workflow's editor — never a newer one an agent's tool, a sync, an import or an app saved, which waits for her "Use vN". A version it may run that is no longer kept is refused, never swapped |
 | `mutations.py` | the typed edit grammar and its structural rules |
@@ -82,8 +82,9 @@ while not terminal:
 | `blocks.py` | shared prompt blocks, resolved at definition time |
 | `coalescer.py` | per-observer event batching in front of the SSE write |
 | `projection.py` | the schema-validated run snapshot |
-| `resilience.py` | retries, circuit breaker, budgets |
-| `step_usage.py` | what one attempt at a step used, as every row that ends it records it: `measured()` reads the node's `guardrails.calls` log once for `step_completed`, `step_failed` and `step_cancelled` (tokens and cost as the providers reported them, the model and provider, a floor beside `model_calls_open` when calls were cut off, and `model_substituted` when a fallback served in place of the model asked for) and says what the run row's token budget is charged. `NOTHING_SENT` for an attempt refused before it dispatched |
+| `resilience.py` | retries, circuit breaker, and the budget verdict (`check_budget`): the sentence a run pauses with at its token or dollar cap, or at a step its dollar cap could not count |
+| `step_usage.py` | what one attempt at a step used, as every row that ends it records it: `measured()` reads the node's `guardrails.calls` log once for `step_completed`, `step_failed` and `step_cancelled` (tokens and cost as the providers reported them, the model and provider, a floor beside `model_calls_open` when calls were cut off, and `model_substituted` when a fallback served in place of the model asked for), and books it on the run's row (`charge`): its tokens, its dollars, and an attempt no price covered counted apart rather than as $0.00. `NOTHING_SENT` for an attempt refused before it dispatched |
+| `run_budget.py` | what a run is held to and what it has spent against it: the caps its definition declares (`defaults.budget`, `declared`), held inside what the run that started it, or the automation's run scope it started within, has left (`for_run`), its spend with what the runs its steps started booked (`spent`), what its page shows of them (`shown`), and whether a resume may go on within them (`resume_refusal`) |
 | `liveness.py` | the stall clock: what keeps a working node's clock running — a nested run's heartbeat (`wait_with_progress`) and the latest event the node's model calls received (`last_heard`) — and the per-node window past which a silent node is stopped (`enforce_stall_timeouts`) |
 | `failure_taxonomy.py` | the ONE place that decides whether a failed step's retry can help (only `TRANSIENT`/`NETWORK` are retryable), which is also whether the run page offers Retry. Classified at the cause, typed errors first: `classify_exception()` reads an HTTP status, a transport error's type, the guard's `CircuitOpenError`/`ModelCallTimeout`/`BudgetExceededError` and the provider bridge's WHAT/WHY/FIX before any substring rule; `classify_action_result()` takes a failed action's own `failure_class`, `retry_after` and `agent_error.fix`, and never assumes a silent failure is retryable; `binding_failure()` files a binding by who can fix it; `with_breaker_window()` records the providers a retryable failure called and, while one's breaker is open, when a retry can run (`Failure.retry_at`). A permanent failure's remediation says what to change and where. Lifted out of `engine.py` because three modules consult it — the engine, the controller's terminal-failure path and the gateway's channel injection — and two of them reached it through a function-local import of a private name |
 | `error_codes.py` | `WF_ERROR_CODES` — the registry for the `WF_UPPER_SNAKE` service-result vocabulary (#3499), and the place to look a code up. One derived one-line meaning per code, grouped by the module that raises it so the derivation can be re-checked. Every meaning is read off the raise site — the guard that fires plus the message it emits — never off the name: a plausible-sounding guess reads as authoritative, and an author would act on a contract the engine never implemented. A row is the *stable contract* a caller may branch on, while the per-instance message stays the concrete detail (which node, which key, which run) — which is why, unlike `http_errors.HTTP_ERROR_CODES`, this registry is not also a default message. Carries no severity, because `validator.py`'s `_add` takes one per call and the emitters decide it. Its rail runs BOTH directions — every raised code has a row, and every row is still raised, the half that stops a registry rotting into codes that no longer exist — and EXCLUDES this module from the scan, since its own keys are string literals in core and counting them would make the second direction true by construction |
@@ -574,8 +575,9 @@ from the guard's call log (`step_usage.py`): `step_completed`, `step_failed`
 `tokens`, `cost_usd`, `model`, `provider` and `model_calls_open`. The numbers
 are what the providers reported: `null` where none reported anything, and a
 floor when calls were cut off before they finished, with `model_calls_open`
-counting them. `run_totals`, Introspect and the run row's token charge fold all
-three the same way, so a failed attempt's spend reaches the run's budget.
+counting them. `run_totals`, Introspect and the run row's charge fold all
+three the same way, tokens and dollars, so a failed attempt's spend reaches the
+run's budget.
 
 A step keeps the model it asked for. A binding that cannot be built (a model
 app whose update failed) fails the step, and the failure names the model and
@@ -1014,6 +1016,52 @@ window is still a stall.
 
 `0` means unbounded, for both. A cap the user did not ask for that silently
 halts work is worse than no cap.
+
+## A run's budget
+
+A run's caps are its `RunBudget`: `max_tokens` and `max_cost` (dollars), `0`
+for none. A definition declares them as `defaults.budget`, and a run of it
+starts with them (`run_budget.declared`); a general loop's dollar limit is its
+run's `max_cost`. A cap that is not a number of 0 or more is refused at save
+(`WF_BAD_BUDGET`) and at start (`WF_RUN_BUDGET_INVALID`), never read as none,
+and a key that names no cap is warned of (`WF_BUDGET_UNKNOWN_CAP`).
+
+What a run has spent is what its step rows booked (`step_usage.charge`, kept on
+the run row as `total_tokens` and `total_cost_usd`) and what the runs its steps
+started booked. The controller checks the caps between steps: at a cap it starts
+nothing new, lets the steps already running finish and be booked, and pauses
+with the sentence `resilience.check_budget` writes ("Paused at its dollar
+budget: $0.12 of $0.10 spent."), the token cap the same way. A resume names the
+caps it goes on with (`POST /api/workflows/runs/{run_id}/resume` with
+`budget: {max_tokens, max_cost}`), which the tick loop applies from a sticky
+intent (`store.request_budget`); a resume that would leave the run at a cap is
+refused (`WF_RUN_AT_BUDGET`), and the run stays paused. Raising a cap is the
+owner's alone (`WF_RESUME_NOT_OWNER` for an agent's tool, audited as an answer
+is): a run's agent cannot lift its own run's cap.
+
+**Spend no price covers blocks a dollar cap.** A step whose calls had no price
+(a model the price table does not know, a subagent turn with none) is counted
+apart (`unpriced_steps`), never as $0.00, and a run with a dollar cap pauses at
+it: the cap cannot say whether the run is still inside it. Her resume lets it go
+on past every such step so far (`unpriced_allowed`), and the run's dollar figure
+says it leaves them out. A run with no dollar cap runs on, as before.
+
+**A nested budget stays inside the one it runs within.** A run another run
+starts (a `subworkflow` or `run-workflow` step) starts held, in each dimension,
+to the tighter of its own caps and what that run has left (`run_budget.for_run`),
+and so does a run an automation's action starts, inside what the automation's
+per-run cap has left. The same rule holds below the run, on the guard's ambient
+run scope (`guardrails.budgets.held_within`): a learning replay, a room member's
+turn, the doctor's judgment lane and an optimize search each narrow the ceiling
+bound where they run and charge what they spend to it, and never replace it. A
+subworkflow step books its child's spend on its own row, so it is counted once.
+
+The caps are soft: steps running side by side, and runs started side by side,
+can together pass a cap by what each was allowed before the check saw it.
+
+The run page shows each cap beside what the run has spent against it, and a run
+paused at its budget reads as information rather than a fault: Resume asks for
+the cap it reached and resumes with it raised.
 
 ## Context lifecycle for long horizons
 

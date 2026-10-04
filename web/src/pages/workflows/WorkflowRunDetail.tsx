@@ -24,6 +24,7 @@ import { confirmationPreview, rewindNode } from './reentry'
 import { WorkflowAsk } from './WorkflowAsk'
 import { RunToolApprovals } from './RunToolApprovals'
 import { capsHaveRoom, readEscalations, retryWindow, spendCapStop, stoppedAtBudget } from './attentionMeta'
+import { budgetLine, capsReached, raisedCapProblem } from './runBudgetMeta'
 import { EscalationPanel } from './EscalationPanel'
 import { NodeInspectorDrawer } from './NodeInspectorDrawer'
 import { SteeringPanel } from './SteeringPanel'
@@ -138,6 +139,40 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
       setBusy(false)
     }
   }, [refetch])
+
+  // Resume. A run paused at a cap it reached goes on only with that cap raised, which its owner
+  // sets here (the server refuses a resume that would only pause it again, and anyone but her);
+  // one whose dollar budget could not count a step that had no price goes on past that step.
+  const resume = useCallback(async () => {
+    if (!run) return
+    const hit = capsReached(run)
+    if (!hit.tokens && !hit.dollars) {
+      await act('Resume', () => api.resumeWorkflowRun(runId, {}))
+      return
+    }
+    const spent = run.spend ?? { tokens: 0, dollars: 0, unpriced_steps: 0 }
+    const caps = run.budget ?? { max_tokens: 0, max_cost: 0 }
+    const answers = await promptForm({
+      title: 'Raise its budget to resume',
+      body: run.error ? `${run.error} Set more than it has spent, or 0 for no budget.` : undefined,
+      fields: [
+        ...(hit.dollars ? [{
+          name: 'max_cost', label: 'Dollar budget', initial: String(caps.max_cost), required: true,
+          validate: (v: string) => raisedCapProblem(v, spent.dollars, 'dollars'),
+        }] : []),
+        ...(hit.tokens ? [{
+          name: 'max_tokens', label: 'Token budget', initial: String(caps.max_tokens), required: true,
+          validate: (v: string) => raisedCapProblem(v, spent.tokens, 'tokens'),
+        }] : []),
+      ],
+      confirmLabel: 'Resume',
+    })
+    if (answers === null) return
+    const budget: { max_tokens?: number; max_cost?: number } = {}
+    if (hit.dollars) budget.max_cost = Number(String(answers.max_cost).trim().replace(/^\$/, ''))
+    if (hit.tokens) budget.max_tokens = Number(String(answers.max_tokens).trim())
+    await act('Resume', () => api.resumeWorkflowRun(runId, { budget }))
+  }, [act, run, runId])
 
   // What each step is called, by its id, for the surfaces that are handed only an id — the
   // dialogs, the inspector, the escalation panel, an expired ask. Every one names a step the way
@@ -301,6 +336,8 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
   // A loop that stopped at the budget it was given ends the run `escalated`, and it is not a step
   // that gave up: the page says it stopped at its budget, as the bell does, on every part of it.
   const atBudget = run ? stoppedAtBudget(run.status, run.attention) : false
+  // The caps a run paused at its budget has reached, which its Resume raises (`capsReached`).
+  const reached = run ? capsReached(run) : { tokens: false, dollars: false }
   const look = run ? runLook(run.status, run.held, atBudget) : null
   const StatusIcon = look?.icon
   // What you declined, less what the line a loop waiting on your Deny shows already says.
@@ -549,10 +586,14 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                     page. */}
                 {run.status === 'paused' ? (
                   <HeaderControl icon={Play} label="Resume" priority="primary"
-                    onClick={() => act('Resume', () => api.resumeWorkflowRun(runId, {}))}
-                    title={run.declined_wait
-                      ? 'Resume — its next cycle runs, with anything you told it'
-                      : 'Resume — the step the pause stopped runs again'} />
+                    onClick={resume}
+                    title={run.at_budget
+                      ? (reached.tokens || reached.dollars
+                        ? 'Resume — raise the budget it reached, and it goes on'
+                        : 'Resume — it goes on without counting the step that had no price')
+                      : run.declined_wait
+                        ? 'Resume — its next cycle runs, with anything you told it'
+                        : 'Resume — the step the pause stopped runs again'} />
                 ) : run.pause_requested ? (
                   <HeaderControl icon={Pause} label="Pausing…" priority="primary" title="Pausing"
                     disabled disabledReason="the step in flight is being stopped" />
@@ -598,7 +639,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 ("Stopped because its loop … was stopped."), nor one whose loop waits for you after
                 your Deny. */}
             {run.error && (
-              <p data-type="body-s" className={run.status === 'declined' || run.status === 'cancelled' || atBudget || run.declined_wait ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
+              <p data-type="body-s" className={run.status === 'declined' || run.status === 'cancelled' || atBudget || run.at_budget || run.declined_wait ? 'text-on-surface-var' : 'text-danger'}>{run.error}</p>
             )}
 
             {/* What you declined in the run, in one list: each loop cycle that ended at your Deny
@@ -646,7 +687,9 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
             <div data-type="caption" className="flex flex-wrap items-center gap-l text-on-surface-low">
               <span>run <span className="font-mono">{run.run_id}</span></span>
               <span>spec v{run.spec_version}</span>
-              {run.tokens ? <span className="tabular-nums">{run.tokens.toLocaleString()} tokens</span> : null}
+              {/* What it has spent beside what it may (`budgetLine`): its tokens and its dollars,
+                  each against its cap when it has one, and what the dollar figure leaves out. */}
+              {budgetLine(run).map((piece) => <span key={piece} className="tabular-nums">{piece}</span>)}
               {run.elapsed_secs ? <span className="tabular-nums">{fmtElapsed(run.elapsed_secs)}</span> : null}
             </div>
 

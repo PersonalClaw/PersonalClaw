@@ -107,6 +107,9 @@ def _connect() -> sqlite3.Connection:
             completed_at TEXT,
             elapsed_seconds REAL NOT NULL DEFAULT 0,
             total_tokens INTEGER NOT NULL DEFAULT 0,
+            total_cost_usd REAL NOT NULL DEFAULT 0,
+            unpriced_steps INTEGER NOT NULL DEFAULT 0,
+            unpriced_allowed INTEGER NOT NULL DEFAULT 0,
             agent_count INTEGER NOT NULL DEFAULT 0,
             error_message TEXT NOT NULL DEFAULT '',
             attention TEXT,
@@ -139,6 +142,9 @@ def _connect() -> sqlite3.Connection:
     # `WorkflowRun.belongs_to` reads as the owner's, so a solo install is unchanged.
     # `loop_kind`/`title` likewise: a pre-change run gains them empty, which reads as "not a loop",
     # which is what every run created before the loop door recorded them was.
+    # The booked dollars and the unpriced counts likewise, at zero: a run's controller charges them
+    # again from its ledger whenever it starts (`RunController._prepare`), so a pre-change run
+    # reads its real spend as soon as anything drives it.
     _ensure_columns(
         conn,
         {
@@ -147,6 +153,9 @@ def _connect() -> sqlite3.Connection:
             "origin_harness": "TEXT NOT NULL DEFAULT ''",
             "loop_kind": "TEXT NOT NULL DEFAULT ''",
             "title": "TEXT NOT NULL DEFAULT ''",
+            "total_cost_usd": "REAL NOT NULL DEFAULT 0",
+            "unpriced_steps": "INTEGER NOT NULL DEFAULT 0",
+            "unpriced_allowed": "INTEGER NOT NULL DEFAULT 0",
         },
     )
     # The run-tree query. Without it, listing a tree scans the table.
@@ -157,6 +166,8 @@ def _connect() -> sqlite3.Connection:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
     # The loop listing (`list_loop_runs`) selects on it every time a loop surface polls.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_loop_kind ON runs(loop_kind, created_at)")
+    # The runs a run's steps started (`started_runs`), read on every step of a capped run.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)")
     conn.commit()
     return conn
 
@@ -197,6 +208,9 @@ _COLUMNS = (
     "completed_at",
     "elapsed_seconds",
     "total_tokens",
+    "total_cost_usd",
+    "unpriced_steps",
+    "unpriced_allowed",
     "agent_count",
     "error_message",
     "attention",
@@ -402,6 +416,22 @@ def list_runs(
     finally:
         conn.close()
     return [_row_to_run(r) for r in rows], int(total)
+
+
+def started_runs(run_id: str) -> list[WorkflowRun]:
+    """The runs *run_id*'s steps started and left running (a `run-workflow` step's,
+    ``spawned_by_node_id``), oldest first. Not a subworkflow's run, which the step that started it
+    waits for, nor a fork, which continues a run rather than being its work."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM runs WHERE parent_run_id = ? AND spawned_by_node_id IS NOT NULL "
+            "ORDER BY created_at, id",
+            (run_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [_row_to_run(r) for r in rows]
 
 
 def active_runs() -> list[WorkflowRun]:
@@ -839,6 +869,45 @@ def pause_requested(run_id: str) -> bool:
 
 def clear_pause(run_id: str) -> None:
     (run_dir(run_id) / "PAUSE").unlink(missing_ok=True)
+
+
+#: The caps its owner set for a run that has not yet taken them (:func:`request_budget`).
+BUDGET_FILE = "BUDGET.json"
+
+
+def request_budget(run_id: str, budget: dict[str, Any]) -> None:
+    """Persist the caps a run's owner set as she resumed it (``service.resume_run``): an INTENT
+    the tick loop applies at its next step (`RunController._step`), for the reason a pause is one —
+    the live controller rewrites the whole row from its in-memory copy on every save, so a cap
+    written onto the row by a request handler would be overwritten by the next tick. A file, so a
+    run resumed while the gateway restarts takes the caps it was resumed with."""
+    path = run_dir(run_id) / BUDGET_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps(budget))
+
+
+def budget_request(run_id: str) -> dict[str, Any] | None:
+    """The caps its owner set that the run has not taken yet, or ``None`` when there are none.
+
+    Caps that cannot be read are dropped, logged, and the run keeps the caps it had: they are not
+    caps anybody can be said to have set, and the run then pauses at its budget again, where she
+    sets them once more."""
+    path = run_dir(run_id) / BUDGET_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        logger.warning("run %s: dropped an unreadable %s", run_id, BUDGET_FILE)
+        path.unlink(missing_ok=True)
+        return None
+    return data
+
+
+def clear_budget_request(run_id: str) -> None:
+    (run_dir(run_id) / BUDGET_FILE).unlink(missing_ok=True)
 
 
 #: The run's queue of steering instructions not yet taken (:func:`queue_steering`).

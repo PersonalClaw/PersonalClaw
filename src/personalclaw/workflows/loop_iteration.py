@@ -45,15 +45,18 @@ if TYPE_CHECKING:
 
 
 def _loop_node_under_overlay(ctl: RunController, node: Node) -> Node:
-    """The loop node with the run's ``max_cycles`` override applied as its iteration cap.
+    """The loop node with its cycle budget applied as its iteration cap
+    (`supervisor_policy.loop_cycle_cap`): the run's ``max_cycles`` override, else the tighter of
+    its ``max_iterations`` and its supervisor's declared ``budget.max_cycles``.
 
     A template is SHARED across runs, so a per-instance cycle budget cannot live in it (OWNER
     RULING 2); the run's overlay carries it, and this is where it meets the one config key the
     engine bounds iterations by. A copy, never an edit: the spec every other reader walks must
-    keep the template's declaration. No override (or ``0``) returns the node unchanged.
+    keep the template's declaration. A node whose cap is its own ``max_iterations`` returns
+    unchanged.
     """
-    cap = supervisor_policy.loop_iteration_cap(ctl.run.policy_overrides)
-    if not cap:
+    cap = supervisor_policy.loop_cycle_cap(node.config, ctl.run.policy_overrides)
+    if not cap or cap == (node.config or {}).get("max_iterations"):
         return node
     return replace(node, config={**(node.config or {}), "max_iterations": cap})
 

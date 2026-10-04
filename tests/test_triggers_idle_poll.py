@@ -421,3 +421,35 @@ def test_the_sidecar_lands_beside_the_STORE_never_in_the_real_home(tmp_path):
     """The `file_poll`/claims lesson: state describing one store must not live in another."""
     IP.save_state("idle:standup", IP.IdleState(armed_at=NOW), base_dir=tmp_path)
     assert (tmp_path / "trigger-idle" / "idle-standup.json").exists()
+
+
+# ── the caps on how many times an idle trigger that wakes may fire ──
+
+
+@pytest.mark.parametrize(
+    ("where", "cap"),
+    [("gates", {"max_fires": 2}), ("spec", {"max_cycles": 2})],
+)
+def test_an_idle_trigger_that_has_fired_its_cap_is_quiet_and_says_why(tmp_path, where, cap):
+    """Its fires never passed the clock's admission, where `max_fires` binds every other trigger,
+    so neither cap held: set to 2, it fired on every quiet period."""
+    store = TriggerStore(base_dir=tmp_path)
+    trigger = _idle()
+    if where == "gates":
+        trigger.gates = dict(cap)
+    else:
+        trigger.spec = {**trigger.spec, **cap}
+    trigger.run_count = 2
+    store.upsert(trigger)
+    IP.save_state("idle:standup", IP.IdleState(armed_at=NOW), base_dir=tmp_path)
+
+    fires, skipped = IP.due_fires(store, now=NOW + 61, base_dir=tmp_path)
+    assert fires == []
+    assert {(r["trigger_id"], r["reason"]) for r in skipped} == {
+        ("idle:standup", IP.SKIP_BUDGET_SPENT)
+    }
+
+    trigger.run_count = 1  # one fire left
+    store.upsert(trigger)
+    fires, _ = IP.due_fires(store, now=NOW + 61, base_dir=tmp_path)
+    assert [f.trigger.id for f in fires] == ["idle:standup"]

@@ -541,6 +541,10 @@ class SubagentInfo:
     # Its session is that project's: its shell fills `{{secret:NAME}}` from the project's secrets
     # first. Last, for the reason `trigger_id` is.
     project_id: str = ""
+    # False when nothing priced what its turn cost (`routing.rates.CallPrice.priced`): `cost_usd`
+    # is then 0.0, which is not a price, and a run's dollar cap cannot count it
+    # (`workflows.step_usage.subagent_usage`). Last, for the reason `trigger_id` is.
+    priced: bool = True
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -2517,12 +2521,14 @@ class SubagentManager:
                     # its own never named: its child ran on the chain's head and was charged
                     # nothing. An ACP child names neither, and is priced by its runtime and the
                     # model it chose.
-                    cost = price_event(
+                    price = price_event(
                         event,
                         provider=answered_provider(event, "acp"),
                         model=answered_model(event, info.model),
-                    ).dollars
+                    )
+                    cost = price.dollars
                     info.cost_usd = cost
+                    info.priced = price.priced
                     # Write the resolved cost back so the ledger records it without a
                     # redundant second estimate (see _record_subagent_usage).
                     try:

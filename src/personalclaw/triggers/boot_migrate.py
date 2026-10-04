@@ -84,6 +84,7 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
     # after that — an import there left its loops out of the item the owner is sent to.
     nudges_absorbed = _absorb_nudges(root, now=now)
     _drop_webhook_token_refs(store)
+    _drop_retry(store)
 
     try:
         report = store.migrate_from_crons(now=now)
@@ -132,6 +133,23 @@ def _drop_webhook_token_refs(store: Any) -> None:
         return
     if dropped:
         logger.info("webhook automations: took the unread token_ref out of %s", ", ".join(dropped))
+
+
+def _drop_retry(store: Any) -> None:
+    """Take ``retry`` out of every automation. Never raises.
+
+    Every row a release before this one wrote carried it, and nothing ever read it: a step's
+    retries are its own. Left in, each such row would read on the Triggers page as carrying a
+    field nothing knows."""
+    try:
+        from personalclaw.triggers.store import drop_field
+
+        dropped = drop_field(store, "retry")
+    except Exception:  # noqa: BLE001 - a store that cannot be rewritten must not stop the gateway
+        logger.warning("could not take retry out of the automations", exc_info=True)
+        return
+    if dropped:
+        logger.info("automations: took the unread retry out of %s", ", ".join(dropped))
 
 
 def _absorb_nudges(root: Path | str, *, now: float = 0.0) -> int:

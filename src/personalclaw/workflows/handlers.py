@@ -101,6 +101,10 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     "WF_RUN_LAUNCH_FAILED": (500, "launch_failed"),
     "WF_RUN_NOT_LIVE": (409, "run_not_live"),
     "WF_RUN_ALREADY_TERMINAL": (409, "already_terminal"),
+    # 409: the request is well-formed and the run's spend is the problem — raising the cap past
+    # what it has spent, or removing it, is how the caller goes on.
+    "WF_RUN_AT_BUDGET": (409, "at_budget"),
+    "WF_RUN_BUDGET_INVALID": (400, "invalid_request"),
     "WF_RUN_NO_SPEC": (500, "spec_unreadable"),
     "WF_RUN_BAD_SPEC": (500, "spec_unreadable"),
     "WF_NODE_NOT_RUN": (409, "not_produced"),
@@ -1621,7 +1625,9 @@ async def api_run_resume(request: web.Request) -> web.Response:
     """Answer a gate, or clear a pause.
 
     The caller is who the request proved (`approval_answer.of_request`): only you answer a gate,
-    and an app or an agent's tool that sends an answer is refused 403 `approval_owner_only`.
+    and an app or an agent's tool that sends an answer is refused 403 `approval_owner_only`. The
+    same holds for `budget`, the caps a cleared pause goes on with (`service.resume_run`): only you
+    raise a run's caps, and a resume still at one is refused 409 `at_budget`.
 
     `channel` marks a REMOTE reply, which the engine owner-binds. An HTTP caller is already
     authenticated by the gateway, so it defaults to local — passing a channel through from
@@ -1640,6 +1646,7 @@ async def api_run_resume(request: web.Request) -> web.Response:
         token=str(body.get("resume_token", "") or ""),
         answer=body.get("answer"),
         always_allow=bool_field(body, "always_allow", default=False),
+        budget=body.get("budget"),
     )
     _audit(request, "workflow_run_resume", "success" if result.get("ok") else "failure", run_id)
     return _reply(result)

@@ -34,8 +34,11 @@ Pure functions plus one provider registry. Nothing here fires or writes.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
@@ -53,9 +56,9 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 #: `skip_dates`, `duty_gate` and `condition` are all genuinely enforced on the fire path.
 #:
 #: 🔴 The FIVE storm-spacing keys were added S150 after a `GATE_KEYS` sweep found them declared and
-#: unread — and the asymmetry that made it worth a session: a user setting `cost_cap` was honestly
-#: told it is unmetered, while a user setting `debounce_secs: 300` got SILENCE and believed their
-#: automation was spacing its fires. `firepath`'s own module docstring names the order as
+#: unread — and the asymmetry that made it worth a session: a user setting a per-window cost cap was
+#: honestly told it is unmetered, while a user setting `debounce_secs: 300` got SILENCE and believed
+#: their automation was spacing its fires. `firepath`'s own module docstring names the order as
 #: "debounce/quiet/cooldown/condition", so three of the four gates it advertises are absent from
 #: `GATE_ORDER`.
 #:
@@ -66,12 +69,11 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 #:   check rather than as a fire-path gate. That placement is forced by the meter: run totals accrue
 #:   in-process AS the run spends, and the fire seam binds a FRESH per-fire key before the first
 #:   call, so a pre-fire gate would read $0.00 every time and be inert by construction.
-#: * `cost_cap` — still named here, and for a DIFFERENT reason than it used to be. §3.6 defines it
-#:   as a PRE-CLAIM check "against a persistent per-window budget table", and `ScheduleRun` carries
-#:   no cost column, so there is nothing durable to sum a window over: `SpendMeter`'s run scope is
-#:   in-memory and dies with the process. Enforcing it off the per-run meter would silently redefine
-#:   a per-window cap as a per-run one — a control that runs but answers a different question, which
-#:   is worse than one that admits it is unmetered.
+#: * the per-window cost cap is not a gate at all any more: it named no window and no meter could
+#:   sum one, so it was a cap its owner believed held and nothing read. An automation's spend is
+#:   capped per run (`max_cost_usd_per_run`) and per day (the day's dollar budget), both enforced; a
+#:   stored row that still carries the old key is named by the doctor, as every key nothing reads is
+#:   (`models.GATE_KEYS`).
 #: * `max_runs_per_hour` / `max_actions_per_hour` / `rate_cap` — **WIRED S152**, so deliberately
 #:   absent. They needed a windowed history query; `ScheduleRunStore.count_since` is it, and
 #:   `firepath`'s `rate` gate delegates the decision to `missed.within_rate_window`.
@@ -85,7 +87,6 @@ DUTY_GATE_TIMEOUT_SECS = 2.0
 #: Naming beats implying: a user who set a cap believes their automation is bounded.
 UNMETERED_CAPS: frozenset[str] = frozenset(
     {
-        "cost_cap",
         "idempotency",
         "threshold",
     }
@@ -95,9 +96,7 @@ UNMETERED_CAPS: frozenset[str] = frozenset(
 def run_budget_for(gates: dict[str, Any] | None) -> Any:
     """The RUN-scope ceiling a trigger's gates declare, or an unlimited Budget (S154).
 
-    Reads `max_cost_usd_per_run` only. `cost_cap` is deliberately NOT folded in: §3.6 defines it
-    per-WINDOW against a persistent table, and treating it as per-run would quietly enforce a
-    different promise than the one the user wrote down.
+    Reads `max_cost_usd_per_run`, the one per-run cap key.
 
     **Malformed values are ignored rather than defaulted** — the fail-OPEN direction §1.4 assigns
     the per-trigger cap keys. A typo'd `max_cost_usd_per_run: "ten"` must not become a $0 ceiling
@@ -120,6 +119,28 @@ def run_budget_for(gates: dict[str, Any] | None) -> Any:
     except (TypeError, ValueError):
         return Budget()
     return Budget(max_dollars=dollars) if dollars > 0 else Budget()
+
+
+@contextlib.contextmanager
+def run_scope(trigger: Any) -> Iterator[None]:
+    """One run of *trigger*'s action as a run scope of its own, whichever door ran it: its fire,
+    or a run by hand (Run now, an answer, the restart review's Run now).
+
+    Keyed per RUN, not per trigger: ``max_cost_usd_per_run`` is a per-run cap, and a trigger-scoped
+    key would accumulate across fires and make the second fire of a healthy automation look over
+    budget. Its model calls are charged to it and held to that cap (:func:`run_budget_for`) inside
+    any run scope the action is already within (``budgets.held_within``), and its counter is
+    dropped when the action returns: the cap is enforced DURING the run, so the total has no
+    reader after it, and a gateway that runs for months must not keep one per fire. A workflow run
+    the action starts and leaves running takes what the cap has left as its own budget
+    (``workflows.run_budget.for_run``). `getattr` throughout: the fire path is driven with partial
+    trigger shapes, and a ceiling lookup must never be what turns a fire into an error.
+    """
+    from personalclaw.guardrails.budgets import held_within
+
+    key = f"trigger:{getattr(trigger, 'id', '') or ''}:{int(time.time() * 1000)}"
+    with held_within(key, run_budget_for(getattr(trigger, "gates", None)), starting_at=(0, 0.0)):
+        yield
 
 
 #: Day-of-week tokens, Monday-first to match `datetime.weekday()`. Named rather than positional so a
@@ -957,14 +978,19 @@ def diagnose(
                     )
                 )
 
-        # 🔴 CAP KEYS that still enforce nothing. `max_fires` is wired,
-        # but `cost_cap`/`max_cost_usd_per_run` need per-run spend attribution and
-        # `max_runs_per_hour`/`max_actions_per_hour` need a windowed history query — neither meter
-        # exists on this path. Naming them beats implying they work: a user who set a cost cap
-        # believes their automation is bounded.
+        # 🔴 CAP KEYS that enforce nothing: the ones no meter reads (`UNMETERED_CAPS`), and a
+        # stored key that is no gate at all any more (outside `GATE_KEYS`, which its row's own
+        # issues call never enforced). Naming them beats implying they work: a user who set a cost
+        # cap believes their automation is bounded.
         gate_block = entry.get("gates")
         if isinstance(gate_block, dict):
-            unmetered = sorted(k for k in UNMETERED_CAPS if gate_block.get(k))
+            from personalclaw.triggers.models import GATE_KEYS
+
+            unmetered = sorted(
+                k
+                for k in gate_block
+                if gate_block.get(k) and (k in UNMETERED_CAPS or k not in GATE_KEYS)
+            )
             if unmetered:
                 report.findings.append(
                     Finding(
@@ -972,8 +998,9 @@ def diagnose(
                         code="unmetered_cap",
                         detail=f"sets {', '.join(unmetered)}, which no meter reads yet — this "
                         "automation is NOT bounded by that cap",
-                        fix="use gates.max_fires (enforced) to bound total fires, or remove the "
-                        "cap until its meter lands",
+                        fix="use gates.max_fires to bound its fires and "
+                        "gates.max_cost_usd_per_run to bound what each run spends (both "
+                        "enforced), or remove the cap",
                     )
                 )
 

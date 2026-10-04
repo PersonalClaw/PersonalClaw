@@ -47,12 +47,14 @@ calls to each model have cost today, are held in the gateway process's memory.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import itertools
 import json
 import logging
 import math
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -111,6 +113,18 @@ class Budget:
     @property
     def is_unlimited(self) -> bool:
         return self.max_tokens <= 0 and self.max_dollars <= 0.0
+
+    def tighter(self, other: Budget) -> Budget:
+        """The tighter of the two in each dimension, where unlimited loses to any limit: two
+        ceilings that both hold, held together."""
+
+        def cap(a: float, b: float) -> float:
+            return min(a, b) if a > 0 and b > 0 else max(a, b)
+
+        return Budget(
+            max_tokens=int(cap(self.max_tokens, other.max_tokens)),
+            max_dollars=cap(self.max_dollars, other.max_dollars),
+        )
 
 
 class BudgetVerdict(str, Enum):
@@ -550,19 +564,22 @@ class SpendMeter:
             self._seen = {}
         return self._seen
 
-    def charge_run(self, run_key: str, tokens: int, dollars: float) -> None:
+    def charge_run(self, run_key: str, tokens: int, dollars: float, *, unpriced: int = 0) -> None:
         """Record spend against ``run_key``'s run scope ONLY — spend the day scope has already
         counted (a guarded call charged it where it was made), folded into a run it also
         belongs to. :meth:`charge` there would count those dollars against the day twice.
+        ``unpriced`` is how many of those calls had no price, as :meth:`charge` counts them.
         Best-effort; never raises."""
         tokens = max(0, int(tokens or 0))
         dollars = max(0.0, float(dollars or 0.0))
-        if not run_key or (tokens == 0 and dollars == 0.0):
+        unpriced = max(0, int(unpriced or 0))
+        if not run_key or (tokens == 0 and dollars == 0.0 and not unpriced):
             return
         with self._lock:
             rt = self._run_totals.setdefault(run_key, _ScopeTotal())
             rt.tokens += tokens
             rt.dollars += dollars
+            rt.unpriced += unpriced
 
     def end_run(self, run_key: str) -> None:
         """Drop a run's in-memory counter when the run completes."""
@@ -757,6 +774,73 @@ def current_run_budget() -> Budget:
     """The ambient run ceiling, or an unlimited Budget when no run bound one."""
     got = _CURRENT_RUN_BUDGET.get()
     return got if isinstance(got, Budget) else Budget()
+
+
+def _within(own: float, spent: float, outer: float, used: float, least: float) -> float:
+    """One dimension of a nested ceiling (:func:`held_within`): *own*, the nested scope's limit
+    against its account of *spent* (0 for none), held inside what *outer* has left once *used* is
+    spent. With no room left it is the least amount there is rather than 0, which reads as none."""
+    if outer <= 0:
+        return own
+    room = spent + max(0.0, outer - used)
+    return max(least, min(own, room) if own > 0 else room)
+
+
+@contextlib.contextmanager
+def held_within(
+    key: str, budget: Budget, *, starting_at: tuple[int, float] | None = None
+) -> Iterator[None]:
+    """Bind *key* as the run scope of every model call made inside the block, held to *budget*
+    and to what the run scope it is already inside has left: a nested ceiling narrows the one it
+    runs within and never replaces it.
+
+    ``ModelCallGuard`` admits each call against the ambient ceiling before it is made
+    (``model_call.admit_call``) and charges it to the ambient key after, so the calls inside are
+    held, in each dimension, to the tighter of *budget* (against *key*'s account) and what the
+    enclosing scope has left; and what they cost is charged to the enclosing account as the block
+    ends, so its total counts them as its own calls would be counted. With no enclosing scope bound
+    the block is held to *budget* alone.
+
+    *key*'s account persists across blocks (a room member's, over its turns) unless *starting_at*
+    gives what its scope has already spent (tokens, dollars): the account then starts there for the
+    block and is dropped when it ends (a search, whose spend is read from its own ledger).
+    """
+    meter = get_meter()
+    outer_key = current_run_key()
+    # Bound again under its own key, the scope is its own account: nothing to charge across.
+    nested = bool(outer_key) and outer_key != key
+    if starting_at is not None:
+        meter.end_run(key)
+        meter.charge_run(key, max(0, int(starting_at[0])), max(0.0, float(starting_at[1])))
+    before = meter.run_totals(key)
+    ceiling = budget
+    if outer_key:
+        outer, used = current_run_budget(), meter.run_totals(outer_key)
+        ceiling = Budget(
+            max_tokens=int(
+                _within(budget.max_tokens, before.tokens, outer.max_tokens, used.tokens, 1)
+            ),
+            max_dollars=_within(
+                budget.max_dollars, before.dollars, outer.max_dollars, used.dollars, _EPSILON
+            ),
+        )
+    key_token = set_current_run_key(key)
+    budget_token = set_current_run_budget(ceiling)
+    try:
+        yield
+    finally:
+        reset_current_run_budget(budget_token)
+        reset_current_run_key(key_token)
+        after = meter.run_totals(key)
+        if starting_at is not None:
+            meter.end_run(key)
+        if nested:
+            meter.charge_run(
+                outer_key,
+                max(0, after.tokens - before.tokens),
+                max(0.0, after.dollars - before.dollars),
+                unpriced=max(0, after.unpriced - before.unpriced),
+            )
 
 
 def get_meter() -> SpendMeter:

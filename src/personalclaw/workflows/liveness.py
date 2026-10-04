@@ -29,7 +29,7 @@ from personalclaw.workflows.models import (
     spec_path,
     walk,
 )
-from personalclaw.workflows.step_usage import measured
+from personalclaw.workflows.step_usage import charge, measured
 
 if TYPE_CHECKING:
     from personalclaw.guardrails.calls import CallLog
@@ -123,9 +123,8 @@ def enforce_stall_timeouts(ctl: RunController) -> None:
         inst.completed_at = now_stamp()
         # Read before the cancel reaches the calls: each one still open is cut off by it.
         usage = measured(entry.calls)
-        inst.tokens = usage.billable()
+        inst.tokens = charge(ctl.run, usage)
         inst.model_substituted = list(usage.substitutions)
-        ctl.run.total_tokens += inst.tokens
         ctl.journal.step_failed(
             path,
             entry.ready.node.id,

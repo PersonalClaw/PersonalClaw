@@ -26,6 +26,7 @@ from personalclaw.workflows.models import (
     FailureClass,
     InstanceState,
     Node,
+    RunBudget,
 )
 from personalclaw.workflows.resilience import (
     DEFAULT_ERROR_STREAK,
@@ -34,6 +35,7 @@ from personalclaw.workflows.resilience import (
     WARN_FRACTION,
     Attempt,
     BreakerState,
+    RunSpend,
     attempt_from_failure,
     check_breaker,
     check_budget,
@@ -223,29 +225,53 @@ class TestEscalation:
 class TestBudget:
     def test_no_cap_means_unbounded(self) -> None:
         """A cap the user did not ask for that silently halts a run is worse than no cap."""
-        v = check_budget(10_000_000, 0)
-        assert not v.over and not v.warn
+        v = check_budget(RunBudget(), RunSpend(tokens=10_000_000, dollars=500.0, unpriced=3))
+        assert not v.over and not v.warn and v.reason == ""
 
     def test_the_warning_fires_at_the_declared_fraction(self) -> None:
-        v = check_budget(int(1000 * WARN_FRACTION), 1000)
+        v = check_budget(RunBudget(max_tokens=1000), RunSpend(tokens=int(1000 * WARN_FRACTION)))
         assert v.warn and not v.over
+        assert v.reason == "Nearing its token budget: 800 of 1,000 tokens used."
 
     def test_under_the_warning_line_is_silent(self) -> None:
-        assert not check_budget(500, 1000).warn
+        assert not check_budget(RunBudget(max_tokens=1000), RunSpend(tokens=500)).warn
 
     def test_over_the_cap_also_warns(self) -> None:
         """Not mutually exclusive on purpose: one large node can jump from 40% straight
         past the cap, and treating `over` as "no warning needed" leaves the user with a
         paused run and no notice it was coming."""
-        v = check_budget(1500, 1000)
+        v = check_budget(RunBudget(max_tokens=1000), RunSpend(tokens=1500))
         assert v.over and v.warn
 
     def test_a_cost_cap_is_honored_independently(self) -> None:
-        v = check_budget(10, 1_000_000, spent_cost=5.0, cap_cost=1.0)
-        assert v.over and "cost budget" in v.reason
+        v = check_budget(
+            RunBudget(max_tokens=1_000_000, max_cost=1.0), RunSpend(tokens=10, dollars=5.0)
+        )
+        assert v.over and v.reason == "Paused at its dollar budget: $5.00 of $1.00 spent."
 
-    def test_the_fraction_is_reported_for_display(self) -> None:
-        assert check_budget(250, 1000).fraction == 0.25
+    def test_both_caps_pause_in_one_set_of_words(self) -> None:
+        """The token cap and the dollar cap are one budget: the same pause, said the same way."""
+        tokens = check_budget(RunBudget(max_tokens=100), RunSpend(tokens=120))
+        dollars = check_budget(RunBudget(max_cost=0.5), RunSpend(dollars=0.5))
+        assert tokens.reason == "Paused at its token budget: 120 of 100 tokens used."
+        assert dollars.reason == "Paused at its dollar budget: $0.50 of $0.50 spent."
+
+    def test_a_step_no_price_covered_blocks_a_dollar_cap_until_its_owner_lets_it_go_on(
+        self,
+    ) -> None:
+        capped = RunBudget(max_cost=2.0)
+        waiting = check_budget(capped, RunSpend(dollars=0.1, unpriced=2, unpriced_allowed=1))
+        assert waiting.over and waiting.reason == (
+            "Paused at its dollar budget: 1 step ran on a model with no price, so the $2.00 "
+            "budget cannot count what it spent."
+        )
+        assert not check_budget(capped, RunSpend(dollars=0.1, unpriced=2, unpriced_allowed=2)).over
+        # A token cap counts every call, priced or not, so an unpriced step is no reason to stop.
+        assert not check_budget(RunBudget(max_tokens=1000), RunSpend(tokens=10, unpriced=4)).over
+
+    def test_a_cent_below_is_said_to_four_figures_not_as_none(self) -> None:
+        v = check_budget(RunBudget(max_cost=0.004), RunSpend(dollars=0.0042))
+        assert v.reason == "Paused at its dollar budget: $0.0042 of $0.004 spent."
 
 
 class TestCallEstimate:

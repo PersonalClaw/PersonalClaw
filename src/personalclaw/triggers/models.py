@@ -728,7 +728,6 @@ GATE_KEYS: frozenset[str] = frozenset(
         "max_fires",
         "skip_dates",
         "quiet_hours",
-        "cost_cap",
         "max_cost_usd_per_run",
         "max_actions_per_hour",
         "cooldown_secs",
@@ -752,9 +751,10 @@ GATE_KEYS: frozenset[str] = frozenset(
 #: 🔴 TWO VOCABULARIES, and this set has to answer for BOTH.
 #:
 #: `set(firepath.GATE_ORDER) & FAIL_OPEN_GATES` was **empty**. The names here were the
-#: per-trigger CAP KEYS a person edits (`cost_cap`, `rate_cap`, `duty_gate` — the `GATE_KEYS`
-#: vocabulary), while the fire path walks GATE names (`screen`, `quiet`, `duty`, `budget`, `claim`,
-#: `yield`, `capability`, `incident`). So every gate the engine actually runs read "closed",
+#: per-trigger CAP KEYS a person edits (`max_cost_usd_per_run`, `rate_cap`, `duty_gate` — the
+#: `GATE_KEYS` vocabulary), while the fire path walks GATE names (`screen`, `quiet`, `duty`,
+#: `budget`, `claim`, `yield`, `capability`, `incident`). So every gate the engine actually runs
+#: read "closed",
 #: including
 #: `duty` — which §1.4 and `calendar.evaluate_duty` both require to fail OPEN, and which correctly
 #: DOES fail open in practice. The classifier disagreed with the code it was written to
@@ -767,7 +767,6 @@ GATE_KEYS: frozenset[str] = frozenset(
 FAIL_OPEN_GATES: frozenset[str] = frozenset(
     {
         # ── per-trigger cap keys (`GATE_KEYS` vocabulary — what a person edits) ──
-        "cost_cap",
         "max_cost_usd_per_run",
         "max_actions_per_hour",
         "max_runs_per_hour",
@@ -828,7 +827,7 @@ FAIL_CLOSED_GATES: frozenset[str] = frozenset(
 def gate_failure_mode(gate: str) -> str:
     """`open` or `closed` for one gate, when its own check cannot complete.
 
-    Accepts EITHER vocabulary — a per-trigger cap key (`duty_gate`, `cost_cap`) or a fire-path gate
+    Accepts EITHER vocabulary — a per-trigger cap key (`duty_gate`, `rate_cap`) or a fire-path gate
     name (`duty`, `budget`) — because callers legitimately hold one or the other and a classifier
     that silently answered "closed" for the other namespace is what S130 found.
 
@@ -906,7 +905,6 @@ class Trigger:
     #: A SEPARATE route for failures (R12). Failures reach the inbox even when `delivery` is none:
     #: an automation the user asked to stay quiet still has to be able to say it broke.
     failure_delivery: str = "inbox"
-    retry: dict[str, Any] = field(default_factory=dict)
     failure_policy: dict[str, Any] = field(default_factory=dict)
     yield_to_user: bool = False
     resource_slots: list[str] = field(default_factory=list)
@@ -1033,7 +1031,6 @@ class Trigger:
             "model_tier": self.model_tier,
             "delivery": self.delivery,
             "failure_delivery": self.failure_delivery,
-            "retry": dict(self.retry),
             "failure_policy": dict(self.failure_policy),
             "yield_to_user": self.yield_to_user,
             "resource_slots": list(self.resource_slots),
@@ -1348,7 +1345,6 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
         failure_delivery=(
             data["failure_delivery"] if isinstance(data.get("failure_delivery"), str) else "inbox"
         ),
-        retry=dict(data["retry"]) if isinstance(data.get("retry"), dict) else {},
         failure_policy=(
             dict(data["failure_policy"]) if isinstance(data.get("failure_policy"), dict) else {}
         ),

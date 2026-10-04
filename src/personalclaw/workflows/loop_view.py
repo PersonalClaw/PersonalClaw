@@ -183,17 +183,16 @@ def run_loop_view(run: WorkflowRun) -> dict[str, Any]:
 
     Every field is either read off the run or honestly empty: a run has no worker chat session, no
     findings files and no kind_config, so those arrive as their empty values rather than invented
-    ones. The cycle budget is the run's own ``max_cycles`` override when it has one, else the
-    template's declared ``max_iterations`` — the number that ACTUALLY bounds the run, so a list
-    reading "cycle 3/30" means 30 is what the engine will stop at.
+    ones. The cycle budget is the one the engine stops at (`supervisor_policy.loop_cycle_cap`): the
+    run's own ``max_cycles`` override when it has one, else the template's declared cap — so a
+    list reading "cycle 3/30" means 30 is what the engine will stop at.
     """
     spec = store.read_spec(run.id)
     intake = loop_aliases.template_intake(spec)
     loop = _loop_root(spec)
-    cap = supervisor_policy.loop_iteration_cap(run.policy_overrides)
-    if not cap and loop is not None:
-        declared = (loop[1].config or {}).get("max_iterations")
-        cap = declared if isinstance(declared, int) and declared > 0 else 0
+    cap = supervisor_policy.loop_cycle_cap(
+        loop[1].config if loop is not None else None, run.policy_overrides
+    )
     task = str(run.inputs.get(intake.get("task", ""), "") or "")
     criterion = str(run.inputs.get(intake.get("success_criteria", ""), "") or "")
     status, stop_reason, error = loop_ending(run)

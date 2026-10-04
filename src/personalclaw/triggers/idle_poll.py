@@ -105,6 +105,9 @@ SKIP_NUDGE_UNAVAILABLE = "nudge_service_unavailable"
 #: alike, since both start a turn nobody typed — and its state stays un-advanced, so it fires on
 #: the first poll after the switch is off.
 SKIP_INCIDENT = "incident_active"
+#: An idle trigger that wakes has fired as many times as it may (:func:`fires_spent`). It stays
+#: armed and quiet; raising or clearing its cap lets it fire again.
+SKIP_BUDGET_SPENT = "fire_budget_spent"
 
 
 @dataclass
@@ -299,6 +302,27 @@ def _is_nudge(trigger: Any) -> bool:
     return bool(str(spec.get("message") or "").strip())
 
 
+def fires_spent(trigger: Any) -> bool:
+    """Whether an idle trigger that wakes has fired as many times as it may: its `max_fires`
+    gate (``service.budget_spent``, the meter the clock's admission reads), or its spec's
+    `max_cycles`, counted in the fires `note_fire` counts.
+
+    Its fires never pass the clock's admission, where `max_fires` binds every other trigger, so
+    neither cap held for one: set to 2, it fired on every quiet period. A nudge row counts its own
+    cycles in the cycles it delivered (`nudge.NudgeService.fire`), and is not asked here.
+    """
+    from personalclaw.triggers.service import budget_spent
+
+    if budget_spent(trigger):
+        return True
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    try:
+        cap = int(spec.get("max_cycles") or 0)
+    except (TypeError, ValueError):
+        cap = 0
+    return cap > 0 and int(getattr(trigger, "run_count", 0) or 0) >= cap
+
+
 def _nudge_owned_sessions(triggers: list[Any]) -> set[str]:
     """The sessions a nudge row already owns (the anti-double-fire fence, post-port).
 
@@ -343,6 +367,9 @@ def due_fires(
             session_key = scope_session(trigger)
             if not _is_nudge(trigger) and session_key in owned:
                 skipped.append({"trigger_id": trigger.id, "reason": SKIP_AUTONUDGE})
+                continue
+            if not _is_nudge(trigger) and fires_spent(trigger):
+                skipped.append({"trigger_id": trigger.id, "reason": SKIP_BUDGET_SPENT})
                 continue
             due, why = is_idle(trigger, state, now=now)
             if not due:

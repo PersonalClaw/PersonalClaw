@@ -924,14 +924,20 @@ async def _dispatch_store_action(
     claimed = _hold_claim(trigger_id, holder=holder, now=started)
     from personalclaw.guardrails.policy import unattended_dispatch_key
     from personalclaw.net.policy import egress_held_to
+    from personalclaw.triggers.calendar import run_scope
 
     try:
         # The same floor a scheduled fire gets (`firepath.action_timeout`): this passed none, so a
         # `bash` Run now was cut off at 30s where its scheduled fire had 300s. And the same egress
         # tier: what the action reaches is held to the identity a fire of this trigger runs under,
-        # since a Run now is a run of the automation too.
+        # since a Run now is a run of the automation too. So is what it spends: its own run scope,
+        # held to the automation's `max_cost_usd_per_run` as its fire's is (`calendar.run_scope`).
         # And what it writes itself as it runs is masked of each value filled in, as a fire's is.
-        with egress_held_to(unattended_dispatch_key(f"trigger:{trigger_id}")), handed(filled):
+        with (
+            run_scope(trigger),
+            egress_held_to(unattended_dispatch_key(f"trigger:{trigger_id}")),
+            handed(filled),
+        ):
             result = await provider.execute(config, ctx, timeout=action_timeout(provider_name))
     except asyncio.CancelledError:
         # A stop or a restart cut it off. A cancellation is not an `Exception`, so the branch below

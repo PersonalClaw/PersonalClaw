@@ -254,8 +254,16 @@ def test_an_unknown_GATE_is_flagged_as_never_enforced():
 def test_budget_and_storm_gates_FAIL_OPEN():
     """R3's amendment. A budget probe that hangs must not silently stop every automation on the
     machine."""
-    for gate in ("cost_cap", "max_runs_per_hour", "rate_cap", "condition"):
+    for gate in ("max_cost_usd_per_run", "max_runs_per_hour", "rate_cap", "condition"):
         assert gate_failure_mode(gate) == "open"
+
+
+def test_a_per_window_cost_cap_is_no_gate():
+    """It named no window and nothing metered one, so it was a cap its owner believed held and
+    nothing read. A row that sets it is told it is never enforced, as for any key that is no
+    gate."""
+    issues = validate_gates({"cost_cap": 5.0})
+    assert any("never enforced" in i.message for i in issues)
 
 
 def test_an_UNCLASSIFIED_gate_fails_CLOSED():

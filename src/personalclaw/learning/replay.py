@@ -754,15 +754,11 @@ async def replay_proposal(
     The spend bound is bound HERE, around the whole proposal, rather than per call: the
     ContextVars are what ``ModelCallGuard`` reads, and a per-call binding would reset the run
     total before every check and never refuse anything — the inert shape ``budgets``' own
-    docstring records for ``check_run``.
+    docstring records for ``check_run``. It is held inside any ceiling the replay already runs
+    within (``budgets.held_within``), whose account then counts what it spent: a replay's own
+    budget narrows the one it runs inside and never lifts it.
     """
-    from personalclaw.guardrails.budgets import (
-        Budget,
-        reset_current_run_budget,
-        reset_current_run_key,
-        set_current_run_budget,
-        set_current_run_key,
-    )
+    from personalclaw.guardrails.budgets import Budget, held_within
     from personalclaw.guardrails.failure import BudgetExceededError
 
     ceiling = replay_budget() if budget_dollars is None else float(budget_dollars)
@@ -799,29 +795,26 @@ async def replay_proposal(
 
     report = ReplayReport(state=REPLAY_REPLAYED, reason="", budget_dollars=ceiling)
     criteria = criteria_for(prop)
-    key_token = set_current_run_key(RUN_KEY)
-    budget_token = set_current_run_budget(Budget(max_dollars=ceiling))
     try:
-        for case in cases[:MAX_CASES_PER_PROPOSAL]:
-            try:
-                report.cases.append(
-                    await _run_case(
-                        case, prop=prop, criteria=criteria, judge=judge, completion=completion
+        with held_within(RUN_KEY, Budget(max_dollars=ceiling)):
+            for case in cases[:MAX_CASES_PER_PROPOSAL]:
+                try:
+                    report.cases.append(
+                        await _run_case(
+                            case, prop=prop, criteria=criteria, judge=judge, completion=completion
+                        )
                     )
-                )
-            except BudgetExceededError:
-                # The ceiling bit. Everything already scored STAYS on the report — a partial
-                # measurement is real evidence — but the report is marked deferred so the card
-                # says why it is thin instead of implying this was the whole plan.
-                logger.info("replay: learning replay budget exhausted; deferring the rest")
-                report.deferred = True
-                report.reason = UNREPLAYED_BUDGET_EXHAUSTED
-                if not report.scored_cases:
-                    report.state = REPLAY_UNREPLAYED
-                break
+                except BudgetExceededError:
+                    # The ceiling bit. Everything already scored STAYS on the report — a partial
+                    # measurement is real evidence — but the report is marked deferred so the
+                    # card says why it is thin instead of implying this was the whole plan.
+                    logger.info("replay: learning replay budget exhausted; deferring the rest")
+                    report.deferred = True
+                    report.reason = UNREPLAYED_BUDGET_EXHAUSTED
+                    if not report.scored_cases:
+                        report.state = REPLAY_UNREPLAYED
+                    break
     finally:
-        reset_current_run_budget(budget_token)
-        reset_current_run_key(key_token)
         try:
             await judge.shutdown()
         except Exception:
@@ -888,6 +881,11 @@ async def run_pass(*, max_proposals: int = 3) -> dict[str, Any]:
         return out
 
     cases = mine_cases()
+    # The ceiling bounds this PASS (`RUN_KEY`): it starts with nothing spent, and what an earlier
+    # pass spent is not this one's.
+    from personalclaw.guardrails.budgets import get_meter
+
+    get_meter().end_run(RUN_KEY)
     for prop in pending:
         try:
             report = await replay_proposal(prop, cases)

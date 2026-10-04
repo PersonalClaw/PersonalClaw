@@ -224,14 +224,13 @@ async def admit_call(
     The run's ceiling is read HERE, beside the day's, rather than as a ``firepath`` gate: run
     totals accrue in-process as the run spends, and the fire path binds a FRESH per-fire key
     before the first call — so a pre-fire gate would read 0.0 every time and be inert by
-    construction. The AMBIENT ceiling wins when the run bound one: a per-trigger
-    ``max_cost_usd_per_run`` is a tighter, run-specific promise than the operator's
-    ``max_tokens_per_run`` default (*run*), and the run seam is the only place that knows it.
+    construction. The AMBIENT ceiling the run bound and the operator's ``max_tokens_per_run``
+    default (*run*) both hold, each dimension at the tighter of the two: a per-trigger
+    ``max_cost_usd_per_run``, or a nested scope's own ceiling (``budgets.held_within``), narrows
+    the operator's default and never lifts it, and only the run seam knows it.
     """
     run_key = current_run_key()
-    ceiling = current_run_budget()
-    if ceiling.is_unlimited:
-        ceiling = run
+    ceiling = current_run_budget().tighter(run)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(0.0, float(wait_secs))
     while True:

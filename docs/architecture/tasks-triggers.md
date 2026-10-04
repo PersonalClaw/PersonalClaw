@@ -94,7 +94,9 @@ relative to `PersonalClaw/src/personalclaw/`.
   what a workflow run said it produced) are read by the injection screen and
   reach the action fenced with the trigger as their source; one the screen
   refuses leaves a `blocked_injection` row and runs nothing. `gates.max_fires` switches the trigger off once spent ("alert me
-  the NEXT time X"); `gates.debounce_secs` (5 s unless set) collapses a burst,
+  the NEXT time X"), and a quiet-session automation that wakes keeps to it, and to its spec's
+  `max_cycles`: once either is spent, its poll skips it (`idle_poll.fires_spent`,
+  `fire_budget_spent`); `gates.debounce_secs` (5 s unless set) collapses a burst,
   and at most 30 event fires a minute run across all event triggers. A process
   with no gateway — the CLI, or the `mcp-core` server an agent's memory tools
   run in — parks an event a stored trigger wants in `trigger-spool.jsonl`, and
@@ -106,7 +108,9 @@ relative to `PersonalClaw/src/personalclaw/`.
   (`boot_migrate.migrate_and_arm`, before the dashboard is up) **once per home**
   and renamed `<name>.imported-<date>`; a copy by that name (or the `.migrated` an earlier
   build left) means the import happened, so a file found again is not read and
-  the Doctor names it (`automations.legacy_files`). An imported row is
+  the Doctor names it (`automations.legacy_files`). The same pass takes the
+  `retry` field every row an earlier release wrote out of the store
+  (`boot_migrate._drop_retry`): nothing ever read it. An imported row is
   `created_by: import`, carries no capability block and none of the step keys
   that loosen whether its agent asks (`automation_posture.loosened_keys`), and
   one that would run anything needing a grant — or a nudge, which types into a
@@ -147,7 +151,12 @@ relative to `PersonalClaw/src/personalclaw/`.
   run on the Triggers page say which, naming the app or the secret and never
   a value, and its owner hears of it once on its failure route, until a run
   gets through or it is refused for another reason. The unattended dispatch
-  waits for the apps to start before it decides an app's action is missing. A grant is for the action as the owner allowed it:
+  waits for the apps to start before it decides an app's action is missing.
+  Both run the action as a run scope of its own (`calendar.run_scope`), so
+  `gates.max_cost_usd_per_run` holds its model calls to that many dollars by
+  whichever door it ran, inside any ceiling it already runs within, and a
+  workflow run it starts takes what is left of the cap as its own dollar budget
+  (`workflows/run_budget.py`). A grant is for the action as the owner allowed it:
   an edit that changes what a granted action runs (another command, URL,
   prompt, agent or workflow) keeps no grant for the change, and neither does a
   provider the edited action stopped using (`grants.narrow`); the step keys

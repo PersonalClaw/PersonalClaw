@@ -130,9 +130,10 @@ def test_the_two_zeros_are_now_DISTINGUISHABLE(ledger_home):
     """The measured before/after, as a test: only the two disclosures separate the two facts.
 
     Before this change the two dicts were byte-identical (see the module docstring). Asserting the
-    SET of differing keys is deliberate: ``priced`` distinguishes the cost, while ``tokens`` and
-    ``tokens_recorded`` are #2630's nullable-scalar representation of the independent token fact.
-    Nothing else about the aggregate may drift.
+    SET of differing keys is deliberate: ``priced`` distinguishes the cost and ``unpriced_steps``
+    counts the rows that make it a floor, while ``tokens`` and ``tokens_recorded`` are #2630's
+    nullable-scalar representation of the independent token fact. Nothing else about the
+    aggregate may drift.
     """
     from personalclaw.workflows import journal as J
 
@@ -141,8 +142,9 @@ def test_the_two_zeros_are_now_DISTINGUISHABLE(ledger_home):
     free = J.run_totals("run-free2")
     assert loop["steps_completed"] == free["steps_completed"] == 2, "vacuity floor"
     differing = {k for k in set(loop) | set(free) if loop.get(k) != free.get(k)}
-    assert differing == {"priced", "tokens", "tokens_recorded"}, differing
+    assert differing == {"priced", "unpriced_steps", "tokens", "tokens_recorded"}, differing
     assert loop["priced"] is False and free["priced"] is True
+    assert loop["unpriced_steps"] == 2 and free["unpriced_steps"] == 0
     assert loop["tokens"] is None and loop["tokens_recorded"] is False
     assert free["tokens"] == 0 and free["tokens_recorded"] is True
 

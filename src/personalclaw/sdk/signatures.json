@@ -3332,7 +3332,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "app"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "held_back"},
     {"annotation": "list[dict[str, Any]]", "default": "<factory>", "kind": "positional_or_keyword", "name": "declined_calls"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "project_id"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "project_id"},
+    {"annotation": "bool", "default": "True", "kind": "positional_or_keyword", "name": "priced"}
    ],
    "returns": "None"
   },
@@ -3542,7 +3543,6 @@
     {"annotation": "str", "default": "'background'", "kind": "positional_or_keyword", "name": "model_tier"},
     {"annotation": "str", "default": "'none'", "kind": "positional_or_keyword", "name": "delivery"},
     {"annotation": "str", "default": "'inbox'", "kind": "positional_or_keyword", "name": "failure_delivery"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "retry"},
     {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "failure_policy"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "yield_to_user"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "resource_slots"},

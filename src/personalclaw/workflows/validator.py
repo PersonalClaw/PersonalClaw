@@ -1686,11 +1686,41 @@ def validate_spec(spec: dict[str, Any], *, strict: bool = False) -> ValidationRe
         return res
 
     _validate_loop_intake(res, spec)
+    _validate_budget(res, spec)
     tree_res = validate_node_tree(root, strict=strict)
     res.issues.extend(tree_res.issues)
     _validate_wip_invariant(res, spec, root)
     res.levels = tree_res.levels if res.ok else []
     return res
+
+
+def _validate_budget(res: ValidationResult, spec: dict[str, Any]) -> None:
+    """The caps a run of this workflow starts with and pauses at (``defaults.budget``).
+
+    A cap that is not a number of 0 or more is an error: a run cannot be held to it, and the
+    definition model cannot read it, so a saved one would drop out of every listing. A key that
+    names no cap is a warning, since it holds nothing: a mistyped cap would otherwise ship as no
+    cap at all with nothing said. A ``_has_`` presence flag is the save path's own to restore
+    (`secrets.reinject_secrets`), and is passed over."""
+    from personalclaw.workflows import run_budget
+
+    defaults = spec.get("defaults")
+    if not isinstance(defaults, dict) or "budget" not in defaults:
+        return
+    raw = defaults["budget"]
+    if why := run_budget.unreadable(raw):
+        _add(res, "WF_BAD_BUDGET", f"defaults.{why}", "defaults.budget")
+        return
+    for key in raw or {}:
+        if key not in run_budget.CAPS and not str(key).startswith("_has_"):
+            _add(
+                res,
+                "WF_BUDGET_UNKNOWN_CAP",
+                f"defaults.budget has no cap called {key!r}, so it holds nothing: its caps are "
+                "max_tokens and max_cost",
+                "defaults.budget",
+                SEVERITY_WARNING,
+            )
 
 
 def _validate_loop_intake(res: ValidationResult, spec: dict[str, Any]) -> None:

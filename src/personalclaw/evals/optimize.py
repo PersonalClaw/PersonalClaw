@@ -830,23 +830,6 @@ def budget_stop(spend: Spend, budget_usd: float, *, before: str) -> str:
     return ""
 
 
-def _held_within(budget_usd: float, spent: float, outer: Any, used: Any) -> Any:
-    """The search's ceiling held inside an enclosing one, *outer*, of which *used* is spent: in
-    each dimension, the tighter of the two. A dimension with no room left is held at the least
-    amount there is rather than at 0, which a :class:`~personalclaw.guardrails.budgets.Budget`
-    reads as unlimited."""
-    from personalclaw.guardrails.budgets import Budget
-
-    dollars = float(budget_usd)
-    if outer.max_dollars > 0:
-        dollars = min(dollars, spent + max(0.0, float(outer.max_dollars) - float(used.dollars)))
-    tokens = 0
-    if outer.max_tokens > 0:
-        # The search's own account counts no tokens before the block, so its room is all of it.
-        tokens = max(1, int(outer.max_tokens) - int(used.tokens))
-    return Budget(max_tokens=tokens, max_dollars=max(dollars, _EPSILON))
-
-
 @contextlib.contextmanager
 def held_to(key: str, budget_usd: float, spent_usd: float) -> Iterator[None]:
     """Hold every model call made inside the block to what is left of the search's budget.
@@ -859,43 +842,15 @@ def held_to(key: str, budget_usd: float, spent_usd: float) -> Iterator[None]:
     account is dropped on the way out: what the search spent is read from its own ledger, never
     from this in-process counter.
 
-    A ceiling the block is already inside still holds. A search an automation started is held to
-    that automation's per-run ceiling, under the automation's own key: the calls in the block are
-    held to the tighter of the two (:func:`_held_within`), and what they cost is charged to the
-    enclosing account as the block ends, so its total counts them as the guard would have.
+    A ceiling the block is already inside still holds (``budgets.held_within``): a search an
+    automation or a capped run started is held to the tighter of the two, and what its calls cost
+    is charged to the enclosing account as the block ends.
     """
-    from personalclaw.guardrails.budgets import (
-        Budget,
-        current_run_budget,
-        current_run_key,
-        get_meter,
-        reset_current_run_budget,
-        reset_current_run_key,
-        set_current_run_budget,
-        set_current_run_key,
-    )
+    from personalclaw.guardrails.budgets import Budget, held_within
 
-    meter = get_meter()
     spent = max(0.0, float(spent_usd))
-    outer_key = current_run_key()
-    ceiling = (
-        _held_within(budget_usd, spent, current_run_budget(), meter.run_totals(outer_key))
-        if outer_key
-        else Budget(max_dollars=float(budget_usd))
-    )
-    meter.end_run(key)
-    meter.charge_run(key, 0, spent)
-    key_token = set_current_run_key(key)
-    budget_token = set_current_run_budget(ceiling)
-    try:
+    with held_within(key, Budget(max_dollars=float(budget_usd)), starting_at=(0, spent)):
         yield
-    finally:
-        reset_current_run_budget(budget_token)
-        reset_current_run_key(key_token)
-        inside = meter.run_totals(key)
-        meter.end_run(key)
-        if outer_key:
-            meter.charge_run(outer_key, inside.tokens, max(0.0, inside.dollars - spent))
 
 
 # ── the halt detectors, and the one decision both drivers take ───────────────

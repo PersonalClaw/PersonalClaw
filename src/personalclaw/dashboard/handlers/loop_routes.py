@@ -514,8 +514,9 @@ async def _create_ported_kind_as_run(
     ``success_criteria`` is the template's declared ``exit_condition``. Before this the door
     handed the run the task alone: an "Unattended" loop stopped for approval on every stage, its
     budget was the template's literal 6 while every surface counted toward 30, and it was listed
-    nowhere. ``auto_teardown_on_complete`` has no home on a run and is refused by the shared
-    validation gate above rather than dropped.
+    nowhere. ``max_cost_usd`` becomes the run's dollar budget, which pauses it once its steps have
+    spent it. ``auto_teardown_on_complete`` and ``deadline_secs`` have no home on a run and are
+    refused by the shared validation gate above rather than dropped.
     (A retired cycle-count field is DESCRIBED in this module rather than spelled, deliberately.
     PP-16 seam 4a retired the name, and its rail censuses ``src/`` for it by AST; the rail's SQL arm
     fires on any string constant carrying the name near ``set ``/``update ``/…, and a docstring IS a
@@ -525,7 +526,7 @@ async def _create_ported_kind_as_run(
     """
     from personalclaw.workflows import service as workflows
     from personalclaw.workflows.handlers import _audit, _guard, _reply, _supervisor
-    from personalclaw.workflows.models import OriginKind
+    from personalclaw.workflows.models import OriginKind, RunBudget
 
     denied = _guard(request, "workflow_run_start")
     if denied is not None:
@@ -557,6 +558,9 @@ async def _create_ported_kind_as_run(
             or _derive_name(task)
         ),
         policy_overrides=overrides,
+        # Its dollar limit is its run's dollar budget, which pauses it when its steps have spent
+        # it; already read as a number of 0 or more by the validation gate above.
+        budget=RunBudget(max_cost=validation.run_dollar_cap(body) or 0.0),
         # The file the loop's work produces, when its task asks for one: the run shows it.
         document=str(body.get("document") or "").strip(),
         supervisor=_supervisor(request),
