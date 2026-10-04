@@ -518,13 +518,10 @@ async def auto_execute(
         # control. `enforce_action` also writes the SEL row and, on `needs_human`, raises the
         # notification — so a refused auto-execution is never a silent drop.
         decision = enforce_action(provider, config, ctx, session_key=session_key)
-        if getattr(decision, "blocked", False):
+        if decision.blocked:
+            # The rule's code and its sentence, as a trigger's fire records the same refusal.
             deferred.append(
-                DeferredProposal(
-                    proposal=proposal,
-                    reason=SKIP_DENYLIST,
-                    detail=str(getattr(decision, "reason", "") or ""),
-                )
+                DeferredProposal(proposal=proposal, reason=SKIP_DENYLIST, detail=decision.refusal())
             )
             continue
 

@@ -970,7 +970,7 @@ sends, the browser's navigations and every other request an app makes through th
 
 An automation's action is held to it too. A trigger's fire, its Run now, a webhook's or a view's
 fire, a hook and a workflow step hold what their action reaches to the run the action is dispatched
-for (`net.policy.egress_held_to`, under the identity the action denylist judges it by), so a
+for (`net.policy.egress_held_to`, under the identity an unattended run of it is judged by), so a
 webhook, an A2A call or a fetch an automation sends keeps to the tier as a chat's request does; an
 agent the action starts is held to its own run. So is a remote MCP server: its connection's start,
 a turn's listing of its tools and every tool call ask the guard about the server's URL first, for

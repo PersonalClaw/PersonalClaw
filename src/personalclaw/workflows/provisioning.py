@@ -400,10 +400,19 @@ async def run_step(
     import asyncio
 
     from personalclaw.command_audit import audit_command_refusal
+    from personalclaw.guardrails.denylist import check_command
+    from personalclaw.guardrails.policy import unattended_dispatch_key
     from personalclaw.security import denied_command
 
-    # The shell denylist every command path asks, before either way of running the step (bare or
-    # in the run's durable session): a step is workflow-authored text, an agent's included.
+    # The action denylist, then the shell denylist every command path asks, before either way of
+    # running the step (bare or in the run's durable session): a step is workflow-authored text,
+    # an agent's included, and runs with nobody answering it, so among the first one's rules a
+    # step that would stop or replace the PersonalClaw its run lives in is refused, as the run's
+    # action steps are (`engine.dispatch_action`).
+    held = check_command(command or "", session_key=unattended_dispatch_key(f"workflow:{run_id}"))
+    if held.blocked:
+        audit_command_refusal(command, held, source="workflow", operation="step")
+        return False, held.refusal()
     if (denied := denied_command(command or "")) is not None:
         audit_command_refusal(command, denied, source="workflow", operation="step")
         return False, denied.refusal()

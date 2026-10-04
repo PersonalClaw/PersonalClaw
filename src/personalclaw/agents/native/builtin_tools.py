@@ -43,6 +43,7 @@ from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal
 from personalclaw.file_scope import refusal as scope_refusal
 from personalclaw.file_scope import store_named_in
 from personalclaw.file_view import BINARY_SNIFF_BYTES, is_binary
+from personalclaw.guardrails.denylist import check_command
 from personalclaw.knowledge_providers.dir_source import note_path
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.security import (
@@ -1518,16 +1519,17 @@ class NativeBuiltinToolProvider(ToolProvider):
         handed.extend(_environment_credentials())
         return command, handed
 
-    def _bash_refusal(self, command: str, handed: list[str]) -> ToolResult | None:
-        """What the shell refuses to run, judged on the command that would RUN; None to run it."""
+    def _bash_refusal(self, command: str, handed: list[str], written: str) -> ToolResult | None:
+        """What the shell refuses to run, judged on the command that would RUN (*written* is the
+        command as the agent wrote it, its references unfilled); None to run it."""
         from personalclaw import security
 
         # App-level guards before any execution, judged on the command that will RUN, so a value a
         # reference fills in cannot carry a sensitive path or a denied pattern past them:
         # 1. sensitive credential-path access (is_sensitive_bash_command), with a relative path
         #    read from the folder the command runs in — the workspace, inside the home;
-        # 2. the shell denylist (`security.denied_command`, the check every command path asks):
-        #    its built-in patterns and the ones added under Settings → Security.
+        # 2. the action denylist, under this session (one nobody is in is held to it), then the
+        #    shell denylist (`security.denied_command`, the check every command path asks).
         # Each refusal names its control and rule for the call's audit row (`_refused_by`).
         sens = security.is_sensitive_bash_command(command, cwd=self._cwd)
         if sens:
@@ -1545,6 +1547,9 @@ class NativeBuiltinToolProvider(ToolProvider):
         if stored := store_named_in(command, cwd=self._cwd):
             said = security.redact_known_values(stored, handed)
             return _refused_by("bash", "own_store", said, said)
+        if (held := check_command(command, session_key=self._session_key, written=written)).blocked:
+            said = security.redact_known_values(held.refusal(), handed)
+            return _refused_by("bash", "action_denylist", said, held.matched)
         if (denied := security.denied_command(command)) is not None:
             return _refused_by(
                 "bash",
@@ -1605,7 +1610,9 @@ class NativeBuiltinToolProvider(ToolProvider):
     def _p_bash(self, a: dict) -> ToolResult | None:
         """What ``bash`` refuses first (:meth:`preflight`), judged as :meth:`_t_bash` judges it."""
         resolved = self._bash_command(a)
-        return resolved if isinstance(resolved, ToolResult) else self._bash_refusal(*resolved)
+        if isinstance(resolved, ToolResult):
+            return resolved
+        return self._bash_refusal(*resolved, written=str(a["command"]))
 
     async def _t_bash(self, a: dict, *, timeout: float | None = None) -> ToolResult:
         from personalclaw import security
@@ -1625,7 +1632,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         if isinstance(resolved := self._bash_command(a), ToolResult):
             return resolved
         command, handed = resolved
-        if (refused := self._bash_refusal(command, handed)) is not None:
+        if (refused := self._bash_refusal(command, handed, written=str(a["command"]))) is not None:
             return refused
         argv = ["bash", "-lc", command]
         wrapped, cleanup = wrap_argv(argv, mode=self._sandbox_mode)

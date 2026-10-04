@@ -2493,12 +2493,15 @@ async def api_trigger_review(request: web.Request) -> web.Response:
         await _service.record_dismissal(trigger_id, outcome, reason, base_dir=store.base_dir)
         state.push_refresh("crons")
         return web.json_response({"ok": True, "outcome": outcome, "reason": reason})
+    from personalclaw import approval_answer
+
     ran, note = await trigger_runs._dispatch_store_action(
         row.trigger,
         {"trigger_id": trigger_id, "manual": True, "review": kind, "scheduled_for": taken.latest},
         event="review.run_now",
         late=reason,
         state=state,
+        runs_for=approval_answer.of_request(request),
     )
     state.push_refresh("crons")
     return web.json_response(

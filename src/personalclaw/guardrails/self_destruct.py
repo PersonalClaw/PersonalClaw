@@ -243,7 +243,7 @@ class HostEffect:
         """The refusal text. Names the operation AND the interactive path (WF2AUT-14)."""
         interactive = (
             "run it yourself from an interactive session — the dashboard's Updates panel, or "
-            "your own shell — where it is not a scheduled run killing its own runner"
+            "your own shell — where it is not an unattended run killing its own runner"
         )
         if self.kind == _KIND_UNKNOWN:
             return (

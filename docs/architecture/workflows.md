@@ -287,12 +287,25 @@ trigger's fire records for the same rule, its code and its sentence
 unattended action refused: it would stop the PersonalClaw gateway that is executing it
 …"); the run stops there and its ending names it (a control's refusal stops the run
 whatever the step declares), the audit log has its `guardrails.denylist` row and the
-gateway log a warning. You can still stop or update PersonalClaw yourself, from your own
+gateway log a warning. Each quotes the step as it was written: a path or a command a
+`{{secret:NAME}}` filled in is judged on the value and named by the reference, never the
+value. You can still stop or update PersonalClaw yourself, from your own
 shell or Settings → Updates. `tests/test_action_provider_chokepoints.py` fails an
 execution site that reaches a provider, under any name, without asking. What the step then
 reaches is held to the egress tier of that same identity (`net.policy.egress_held_to`), so
 an operator ceiling that gives no run any network refuses a step's fetch or webhook as it
 refuses a trigger's ([limitations §18](../security/limitations.md#18-a-runs-egress-tier-holds-where-its-requests-ask-the-guard)).
+
+**The run's other commands are held to the same rules** (`guardrails.denylist.check_command`):
+a verify gate's command (`loop.gates.run_verify_command`, which a loop's check runs through
+too), a setup or teardown step (`provisioning.run_step`) and an effect's teardown
+(`effects.run_teardown`) each ask it before they run anything, as unattended work, and
+before the shell denylist, so a command both catch (`personalclaw update`) is refused for
+its effect. A refused gate fails with the sentence and ends the run saying it, a refused
+setup step is a failed one, and a refused teardown leaves the redo it guards blocked; each
+is a `command_refused` row in the audit log naming the control (`action_denylist`) and the
+rule. `tests/test_every_command_path_asks_the_denylist.py` fails a command runner nobody
+answers that does not ask.
 
 **Every `WF_*` code has a registry row: `workflows/error_codes.py`
 (`WF_ERROR_CODES`).** That is where to look one up. `WF_*` is the third of this repo's

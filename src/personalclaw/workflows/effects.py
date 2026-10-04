@@ -262,10 +262,18 @@ async def run_teardown(
     import shutil
 
     from personalclaw.command_audit import audit_command_refusal
+    from personalclaw.guardrails.denylist import check_command
+    from personalclaw.guardrails.policy import unattended_dispatch_key
     from personalclaw.security import denied_command
 
-    # The shell denylist every command path asks. A refused teardown is a failed one: the redo
+    # The action denylist, then the shell denylist every command path asks. A teardown runs with
+    # nobody answering it, so among the first one's rules a teardown that would stop or replace
+    # the PersonalClaw its run lives in is refused. A refused teardown is a failed one: the redo
     # it guards stays blocked (`effect_boundary`), so no second resource lands on a live first.
+    held = check_command(command, session_key=unattended_dispatch_key("workflow:teardown"))
+    if held.blocked:
+        audit_command_refusal(command, held, source="workflow", operation="teardown")
+        return False, held.refusal()
     if (denied := denied_command(command)) is not None:
         audit_command_refusal(command, denied, source="workflow", operation="teardown")
         return False, denied.refusal()

@@ -779,7 +779,12 @@ class TestThePlatformGates:
 
         def blocked(provider: str, config: dict, ctx: Any = None, session_key: str = "") -> Any:
             seen.append({"provider": provider, "ctx": ctx, "session_key": session_key})
-            return type("D", (), {"blocked": True, "reason": "action targets a sensitive path"})()
+            return denylist_mod.DenyDecision(
+                blocked=True,
+                verdict="block",
+                reason="action targets a sensitive path",
+                matched="builtin:sensitive_path",
+            )
 
         monkeypatch.setattr(denylist_mod, "enforce_action", blocked)
         dispatch = _Dispatch()
@@ -796,6 +801,11 @@ class TestThePlatformGates:
         assert refused.executed == ()
         assert dispatch.calls == [], "a blocked action must not reach the provider"
         assert {d.reason for d in refused.deferred} == {SKIP_DENYLIST}
+        # Each says the rule's code and its sentence, as a trigger's fire records the refusal.
+        assert {d.detail for d in refused.deferred} == {
+            "blocked by the guardrails denylist: builtin:sensitive_path — "
+            "action targets a sensitive path"
+        }
         # The session key is THREADED, not dropped: without it a run's SafetyProfile deny globs
         # are silently skipped, which is a control that reads as present and enforces nothing.
         assert seen[0]["session_key"] == "unattended:trigger:t1"

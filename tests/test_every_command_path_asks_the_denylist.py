@@ -17,6 +17,13 @@ every spawn site in ``src/personalclaw`` (the census and keys of
 
 A new spawn site reds this rail by name until it is classified, and a stale entry reds it too. The
 falsification tests at the bottom run both checks on source written to fail them.
+
+A site in ``_ASKS`` that runs with nobody answering asks a second check before it spawns, the
+action denylist (``guardrails.denylist.check_command``, ``check_action`` for a command), under the
+identity it judges the command under: among its rules, unattended work may not stop, restart,
+update or reinstall the PersonalClaw it runs in. Every site in ``_ASKS`` is classified once more,
+as such a site (``_ASKS_THE_ACTION_DENYLIST``) or with where that check is asked for it instead
+(``_ACTION_DENYLIST_ELSEWHERE``), so a new command runner cannot skip it unclassified.
 """
 
 from __future__ import annotations
@@ -27,6 +34,9 @@ from pathlib import Path
 from test_spawn_ceiling_audit import _callee, _census, _normalize, _src_root
 
 THE_CHECK = "denied_command"
+#: The action denylist: its command-shaped call, or asked directly or through the seam wrapper that
+#: records it.
+THE_UNATTENDED_CHECK = ("check_command", "check_action", "enforce_action")
 
 _BASH_TOOL = (
     "agents/native/builtin_tools.py::NativeBuiltinToolProvider._t_bash::create_subprocess_limited"
@@ -46,6 +56,31 @@ _ASKS: dict[str, str] = {
     ),
     "workflows/effects.py::run_teardown::create_subprocess_limited": "a workflow effect's teardown",
     "apps/app_manager.py::_run_hook::subprocess.run": "an app's setup hook",
+}
+
+#: The sites above that run with nobody answering, or in a session that may be nobody's (the bash
+#: tool, judged under its session), each asking the action denylist before it spawns.
+_ASKS_THE_ACTION_DENYLIST: dict[str, str] = {
+    _BASH_TOOL: "the agent's bash tool, under its session: one nobody is in is held to it",
+    "loop/gates.py::run_verify_command::create_subprocess_limited": (
+        "a loop's or a workflow's check, which runs between cycles or steps with nobody answering"
+    ),
+    "workflows/provisioning.py::run_step::create_subprocess_limited": (
+        "a workflow's setup or teardown step, part of a run nobody answers"
+    ),
+    "workflows/effects.py::run_teardown::create_subprocess_limited": "a workflow effect's teardown",
+}
+
+#: The rest of ``_ASKS``, and where the action denylist is asked for each instead.
+_ACTION_DENYLIST_ELSEWHERE: dict[str, str] = {
+    "action_providers/bash_provider.py::BashActionProvider.execute::create_subprocess_limited": (
+        "an action provider: each dispatch that runs one with nobody answering asks it first "
+        "(tests/test_action_provider_chokepoints.py)"
+    ),
+    "apps/app_manager.py::_run_hook::subprocess.run": (
+        "an app's lifecycle hook, which runs when you install, update, enable, disable or "
+        "uninstall the app"
+    ),
 }
 
 _COMPOSED = "a program and arguments PersonalClaw composes"
@@ -230,23 +265,39 @@ def _called(node: ast.AST) -> list[tuple[str, int]]:
     return out
 
 
-def _first_ask(qualname: str, functions: dict[str, ast.AST]) -> int | None:
-    """The line where *qualname* first asks the check, itself or through a function of its own
-    module that asks it directly (one hop); None when it never does."""
+def _first_ask(
+    qualname: str, functions: dict[str, ast.AST], checks: tuple[str, ...] = (THE_CHECK,)
+) -> int | None:
+    """The line where *qualname* first asks one of *checks*, itself or through a function of its
+    own module that asks it directly (one hop); None when it never does."""
+    return min((line for _call, line in _asks(qualname, functions, checks)), default=None)
+
+
+def _asks(
+    qualname: str, functions: dict[str, ast.AST], checks: tuple[str, ...]
+) -> list[tuple[ast.Call, int]]:
+    """Each call of one of *checks* that *qualname* makes, itself or in a function of its own
+    module it calls (one hop), with the line in *qualname* where it is asked."""
     node = functions[qualname]
     owner = qualname.rsplit(".", 1)[0] if "." in qualname else ""
 
-    def asks_directly(fn: ast.AST) -> bool:
-        return any(name == THE_CHECK for name, _ in _called(fn))
+    def calls_of(fn: ast.AST) -> list[ast.Call]:
+        return [c for c in ast.walk(fn) if isinstance(c, ast.Call) and _name_of(c) in checks]
 
-    lines = []
-    for name, line in _called(node):
+    found: list[tuple[ast.Call, int]] = []
+    for call in [c for c in ast.walk(node) if isinstance(c, ast.Call)]:
+        name = _name_of(call)
         helper = functions.get(f"{owner}.{name}" if owner else name) or functions.get(name)
-        if name == THE_CHECK or (
-            helper is not None and helper is not node and asks_directly(helper)
-        ):
-            lines.append(line)
-    return min(lines) if lines else None
+        if name in checks:
+            found.append((call, call.lineno))
+        elif helper is not None and helper is not node:
+            found.extend((inner, call.lineno) for inner in calls_of(helper))
+    return found
+
+
+def _name_of(call: ast.Call) -> str:
+    f = call.func
+    return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else ""
 
 
 def _spawn_lines(node: ast.AST, callee: str) -> list[int]:
@@ -335,6 +386,51 @@ def test_every_site_that_runs_a_written_command_asks_the_denylist_before_it_spaw
         assert asked < spawned, f"{key} asks {THE_CHECK} (line {asked}) after it spawns ({spawned})"
 
 
+def test_every_site_that_runs_a_written_command_is_classified_for_the_action_denylist():
+    asked, elsewhere = set(_ASKS_THE_ACTION_DENYLIST), set(_ACTION_DENYLIST_ELSEWHERE)
+    assert not asked & elsewhere
+    unclassified = sorted(set(_ASKS) - asked - elsewhere)
+    assert not unclassified, (
+        "A site that runs a command someone wrote, not classified for the action denylist. If "
+        "it runs with nobody answering, it asks `guardrails.denylist.check_command` under the "
+        "identity it judges the command under before it spawns, and joins "
+        "_ASKS_THE_ACTION_DENYLIST; "
+        "otherwise say where that check is asked for it (_ACTION_DENYLIST_ELSEWHERE):\n"
+        + "\n".join(f"  {k}" for k in unclassified)
+    )
+    stale = sorted((asked | elsewhere) - set(_ASKS))
+    assert not stale, "Not a site in _ASKS; remove:\n" + "\n".join(f"  {k}" for k in stale)
+
+
+def test_every_unattended_command_runner_asks_the_action_denylist_before_it_spawns():
+    for key in sorted(_ASKS_THE_ACTION_DENYLIST):
+        rel, qualname, callee = key.split("::")
+        functions = _functions(_parsed(rel))
+        asks = _asks(qualname, functions, THE_UNATTENDED_CHECK)
+        spawned = min(_spawn_lines(functions[qualname], callee))
+        assert asks, f"{key} runs a command nobody answers and never asks the action denylist"
+        asked = min(line for _call, line in asks)
+        assert asked < spawned, f"{key} asks the action denylist (line {asked}) after it spawns"
+        for call, _line in asks:
+            assert any(k.arg == "session_key" for k in call.keywords), (
+                f"{key} asks the action denylist with no session_key=: the session's profile is "
+                "skipped, and a command is judged as nobody's"
+            )
+
+
+def test_the_bash_action_is_reached_only_as_a_provider():
+    """The property that earns the bash action its place in _ACTION_DENYLIST_ELSEWHERE: nothing
+    constructs it but the provider registry, so it runs only through an action dispatch, which
+    asks the action denylist for a run nobody answers (``test_action_provider_chokepoints``)."""
+    built = set()
+    for path in _src_root().rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for call in ast.walk(tree):
+            if isinstance(call, ast.Call) and _name_of(call) == "BashActionProvider":
+                built.add(path.relative_to(_src_root()).as_posix())
+    assert built == {"action_providers/registry.py", "action_providers/bash_provider.py"}, built
+
+
 def test_no_other_site_hands_a_shell_a_command_it_was_given():
     for key in sorted(_RUNS_NO_WRITTEN_COMMAND):
         rel, qualname, _callee_name = key.split("::")
@@ -390,6 +486,64 @@ _SHELL_TRUE = """
 def run(cmd):
     return subprocess.run(cmd, shell=True)
 """
+
+
+_SKIPS_THE_ACTION_DENYLIST = """
+async def run(cmd):
+    if denied_command(cmd) is not None:
+        return None
+    return await create_subprocess_limited("/bin/sh", "-c", cmd)
+"""
+
+_ASKS_THE_ACTION_DENYLIST_THROUGH_A_HELPER = """
+def held(cmd):
+    return check_command(cmd, session_key=KEY)
+
+async def run(cmd):
+    if held(cmd).blocked or denied_command(cmd) is not None:
+        return None
+    return await create_subprocess_limited("/bin/sh", "-c", cmd)
+"""
+
+_ASKS_THE_ACTION_DENYLIST_TOO_LATE = """
+async def run(cmd):
+    proc = await create_subprocess_limited("/bin/sh", "-c", cmd)
+    enforce_action("check", {"command": cmd}, session_key=KEY)
+    return proc
+"""
+
+_ASKS_THE_ACTION_DENYLIST_AS_NOBODY = """
+async def run(cmd):
+    if check_action("check", {"command": cmd}).blocked:
+        return None
+    return await create_subprocess_limited("/bin/sh", "-c", cmd)
+"""
+
+
+def _action_denylist_asks(source: str) -> tuple[list[tuple[ast.Call, int]], int]:
+    functions = _functions(ast.parse(source))
+    spawned = min(_spawn_lines(functions["run"], "create_subprocess_limited"))
+    return _asks("run", functions, THE_UNATTENDED_CHECK), spawned
+
+
+def test_a_runner_that_skips_the_action_denylist_is_caught():
+    asks, _spawned = _action_denylist_asks(_SKIPS_THE_ACTION_DENYLIST)
+    assert asks == []
+
+
+def test_a_runner_that_asks_the_action_denylist_through_a_helper_first_passes():
+    asks, spawned = _action_denylist_asks(_ASKS_THE_ACTION_DENYLIST_THROUGH_A_HELPER)
+    assert asks and min(line for _call, line in asks) < spawned
+    assert all(any(k.arg == "session_key" for k in call.keywords) for call, _line in asks)
+
+
+def test_a_runner_that_asks_too_late_or_as_nobody_is_caught():
+    late, spawned = _action_denylist_asks(_ASKS_THE_ACTION_DENYLIST_TOO_LATE)
+    assert late and min(line for _call, line in late) > spawned
+    nobody, _spawned = _action_denylist_asks(_ASKS_THE_ACTION_DENYLIST_AS_NOBODY)
+    assert nobody and not any(
+        k.arg == "session_key" for call, _line in nobody for k in call.keywords
+    )
 
 
 def _check(source: str, qualname: str = "run") -> tuple[int | None, bool]:

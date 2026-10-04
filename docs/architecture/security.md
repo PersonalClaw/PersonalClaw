@@ -280,11 +280,29 @@ grants, is refused before its message is sent, and the owner is told why.
 
 ### What an unattended action is refused (`guardrails/denylist.py`)
 
-Every unattended dispatch asks `enforce_action` before the action's provider runs: a
-stored trigger's fire through the gateway (clock, event, file, web watch, chained), a
-lifecycle hook, a workflow run's action step (whoever started the run), a dashboard
-tile's refresh and the triage digest's auto-execution. An app's action provider is
-asked about at the same seams, so it inherits the check without knowing it exists.
+Every dispatch that runs an action with nobody answering it asks `enforce_action` before the
+action's provider runs: a stored trigger's fire through the gateway (clock, event, file, web
+watch, chained), a webhook's fire from an outside caller, a view's refresh, a lifecycle hook, a
+workflow run's action step (whoever started the run), a dashboard tile's refresh and the triage
+digest's auto-execution. The run-by-hand dispatch (`trigger_runs._dispatch_store_action`) asks it
+for every run but one you start yourself (Run now, your answer to the question a run stopped on,
+the restart review's Run now): a Run now an agent's tool starts (`automation_run`, or
+`personalclaw cron trigger` in its shell) is judged under the agent's session, so it is held as
+that session holds its own work, and one an app starts has no session and is judged as nobody's.
+`personalclaw cron trigger` run from a terminal of yours names the job's own work, as the job's
+fire does, and is judged as that fire is. An app's action provider is asked about at the same
+seams, so it inherits the check without knowing it exists.
+
+Every path that runs a command with nobody answering it asks the same rules (`check_command`,
+`check_action` for a command) before it runs anything: a loop's check and a workflow's verify gate
+(`loop.gates.run_verify_command`), a workflow's setup and teardown steps
+(`workflows.provisioning.run_step`), an effect's teardown (`workflows.effects.run_teardown`),
+and the agent's bash tool under its session, which a session nobody is in (a schedule's, a
+loop's or a subagent's turn, a scheduled script's call) is held to and a chat you are in is not.
+Each asks them before the shell denylist, the order `check_action` asks its own rules, so a
+command both catch (`personalclaw update`) is refused for its effect, in the same words on
+every path.
+
 `check_action` refuses, first match wins: every action while the security config cannot
 be read; a path that names a credential file; a path outside the ceiling's `paths`; a path the operator's `security.autonomy_denylist` names
 (its `needs_human` verdict also notifies you); a command that would stop, restart,
@@ -298,13 +316,22 @@ another service alone. A command it cannot classify that reaches for PersonalCla
 lifecycle verb is refused closed. It holds for unattended work only: you stop or update
 PersonalClaw from your own shell or Settings → Updates.
 
-A refusal never reaches the provider. It is a `guardrails.denylist` row in the audit log
-naming the rule, its reason and the command, a warning in the gateway log, and a record
-where the work is recorded: a trigger's history row (`skipped_gate`) and a workflow step,
-which fails `permission` and is named in the run's ending, say the same words, the
-rule's code and its sentence (`DenyDecision.refusal`); a hook's run and a tile's refresh
-record the sentence. `tests/test_action_provider_chokepoints.py` fails an execution site
-that reaches a provider, under any name, without asking.
+A refusal never reaches the provider or a shell. A dispatch's is a `guardrails.denylist` row in
+the audit log naming the rule, its reason and the command; a command path's is a
+`command_refused` row naming the control (`action_denylist`) and the rule, or for the bash tool
+the call's own audit row; each with a warning in the gateway log. Each quotes the path or the
+command as it was written. A dispatch that fills each `{{secret:NAME}}` in before asking (a
+trigger's fire and its run by hand or from outside, a workflow step, the bash tool) is judged on
+the value it filled in and quoted with the reference left a reference (`check_action`'s
+`written`), so a secret's value is in no refusal, record or log. Wherever the work is recorded,
+it says the same words, the rule's code and its sentence (`DenyDecision.refusal`): a trigger's
+history row (`skipped_gate` for its own fire, `refused` for a run by hand or from outside, whose
+owner is told once), a workflow step, which fails `permission` and is named in the run's ending,
+a hook's run, a tile's refresh, a deferral of the triage digest, a loop, which pauses with it as
+its question, a workflow gate, which fails with it, and a setup or teardown step.
+`tests/test_action_provider_chokepoints.py` fails an execution site that reaches a provider,
+under any name, without asking, and `tests/test_every_command_path_asks_the_denylist.py` a
+command runner nobody answers that does not.
 
 ## Sandbox (`sandbox.py`)
 
@@ -956,11 +983,11 @@ chokepoint:
   around every tool call (`mcp_core.set_current_session_key`: the native runtime's
   dispatch, the tool server an agent CLI runs, `POST /api/tools/invoke`), or the run
   an automation's action is dispatched for, held around the action alone
-  (`net.policy.egress_held_to`, egress only, under the key its action denylist judges
-  it by: a trigger's fire `unattended_dispatch_key("trigger:<id>")`, which its hand
-  runs take too, a hook its parent session or `"hook:<id>"`, a workflow step
-  `"workflow:<run>"`). A session bound inside the held work (an agent the action
-  starts) is the inner run.
+  (`net.policy.egress_held_to`, egress only, under the key the action denylist judges
+  an unattended run of it by: a trigger's fire `unattended_dispatch_key("trigger:<id>")`,
+  which every hand run of it takes too, whoever starts it, a hook its parent session or
+  `"hook:<id>"`, a workflow step `"workflow:<run>"`). A session bound inside the held
+  work (an agent the action starts) is the inner run.
   A call made for no run (the owner's own action, a background job) keeps to the
   Network egress settings alone.
 - A remote MCP server's connection (`mcp_client.McpServerConn`) asks the guard about

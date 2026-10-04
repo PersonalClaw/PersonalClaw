@@ -459,7 +459,9 @@ class TestAFailedRefreshKeepsLastGood:
         result = await tile_refresh.refresh_tile("overview", ref)
 
         assert result.refreshed is False
-        assert "refused by the action denylist" in result.nodes[0].error
+        # The rule's code and its sentence, as a trigger's fire records the same refusal.
+        said = result.nodes[0].error
+        assert said == "blocked by the guardrails denylist: test — matched a deny glob", said
         assert _body() == before
 
     @pytest.mark.asyncio

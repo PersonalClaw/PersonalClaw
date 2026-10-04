@@ -1051,7 +1051,8 @@ async def run_script_hook(
             hook_id=hook.id,
             hook_name=hook.name,
             event=hook.event,
-            error=f"blocked by guardrails denylist: {_deny.reason}",
+            # The rule's code and its sentence, as a trigger's fire records the same refusal.
+            error=_deny.refusal(),
         )
     # Rung routing, composed with the denylist gate above and
     # sitting ON TOP of it: a rung never relaxes a block, an incident, or a budget pause.

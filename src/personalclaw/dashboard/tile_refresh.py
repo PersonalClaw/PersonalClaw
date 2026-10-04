@@ -362,11 +362,9 @@ async def _run_data_node(
     ctx = ActionContext(event="tile_refresh", payload={"node": node.id})
     decision = enforce_action(node.provider, dict(node.config), ctx, session_key=session_key)
     if decision.blocked:
+        # The rule's code and its sentence, as a trigger's fire records the same refusal.
         return None, NodeOutcome(
-            id=node.id,
-            provider=node.provider,
-            ok=False,
-            error=f"refused by the action denylist: {decision.reason}",
+            id=node.id, provider=node.provider, ok=False, error=decision.refusal()
         )
     try:
         result = await provider.execute(

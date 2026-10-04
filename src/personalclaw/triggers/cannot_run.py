@@ -112,7 +112,8 @@ async def refuse(
     store: Any = None,
     runs: Any = None,
 ) -> None:
-    """Refuse a run of *trigger* that has nothing it can run, saying *why*.
+    """Refuse a run of *trigger* that has nothing it can run, or a run by hand or from outside
+    whose action the action denylist refused (`trigger_runs._dispatch_store_action`), saying *why*.
 
     Records the refused run and its stamps (`run_record.record_refusal`; *by_hand* for a run a
     person or an outside caller started, *store* and *runs* the home's stores to write) and, the

@@ -376,7 +376,8 @@ async def record_refusal(
 ) -> bool:
     """Record a run of *trigger* refused before its action ran, because something the action needs
     is gone (`triggers.cannot_run`): no app running here provides it, a secret it uses does not
-    resolve, or the trigger names no action. *why* is the sentence that says which.
+    resolve, or the trigger names no action; or, for a run by hand or from outside, because the
+    action denylist refused its action. *why* is the sentence that says which.
 
     The row reads ``refused``, saying *why*, and the trigger's stamps move as they do for a run
     that went wrong (:func:`stamp_run`), so its last run is this one, refused, with *why* as its

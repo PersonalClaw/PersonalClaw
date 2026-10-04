@@ -305,7 +305,7 @@ def test_a_view_refresh_does_not_run_an_ungranted_action(home, monkeypatch):
     """🔴 Red on main: a `view` trigger bound to a surface refreshed into `bash` with no grant."""
     dispatched: list[str] = []
 
-    async def _spy(trigger, payload, *, event="manual.run", state=None):
+    async def _spy(trigger, payload, *, event="manual.run", state=None, runs_for=None):
         dispatched.append(trigger.id)
         return True, "ran"
 
@@ -346,9 +346,9 @@ def test_a_view_refresh_does_not_run_an_ungranted_action(home, monkeypatch):
 
 
 def test_the_dispatch_itself_refuses_so_no_caller_can_forget(home, ran):
-    """🔴 Red on main. Every attended caller — Run now, the review's Run now, a view refresh, a
-    webhook fire — reaches the action through `_dispatch_store_action`, so the refusal lives there
-    too, not only in the callers that remembered to ask first."""
+    """🔴 Red on main. Every caller by hand or from outside — Run now, the review's Run now, a view
+    refresh, a webhook fire — reaches the action through `_dispatch_store_action`, so the refusal
+    lives there too, not only in the callers that remembered to ask first."""
     _schedule(home)
 
     done, note = asyncio.run(

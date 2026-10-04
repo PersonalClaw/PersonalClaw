@@ -1541,6 +1541,7 @@ class GatewayOrchestrator:
         #
         # The refusal is a refused run naming the secret, never its value (`triggers.cannot_run`):
         # it used to be a log line, so the automation read healthy and never ran.
+        written = config
         try:
             config = _trigger_secrets.resolve_for(provider, config)
         except _trigger_secrets.UnresolvedSecret as exc:
@@ -1576,8 +1577,9 @@ class GatewayOrchestrator:
         # Placed AFTER `_trigger_secrets.resolve` deliberately: the check must see the config the
         # provider will actually receive, so a `{{secret:...}}` that expands into a denied command
         # or a sensitive path is judged on its resolved value and not on a placeholder that dodges
-        # every pattern. And BEFORE the rung ladder, matching both other seams — a rung never
-        # relaxes a block, an incident, or a budget pause.
+        # every pattern; its refusal quotes the config as written, the secret by its reference. And
+        # BEFORE the rung ladder, matching both other seams — a rung never relaxes a block, an
+        # incident, or a budget pause.
         from personalclaw.guardrails.denylist import enforce_action
         from personalclaw.guardrails.policy import unattended_dispatch_key
         from personalclaw.guardrails.rungs import announce_withheld, record_execution
@@ -1594,7 +1596,9 @@ class GatewayOrchestrator:
         # into `enforce_action` is also what lets the run's `SafetyProfile.denylist_extra` and its
         # `path_allowlist` confinement layer here exactly as they do at the other two seams.
         dispatch_key = unattended_dispatch_key(f"trigger:{getattr(trigger, 'id', '') or ''}")
-        decision = enforce_action(provider_name, config, ctx, session_key=dispatch_key)
+        decision = enforce_action(
+            provider_name, config, ctx, session_key=dispatch_key, written=written
+        )
         if decision.blocked:
             logger.warning(
                 "trigger %s: action blocked by the guardrails denylist (%s)",

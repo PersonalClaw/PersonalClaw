@@ -118,8 +118,10 @@ relative to `PersonalClaw/src/personalclaw/`.
   action is read-only by what it declares (`ActionProvider.effect`), never
   by its name: `call-app-route` reads only when the app declares the route
   `readOnly`, and an action that declares nothing is a change. Both
-  dispatches check it — the attended one (`_dispatch_store_action`: Run now,
-  the restart review's Run now, a view refresh, a webhook fire) and the
+  dispatches check it — the one by hand or from outside
+  (`_dispatch_store_action`: Run now, the restart review's Run now, a view
+  refresh, a webhook fire, which also holds every run but one you start
+  yourself to the action denylist, as the other holds every fire) and the
   unattended one (`gateway._fire_store_trigger`: clock, event, file,
   web_watch, chained) — and a refusal names the missing action and how the
   owner allows it; an unattended refusal is a `skipped_gate` row in the

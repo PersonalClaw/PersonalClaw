@@ -1239,7 +1239,8 @@ async def dispatch_action(
 
     from personalclaw.action_providers.base import ActionContext
 
-    action_config = dict(cfg.get("with") or cfg.get("config") or {})
+    picked = "with" if cfg.get("with") else "config"
+    action_config = dict(cfg.get(picked) or {})
     payload = dict(cfg.get("payload") or {})
     # Run/node provenance in the payload, so a provider can attribute what it wrote without
     # the template having to restate ids it cannot know. `knowledge-persist` auto-fills
@@ -1290,7 +1291,9 @@ async def dispatch_action(
     from personalclaw.guardrails.policy import unattended_dispatch_key
 
     key = unattended_dispatch_key(f"workflow:{run_id}")
-    if (denied := enforce_action(name, action_config, context, session_key=key)).blocked:
+    written = (node.config or {}).get(picked)  # quoted as written: a secret by its reference
+    denied = enforce_action(name, action_config, context, session_key=key, written=written)
+    if denied.blocked:
         fix = "change what this step runs, then run the workflow again; until then it is refused"
         return _fail(
             FailureClass.PERMISSION, denied.refusal(), fix, terminal_reason=REFUSED_TO_START

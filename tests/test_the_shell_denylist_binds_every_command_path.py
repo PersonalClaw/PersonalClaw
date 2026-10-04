@@ -329,11 +329,14 @@ def trigger_home(tmp_path, monkeypatch) -> Path:
     return tmp_path
 
 
-def test_run_now_of_a_bash_trigger_the_denylist_refuses_runs_nothing(trigger_home, spawns):
+@pytest.mark.parametrize("by_you", [True, False], ids=["your-run-now", "a-run-nobody-answers"])
+def test_run_now_of_a_bash_trigger_the_denylist_refuses_runs_nothing(trigger_home, spawns, by_you):
     """Run now, the restart review's Run now, a webhook fire and a view refresh all reach the
-    action through this one dispatch, which asks no denylist of its own: the action asks."""
+    action through this one dispatch. A run nobody answers is held to the action denylist there,
+    whose last rule is this one; a run you start yourself is not, and the action itself asks."""
     from test_a_trigger_runs_only_what_it_was_granted import _row, _schedule
 
+    from personalclaw import approval_answer
     from personalclaw.dashboard.handlers import trigger_runs
 
     _add_pattern()
@@ -341,7 +344,9 @@ def test_run_now_of_a_bash_trigger_the_denylist_refuses_runs_nothing(trigger_hom
     _schedule(trigger_home, workflow=bash, capabilities={"providers": ["bash"]})
     ran, note = asyncio.run(
         trigger_runs._dispatch_store_action(
-            _row(trigger_home, "nightly"), {"trigger_id": "nightly", "manual": True}
+            _row(trigger_home, "nightly"),
+            {"trigger_id": "nightly", "manual": True},
+            runs_for=approval_answer.YOU if by_you else approval_answer.trigger("nightly"),
         )
     )
     assert ran is False and RULE in note

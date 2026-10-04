@@ -7,7 +7,8 @@ rather than to fix a defect:
     hooks._run_provider (lifecycle)                  incident_active   + enforce_action
     gateway._fire_store_trigger (clock/file/event)   incident_active   + enforce_action
     workflows.engine.dispatch_action (a run's step)  enforce_action
-    handlers/trigger_runs._dispatch_store_action (manual) manual_refusal
+    handlers/trigger_runs._dispatch_store_action     manual_refusal    + enforce_action
+        (by hand or from outside: yours is attended, every other run is not)
     handlers/hooks                                   -- reads metadata only, never executes
 
 (`event_triggers.execute_event_action` was a third unattended seam until a data-event trigger
@@ -48,7 +49,11 @@ import pytest
 EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "the lifecycle-hook fire path"),
     ("personalclaw.gateway", "the clock/file/event trigger fire path"),
-    ("personalclaw.dashboard.handlers.trigger_runs", "the manual Run path"),
+    # Run now, the restart review's Run now, your answer to a run's question, a webhook's fire, a
+    # view's refresh, and a Run now an agent's tool or an app starts. Yours is attended and carries
+    # `manual_refusal`; every other run has nobody answering it, so the module is a denylist seam
+    # below as well (`test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist`).
+    ("personalclaw.dashboard.handlers.trigger_runs", "the run-by-hand-or-from-outside path"),
     # Approving an inbox proposal whose apply case is `action` dispatches a provider
     # directly (not through `triggers.tools.run`), so it is a real execution site. User-clicked,
     # so it carries `manual_refusal` — the manual Run path's gate — rather than the unattended
@@ -113,12 +118,19 @@ DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
     ("personalclaw.dashboard.tile_refresh", "TTL dashboard tiles"),
     ("personalclaw.proactive.autoexec", "trivial-tier triage auto-execution"),
     ("personalclaw.workflows.engine", "workflow action steps"),
+    (
+        "personalclaw.dashboard.handlers.trigger_runs",
+        "a webhook's fire, a view's refresh, an agent's or an app's Run now",
+    ),
 )
 
-#: The one execution site NOT required to carry the denylist, and why: it runs a trigger because a
-#: human just pressed Run, so it is attended by definition and is gated by `manual_refusal`
-#: instead. Asserted in `test_the_manual_run_path_is_the_documented_denylist_exemption` rather
-#: than merely stated.
+#: The run-by-hand-or-from-outside dispatch. It used to be exempt from the denylist as the Run
+#: button's path, attended because a human just pressed Run, while a webhook's outside caller, a
+#: view's refresh and an agent's `automation_run` reached the same dispatch with nobody answering:
+#: a webhook whose action said `personalclaw stop` stopped the gateway. Now only a run you start
+#: yourself is attended (`manual_refusal` gates it), and every other run is held to the denylist,
+#: so the module is a denylist seam above and not an exemption below. Asserted in
+#: `test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist`.
 MANUAL_SEAM = "personalclaw.dashboard.handlers.trigger_runs"
 
 #: The ONE site that resolves an action provider to UNDO an action rather than to run one
@@ -132,12 +144,10 @@ MANUAL_SEAM = "personalclaw.dashboard.handlers.trigger_runs"
 #: is exempt ONLY while it still carries `manual_refusal` — asserted per-member below, so an
 #: exemption cannot outlive its own gate. Adding a member here is an argument, not a shortcut.
 USER_CLICKED_SEAMS: tuple[str, ...] = (
-    MANUAL_SEAM,
     "personalclaw.proposals_contract",  # Approve on an inbox proposal
     # "Run now" on a scheduled research report. Attended by definition — the
     # SCHEDULED fire of the same report goes through the trigger path, which carries the
-    # denylist — so the exemption is the same argument as the trigger Run path, and the
-    # per-member assertion below holds it to carrying `manual_refusal`.
+    # denylist — and the per-member assertion below holds it to carrying `manual_refusal`.
     "personalclaw.dashboard.handlers.research_reports",
 )
 
@@ -219,7 +229,7 @@ def test_the_denylist_seam_list_covers_every_unattended_execution_site():
 
 
 @pytest.mark.parametrize("module_name", USER_CLICKED_SEAMS)
-def test_the_manual_run_path_is_the_documented_denylist_exemption(module_name):
+def test_each_user_clicked_seam_is_a_documented_denylist_exemption(module_name):
     """The exemption asserted rather than assumed: it must still be gated by `manual_refusal`.
 
     If that check ever disappears, this path becomes an unattended-equivalent execution site with
@@ -227,9 +237,54 @@ def test_the_manual_run_path_is_the_documented_denylist_exemption(module_name):
     """
     src = _source(module_name)
     assert "manual_refusal" in src, (
-        "the manual Run path is exempt from the denylist because a human initiates it and "
+        f"{module_name} is exempt from the denylist because a human initiates it and "
         "`manual_refusal` gates it. That gate is gone, so the exemption no longer holds."
     )
+
+
+def test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist():
+    """🔴 The run-by-hand-or-from-outside dispatch was exempt as the Run button's path, while a
+    webhook's outside caller, a view's refresh and an agent's `automation_run` reached the same
+    dispatch with nobody answering. The properties that make it a denylist seam now:
+
+    * `_dispatch_store_action` asks `enforce_action`, threading the identity it judges the run
+      under, before its provider runs;
+    * your own run is still gated as an attended one is (`manual_refusal`);
+    * every caller of the dispatch says whose run it is (`runs_for=`), so a new caller decides
+      rather than inherits. One that did not would be judged as the trigger's own fire.
+    """
+    import ast
+
+    from personalclaw.dashboard.handlers import trigger_runs, triggers
+
+    src = _source(MANUAL_SEAM)
+    assert "manual_refusal" in src, "your own Run now is no longer gated"
+    [dispatch] = [
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_dispatch_store_action"
+    ]
+    calls = [node for node in ast.walk(dispatch) if isinstance(node, ast.Call)]
+    asks = [c for c in calls if isinstance(c.func, ast.Name) and c.func.id == "enforce_action"]
+    runs = [c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr == "execute"]
+    assert asks, "the hand dispatch runs a provider without asking the denylist"
+    assert all(any(k.arg == "session_key" for k in c.keywords) for c in asks)
+    assert runs and min(c.lineno for c in asks) < min(
+        c.lineno for c in runs
+    ), "the hand dispatch asks the denylist after its provider runs"
+
+    callers = 0
+    for module in (trigger_runs, triggers):
+        for node in ast.walk(ast.parse(inspect.getsource(module))):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name != "_dispatch_store_action":
+                continue
+            callers += 1
+            assert "runs_for" in {k.arg for k in node.keywords}, ast.unparse(node)
+    assert callers >= 5, f"found only {callers} callers; the scan is not seeing them"
 
 
 @pytest.mark.parametrize("module_name,label", EXECUTION_SITES)

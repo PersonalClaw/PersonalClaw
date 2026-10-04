@@ -92,7 +92,7 @@ async def test_a_scoped_token_fires_the_webhook(tmp_path, monkeypatch):
     trigger_id = _make_webhook(tmp_path)
     captured: dict = {}
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
         captured.update(trigger=trigger, payload=payload, event=event)
         return True, "ran"
 
@@ -122,7 +122,7 @@ async def test_an_accepted_fire_is_counted_on_its_trigger_and_a_refused_one_is_n
     trigger_id = _make_webhook(tmp_path)
     refused_id = _make_webhook(tmp_path, slug="not-allowed", capabilities={})
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
         return True, "ran"
 
     monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
@@ -153,7 +153,7 @@ async def test_the_inbound_body_reaches_the_action_fenced(tmp_path, monkeypatch)
     trigger_id = _make_webhook(tmp_path)
     captured: dict = {}
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
         captured.update(payload=payload)
         return True, "ran"
 
@@ -189,7 +189,7 @@ async def test_a_trigger_not_allowed_to_run_its_action_is_refused_before_it_is_a
     trigger_id = _make_webhook(tmp_path, capabilities={})
     dispatched: list = []
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
         dispatched.append(trigger.id)
         return True, "ran"
 
@@ -302,7 +302,7 @@ async def test_a_paused_webhook_trigger_answers_like_one_that_is_not_there(
     ghost = "store:webhook:ghost"
     dispatched: list = []
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
         dispatched.append(trigger.id)
         return True, "ran"
 
