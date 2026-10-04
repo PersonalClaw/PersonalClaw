@@ -249,10 +249,12 @@ def test_recall_ranking_reaches_the_frontend_through_one_component():
 # ── the endpoints, driven ─────────────────────────────────────────────────────
 
 
-class _Req:
-    """Minimal aiohttp-request stand-in for the memory handlers."""
+class _Req(dict):
+    """Minimal aiohttp-request stand-in for the memory handlers: a request of your signed-in
+    session, which the sign-in leaves who you are on."""
 
     def __init__(self, app, query=None, session_key="dashboard:chat-1"):
+        super().__init__(user="owner")
         self.app = app
         self.query = query or {}
         self.headers = {"X-Session-Key": session_key}

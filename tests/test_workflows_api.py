@@ -669,16 +669,17 @@ class TestRestrictedSessions:
 
         key = "dashboard:chat-mode-unreadable"
         session_restrictions.mark_unreadable(key)
+        request = _req(
+            "POST",
+            "/api/workflows/runs",
+            state=_State(_Sup()),
+            body={"name": "x"},
+            headers={"X-Session-Key": key},
+        )
+        # Your signed-in page's request for that chat: the sign-in leaves who you are on it.
+        request["user"] = "owner"
         try:
-            resp = await H.api_run_start(
-                _req(
-                    "POST",
-                    "/api/workflows/runs",
-                    state=_State(_Sup()),
-                    body={"name": "x"},
-                    headers={"X-Session-Key": key},
-                )
-            )
+            resp = await H.api_run_start(request)
         finally:
             session_restrictions.clear(key)
         assert resp.status == 403

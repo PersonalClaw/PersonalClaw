@@ -235,6 +235,8 @@ def _restricted_request(path, monkeypatch, mode):
     app = web.Application()
     app["state"] = _state((RESTRICTED_CHAT, mode))
     request = make_mocked_request("POST", path, headers={"X-Session-Key": RESTRICTED_KEY}, app=app)
+    # The chat's own page: the sign-in leaves who you are on its request.
+    request["user"] = "owner"
     return request, provider, service, audit
 
 
@@ -296,9 +298,11 @@ WRITE_ROUTES: list[tuple[str, Any, str, Any]] = [
 def _guarded_app(state) -> web.Application:
     """The write routes as the gateway serves them: behind the memory write middleware, which
     makes each request the work of the session it names, beside the gateway's state."""
+    from chat_test_helpers import signed_in
+
     from personalclaw.dashboard.memory_write_gate import memory_write_middleware
 
-    app = web.Application(middlewares=[memory_write_middleware()])
+    app = web.Application(middlewares=[signed_in, memory_write_middleware()])
     app["state"] = state
     for path, handler, _operation, _body in WRITE_ROUTES:
         app.router.add_post(path, handler)

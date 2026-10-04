@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from personalclaw import memory_locality, memory_reads, memory_writes
+from personalclaw.approval_answer import work_of_request
 from personalclaw.dashboard import memory_holds
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
@@ -100,7 +101,7 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     refused = _change_refused_for_the_app(state, request, "memory_remember")
     if refused is not None:
         return refused
-    sk = request.headers.get("X-Session-Key", "")
+    sk = work_of_request(request)
     if not sk:
         _sel().log_api_access(
             caller="anonymous",
@@ -110,12 +111,13 @@ async def api_lessons_create(request: web.Request) -> web.Response:
             resources="missing_session_key",
         )
         return web.json_response({"error": "missing X-Session-Key"}, status=400)
-    # The lesson is the work of the session the key names, judged as the work it does for the chat
-    # at the top (`memory_reads.reach_of`): a subagent's or a workflow step's is saved where that
-    # chat keeps memory, and refused where anything on the way keeps nothing (an Incognito or
-    # Temporary chat, or one whose mode nothing can say: a chat the gateway does not hold that
-    # nothing records), whatever its own key is marked. What it writes is filed under that chat
-    # (`memory_writes.filed_under`). `dashboard:ui` is your own Memory page.
+    # The lesson is the request's work (`work_of_request`: an app's own, whatever session it names,
+    # or the session your pages and PersonalClaw's own processes name), judged as the work it does
+    # for the chat at the top (`memory_reads.reach_of`): a subagent's or a workflow step's is saved
+    # where that chat keeps memory, and refused where anything on the way keeps nothing (an
+    # Incognito or Temporary chat, or one whose mode nothing can say: a chat the gateway does not
+    # hold that nothing records), whatever its own key is marked. What it writes is filed under that
+    # chat (`memory_writes.filed_under`). `dashboard:ui` is your own Memory page.
     reach = memory_reads.reach_of(state, sk)
     if reach.restricted_mode:
         logger.warning("Blocked memory_remember from restricted session %s", sk)
@@ -160,7 +162,7 @@ async def api_lessons_create(request: web.Request) -> web.Response:
             rules = {finding.rule for report in flagged for finding in report.findings}
             cats = ", ".join(sorted(rules)) or "dangerous content"
             _sel().log_api_access(
-                caller=request.headers.get("X-Session-Key", ""),
+                caller=work_of_request(request),
                 operation="memory_remember",
                 outcome="denied",
                 source="dashboard",
@@ -275,7 +277,7 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
     refused = _change_refused_for_the_app(state, request, "lessons.delete")
     if refused is not None:
         return refused
-    sk = request.headers.get("X-Session-Key", "")
+    sk = work_of_request(request)
     if memory_reads.reach_of(state, sk).temporary:
         _sel().log_api_access(
             caller=sk,
@@ -358,7 +360,7 @@ async def api_lessons(request: web.Request) -> web.Response:
     # answer says why, so `memory_list` does not tell the agent there are none. Incognito reads.
     refusal = _memory_refusal(state, request)
     if refusal:
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="lessons.list",

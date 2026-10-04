@@ -273,8 +273,10 @@ async def api_proactive_install(request: web.Request) -> web.Response:
             "triage_schedule_write_failed", message=f"{type(exc).__name__}: {exc}", status=500
         )
     request.app["state"].push_refresh("crons")
+    from personalclaw.approval_answer import work_of_request
+
     _sel().log_api_access(
-        caller=request.headers.get("X-Session-Key", ""),
+        caller=work_of_request(request),
         operation="triage_schedule.install" if created else "triage_schedule.reconcile",
         outcome="success",
         source="dashboard",
@@ -312,7 +314,7 @@ async def api_proactive_reply(request: web.Request) -> web.Response:
     if not run_id:
         return json_error("invalid_request", message="run_id is required", status=400)
 
-    session_key = request.headers.get("X-Session-Key", "") or ""
+    session_key = approval_answer.work_of_request(request)
     state = request.app["state"]
     done = await triage_answer.answer(
         run_id,

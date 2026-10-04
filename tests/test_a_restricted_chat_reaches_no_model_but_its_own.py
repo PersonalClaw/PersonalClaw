@@ -666,6 +666,7 @@ def test_the_gateway_tells_a_tool_process_what_its_chat_is():
 
     from aiohttp import web
     from aiohttp.test_utils import TestClient, TestServer
+    from chat_test_helpers import signed_in
 
     from personalclaw import session_restrictions
     from personalclaw.dashboard.chat_handlers import api_chat_session_model_reach
@@ -681,7 +682,7 @@ def test_the_gateway_tells_a_tool_process_what_its_chat_is():
         memory_writes.hand_on("subagent:a1b2c3", INCOGNITO)
 
     async def run() -> list[tuple[str, object]]:
-        app = web.Application(middlewares=[memory_write_middleware()])
+        app = web.Application(middlewares=[signed_in, memory_write_middleware()])
         app["state"] = SimpleNamespace(_sessions=sessions)
         app.router.add_get("/api/chat/sessions/model-reach", api_chat_session_model_reach)
         out: list[tuple[str, object]] = []

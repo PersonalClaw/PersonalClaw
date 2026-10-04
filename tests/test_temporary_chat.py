@@ -100,6 +100,8 @@ class TestIsRestrictedSession:
     def _mock_request(self, session_key=""):
         req = MagicMock()
         req.headers = {"X-Session-Key": session_key} if session_key else {}
+        # Your signed-in page's request: the sign-in leaves who you are on it, and no app.
+        req.get = {"user": "owner"}.get
         return req
 
     def test_dashboard_temporary_slot(self):
@@ -174,7 +176,8 @@ class TestMemoryRecallGuard:
         req.app = {"state": state}
         req.headers = {"X-Session-Key": session_key} if session_key else {}
         req.query = {"q": q}
-        req.get.return_value = None  # no app's token made it
+        # Your signed-in page's request: the sign-in leaves who you are on it, and no app.
+        req.get = {"user": "owner"}.get
         return req
 
     def _state_with(self, session):

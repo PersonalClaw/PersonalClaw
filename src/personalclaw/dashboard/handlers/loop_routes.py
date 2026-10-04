@@ -561,8 +561,9 @@ async def _create_ported_kind_as_run(
         # run's own provenance depend on which door the UI happened to use.
         origin_kind=OriginKind.API,
         # Carries the launching session's memory posture down into the run
-        # — an incognito chat's loop must not write memories through its run.
-        session_key=request.headers.get("X-Session-Key", "") or "",
+        # — an incognito chat's loop must not write memories through its run. The session is the
+        # work the request's sign-in proves (`work_of_request`), never one a header alone names.
+        session_key=approval_answer.work_of_request(request),
         project_id=str(body.get("project_id", "") or ""),
     )
     # Audited under the operation that GUARDED it, so a denial and a failure land in the same

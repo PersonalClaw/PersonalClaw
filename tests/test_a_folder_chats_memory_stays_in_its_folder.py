@@ -314,10 +314,11 @@ async def test_memory_recall_reads_the_asking_chats_folder_first(gw) -> None:
     app["state"] = gw.state
 
     async def recall(caller: str, query: str) -> str:
+        # The chat's memory tool, which presents the internal credential and names its chat.
         request = make_mocked_request(
             "GET",
             f"/api/memory/recall?{urlencode({'q': query})}",
-            headers={"X-Session-Key": caller},
+            headers={"X-Internal-Secret": "the-gateways-own", "X-Session-Key": caller},
             app=app,
         )
         resp = await api_memory_recall(request)

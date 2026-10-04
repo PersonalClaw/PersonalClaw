@@ -169,8 +169,10 @@ chat, channel thread, loop worker, webhook, subagent).
     (`dashboard/side.py`), both as the chat's own work (`as_its_session`), by
     every consolidation pass
     (`HistoryConsolidator._consolidate` / `consolidate_session`) and by every
-    API request that names a session in `X-Session-Key`
-    (`dashboard/memory_write_gate.py`), and it follows the work into the tasks
+    API request whose work its sign-in proves (`dashboard/memory_write_gate.py`,
+    `approval_answer.work_of_request`: an app's token is the app's own work, and
+    the session named in `X-Session-Key` is the work of your signed-in pages and
+    of PersonalClaw's own processes only), and it follows the work into the tasks
     it spawns, `asyncio.to_thread`, and every worker pool, each of which is a
     `ScopeCarryingExecutor` (the gateway's default executor too). A plain pool
     drops it: a memory read bounded by a timeout once ran on one, and an

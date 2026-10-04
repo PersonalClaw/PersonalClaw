@@ -252,6 +252,8 @@ async def test_a_day_changed_since_it_was_read_is_not_saved_over(memory) -> None
 
 async def test_work_that_may_change_no_memory_cannot_save_a_day(memory) -> None:
     """A Temporary chat's work is refused in the refusal's own words, the owner's page is not."""
+    from chat_test_helpers import signed_in
+
     from personalclaw import memory_writes, session_restrictions
     from personalclaw.dashboard.memory_write_gate import memory_write_middleware
 
@@ -259,7 +261,7 @@ async def test_work_that_may_change_no_memory_cannot_save_a_day(memory) -> None:
     session_restrictions.mark_temporary(key)
     day = _day(1)
     try:
-        app = _app(memory, middlewares=(memory_write_middleware(),))
+        app = _app(memory, middlewares=(signed_in, memory_write_middleware()))
         async with TestClient(TestServer(app)) as c:
             read = await (await c.get(f"/api/memory/history/{day}")).json()
             refused = await c.put(

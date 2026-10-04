@@ -53,6 +53,8 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from aiohttp import web
@@ -82,11 +84,11 @@ ROUTE_VOICES = "/v1/audio/voices"
 #: ecosystem it exists to admit.
 MODEL_PREFIX = "personalclaw/"
 
-#: Session-key family for this surface: ``inbound:<client_id>:<sha8>``.
-#: ``session_keys.INBOUND`` classifies the whole family as unattended, so every turn
-#: through here resolves to HEADLESS by construction, and ``chat_handlers``'
-#: ``_run_chat_scoped`` reads segment 1 — the client_id — as the SpendMeter run scope,
-#: which is what makes the budget PER-CLIENT without this module binding one itself.
+#: Session-key family for this surface: ``inbound:<client_id>:<sha8>``, and
+#: ``inbound:<client_id>`` for the client's speech and transcription, which belong to no
+#: conversation. ``session_keys.INBOUND`` classifies the whole family as unattended, so all of
+#: it resolves to HEADLESS by construction, and ``inbound.spend.spend_scope`` reads segment 1 —
+#: the client_id — as the SpendMeter run scope, which is what makes the budget PER-CLIENT.
 SESSION_PREFIX = session_keys.INBOUND.prefix
 
 #: Session id used when the caller names none. The declared default.
@@ -970,6 +972,22 @@ async def handle_models(request: web.Request) -> web.StreamResponse:
 # ── /v1/audio/* ───────────────────────────────────────────────────────────────
 
 
+@contextmanager
+def _as_the_clients_work(client_id: str) -> Iterator[None]:
+    """Run the enclosed speech or transcription as the client's own work, in the spend scope its
+    chat turns run in (``inbound.spend.spend_scope``): nobody watches it, so the day's caps and the
+    run ceiling an inbound caller is held to weigh each call before it is made, and what it cost is
+    counted where the client's turns count theirs, its Usage row naming the client
+    (``inbound:<client_id>``). It is the client's whatever the request names in a header: this
+    surface signs its own clients in, and the dashboard's sign-in proved nobody."""
+    from personalclaw import memory_writes
+    from personalclaw.inbound.spend import spend_scope
+
+    key = session_keys.INBOUND.key(client_id)
+    with memory_writes.as_work_of(key), spend_scope(key):
+        yield
+
+
 def resolve_voice(name: str = "", *, surface: str = "") -> dict | None:
     """The single seam a voice NAME resolves through. NEW-9 re-implements THIS.
 
@@ -996,6 +1014,9 @@ async def handle_speech(request: web.Request) -> web.StreamResponse:
     ``active_models.json`` binding is the truth (§2.2), and a dialect that let a
     client's cosmetic model string select an engine would have handed an external
     caller a provider-routing control the owner never gave it.
+
+    The speech is the client's work (:func:`_as_the_clients_work`): a request past a spend cap is
+    refused before anything is spoken, ``tts_spend_refused`` in the cap's own words.
     """
     refusal, client, client_id = _admit(request, ROUTE_SPEECH)
     if refusal is not None:
@@ -1034,19 +1055,39 @@ async def handle_speech(request: web.Request) -> web.StreamResponse:
             status=503,
         )
 
+    from personalclaw.guardrails.budgets import BudgetConfigUnreadable
+    from personalclaw.guardrails.failure import BudgetExceededError
     from personalclaw.tts.registry import TtsNotReady
     from personalclaw.voice_reply import streaming_voice_reply
 
     chunks: list[bytes] = []
     try:
-        async for _idx, _sentence, wav in streaming_voice_reply(
-            params["provider"],
-            text,
-            voice=params["voice"],
-            speed=params["speed"],
-            speech_voice=params["speech_voice"],
-        ):
-            chunks.append(wav)
+        with _as_the_clients_work(client_id):
+            async for _idx, _sentence, wav in streaming_voice_reply(
+                params["provider"],
+                text,
+                voice=params["voice"],
+                speed=params["speed"],
+                speech_voice=params["speech_voice"],
+            ):
+                chunks.append(wav)
+    except (BudgetExceededError, BudgetConfigUnreadable) as capped:
+        # A spend cap refused it before anything was spoken: an answer about this client's
+        # spending, said in the cap's own words (which cap, and how to lift it), and never a
+        # synthesis fault to retry.
+        said = (
+            capped.sentence()
+            if isinstance(capped, BudgetExceededError)
+            else f"{capped}, so nothing was spoken."
+        )
+        audit(
+            OPENAI_SURFACE,
+            route=ROUTE_SPEECH,
+            status=503,
+            client_id=client_id,
+            refused="spend cap",
+        )
+        return openai_error(said, code="tts_spend_refused", type_="server_error", status=503)
     except TtsNotReady as refused:
         # A configuration answer, like `no_bound_voice` above, and not a fault to retry: the
         # bound voice cannot speak until the owner fixes it in Settings.
@@ -1150,7 +1191,10 @@ async def _stitch(chunks: list[bytes]) -> bytes:
 async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
     """POST /v1/audio/transcriptions — a thin alias over the bound STT provider.
 
-    ``model`` is read and discarded for the same reason as ``/v1/audio/speech``.
+    ``model`` is read and discarded for the same reason as ``/v1/audio/speech``. The transcription
+    is the client's work (:func:`_as_the_clients_work`): a request past a spend cap is refused
+    before anything is sent to be transcribed, in the cap's own words, as every reason there is no
+    transcript is said (``transcription_failed``).
     """
     refusal, client, client_id = _admit(request, ROUTE_TRANSCRIPTIONS)
     if refusal is not None:
@@ -1238,14 +1282,30 @@ async def handle_transcriptions(request: web.Request) -> web.StreamResponse:
         if not saved:
             return openai_error("Missing 'file' field.", code="missing_file", status=400)
 
-        transcript = await transcribe_audio(saved)
+        with _as_the_clients_work(client_id):
+            transcript = await transcribe_audio(saved)
     except SttError as exc:
         # The provider's sentence already says what failed and what to do; "Transcription
-        # failed: " in front of it said the first half twice.
+        # failed: " in front of it said the first half twice. A spend cap's refusal is one of
+        # them, so the request leaves its audit row, as every other refusal here does.
         logger.warning("openai dialect: transcription failed: %s", exc)
+        audit(
+            OPENAI_SURFACE,
+            route=ROUTE_TRANSCRIPTIONS,
+            status=502,
+            client_id=client_id,
+            refused="transcription failed",
+        )
         return openai_error(str(exc), code="transcription_failed", type_="server_error", status=502)
     except Exception as exc:  # noqa: BLE001
         logger.warning("openai dialect: transcription failed", exc_info=True)
+        audit(
+            OPENAI_SURFACE,
+            route=ROUTE_TRANSCRIPTIONS,
+            status=502,
+            client_id=client_id,
+            refused="transcription failed",
+        )
         return openai_error(
             sentence_with_detail(
                 "The transcription failed. Try again; if it keeps failing, check the gateway log.",

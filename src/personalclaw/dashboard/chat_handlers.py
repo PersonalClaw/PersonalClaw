@@ -74,57 +74,24 @@ logger = logging.getLogger(__name__)
 
 
 async def _run_chat_scoped(state: DashboardState, session: _ChatSession, message: str) -> None:
-    """Run one turn with an inbound turn's SPEND SCOPE bound (EXTERNAL-ACCESS §9.5).
+    """Run one turn, an inbound caller's in its spend scope (``inbound.spend.spend_scope``).
 
-    §9.5 asks that headless CLI turns "ride SpendMeter scope_key=cli". Nothing on the
-    chat path bound a run scope at all — ``set_current_run_key`` had exactly one
-    production caller (the trigger-fire seam), so every chat turn charged with an empty
-    run key and ``run_totals`` for any chat scope was 0.0 by construction.
-
-    Binding happens HERE rather than inside ``run_chat`` because this is a fresh task:
-    a ContextVar set in a task dies with it, so the scope cannot leak into the caller's
-    context and there is no reset to get wrong in a 2900-line function's teardown. The
-    two direct-await callers of ``run_chat`` (the gateway's nudge loop, tests) are
-    therefore untouched — they bind no scope, exactly as before.
-
-    An ``inbound:cli:`` session scopes to ``cli``; another ``inbound:`` surface scopes to
-    its own surface name, so the HTTP dialects EA-2/EA-5 add are attributable without
-    being lumped in with the CLI. A dashboard session binds nothing, keeping every
-    interactive turn byte-identical to today.
+    A headless ``personalclaw run`` turn's spend rides the ``cli`` run, a client's of the
+    OpenAI-compatible endpoint its own client's, each held to the run ceiling an inbound caller
+    is given; the endpoint's speech and transcription run in the same scope. Bound here rather
+    than inside ``run_chat`` because this is a fresh task: the scope cannot leak into the caller's
+    context. The two direct-await callers of ``run_chat`` (the gateway's nudge loop, tests) bind
+    no scope, and a dashboard session binds nothing, keeping every interactive turn as it was.
     """
     key = session.key or ""
     if not session_keys.INBOUND.names(key):
         await run_chat(state, session, message)
         return
 
-    from personalclaw.cli_run import CLI_RUN_KEY, CLI_SESSION_PREFIX
-    from personalclaw.guardrails.budgets import (
-        get_meter,
-        safety_budget_for_inbound,
-        set_current_run_budget,
-        set_current_run_key,
-    )
+    from personalclaw.inbound.spend import spend_scope
 
-    if key.startswith(CLI_SESSION_PREFIX):
-        run_key = CLI_RUN_KEY
-    else:
-        parts = key.split(":")
-        run_key = parts[1] if len(parts) > 1 and parts[1] else "inbound"
-    set_current_run_key(run_key)
-    # The ceiling beside the key: binding attribution without a budget gets you a number
-    # nothing enforces (the mistake `run_totals("doctor")` shipped). The HEADLESS
-    # profile's budget is the operator's configured per-day ceiling via
-    # `safety_profile_for`, so an inbound turn cannot outspend a local one.
-    set_current_run_budget(safety_budget_for_inbound())
-    try:
+    with spend_scope(key):
         await run_chat(state, session, message)
-    finally:
-        # Drop the per-scope counter so a long-lived gateway does not retain one total
-        # per inbound turn forever (the leak the trigger seam's `end_run` call fixed).
-        try:
-            get_meter().end_run(run_key)
-        except Exception:  # noqa: BLE001 — bookkeeping must not mask a turn's outcome
-            logger.debug("end_run failed for %s", run_key, exc_info=True)
 
 
 async def api_chat(request: web.Request) -> web.StreamResponse:
@@ -871,10 +838,11 @@ async def api_chat_session_bound_project(request: web.Request) -> web.Response:
     construction, so ``artifact_save`` there stamped nothing. The session key already
     crosses to that process, so this endpoint closes the loop with no protocol change.
 
-    Keyed off the ``X-Session-Key`` header, never off a path segment or a query
-    parameter: the caller must prove which session it IS, and letting it name any
-    session would turn a stamping helper into a cross-session read of someone else's
-    project binding.
+    Keyed off the work the request's sign-in proves (``approval_answer.work_of_request``: the
+    session the internal credential names in ``X-Session-Key``), never off a path segment or a
+    query parameter: the caller must prove which session it IS, and letting it name any session
+    would turn a stamping helper into a cross-session read of someone else's project binding. An
+    app's own work is no chat's.
 
     Returns ``{"project_id": ""}`` — a 200, not a 404 — when the header is absent, the
     session is unknown or the session binds no project. All three mean the same thing to
@@ -884,8 +852,8 @@ async def api_chat_session_bound_project(request: web.Request) -> web.Response:
     project the user never chose is worse than an unstamped artifact.
     """
     state: DashboardState = request.app["state"]
-    sk = request.headers.get("X-Session-Key", "")
-    if not sk or sk == "dashboard:ui":
+    sk = approval_answer.work_of_request(request)
+    if not sk or sk == session_keys.DASHBOARD_UI or session_keys.APP.names(sk):
         return web.json_response({"project_id": ""})
     name = sk.split(":", 1)[-1] if ":" in sk else sk
     session = (getattr(state, "_sessions", {}) or {}).get(name)
@@ -909,8 +877,9 @@ async def api_chat_session_model_reach(request: web.Request) -> web.Response:
     record). The request runs as deriving from the session it names (``memory_write_gate``), so
     this is the answer the gateway's own stores give.
 
-    Keyed off the ``X-Session-Key`` header, never off a path segment or a query parameter: the
-    caller asks about the session it is. No header, or the dashboard's own, is no session.
+    Keyed off the work the request's sign-in proves (``approval_answer.work_of_request``), never off
+    a path segment or a query parameter: the caller asks about the session it is. No header, or the
+    dashboard's own, is no session.
     """
     from personalclaw import memory_writes
 

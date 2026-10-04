@@ -87,8 +87,9 @@ describe('incognito copy matches the backend contract', () => {
     expect(read('dashboard', 'attachment_extract.py').match(/with memory_writes\.reading_their_input\(\):/g)?.length).toBe(2)
     expect(read('dashboard', 'chat_runner.py').match(/with memory_writes\.reading_their_input\(\):/g)?.length).toBe(1)
     // Dictation and read-aloud are the page's own requests, made as the dashboard and not as the
-    // chat (and by no app's token), so no chat's scope reaches them.
-    expect(read('dashboard', 'memory_write_gate.py')).toMatch(/if session_key == _DASHBOARD_UI:\s*\n\s*session_key = ""\s*\n\s*token_app = str\(request\.get\("app"\) or ""\)\s*\n\s*if not session_key and not token_app:\s*\n\s*return await handler\(request\)/)
+    // chat (and by no app's token), so no chat's scope reaches them: the work a request is for is
+    // the one its sign-in proves, and your own pages' is none.
+    expect(read('dashboard', 'memory_write_gate.py')).toMatch(/key = approval_answer\.work_of_request\(request\)\s*\n\s*if not key or key == _DASHBOARD_UI:\s*\n\s*return await handler\(request\)/)
     const client = readFileSync(join(__dirname, '..', '..', 'lib', 'api.ts'), 'utf8')
     expect(client).toMatch(/const SK = \{ 'X-Session-Key': 'dashboard:ui'/)
     expect(client).toMatch(/fetch\(url, \{ method: 'POST', headers: \{ \.\.\.SK \}, body: fd \}\)/)

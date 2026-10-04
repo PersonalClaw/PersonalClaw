@@ -1475,6 +1475,30 @@ def presented_session_nonce(request: Any, port: int) -> str:
     return nonce
 
 
+def presented_app(request: Any) -> str:
+    """The app *request*'s own app-scoped token names, or ``""`` when it presents none that
+    validates: ``Authorization: Bearer``, or ``?app_token=`` for the ``/api/ws`` handshake, which
+    cannot set a header.
+
+    For the same two paths :func:`presented_session_nonce` serves, which admit a request without
+    checking its sign-in: ``AuthMode.NONE``'s dev middleware and the local-network bypass. An app's
+    token only NARROWS who the request is, so on both an app's request is still the app's: held to
+    the permissions it declared (``app_permission_middleware``) and judged as its own work
+    (``approval_answer.work_of_request``), never as yours. The bypass dropped the claim, so an app's
+    backend or its page on a bypassed network reached every route you do, as you.
+    """
+    token = ""
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Bearer "):
+        token = header[7:].strip()
+    if not token:
+        token = request.query.get("app_token", "")
+    if not token:
+        return ""
+    valid, _user, _reason, app = validate_token_with_app(token)
+    return app if valid and app else ""
+
+
 def note_session_client(
     nonce: str, request: Any, source: str, *, ip: str = "", issued_at: float = 0.0
 ) -> None:
@@ -2068,6 +2092,11 @@ def token_auth_middleware(
                 # presents one the token proves. See presented_session_nonce.
                 if not request.get("session_nonce"):
                     request["session_nonce"] = presented_session_nonce(request, port)
+                # For the same reason an app's token is the app's here too: it only narrows.
+                if not request.get("app"):
+                    app_claim = presented_app(request)
+                    if app_claim:
+                        request["app"] = app_claim
                 _log_auth(
                     request,
                     request["user"],

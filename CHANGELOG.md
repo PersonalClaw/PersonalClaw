@@ -8,6 +8,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+- **An app is judged as the app whatever chat of yours it names: its speech and images are held to the spend caps for work nobody watches, what it writes to your memory is filed under the app, and the audit log names it.**
+- **The OpenAI-compatible endpoint's speech and transcriptions are held to the spend caps its chat turns are: counted in Usage under the client and against the day's dollar cap, and refused past it before anything is spoken or transcribed.**
+- **On the local-network bypass an app's page or backend is held to the permissions it declared, as it is everywhere else, instead of being admitted as you.**
 - **Memory learns your correction or preference when your queued message runs as one turn beside someone else's, and never learns what a turn did for someone else, in that turn or in your next one.**
 - **The agent never writes over an edit you made to an artifact behind your back: `artifact_get` gives it the text of every kind (a Word document, deck, spreadsheet and PDF included) with its version and its base, a write over an existing artifact with no base or with one older than the version you saved is refused and changes nothing, an edit of yours that no version holds is kept as a version of its own before the agent, an app or a workflow's refresh writes over it, and an app's edit is recorded as the app's.**
 - **An automation that runs a workflow runs the version you allowed, and so do the workflows it starts as steps: a newer version you save in a workflow's editor is followed, and one an agent, a sync, an import or an app saved waits for your Use vN on the automation, which asks first. Every version says who saved it, the workflow's page lists the automations that run it, and the version pointer `POST /api/workflows/{name}/versions/repin`, which no run read, is gone.**

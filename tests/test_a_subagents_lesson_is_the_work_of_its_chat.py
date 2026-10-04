@@ -244,9 +244,9 @@ def test_a_subagent_of_an_incognito_chat_changes_workflows_as_its_chat_may(tmp_p
     app["state"] = state
 
     def asked(operation: str) -> web.Response | None:
-        request = make_mocked_request(
-            "POST", "/api/workflows", headers={"X-Session-Key": AGENT}, app=app
-        )
+        # The subagent's workflow tool: the internal credential, naming the subagent.
+        named = {"X-Internal-Secret": "the-gateways-own", "X-Session-Key": AGENT}
+        request = make_mocked_request("POST", "/api/workflows", headers=named, app=app)
         return _guard(request, operation)
 
     assert asked("workflow_run_start") is None, "its run keeps the chat's mode"

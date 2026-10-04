@@ -20,8 +20,8 @@ or transcribe hours of audio with no cap ever seeing it. :func:`metered_media_ca
   fails;
 * a call a person made for themselves (their chat, the dashboard) is not capped, as their chat
   turn is not; and
-* either way, a call that ends writes one Usage row naming its unit and how many of it it was billed
-  for (``usage_ledger.record_units``), so Usage counts it.
+* either way, a call that ends writes one Usage row naming its unit, how many of it it was billed
+  for and the session it was made for (``usage_ledger.record_units``), so Usage counts it.
 
 What each caller hands over is a :class:`MediaCall`: who serves it, which model, its unit, how much
 of it the call asks for (``None`` when that cannot be known before it runs), and an image's size and
@@ -69,11 +69,10 @@ def is_unattended(session_key: str = "") -> bool:
     made inside a tracked run (a trigger fire, a loop, a subagent). A call that names no session is
     the work it is made in (``memory_writes.source_session``): speech an app's request asks for is
     the app's work, as its tool calls are."""
-    from personalclaw import memory_writes
     from personalclaw.guardrails.budgets import current_run_key
     from personalclaw.guardrails.policy import is_unattended_session
 
-    key = session_key or memory_writes.source_session()
+    key = _work_of(session_key)
     return bool(current_run_key()) or (bool(key) and is_unattended_session(key))
 
 
@@ -155,8 +154,18 @@ async def metered_media_call(
             priced=price.priced,
             run_key=current_run_key() or None,
         )
-    _record(call, quantity, price, held_to_caps, session_key, started)
+    _record(call, quantity, price, held_to_caps, _work_of(session_key), started)
     return result
+
+
+def _work_of(session_key: str) -> str:
+    """The session a call is made for: the one it names, else the work it is made in
+    (``memory_writes.source_session``), as :func:`is_unattended` judges it and as an embedding
+    call's Usage row names it. A client's speech on the OpenAI-compatible endpoint is then counted
+    under that client, where its chat turns are."""
+    from personalclaw import memory_writes
+
+    return session_key or memory_writes.source_session()
 
 
 def _uncovered(call: MediaCall) -> str:

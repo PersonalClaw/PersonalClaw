@@ -6,6 +6,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.approval_answer import work_of_request
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import ConfigPreserveError, ConfigWriteError
 from personalclaw.dashboard.state import DashboardState
@@ -163,10 +164,12 @@ def _is_restricted_session(state: DashboardState, request: "Any") -> bool:
     read by the one reader of a session's mode, over the gateway's live chats: the live chat first,
     then the registry, the transcript and a step's run.
 
-    Reads X-Session-Key header (set by browser and MCP subprocesses).
-    Returns True if the session should be blocked from memory operations.
+    The work is the one the request's sign-in proves (``approval_answer.work_of_request``): an
+    app's own, whatever session it names, or the session your pages and PersonalClaw's own
+    processes name in ``X-Session-Key``. Returns True if it should be blocked from memory
+    operations.
     """
-    sk = request.headers.get("X-Session-Key", "")
+    sk = work_of_request(request)
     if not sk or sk == "dashboard:ui":
         return False
     from personalclaw import memory_reads
@@ -177,12 +180,12 @@ def _is_restricted_session(state: DashboardState, request: "Any") -> bool:
 def _memory_refusal(state: DashboardState, request: "Any") -> str:
     """Why the work the request is made for reads none of your memory, or ``""`` when it may: a
     Temporary chat's work, or an app's that does not hold the memory permission — the app whose
-    token made the request, or the one whose conversation or agent its ``X-Session-Key`` names
-    (:func:`personalclaw.memory_reads.reach_of`)."""
+    token made the request, or the one whose conversation or agent the session your pages or
+    PersonalClaw's own processes name belongs to (``approval_answer.work_of_request``,
+    :func:`personalclaw.memory_reads.reach_of`)."""
     from personalclaw import memory_reads
 
-    caller = request.headers.get("X-Session-Key", "")
-    return memory_reads.reach_of(state, caller, app=str(request.get("app") or "")).refusal
+    return memory_reads.reach_of(state, work_of_request(request)).refusal
 
 
 def _change_refused_for_the_app(
@@ -191,14 +194,13 @@ def _change_refused_for_the_app(
     """The 403 for a change to your memory made for an app's work that may change none of it,
     said in the app's words (``memory_reads.app_refusal``) with its security-log row; ``None`` when
     the work may. The app is found as :func:`_memory_refusal` finds it: the one whose token made
-    the request, or whose conversation, agent or scheduled job its ``X-Session-Key`` names. Asked
+    the request, or whose conversation, agent or scheduled job the session named belongs to. Asked
     before anything else the change does, so nothing of it happens. A Temporary or Incognito
     chat's change is :func:`_is_restricted_session`'s to answer."""
     from personalclaw import memory_reads
 
-    caller = request.headers.get("X-Session-Key", "")
-    token_app = str(request.get("app") or "")
-    app = memory_reads.reach_of(state, caller, app=token_app).app
+    caller = work_of_request(request)
+    app = memory_reads.reach_of(state, caller).app
     refused = memory_reads.app_refusal(app, changing=True)
     if not refused:
         return None
@@ -206,7 +208,7 @@ def _change_refused_for_the_app(
     import personalclaw.dashboard.handlers as _pkg  # noqa: F811 — circular import
 
     _pkg.sel().log_api_access(
-        caller=caller or f"app:{token_app}",
+        caller=caller,
         operation=operation,
         outcome="denied",
         source="dashboard",

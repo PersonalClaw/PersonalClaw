@@ -10,6 +10,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw import memory_locality, memory_reads, memory_service, memory_writes
+from personalclaw.approval_answer import work_of_request
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import ConfigWriteError
 from personalclaw.config.transactions import mutate_config_async
@@ -503,7 +504,7 @@ async def api_memory_partition_delete(request: web.Request) -> web.Response:
     names none is 404, and work for a Temporary or Incognito chat, or for an app not given your
     memory, cannot remove memory (403)."""
     state: DashboardState = request.app["state"]
-    sk = request.headers.get("X-Session-Key", "")
+    sk = work_of_request(request)
     pid = request.match_info["id"]
     if _is_restricted_session(state, request):
         _sel().log_api_access(
@@ -536,11 +537,11 @@ async def api_memory_partition_delete(request: web.Request) -> web.Response:
 
 
 def _asking_work_folder(state: DashboardState, request: web.Request) -> str:
-    """The folder whose memory the work a call is made for reads first (its ``X-Session-Key``),
-    as that work's prompts read it (``memory_locality.work_folder``): a folder chat's own, the
-    chat's a subagent or a workflow step works for, a project run's project's. "" for the Memory
-    page and for work in no folder of its own, which read the global memory alone."""
-    caller = request.headers.get("X-Session-Key", "")
+    """The folder whose memory the work a call is made for reads first (``work_of_request``), as
+    that work's prompts read it (``memory_locality.work_folder``): a folder chat's own, the chat's
+    a subagent or a workflow step works for, a project run's project's. "" for the Memory page, for
+    an app's own work and for work in no folder of its own, which read the global memory alone."""
+    caller = work_of_request(request)
     if not caller:
         return ""
     return memory_locality.work_folder(state, memory_reads.reach_of(state, caller))
@@ -580,7 +581,7 @@ async def api_memory_semantic(request: web.Request) -> web.Response:
 async def api_memory_semantic_write(request: web.Request) -> web.Response:
     """PUT /api/memory/semantic — create/update a semantic entry."""
     if _is_restricted_session(request.app["state"], request):
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="semantic.write",
@@ -632,7 +633,7 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
     err = await asyncio.to_thread(svc.set_semantic, key, value, confidence, source)
     if err is not None:
         code, message = err
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="semantic.write",
@@ -644,7 +645,7 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
         msg, _ = redact_exfiltration_urls(message)
         msg, _ = redact_credentials(msg)
         return web.json_response({"error": msg}, status=status)
-    sk = request.headers.get("X-Session-Key", "")
+    sk = work_of_request(request)
     _sel().log_api_access(
         caller=sk,
         operation="semantic.write",
@@ -658,7 +659,7 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
 async def api_memory_semantic_delete(request: web.Request) -> web.Response:
     """DELETE /api/memory/semantic/{key} — tombstone a semantic entry."""
     if _is_restricted_session(request.app["state"], request):
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="semantic.delete",
@@ -710,7 +711,7 @@ async def api_memory_approval_rules(request: web.Request) -> web.Response:
     withheld = _memory_refusal(state, request)
     if withheld:
         _sel().log_api_access(
-            caller=request.headers.get("X-Session-Key", ""),
+            caller=work_of_request(request),
             operation="approval_rule.list",
             outcome="denied",
             source="dashboard",
@@ -749,7 +750,7 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
     from personalclaw.proactive.approval import ApprovalRule, Verdict, rule_to_value
 
     if _is_restricted_session(request.app["state"], request):
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="approval_rule.write",
@@ -804,7 +805,7 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=422)
     svc = _global_service(request.app["state"])
-    sk = request.headers.get("X-Session-Key", "")
+    sk = work_of_request(request)
     # A turn someone other than you asked for adds no rule on its own: held for your own word.
     if memory_writes.asker():
         from personalclaw.dashboard import memory_holds
@@ -865,7 +866,7 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
     from personalclaw.proactive.approval import APPROVAL_KEY_PREFIX
 
     if _is_restricted_session(request.app["state"], request):
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="approval_rule.delete",
@@ -889,7 +890,7 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
     if memory_writes.asker():
         from personalclaw.dashboard import memory_holds
 
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
 
         async def _on_her_allow() -> None:
             if svc.delete_semantic(key, source="user_explicit"):
@@ -914,7 +915,7 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
     if not svc.delete_semantic(key, source="user_explicit"):
         return web.json_response({"error": "not found"}, status=404)
     _sel().log_api_access(
-        caller=request.headers.get("X-Session-Key", ""),
+        caller=work_of_request(request),
         operation="approval_rule.delete",
         outcome="success",
         source="dashboard",
@@ -1045,7 +1046,7 @@ async def api_memory_recall(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     refusal = _memory_refusal(state, request)
     if refusal:
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="memory.recall",
@@ -1367,7 +1368,7 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
     taken (``raw_ingested``), refused (``raw_refused``: each a failed item saying why) and left in
     ``raw/`` because they are still being written (``raw_waiting``: the next sync takes them)."""
     if _is_restricted_session(request.app["state"], request):
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="memory.vault_sync",
@@ -1408,7 +1409,7 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
 async def api_memory_migrate(request: web.Request) -> web.Response:
     """POST /api/memory/migrate — migrate legacy markdown memory to vector store."""
     if _is_restricted_session(request.app["state"], request):
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="memory.migrate",
@@ -1446,7 +1447,7 @@ async def api_memory_migrate(request: web.Request) -> web.Response:
 async def api_memory_import(request: web.Request) -> web.Response:
     """POST /api/memory/import — import memory from JSON (export format)."""
     if _is_restricted_session(request.app["state"], request):
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="memory.import",
@@ -1503,7 +1504,7 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
     """POST /api/memory/consolidate — trigger immediate consolidation for testing."""
     state: DashboardState = request.app["state"]
     if _is_restricted_session(state, request):
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="memory.consolidate",
@@ -1562,7 +1563,7 @@ async def api_memory_observability(request: web.Request) -> web.Response:
 async def api_memory_promote(request: web.Request) -> web.Response:
     """POST /api/memory/promote — promote repeated episodic patterns to semantic facts."""
     if _is_restricted_session(request.app["state"], request):
-        sk = request.headers.get("X-Session-Key", "")
+        sk = work_of_request(request)
         _sel().log_api_access(
             caller=sk,
             operation="memory.promote",

@@ -151,6 +151,8 @@ def _create(state: _FakeState, body: dict[str, Any], *, session_key: str = "") -
     app["state"] = state
     headers = {"X-Session-Key": session_key} if session_key else None
     request = make_mocked_request("POST", "/api/loops", app=app, headers=headers)
+    # Your signed-in page's request: the sign-in leaves who you are on it.
+    request["user"] = "owner"
 
     async def _json() -> dict[str, Any]:
         return body

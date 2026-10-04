@@ -419,8 +419,11 @@ async def api_local_model_search(request: web.Request) -> web.Response:
 
 
 def _sel_caller(request: web.Request) -> str:
-    """A caller identity for the token set/clear SEL event (the session key, else a default)."""
-    return request.headers.get("X-Session-Key") or "dashboard:hf-token"
+    """A caller identity for the token set/clear SEL event: the request's work
+    (``approval_answer.work_of_request``), else a default."""
+    from personalclaw.approval_answer import work_of_request
+
+    return work_of_request(request) or "dashboard:hf-token"
 
 
 # ── HF token cascade (LMMV §5) — status + set/clear, values never leave unmasked ──────

@@ -34,7 +34,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import memory_writes
+from personalclaw import approval_answer, memory_writes
 from personalclaw.turn_source import fence_source, named
 from personalclaw.workflows import owner_allow
 
@@ -97,7 +97,7 @@ def held(
     has checked what it was asked for, and only when someone other than you asked for the turn the
     request's work is for (``memory_writes.asker``)."""
     state = request.app["state"]
-    session_key = request.headers.get("X-Session-Key", "")
+    session_key = approval_answer.work_of_request(request)
     someone = memory_writes.asker()
     who = named(someone)
     # The chat at the top the work is done for: its card asks you, and its turn's Stop ends the ask.

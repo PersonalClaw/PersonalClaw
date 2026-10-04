@@ -844,18 +844,11 @@ async def start_dashboard(
 
             request["session_nonce"] = presented_session_nonce(request, port)
         if not request.get("app"):
-            from personalclaw.dashboard.token_auth import validate_token_with_app
+            from personalclaw.dashboard.token_auth import presented_app
 
-            app_token = ""
-            _auth = request.headers.get("Authorization", "")
-            if _auth.startswith("Bearer "):
-                app_token = _auth[7:].strip()
-            if not app_token:
-                app_token = request.query.get("app_token", "")
-            if app_token:
-                a_valid, _a_user, _reason, a_app = validate_token_with_app(app_token)
-                if a_valid and a_app:
-                    request["app"] = a_app
+            app_claim = presented_app(request)
+            if app_claim:
+                request["app"] = app_claim
         return await handler(request)  # type: ignore[operator]
 
     # The ONE place a client's declared API version is compared against the

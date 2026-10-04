@@ -447,6 +447,7 @@ def test_the_api_answers_a_refused_write_403_whichever_handler_makes_it(home) ->
     request names its session, and the store refuses for an Incognito one."""
     from aiohttp import web
     from aiohttp.test_utils import TestClient, TestServer
+    from chat_test_helpers import signed_in
 
     from personalclaw.dashboard.memory_write_gate import memory_write_middleware
 
@@ -465,7 +466,7 @@ def test_the_api_answers_a_refused_write_403_whichever_handler_makes_it(home) ->
 
     async def run() -> list[tuple[str, int]]:
         memory_writes.carry_scope_into_worker_threads(asyncio.get_running_loop())
-        app = web.Application(middlewares=[memory_write_middleware()])
+        app = web.Application(middlewares=[signed_in, memory_write_middleware()])
         app["state"] = None
         app.router.add_post("/loop", on_loop)
         app.router.add_post("/thread", in_thread)

@@ -1,8 +1,12 @@
-"""An API request a session makes runs as deriving from that session, and as its app's work.
+"""An API request runs as the work of whoever made it: a session's, or an app's own.
 
 The agent's memory, knowledge and vocabulary tools reach the gateway over HTTP and name their
-session in ``X-Session-Key``, as the chat page does. This middleware makes that session the
-request's memory-write scope (:mod:`personalclaw.memory_writes`), so the stores refuse a write the
+session in ``X-Session-Key``, as the chat page does. Whose work a request is, is read from who
+signed it in (``approval_answer.work_of_request``), never from that header alone: an app's token is
+the app's own work whatever session it names, the session named is the work of PersonalClaw's own
+processes (the internal credential) and of your signed-in pages only, and a caller that proved
+neither (one a route signs in itself) names none. This middleware makes that work the request's
+memory-write scope (:mod:`personalclaw.memory_writes`), so the stores refuse a write the
 request makes for an Incognito or Temporary session, whichever handler makes it, and answers the
 refusal as the API always has: 403 ``Memory writes are not allowed in this session mode.``, with a
 security-log row. Such a session's request also runs on the one model its work stays on
@@ -18,9 +22,9 @@ one whose conversation, agent, agent run or scheduled job the session names
 (:func:`personalclaw.memory_reads.reach_of`, asked only when the request writes). Such work
 changes your memory only when the app holds the ``memory`` permission; otherwise the memory stores
 refuse the change and the 403 says why in the app's words, and with it what it writes names the app
-as its source. A request an app's own token makes with no session of its own is the app's work too.
-The same walk names the chat at the top the request's work is done for, which what it writes is
-filed under (``memory_writes.filed_under``): a subagent's lesson is its chat's.
+as its source. The same walk names the chat at the top the request's work is done for, which what
+it writes is filed under (``memory_writes.filed_under``): a subagent's lesson is its chat's, and an
+app's own work is filed under the app, never under a chat of yours it names.
 
 A request made while a turn someone other than you asked for is running in the session it names,
 or one a subagent such a turn started makes, changes none of your memory on its own
@@ -87,15 +91,11 @@ def memory_write_middleware() -> Any:
                 error="a call made with the internal credential named no session",
             )
             return json_error("internal_call_names_no_work", status=403)
-        session_key = request.headers.get("X-Session-Key", "").strip()
-        if session_key == _DASHBOARD_UI:
-            session_key = ""
-        token_app = str(request.get("app") or "")
-        if not session_key and not token_app:
+        key = approval_answer.work_of_request(request)
+        if not key or key == _DASHBOARD_UI:
             return await handler(request)
-        key = session_key or session_keys.APP.key(token_app)
         state = request.app.get("state")
-        whose = functools.partial(memory_reads.reach_of, state, key, app=token_app)
+        whose = functools.partial(memory_reads.reach_of, state, key)
 
         with memory_writes.as_work_of(key, memory_mode=_mode_of(request, key), reach=whose):
             try:

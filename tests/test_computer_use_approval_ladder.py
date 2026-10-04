@@ -626,8 +626,11 @@ def test_a_request_with_no_session_header_resolves_to_an_unattended_identity():
     from personalclaw.dashboard.handlers.computer_use import _caller_identity
     from personalclaw.guardrails.policy import profile_for_session
 
-    class _Req:
+    class _Req(dict):
+        """A request of your signed-in session: the sign-in leaves who you are on it."""
+
         def __init__(self, headers):
+            super().__init__(user="owner")
             self.headers = headers
 
     minted = _caller_identity(_Req({}))

@@ -484,6 +484,15 @@ def test_a_subagent_of_a_chat_whose_mode_cannot_be_read_is_marked_so_and_says_wh
 # ── every reader asks the one reader ─────────────────────────────────────────────────────────
 
 
+class _from_your_page(dict):
+    """A request your signed-in page makes for the chat *key* names: the sign-in leaves who you
+    are on it."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(user="owner")
+        self.headers = {"X-Session-Key": key}
+
+
 @pytest.mark.parametrize(("name", "mode"), RESTRICTED)
 def test_every_reader_reads_a_first_turn_chat_from_the_live_chat(home, name, mode):
     """Before the chat's transcript exists, the reads, the writes, the inheritance and the route
@@ -492,7 +501,7 @@ def test_every_reader_reads_a_first_turn_chat_from_the_live_chat(home, name, mod
 
     state = _state((name, mode))
     key = f"dashboard:{name}"
-    request = SimpleNamespace(headers={"X-Session-Key": key})
+    request = _from_your_page(key)
 
     assert not _transcript(name).exists()
     assert memory_writes.session_mode(key, state=state) == mode
@@ -510,11 +519,12 @@ async def test_the_route_guard_refuses_a_chat_the_gateway_no_longer_holds_and_sa
     normal work."""
     from aiohttp import web
     from aiohttp.test_utils import TestClient, TestServer
+    from chat_test_helpers import signed_in
 
     from personalclaw.workflows.handlers import api_run_start
 
     await _save_the_workflow()
-    app = web.Application()
+    app = web.Application(middlewares=[signed_in])
     app["state"] = _state((NORMAL_CHAT, "persistent"))
     app.router.add_post("/api/workflows/runs", api_run_start)
     async with TestClient(TestServer(app)) as client:

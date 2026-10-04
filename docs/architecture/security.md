@@ -43,11 +43,14 @@ Skipping the token-auth middleware in none-mode used to silently disable the
 **entire app permission sandbox**: the middleware is what adopts the `app`
 claim from an app-scoped token, and without it an app-scoped request could
 reach ANY `/api` path. The fix (`dashboard/server.py`, the
-`_dev_user_middleware`) re-implements claim adoption in none-mode: it extracts
-the Bearer/`?app_token=` token, validates it (`validate_token_with_app`), and
-sets `request["app"]` so `app_permission_middleware` and the WS event filter
-scope the request. The app token only *narrows* the dev owner's reach — the
-permission model holds in every auth mode.
+`_dev_user_middleware`) adopts the claim in none-mode: `token_auth.presented_app`
+reads the Bearer/`?app_token=` token, validates it (`validate_token_with_app`), and
+the middleware sets `request["app"]` so `app_permission_middleware` and the WS event filter
+scope the request. The local-network bypass (`PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1`) admits a
+request without its sign-in too, and adopts the claim by the same reader: it used to drop it, so on
+a bypassed network an app's page or backend reached every route you do, as you. The app token
+only *narrows* the reach of whoever the mode admits the request as — the permission model, and
+whose work a request is, hold in every auth mode.
 
 ### The desktop app's gateway
 
@@ -112,6 +115,18 @@ and the address is never logged, since a sign-in page's carries its single-use `
   anyone else; the SDK publishes no mint for an arbitrary id. App-scoped tokens bound a
   request to that app's declared permissions. In the Bearer header an app token only narrows
   the owner session it is presented beside, for the same user.
+- **Whose work a request is, is who signed it in** (`approval_answer.work_of_request`). An app's
+  token is the app's own work (`app:<name>`) whatever else the request carries: a session it names
+  in `X-Session-Key` is not its work, so the app is held to the spend caps for work nobody
+  watches, what it writes is filed under the app and its audit rows name it. The session a request
+  names is its work only for your signed-in session (the chat your page is in) and for
+  PersonalClaw's own processes (the internal credential). A caller a route signs in itself (a
+  client of the OpenAI-compatible endpoint, a webhook's sender) names none, and that route says
+  whose work the request is. Every gate that judges a request's work asks this one answer: the
+  spend caps, whether anybody watches it, what of your memory it reads and changes, what it is
+  filed under and what its audit rows name.
+  `tests/test_a_requests_work_is_the_caller_its_sign_in_proves.py` fails any other reader of the
+  header.
 - App backends never see the owner's credential: the reverse proxy strips
   cookie + Authorization and injects the app's own 1-hour app-scoped token
   (see [app-platform.md](app-platform.md#the-reverse-proxy--token-model)).
@@ -389,7 +404,10 @@ has no row, or one minted with its prefix spelled out instead of read from its r
 readers that tell one kind of key from another (where a subagent's report goes, the interface the
 security log names, a run's prompt and runtime, a turn's origin, the idle sweep) to the table too. A
 media call (an image, a video, speech, a transcription) that names no session is the work it is
-made in: speech an app's request asks for is held to the dollar caps, as the app's other calls are.
+made in, for its cap and for its Usage row: speech an app's request asks for is held to the dollar
+caps, as the app's other calls are, and so are the speech and transcriptions a client of the
+OpenAI-compatible endpoint asks for, which run as that client's work in the spend scope its chat
+turns run in (`inbound.spend.spend_scope`).
 
 ### What an unattended action is refused (`guardrails/denylist.py`)
 

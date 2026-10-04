@@ -75,8 +75,9 @@ def wired(tmp_path):
 
 def _req(state, *, body=None, query=None):
     req = MagicMock()
-    # A request's own mapping holds what middleware set on it; the owner's page sets no app.
-    req.get = lambda key, default=None: default
+    # A request's own mapping holds what middleware set on it: the sign-in leaves who you are on
+    # your page's request, and no app.
+    req.get = {"user": "owner"}.get
     req.app = {"state": state}
     req.headers = {"X-Session-Key": "dashboard:ui"}
     req.query = query or {}

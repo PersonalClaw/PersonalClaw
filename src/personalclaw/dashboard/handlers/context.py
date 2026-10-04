@@ -4,8 +4,8 @@ Two surfaces:
 
 - ``GET /api/context`` — the routed-context manifest for a project, backing the
   in-process ``get_context`` MCP tool. Resolves the project from an explicit
-  ``?project_id=`` or, failing that, the calling session's bound project (the
-  ``X-Session-Key`` header), or the Personal default. Read-only.
+  ``?project_id=`` or, failing that, the bound project of the chat the call's work is for
+  (``approval_answer.work_of_request``), or the Personal default. Read-only.
 - ``POST /api/projects/{project_id}/context-adapters/regenerate`` — renders the
   marker-fenced PClaw block into the project's ``workspace_dir`` adapter files
   (``CLAUDE.md`` / ``AGENTS.md`` / ``.cursorrules``), replace-in-place. Gated on
@@ -23,6 +23,8 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import session_keys
+from personalclaw.approval_answer import work_of_request
 from personalclaw.atomic_write import atomic_write
 from personalclaw.http_errors import json_error
 from personalclaw.legibility import context_router as cr
@@ -120,11 +122,12 @@ def _route_for_project(state, project, query: str, withheld: str = "") -> cr.Rou
 
 
 def _session_project_id(state, request: web.Request) -> str:
-    """The bound project of the session named by ``X-Session-Key`` (or "")."""
+    """The bound project of the chat the request's work is for (``work_of_request``), or "": your
+    pages and an app's own work are no chat's."""
     if state is None:
         return ""
-    sk = request.headers.get("X-Session-Key", "")
-    if not sk or sk == "dashboard:ui":
+    sk = work_of_request(request)
+    if not sk or sk == session_keys.DASHBOARD_UI or session_keys.APP.names(sk):
         return ""
     session_name = sk.split(":", 1)[-1] if ":" in sk else sk
     session = (getattr(state, "_sessions", {}) or {}).get(session_name)
@@ -143,7 +146,7 @@ async def api_context_get(request: web.Request) -> web.Response:
     from personalclaw.dashboard.handlers._shared import _memory_refusal
 
     state = request.app.get("state")
-    sk = request.headers.get("X-Session-Key", "")
+    sk = work_of_request(request)
     withheld = _memory_refusal(state, request)
     if withheld:
         _sel().log_api_access(
@@ -241,7 +244,7 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
                 atomic_write(target, merged)
             written.append(str(target))
             _sel().log_api_access(
-                caller=request.headers.get("X-Session-Key", "dashboard"),
+                caller=work_of_request(request) or "dashboard",
                 operation="legibility.context_adapter.write",
                 outcome="success",
                 source="dashboard",
@@ -251,7 +254,7 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
             logger.warning("context adapter write failed for %s: %s", target, exc)
             errors.append({"file": str(target), "error": str(exc)})
             _sel().log_api_access(
-                caller=request.headers.get("X-Session-Key", "dashboard"),
+                caller=work_of_request(request) or "dashboard",
                 operation="legibility.context_adapter.write",
                 outcome="error",
                 source="dashboard",

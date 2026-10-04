@@ -519,7 +519,8 @@ async def test_a_subagents_memory_recall_reads_its_chats_folder_first(gw) -> Non
         resp = await client.get(
             "/api/memory/recall",
             params={"q": "seed order raised beds lentil soup dinner"},
-            headers={"X-Session-Key": agent},
+            # The subagent's memory tool: the internal credential, naming the subagent.
+            headers={"X-Internal-Secret": "the-gateways-own", "X-Session-Key": agent},
         )
         recalled = (await resp.json())["result"]
 

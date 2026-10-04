@@ -164,11 +164,13 @@ def slow_store(tmp_path, monkeypatch):
 
 
 def _app(store: VectorMemoryStore) -> web.Application:
+    from chat_test_helpers import signed_in
+
     from personalclaw.dashboard.handlers.memory import api_memory_semantic_write
     from personalclaw.dashboard.handlers.schedule import api_lessons_create
     from personalclaw.dashboard.handlers_system import api_healthz
 
-    app = web.Application()
+    app = web.Application(middlewares=[signed_in])
     app["state"] = MagicMock(
         _sessions={},
         context_builder=types.SimpleNamespace(memory=types.SimpleNamespace(vector_store=store)),

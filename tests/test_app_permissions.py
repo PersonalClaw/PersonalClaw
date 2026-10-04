@@ -329,9 +329,9 @@ def test_checker_for_unknown_app_is_none(tmp_path):
 
 @asynccontextmanager
 async def _none_mode_client(tmp_path, *, permissions: dict):
-    """Mirror server.py's none-mode chain: _dev_user_middleware (with the app-claim
-    adoption) + the real enforcement middleware."""
-    from personalclaw.dashboard.token_auth import validate_token_with_app
+    """Mirror server.py's none-mode chain: _dev_user_middleware, adopting the app claim by the
+    real reader it asks (``token_auth.presented_app``), + the real enforcement middleware."""
+    from personalclaw.dashboard.token_auth import presented_app
 
     name = "demo"
     appdir = tmp_path / "apps" / name
@@ -360,16 +360,9 @@ async def _none_mode_client(tmp_path, *, permissions: dict):
     async def dev_user_middleware(request, handler):
         request["user"] = request.get("user") or "dev-local"
         if not request.get("app"):
-            app_token = ""
-            _auth = request.headers.get("Authorization", "")
-            if _auth.startswith("Bearer "):
-                app_token = _auth[7:].strip()
-            if not app_token:
-                app_token = request.query.get("app_token", "")
-            if app_token:
-                a_valid, _u, _r, a_app = validate_token_with_app(app_token)
-                if a_valid and a_app:
-                    request["app"] = a_app
+            app_claim = presented_app(request)
+            if app_claim:
+                request["app"] = app_claim
         return await handler(request)
 
     @web.middleware

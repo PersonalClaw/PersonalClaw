@@ -41,6 +41,10 @@ tried and who asked (:func:`refuse`), and an HTTP door returns it as a 403 ``app
 What this cannot tell apart: a process running as you on this machine can read what your own
 sign-in reads. A local program that mints your link with ``personalclaw token`` is you to the
 gateway. That boundary belongs to the operating system (``docs/security/limitations.md``).
+
+The principal a request proved also says whose work the request is (:func:`work_of_request`), the
+one answer the gates that judge a request's work read. A session a request names is its work only
+when the principal may name one: your signed-in session, and PersonalClaw's own processes.
 """
 
 from __future__ import annotations
@@ -48,6 +52,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from personalclaw import session_keys
 
 if TYPE_CHECKING:
     from aiohttp import web
@@ -175,10 +181,42 @@ def of_request(request: Any) -> Principal:
     if app_name:
         return app(app_name)
     if "X-Internal-Secret" in request.headers:
-        return agent(str(request.headers.get("X-Session-Key", "") or "").strip())
+        return agent(_named_session(request))
     if request.get("user"):
         return YOU
     return Principal(UNKNOWN)
+
+
+def _named_session(request: Any) -> str:
+    """The session *request* names in ``X-Session-Key``, ``""`` when it names none."""
+    return str(request.headers.get("X-Session-Key", "") or "").strip()
+
+
+def work_of_request(request: Any) -> str:
+    """The session key of the work an HTTP request is for, from the principal it proved
+    (:func:`of_request`): the one answer every gate that judges a request's work reads (the spend
+    caps, whether anybody watches it, what of your memory it may read and change, what it is filed
+    under and what its audit rows name).
+
+    * An app's token is the app's own work, ``app:<name>``, whatever else the request carries: a
+      session it names in ``X-Session-Key`` is not its work, so an app is never judged as one of
+      your chats.
+    * The internal secret is PersonalClaw's own processes, each naming the work it does there: an
+      agent's tools their chat, a scheduled script its job.
+    * A signed-in session of yours is the chat it names there (``dashboard:ui`` for your own pages),
+      and ``""`` when it names none.
+    * Any other request proved none of these: a caller a route signs in itself (a client of the
+      OpenAI-compatible endpoint, a webhook's sender). It names no work, whatever it sends, and the
+      route that admitted it says whose work it is.
+    """
+    by = of_request(request)
+    if by.kind == APP:
+        return session_keys.APP.key(by.name)
+    if by.kind == AGENT:
+        return by.name
+    if by.kind == OWNER:
+        return _named_session(request)
+    return ""
 
 
 def refusal(by: Principal, *, asked_by: str = "", event: bool = False) -> str:

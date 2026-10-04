@@ -10,6 +10,17 @@ from personalclaw.history import ConversationLog
 from personalclaw.session_map import SessionMap
 
 
+@web.middleware
+async def signed_in(request: web.Request, handler: Any) -> web.StreamResponse:
+    """What the dashboard's sign-in leaves on a request of your signed-in session: who you are.
+
+    A test app with no sign-in in front of its routes puts it there, so the session a request names
+    in ``X-Session-Key`` is its work, as the gateway reads it for your pages and for PersonalClaw's
+    own processes (``approval_answer.work_of_request``). A request nothing signed in names none."""
+    request["user"] = request.get("user") or "owner"
+    return await handler(request)
+
+
 def links_kept_in_a_session_map(sessions: Any) -> SessionMap:
     """Keep the channel links of a stand-in session manager where the gateway keeps them: in a
     real session map (this test's own, as every test's is). The inbound door, a chat's own link

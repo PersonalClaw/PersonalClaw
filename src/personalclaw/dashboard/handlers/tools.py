@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from personalclaw import session_keys
+from personalclaw.approval_answer import work_of_request
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import bool_field, require_bool, require_string
@@ -36,30 +37,20 @@ def _sel():
 
 @contextmanager
 def _as_its_work(request: web.Request) -> Iterator[None]:
-    """Run the tool ``api_tool_invoke`` runs as the request's work: the app's, for an app's token
-    (whatever else it carries), else the session the request names (a scheduled script's
-    ``cron:<job>``, your own pages' ``dashboard:ui``), else yours. The tool's own calls back to the
-    gateway then name that work (``mcp_core._internal_headers``), as a native agent's name its chat,
-    so an app's tool keeps to what the app was given; made with the internal credential and naming
-    nothing, they would be refused (``internal_call_names_no_work``)."""
+    """Run the tool ``api_tool_invoke`` runs as the request's work (``work_of_request``, which its
+    audit rows name too): the app's, for an app's token (whatever else it carries), else the session
+    the request names (a scheduled script's ``cron:<job>``, your own pages' ``dashboard:ui``), else
+    yours. The tool's own calls back to the gateway then name that work
+    (``mcp_core._internal_headers``), as a native agent's name its chat, so an app's tool keeps to
+    what the app was given; made with the internal credential and naming nothing, they would be
+    refused (``internal_call_names_no_work``)."""
     from personalclaw import mcp_core
 
-    token = mcp_core.set_current_session_key(_named_work(request) or session_keys.DASHBOARD_UI)
+    token = mcp_core.set_current_session_key(work_of_request(request) or session_keys.DASHBOARD_UI)
     try:
         yield
     finally:
         mcp_core.reset_current_session_key(token)
-
-
-def _named_work(request: web.Request) -> str:
-    """The work a tool invocation names: the app's own (``session_keys.APP``) for an app's token,
-    whatever else it carries, else the session the request names, else ``""``. What the tool runs
-    as (:func:`_as_its_work`) and what its audit rows name, so an app's call is recorded as the
-    app's."""
-    app = str(request.get("app") or "")
-    if app:
-        return session_keys.APP.key(app)
-    return str(request.headers.get("X-Session-Key", "") or "").strip()
 
 
 def _audit_toggle(request: web.Request, op: str, ok: bool, resources: str, error: str = "") -> None:
@@ -581,7 +572,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     if tool_prefs.is_disabled(_pkey, tool_name):
         try:
             _sel().log_tool_invocation(
-                session_key=_named_work(request) or "internal",
+                session_key=work_of_request(request) or "internal",
                 agent="",
                 source="tool_invoke",
                 tool_name=tool_name,
@@ -613,7 +604,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     if denied:
         try:
             _sel().log_tool_invocation(
-                session_key=_named_work(request) or "internal",
+                session_key=work_of_request(request) or "internal",
                 agent="",
                 source="tool_invoke",
                 tool_name=tool_name,
@@ -640,7 +631,7 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     _declared = getattr(_tool_def, "risk_level", "")
     _risk = resolve_effective_risk(_declared, tool_name, "", arguments)
 
-    caller = _named_work(request) or "internal"
+    caller = work_of_request(request) or "internal"
 
     # What the tool itself refuses whatever anyone answers (`ToolProvider.preflight`: the shell
     # denylist, a path out of reach, an argument it does not take), asked BEFORE the risk gate

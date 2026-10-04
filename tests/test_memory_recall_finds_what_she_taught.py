@@ -119,11 +119,16 @@ async def test_the_agents_recall_reads_the_lesson_too(embedded):
     and no lesson either."""
     from personalclaw.dashboard.handlers.memory import api_memory_recall
 
-    class _Req:
+    class _Req(dict):
+        """The agent's recall for its chat, as a request of your signed-in session."""
+
         app = {"state": MagicMock(_sessions={})}
         query = {"q": "dishwasher"}
         headers = {"X-Session-Key": "dashboard:chat-1"}
         method = "GET"
+
+        def __init__(self):
+            super().__init__(user="owner")
 
     svc = MemoryService.over_vector_store(embedded)
     with (

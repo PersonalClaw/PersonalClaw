@@ -15,6 +15,8 @@ from typing import Any, cast
 
 from aiohttp import web
 
+from personalclaw import session_keys
+from personalclaw.approval_answer import work_of_request
 from personalclaw.artifacts import changes, registry, source_files
 from personalclaw.artifacts.build import (
     ArtifactBuildError,
@@ -106,8 +108,11 @@ def _serialize(art: Artifact, *, include_content: bool = False) -> dict[str, Any
 
 
 def _session_key(request: web.Request) -> str | None:
-    sk = request.headers.get("X-Session-Key", "")
-    if not sk or sk == _UI_SESSION_KEY:
+    """The chat an artifact change is recorded as made in: the chat the request's work is for
+    (``approval_answer.work_of_request``), ``None`` for your own pages and for an app's own work,
+    which are no chat's."""
+    sk = work_of_request(request)
+    if not sk or sk == _UI_SESSION_KEY or session_keys.APP.names(sk):
         return None
     return sk.split(":", 1)[-1] if ":" in sk else sk
 
@@ -210,7 +215,7 @@ def _source_file_refusal(
 def _audit(request: web.Request, operation: str, outcome: str, resources: str = "") -> None:
     try:
         sel().log_api_access(
-            caller=request.headers.get("X-Session-Key", "") or "dashboard:ui",
+            caller=work_of_request(request) or "dashboard:ui",
             operation=operation,
             outcome=outcome,
             source="dashboard",

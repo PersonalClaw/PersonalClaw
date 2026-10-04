@@ -450,11 +450,14 @@ def test_an_agent_clis_artifact_save_for_a_private_chat_is_refused(library, monk
 def test_the_routes_and_the_tools_ask_one_check(library):
     """The library's routes refuse such work by the same answer the tools ask
     (``memory_reads.keeps_nothing``), so the two doors cannot drift apart."""
-    from types import SimpleNamespace
-
     from personalclaw.dashboard.handlers._shared import _is_restricted_session
 
-    request = SimpleNamespace(headers={"X-Session-Key": KEY})
+    class _Request(dict):
+        """A request the chat's tools make: the internal credential, naming the chat."""
+
+        headers = {"X-Internal-Secret": "the-gateways-own", "X-Session-Key": KEY}
+
+    request = _Request()
     with memory_writes.derived_from(KEY, memory_mode="incognito"):
         assert _is_restricted_session(None, request) is True
     with memory_writes.derived_from(KEY, memory_mode="persistent"):

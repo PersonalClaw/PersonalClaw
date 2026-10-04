@@ -231,7 +231,7 @@ def _guard(request: web.Request, operation: str, *, run_id: str = "") -> web.Res
     if state is None:
         return None
     why = restricted_calls.refusal(
-        request.headers.get("X-Session-Key", ""), operation, run_id=run_id, state=state
+        approval_answer.work_of_request(request), operation, run_id=run_id, state=state
     )
     if not why:
         return None
@@ -259,7 +259,7 @@ def _saved_by(request: web.Request, *, owners: str = versions.OWNER) -> str:
 def _audit(request: web.Request, operation: str, outcome: str, resources: str = "") -> None:
     try:
         sel().log_api_access(
-            caller=request.headers.get("X-Session-Key", "") or "dashboard:ui",
+            caller=approval_answer.work_of_request(request) or "dashboard:ui",
             operation=operation,
             outcome=outcome,
             resources=resources,
@@ -828,7 +828,7 @@ async def api_def_refine(request: web.Request) -> web.Response:
         mode="background",
         supervisor=_supervisor(request),
         origin_kind=_origin_of(request),
-        session_key=request.headers.get("X-Session-Key", "") or "",
+        session_key=approval_answer.work_of_request(request),
     )
     _audit(request, "workflow_refine", "success" if result.get("ok") else "failure", name)
     return _reply(result, status=202 if result.get("ok") else 200)
@@ -937,7 +937,7 @@ async def api_run_start(request: web.Request) -> web.Response:
         mode=str(body.get("mode", "background") or "background"),
         supervisor=_supervisor(request),
         origin_kind=_origin_of(request),
-        session_key=request.headers.get("X-Session-Key", "") or "",
+        session_key=approval_answer.work_of_request(request),
         project_id=str(body.get("project_id", "") or ""),
         idempotency_key=str(body.get("idempotency_key", "") or ""),
         blocking_timeout=float(body.get("blocking_timeout", 0) or 0),
@@ -1001,7 +1001,7 @@ async def api_agent_save(request: web.Request) -> web.Response:
         return denied
     result = await definition_ask.save(
         request.app.get("state"),
-        session_key=request.headers.get("X-Session-Key", "") or "",
+        session_key=approval_answer.work_of_request(request),
         fields=fields,
     )
     _audit(request, "workflow_agent_save", "success" if result.get("ok") else "failure", name)
@@ -1023,7 +1023,7 @@ async def api_agent_plan(request: web.Request) -> web.Response:
     from personalclaw import mcp_core, mcp_workflows
 
     body = await json_object_body(request)
-    session_key = request.headers.get("X-Session-Key", "") or ""
+    session_key = approval_answer.work_of_request(request)
 
     def plan() -> tuple[dict[str, Any], str]:
         token = mcp_core.set_current_session_key(session_key)
@@ -1073,7 +1073,7 @@ async def api_batch_start(request: web.Request) -> web.Response:
         workspace=_object("workspace"),
         inputs=_object("inputs"),
         writes=_object("writes"),
-        session_key=request.headers.get("X-Session-Key", "") or "",
+        session_key=approval_answer.work_of_request(request),
         description=str(body.get("description", "") or ""),
     )
     _audit(request, "workflow_batch_start", "success" if result.get("ok") else "failure", name)

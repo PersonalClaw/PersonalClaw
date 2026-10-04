@@ -781,9 +781,10 @@ item vector).
 - A folder chat follows its partition's lessons and, beside them, the global lesson
   list's for every chat and for its folder (`VectorMemoryStore.get_lessons_context`,
   `beside=`): a rule taught in Settings or with `memory_remember` reaches it.
-  `memory_recall` reads the memory of the work asking (its `X-Session-Key`) first, then
-  the global memory, labeled and fenced as cross-partition recall, as that work's
-  prompts do.
+  `memory_recall` reads the memory of the work asking first (the work its sign-in
+  proves, `approval_answer.work_of_request`: the chat its `X-Session-Key` names, and the
+  global memory alone for an app's own work, whatever chat it names), then the global
+  memory, labeled and fenced as cross-partition recall, as that work's prompts do.
 - **What an earlier version filed in the global memory for a folder chat moves** to
   its folder's partition at each start (`memory_locality.move_what_folder_chats_left`,
   idempotent), before anything recalls (`memory_locality.settle_at_start` runs it,

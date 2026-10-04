@@ -540,7 +540,8 @@ async def test_a_scheduled_scripts_shell_call_is_refused_and_in_the_security_log
         resp = await http.post(
             "/api/tools/invoke",
             json={"tool": "bash", "arguments": {"command": STOP}},
-            headers={"X-Session-Key": NOBODY},
+            # A scheduled script calls back with the internal credential, naming its job.
+            headers={"X-Internal-Secret": "pcfixture", "X-Session-Key": NOBODY},
         )
         body = await resp.json()
 

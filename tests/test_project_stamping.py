@@ -118,8 +118,15 @@ class TestTheEndpointKeysOffTheHeaderOnly:
     secret, so the session it answers for must be the one it can PROVE it is."""
 
     def _request(self, headers: dict, sessions: dict):
+        """A call an agent CLI's tools make: the internal credential, naming their session."""
         state = SimpleNamespace(_sessions=sessions)
-        return SimpleNamespace(app={"state": state}, headers=headers)
+
+        class _Request(dict):
+            app = {"state": state}
+
+        request = _Request()
+        request.headers = {"X-Internal-Secret": "the-gateways-own", **headers}
+        return request
 
     async def _call(self, request):
         from personalclaw.dashboard.chat_handlers import api_chat_session_bound_project

@@ -527,6 +527,16 @@ answering another, or while that answer is still being sent, is refused with `40
 `session_busy`, and the answer in progress is left as it is. Ask again once it has finished; a
 client that keeps its conversation can also send it in another session.
 
+What a client asks for on the `openai` surface is work nobody watches, so the spend caps for such
+work (**Settings → Guardrails**) hold all of it: its chat turns, its speech (`/v1/audio/speech`)
+and its transcriptions (`/v1/audio/transcriptions`). Each is counted against the day's dollar cap
+and in **Settings → Usage**, under the client, and each is held to the run ceiling an inbound
+caller is given. A request past a cap is refused before anything is spoken or transcribed, in the
+cap's own words: speech answers `503` with the code `tts_spend_refused`, a transcription `502`
+with `transcription_failed`. A session a client names in a header (`X-Session-Key`) changes none
+of this: the route signs its clients in itself, and a request is the work of the client its token
+proves.
+
 | Command | What it does |
 |---|---|
 | `personalclaw inbound token create <surface> [--rotate] [--ttl 90d]` | Mint that surface's bearer token, stored in the **credential store** (keychain, else `.env` at `0600`) as `PERSONALCLAW_INBOUND_<SURFACE>_TOKEN`. **Printed once** — copy it into your client immediately. It works for `--ttl` (`30m`, `20h`, `7d`; default and limit 90 days — longer is refused, never shortened), and the output says until when. `--rotate` replaces a working token, which immediately invalidates the old one; a token that expired or was revoked is replaced without it. |

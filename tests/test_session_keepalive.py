@@ -22,8 +22,11 @@ class _FakeSessions:
 
 
 def _make_request(headers, state):
+    """The keepalive the chat's own tool server sends: the internal credential, naming its chat
+    (the sign-in leaves no app and no user on it)."""
     req = MagicMock(spec=web.Request)
-    req.headers = headers
+    req.headers = {"X-Internal-Secret": "the-gateways-own", **headers}
+    req.get = {}.get
     req.app = {"state": state}
     return req
 

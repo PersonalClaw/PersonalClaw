@@ -203,12 +203,12 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
       - ``q``: what to look for (at least 2 characters)
       - ``limit``: the most chats to return (1-10, default 5)
 
-    The chat the call is made for (``X-Session-Key``; for a subagent or a workflow step, each
-    session it works for, up to its chat) is not searched, and neither is an Incognito or a
-    Temporary chat. From a Temporary chat's work nothing is: it starts blank. For an app's work,
-    only the conversations that app started are searched, as the app's own content search is
-    (:func:`api_sessions_search`). Whose work the call is, is :func:`memory_reads.reach_of`'s
-    answer, the one every memory read asks.
+    The chat the call is made for (the work its sign-in proves, ``work_of_request``; for a subagent
+    or a workflow step, each session it works for, up to its chat) is not searched, and neither is
+    an Incognito or a Temporary chat. From a Temporary chat's work nothing is: it starts blank. For
+    an app's work, only the conversations that app started are searched, as the app's own content
+    search is (:func:`api_sessions_search`). Whose work the call is, is
+    :func:`memory_reads.reach_of`'s answer, the one every memory read asks.
 
     Returns ``{result, query, chats, matched, searched, complete, index}``. ``result`` is what the
     tool hands the agent. ``chats`` holds each chat found, best first: its ``key``, ``title``,
@@ -231,7 +231,7 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
         limit = int(request.query.get("limit", ""))
     except (TypeError, ValueError):
         limit = chat_recall.DEFAULT_CHATS
-    reach = memory_reads.reach_of(state, request.headers.get("X-Session-Key", ""))
+    reach = memory_reads.reach_of(state, approval_answer.work_of_request(request))
     asking, app = reach.keys, reach.app
     if reach.blank:
         _sel().log_api_access(
@@ -476,10 +476,12 @@ async def api_session_keepalive(request: web.Request) -> web.Response:
     (e.g. the `wait` tool).
 
     Authenticated via X-Internal-Secret; session is selected via the
-    X-Session-Key header that all MCP subprocesses already send.
+    X-Session-Key header that all MCP subprocesses already send, as the work the internal
+    credential names (``approval_answer.work_of_request``): a request an app's token makes is the
+    app's own work, which keeps no chat alive.
     """
     state: DashboardState = request.app["state"]
-    session_key = request.headers.get("X-Session-Key", "").strip()
+    session_key = approval_answer.work_of_request(request)
     if not session_key:
         return web.json_response({"error": "X-Session-Key required"}, status=400)
     provider = state.sessions.get_provider(session_key)
@@ -504,7 +506,7 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
     Authenticated via X-Internal-Secret + X-Session-Key.
     """
     state: DashboardState = request.app["state"]
-    session_key = request.headers.get("X-Session-Key", "").strip()
+    session_key = approval_answer.work_of_request(request)
     if not session_key:
         _sel().log_api_access(
             caller="unknown",

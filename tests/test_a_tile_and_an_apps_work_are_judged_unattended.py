@@ -75,11 +75,11 @@ def _cap(home, dollars: float) -> None:
 
 
 class _Request(dict):
-    """The two things the tool route reads of a request: the app its token proved, if any, and
-    the session it names."""
+    """What the tool route reads of a request of your signed-in session: the app its token proved,
+    if any, and the session it names."""
 
     def __init__(self, *, app: str = "", session: str = "") -> None:
-        super().__init__(app=app)
+        super().__init__(app=app, user="owner")
         self.headers = {"X-Session-Key": session} if session else {}
 
 
