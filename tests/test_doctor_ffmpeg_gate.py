@@ -31,9 +31,9 @@ had already decided the opposite two branches earlier:
 The rails below are properties of the decision, not string equality on the whole block: the
 fault must be licensed by a bound model, and the hint must match the platform it is read on.
 
-⚠️  `_doctor()` reads the agent config under `agents_dir()` and its MCP section REWRITES
-`personalclaw.json`, so every test here that drives `_doctor()` points `PERSONALCLAW_HOME` at
-`tmp_path` first and no test can write the operator's home. The seam is the HOME, not a symbol:
+⚠️  `_doctor()` reads the agent config under `agents_dir()`, `personalclaw.json`, so every test
+here that drives `_doctor()` points `PERSONALCLAW_HOME` at `tmp_path` first and no test reads, or
+writes, the operator's home. The seam is the HOME, not a symbol:
 `agents_dir()` resolves `config_dir()` per call (#3463), there is no `AGENTS_DIR` constant to
 repoint, and relocating the home after import is the supported way to isolate — see
 `tests/test_agent_paths_resolve_at_call_time.py`, which holds that line. `_stt_block` asserts
@@ -102,8 +102,8 @@ def _stt_block(
         stdout = "v22.12.0" if argv[:2] == ["node", "-v"] else "Python 3.13.15"
         return subprocess.CompletedProcess(argv, 0, stdout=f"{stdout}\n", stderr="")
 
-    # Relocate the whole home, then prove it moved. `_doctor()` reads — and its MCP section
-    # rewrites — `agents_dir() / AGENT_FILENAME`, and `agents_dir()` resolves `config_dir()`
+    # Relocate the whole home, then prove it moved. `_doctor()` reads
+    # `agents_dir() / AGENT_FILENAME`, and `agents_dir()` resolves `config_dir()`
     # on every call, so the env var reaches it while redirecting every other home-derived
     # path `_doctor()` touches as well. The assertion is the guard, not the subject: if the
     # seam ever stops moving, these rails must fail loudly rather than read the real home.

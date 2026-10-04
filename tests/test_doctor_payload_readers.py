@@ -317,8 +317,23 @@ def test_personalclaw_doctor_prints_the_deficit_and_its_blocker(tmp_path, monkey
         store.create_typed_item(item_type="note", title=f"seeded {i}", content="body text here")
     assert store.count_items_missing_embedding() == 25, "seeding did not produce the backlog"
 
+    # An agent config whose PersonalClaw server is set up, so the one issue this run could raise
+    # is the deficit under test: its command is a program that is there, and is never run.
+    command = tmp_path / "bin" / "personalclaw"
+    command.parent.mkdir()
+    command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    command.chmod(0o755)
     (tmp_path / "personalclaw.json").write_text(
-        json.dumps({"tools": [], "allowedTools": [], "mcpServers": {}}), encoding="utf-8"
+        json.dumps(
+            {
+                "tools": ["@personalclaw-core"],
+                "allowedTools": ["@personalclaw-core"],
+                "mcpServers": {
+                    "personalclaw-core": {"command": str(command), "args": ["mcp-core"]}
+                },
+            }
+        ),
+        encoding="utf-8",
     )
     mock_run = MagicMock(returncode=0, stdout="v22.12.0", stderr="")
     with (

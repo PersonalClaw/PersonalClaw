@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 import json
 import time
 from pathlib import Path
@@ -36,7 +37,11 @@ from personalclaw.resilience import doctor, fixes, remediation
 from personalclaw.resilience.doctor import DoctorContext
 from personalclaw.vector_memory import VectorMemoryStore, _Index
 
-_DOCTOR_SRC = Path(doctor.__file__)
+#: Every module a registered probe is defined in, read from the registry: a probe that lives beside
+#: what it reads is held to the same rules as the ones in the Doctor's own module.
+_PROBE_SRCS = tuple(
+    sorted({Path(inspect.getsourcefile(p.run) or doctor.__file__) for p in doctor.all_probes()})
+)
 #: The wire id of the index Fix and its maintenance job — pinned as the string a client sees.
 MEMORY_INDEX_FIX = "memory.rebuild-faiss-index"
 
@@ -109,55 +114,60 @@ def test_a_clean_home_still_scores_100(home, monkeypatch):
 
 
 def _failure_constructions() -> list[tuple[str, int, dict[str, ast.expr]]]:
-    """Every `ProbeResult(...)` in the probe module that can report a failure: `ok` is anything
-    but the literal True. Returns ``(function, line, keywords)``."""
-    tree = ast.parse(_DOCTOR_SRC.read_text(encoding="utf-8"))
+    """Every `ProbeResult(...)` in a probe module that can report a failure: `ok` is anything
+    but the literal True. Returns ``(module:function, line, keywords)``."""
     out = []
-    for fn in ast.walk(tree):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for call in ast.walk(fn):
-            if not (isinstance(call, ast.Call) and getattr(call.func, "id", "") == "ProbeResult"):
+    for src in _PROBE_SRCS:
+        tree = ast.parse(src.read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            kws = {k.arg: k.value for k in call.keywords if k.arg}
-            ok = kws.get("ok")
-            if isinstance(ok, ast.Constant) and ok.value is True:
-                continue
-            out.append((fn.name, call.lineno, kws))
+            for call in ast.walk(fn):
+                if not (
+                    isinstance(call, ast.Call) and getattr(call.func, "id", "") == "ProbeResult"
+                ):
+                    continue
+                kws = {k.arg: k.value for k in call.keywords if k.arg}
+                ok = kws.get("ok")
+                if isinstance(ok, ast.Constant) and ok.value is True:
+                    continue
+                out.append((f"{src.name}:{fn.name}", call.lineno, kws))
     return out
 
 
 def _fix_ids_named_in_the_module() -> set[str]:
     """Every Fix id a probe can hand out: the VALUES a `fix_id=` keyword or a `fix_id = …`
-    assignment can take — never the strings in a condition that chooses between them."""
-    tree = ast.parse(_DOCTOR_SRC.read_text(encoding="utf-8"))
-    consts = {
-        t.id: n.value.value
-        for n in tree.body
-        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
-        for t in n.targets
-        if isinstance(t, ast.Name) and isinstance(n.value.value, str)
-    }
-
-    def values(expr: ast.expr) -> set[str]:
-        if isinstance(expr, ast.Constant):
-            return {expr.value} if isinstance(expr.value, str) and expr.value else set()
-        if isinstance(expr, ast.Name):
-            return {consts[expr.id]} if expr.id in consts else set()
-        if isinstance(expr, ast.IfExp):
-            return values(expr.body) | values(expr.orelse)
-        if isinstance(expr, ast.BoolOp):
-            return set().union(*(values(v) for v in expr.values))
-        return set()
-
+    assignment can take — never the strings in a condition that chooses between them. A name is
+    read from the constants of the module it is used in."""
     named: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.keyword) and node.arg == "fix_id":
-            named |= values(node.value)
-        elif isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "fix_id" for t in node.targets
-        ):
-            named |= values(node.value)
+    for src in _PROBE_SRCS:
+        tree = ast.parse(src.read_text(encoding="utf-8"))
+        consts = {
+            t.id: n.value.value
+            for n in tree.body
+            if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+            for t in n.targets
+            if isinstance(t, ast.Name) and isinstance(n.value.value, str)
+        }
+
+        def values(expr: ast.expr, consts: dict[str, str] = consts) -> set[str]:
+            if isinstance(expr, ast.Constant):
+                return {expr.value} if isinstance(expr.value, str) and expr.value else set()
+            if isinstance(expr, ast.Name):
+                return {consts[expr.id]} if expr.id in consts else set()
+            if isinstance(expr, ast.IfExp):
+                return values(expr.body) | values(expr.orelse)
+            if isinstance(expr, ast.BoolOp):
+                return set().union(*(values(v) for v in expr.values))
+            return set()
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.keyword) and node.arg == "fix_id":
+                named |= values(node.value)
+            elif isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "fix_id" for t in node.targets
+            ):
+                named |= values(node.value)
     return named
 
 
@@ -188,6 +198,8 @@ def test_every_failure_a_probe_can_return_names_a_fix_or_a_remedy():
 def test_every_fix_a_probe_names_is_registered():
     named = _fix_ids_named_in_the_module()
     assert MEMORY_INDEX_FIX in named and "serving-fs.symlink-repair" in named, named
+    # A probe defined outside the Doctor's module is read too: the agent-config check's Fix.
+    assert "tools.restore-core-server" in named, named
     unregistered = sorted(f for f in named if fixes.get_fix(f) is None)
     assert not unregistered, f"a probe offers a Fix that does not exist: {unregistered}"
 

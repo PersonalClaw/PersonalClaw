@@ -4,8 +4,10 @@ Every fix is a ``Fix{id, title, impact, dry_preview(), apply()}`` paired with a 
 via its ``fix_id``. **Nothing auto-applies** — the Doctor tab renders the fix with its
 impact description and a two-step confirm runs it; every application is SEL-audited.
 Fixes touch harness mechanics ONLY (symlinks, caches, orphaned locks/PIDs, rollback
-leftovers, bindings to models that are gone) — never user content (memory entries,
-knowledge items, tasks); anything content-adjacent is flagged, never auto-deleted.
+leftovers, bindings to models that are gone, PersonalClaw's own server entry in the agent
+config) — never user content (memory entries, knowledge items, tasks); anything
+content-adjacent is flagged, never auto-deleted. No fix adds a tool to what the agent is
+offered or runs without asking: those lists are the owner's.
 
 ``dry_preview()`` is read-only and returns a human string describing what ``apply()``
 would do. ``apply()`` performs the repair and returns a result string. Both are
@@ -20,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from personalclaw.resilience.core_server import CORE_SERVER_FIX
 from personalclaw.resilience.doctor import MEMORY_INDEX_FIX, PRUNE_BINDINGS_FIX
 
 logger = logging.getLogger(__name__)
@@ -408,6 +411,100 @@ def _rebuild_memory_index_fix() -> str:
     return rebuild_memory_index(reembed=True)
 
 
+#: What the server-entry Fix leaves alone, said in its preview and its result alike.
+_LISTS_KEPT = (
+    "The file's tools and allowedTools lists stay as they are: nothing is added to the tools the "
+    "agent is offered, or to those it runs without asking."
+)
+
+
+def _core_server_starts(command: str) -> str:
+    from personalclaw.resilience.core_server import core_server_args
+
+    return " ".join([command, *core_server_args()])
+
+
+def _restore_core_server_preview() -> str:
+    from personalclaw.resilience.core_server import (
+        AGENT_CONFIG_NAME,
+        agent_config_path,
+        core_server_command,
+        core_server_detail,
+        read_core_server,
+    )
+
+    reading = read_core_server(agent_config_path())
+    if not reading.needs_setting_up:
+        return f"Nothing would change: {core_server_detail(reading)}."
+    command = core_server_command()
+    if not command:
+        return (
+            "This install's personalclaw command was not found, so there is no command to give "
+            "the entry; nothing would change."
+        )
+    starts = _core_server_starts(command)
+    if reading.malformed:
+        change = (
+            f"Would replace PersonalClaw's server entry in {AGENT_CONFIG_NAME}, which is not a "
+            f"server definition, with one that starts {starts}."
+        )
+    elif reading.entry is None:
+        change = f"Would add PersonalClaw's server to {AGENT_CONFIG_NAME}, started as {starts}."
+    elif reading.command == command:
+        change = (
+            f"Would set PersonalClaw's server in {AGENT_CONFIG_NAME} to start {starts}, with its "
+            "own arguments, and keep the rest of its entry."
+        )
+    else:
+        change = (
+            f"Would set PersonalClaw's server in {AGENT_CONFIG_NAME} to start {starts}, in place "
+            f"of {reading.command or 'no command'}, and keep the rest of its entry."
+        )
+    return f"{change} {_LISTS_KEPT}"
+
+
+def _restore_core_server_apply() -> str:
+    """Write PersonalClaw's own server entry: this install's command and the server's arguments,
+    over whatever else the entry holds. Nothing else in the file changes, and a file that is not
+    there or cannot be read is refused rather than written."""
+    import copy
+
+    from personalclaw.config.secret_refs import write_mcp_document
+    from personalclaw.resilience.core_server import (
+        AGENT_CONFIG_NAME,
+        agent_config_path,
+        core_server_args,
+        core_server_command,
+        core_server_detail,
+        core_server_name,
+        read_core_server,
+    )
+
+    path = agent_config_path()
+    reading = read_core_server(path)
+    if reading.set_up:
+        return f"Nothing changed: {core_server_detail(reading)}."
+    if not reading.needs_setting_up:
+        raise RuntimeError(f"{core_server_detail(reading)}; nothing was written")
+    command = core_server_command()
+    if not command:
+        raise RuntimeError(
+            "this install's personalclaw command was not found, so the entry was left as it is"
+        )
+    document = copy.deepcopy(reading.document)
+    servers = document.setdefault("mcpServers", {})
+    servers[core_server_name()] = {
+        **(reading.entry or {}),
+        "command": command,
+        "args": core_server_args(),
+    }
+    write_mcp_document(path, document)
+    return (
+        f"PersonalClaw's server in {AGENT_CONFIG_NAME} starts {_core_server_starts(command)} now. "
+        f"{_LISTS_KEPT}"
+    )
+
+
 def _register_builtin_fixes() -> None:
     register_fix(
         Fix(
@@ -451,6 +548,19 @@ def _register_builtin_fixes() -> None:
             "all) are embedded first with it. What your memories say is not changed.",
             dry_preview=_memory_index_preview,
             apply=_rebuild_memory_index_fix,
+        )
+    )
+    register_fix(
+        Fix(
+            id=CORE_SERVER_FIX,
+            title="Set up PersonalClaw's server in the agent config again",
+            impact="Writes the entry for PersonalClaw's own server in the agent runtime config, "
+            "agents/personalclaw.json, with this install's personalclaw command, as every gateway "
+            "start does, and keeps the rest of the file as it is. Nothing is added to its tools "
+            "list or to allowedTools, the tools the agent runs without asking: both lists are "
+            "yours.",
+            dry_preview=_restore_core_server_preview,
+            apply=_restore_core_server_apply,
         )
     )
 

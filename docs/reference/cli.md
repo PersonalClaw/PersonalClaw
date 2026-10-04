@@ -247,6 +247,15 @@ Doctor starts no agent CLI unless you ask it to. For each one it reports whether
 is installed and what its last Test found (the Test on its card in Settings → Providers);
 one nobody has tested reads as installed and not started, which is not an issue.
 
+The check changes none of your configuration. Its **MCP Tools** rows read the agent runtime config,
+`agents/personalclaw.json` in the home: whether the entry for PersonalClaw's own server starts a
+program that is on this machine, and whether `@personalclaw-core` is in `tools` (the tools the
+agent is offered) and in `allowedTools` (the tools it runs without asking). A missing server
+entry, or a command that is not a program here, is an issue; its repair is the Fix on the same
+check in Settings → Doctor → Tools, which shows what it writes and asks first, and a gateway start
+sets the entry up again too. The two lists are yours: doctor says where the server stands in them,
+and neither doctor nor any Fix adds a tool to either.
+
 Its **Backups** row is the Doctor page's check of the scheduled backups: whether the last
 snapshot and the last export worked, a failure in the words Settings → Backups uses, how many
 runs in a row it has lasted, what to do about it, and the newest snapshot a restore can still

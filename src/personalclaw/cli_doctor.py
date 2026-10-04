@@ -14,7 +14,6 @@ from pathlib import Path
 from personalclaw import __version__ as _pc_version
 from personalclaw import approval_grants, home_gateway, python_children
 from personalclaw.agent import AGENT_FILENAME, agents_dir
-from personalclaw.atomic_write import atomic_write
 from personalclaw.auth.modes import classify_auth_mode_request
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -611,6 +610,64 @@ def _doctor_backups() -> None:
         print(f"               {res.remedy}")
 
 
+#: The Fix line for a server entry the Doctor page's Fix can set up: this command repairs nothing.
+_CORE_SERVER_FIX_LINES = (
+    "Fix: personalclaw doctor repairs nothing. Settings → Doctor → Tools has a Fix",
+    "for this, which shows what it writes and asks first. The gateway's next start",
+    "sets the entry up too.",
+)
+#: Said when the server is missing from either list: a reader may look for a repair, and none comes.
+_LISTS_ARE_YOURS = "Doctor and its fixes leave both lists as they are: they are yours to change."
+
+
+def _doctor_core_server(agent_path: Path) -> list[str]:
+    """Print where PersonalClaw's own server stands in the agent runtime config. Changes nothing.
+
+    The Doctor page's own reading and words (``resilience.core_server``), so the two say one
+    fault one way. A server entry that is missing, or whose command is not a program on
+    this machine, is an issue the run exits by, and its repair is the Doctor page's confirm-gated
+    Fix, which shows what it writes before it writes it. Where the server stands in ``tools`` and
+    ``allowedTools`` is reported only: both lists are the owner's, and neither this command nor
+    any Doctor Fix adds a tool to either. Returns the issues found.
+    """
+    from personalclaw.resilience.core_server import (
+        core_server_command,
+        core_server_detail,
+        core_server_name,
+        core_server_remedy,
+        read_core_server,
+    )
+
+    reading = read_core_server(agent_path)
+    ref = f"@{core_server_name()}"
+    detail = core_server_detail(reading)
+    if not reading.found:  # removed since the Agent row looked: nothing to check, nothing to fix
+        print(f"  {ref}: ⏹  {detail}")
+        return []
+    if reading.unreadable:
+        print(f"  {ref}: ❌ {detail}")
+        print(f"               {core_server_remedy(reading)}")
+        return ["agent config unreadable"]
+    issues: list[str] = []
+    if reading.set_up:
+        print(f"  {ref}: ✅ {detail}")
+    else:
+        print(f"  {ref}: ❌ {detail}")
+        fix = _CORE_SERVER_FIX_LINES if core_server_command() else (core_server_remedy(reading),)
+        for line in fix:
+            print(f"               {line}")
+        issues.append(f"{ref} server entry")
+    print(f"  tools:       {'lists' if reading.in_tools else 'does not list'} {ref}")
+    if reading.in_allowed:
+        print(f"  allowedTools: lists {ref}, so its tools run without asking")
+    else:
+        print(f"  allowedTools: does not list {ref}, so its tools are not among those that run")
+        print("               without asking")
+    if not (reading.in_tools and reading.in_allowed):
+        print(f"               {_LISTS_ARE_YOURS}")
+    return issues
+
+
 def _doctor_maintenance(gateway: _GatewayReading) -> None:
     """Print the remediation engine's health score and the deficits behind it.
 
@@ -1014,60 +1071,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     # ── MCP Tools ──
     print("\nMCP Tools")
     if agent_path.exists():
-
-        try:
-            agent_data = json.loads(agent_path.read_text(encoding="utf-8"))
-        except Exception:
-            agent_data = {}
-        tools = agent_data.get("tools", [])
-        allowed = agent_data.get("allowedTools", [])
-        mcps = agent_data.get("mcpServers", {})
-        mcp_fixed = False
-        mcp_cmd_fixed = False
-        for ref in ("@personalclaw-core",):
-            name = ref[1:]
-            in_tools = ref in tools
-            in_allowed = ref in allowed
-            in_servers = name in mcps
-            if in_tools and in_allowed and in_servers:
-                cmd = mcps[name].get("command", "")
-                exists = Path(cmd).is_file() if cmd else False
-                if exists:
-                    print(f"  {ref}: ✅")
-                else:
-                    resolved = shutil.which("personalclaw")
-                    if resolved:
-                        mcps[name]["command"] = resolved
-                        mcp_cmd_fixed = True
-                        print(f"  {ref}: 🔧 fixed stale path: {cmd} → {resolved}")
-                    else:
-                        print(f"  {ref}: ❌ binary not found: {cmd}")
-                        issues.append(f"{ref} binary")
-            else:
-                missing: list[str] = []
-                if not in_servers:
-                    missing.append("mcpServers")
-                if not in_tools:
-                    missing.append("tools")
-                if not in_allowed:
-                    missing.append("allowedTools")
-                print(f"  {ref}: ❌ missing from {', '.join(missing)}")
-                issues.append(f"{ref} config")
-                # Auto-fix
-                if not in_tools:
-                    tools.append(ref)
-                if not in_allowed:
-                    allowed.append(ref)
-                mcp_fixed = True
-        if mcp_fixed or mcp_cmd_fixed:
-            agent_data["tools"] = tools
-            agent_data["allowedTools"] = allowed
-            atomic_write(agent_path, json.dumps(agent_data, indent=2) + "\n")
-            if mcp_fixed:
-                print("  → Auto-fixed tools/allowedTools in personalclaw.json")
-                issues = [i for i in issues if "config" not in i]
-            if mcp_cmd_fixed:
-                print("  → Auto-fixed stale binary path(s) in personalclaw.json")
+        issues.extend(_doctor_core_server(agent_path))
 
     # ── Python Runtime ──
     print("\nRuntime")

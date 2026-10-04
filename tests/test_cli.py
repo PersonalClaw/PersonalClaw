@@ -14,10 +14,28 @@ from personalclaw.cli_commands import _cron, _security
 from personalclaw.cli_doctor import _doctor
 
 
+def _set_up_agent_config(tmp_path):
+    """An agent config whose PersonalClaw server starts a program that is there (never run)."""
+    command = tmp_path / "bin" / "personalclaw"
+    command.parent.mkdir(exist_ok=True)
+    command.write_text("#!/bin/sh\nexit 0\n")
+    command.chmod(0o755)
+    (tmp_path / "personalclaw.json").write_text(
+        json.dumps(
+            {
+                "tools": ["@personalclaw-core"],
+                "allowedTools": ["@personalclaw-core"],
+                "mcpServers": {
+                    "personalclaw-core": {"command": str(command), "args": ["mcp-core"]}
+                },
+            }
+        )
+    )
+
+
 class TestDoctor:
     def test_doctor_with_agent(self, tmp_path):
-        agent_file = tmp_path / "personalclaw.json"
-        agent_file.write_text("{}")
+        _set_up_agent_config(tmp_path)
         mock_run = MagicMock(returncode=0, stdout="personalclaw-cli 1.0.0", stderr="")
         with (
             patch(
@@ -910,55 +928,6 @@ class TestDoctorProjectDir:
         assert "project dir: ❌ stale" not in out
 
 
-class TestDoctorMcpCmdFixed:
-    """Tests for doctor auto-fixing stale MCP binary paths."""
-
-    def test_doctor_fixes_stale_mcp_path(self, tmp_path, capsys):
-        agent_file = tmp_path / "personalclaw.json"
-        # personalclaw-schedule has valid path, personalclaw-core has stale path
-        valid_bin = tmp_path / "personalclaw"
-        valid_bin.write_text("#!/bin/sh")
-        valid_bin.chmod(0o755)
-        agent_data = {
-            "tools": ["@personalclaw-core", "@personalclaw-schedule"],
-            "allowedTools": ["@personalclaw-core", "@personalclaw-schedule"],
-            "mcpServers": {
-                "personalclaw-core": {"command": "/nonexistent/personalclaw", "args": ["mcp-core"]},
-                "personalclaw-schedule": {"command": str(valid_bin), "args": ["mcp-schedule"]},
-            },
-        }
-        agent_file.write_text(json.dumps(agent_data))
-        mock_run = MagicMock(returncode=0, stdout="personalclaw-cli 1.0.0", stderr="")
-
-        def which_side_effect(b):
-            if b == "personalclaw":
-                return "/usr/bin/personalclaw"
-            return f"/usr/local/bin/{b}"
-
-        with (
-            patch("personalclaw.cli_doctor.shutil.which", side_effect=which_side_effect),
-            patch("personalclaw.cli_doctor.agents_dir", lambda: tmp_path),
-            patch("subprocess.run", return_value=mock_run),
-            patch("urllib.request.urlopen"),
-            patch("personalclaw.cli_doctor.is_local_bind", return_value=True),
-            patch("pathlib.Path.home", return_value=tmp_path),
-            patch.dict("os.environ", {"PERSONALCLAW_PROJECT_DIR": ""}, clear=False),
-            # STT defaults to enabled; keep it disabled here so the unrelated
-            # "no STT model selected" issue doesn't trigger a non-zero exit.
-            patch(
-                "personalclaw.providers.use_cases.load_use_case_settings",
-                return_value={"enabled": False},
-            ),
-            patch("personalclaw.stt.registry.active_stt", return_value=None),
-        ):
-            _doctor()
-        out = capsys.readouterr().out
-        assert "fixed stale path" in out
-        assert "Auto-fixed stale binary" in out
-        # Verify it did NOT print the tools/allowedTools message
-        assert "Auto-fixed tools/allowedTools" not in out
-
-
 class TestDoctorStt:
     """Tests for doctor Speech-to-Text section.
 
@@ -968,22 +937,7 @@ class TestDoctorStt:
     """
 
     def _agent_file(self, tmp_path):
-        agent_file = tmp_path / "personalclaw.json"
-        agent_data = {
-            "tools": ["@personalclaw-core", "@personalclaw-schedule"],
-            "allowedTools": ["@personalclaw-core", "@personalclaw-schedule"],
-            "mcpServers": {
-                "personalclaw-core": {
-                    "command": "/usr/local/bin/personalclaw",
-                    "args": ["mcp-core"],
-                },
-                "personalclaw-schedule": {
-                    "command": "/usr/local/bin/personalclaw",
-                    "args": ["mcp-schedule"],
-                },
-            },
-        }
-        agent_file.write_text(json.dumps(agent_data))
+        _set_up_agent_config(tmp_path)
 
     def test_doctor_stt_enabled_with_model(self, tmp_path, capsys):
         self._agent_file(tmp_path)

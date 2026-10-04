@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from personalclaw.config import loader as config_loader
+from personalclaw.resilience.core_server import probe_core_server
 from personalclaw.security import redact_or_withhold
 from personalclaw.sqlite_compat import sqlite3
 
@@ -2680,6 +2681,15 @@ def _register_builtin_probes() -> None:
             Tier.CAPABILITY,
             _probe_legacy_mcp_settings,
             "MCP servers left in the legacy settings/mcp.json",
+        )
+    )
+    register_probe(
+        Probe(
+            "tools.core_server",
+            "tools",
+            Tier.CAPABILITY,
+            probe_core_server,
+            "PersonalClaw's server in the agent config",
         )
     )
 
