@@ -511,11 +511,25 @@ def _bench_req(**kw):
 def test_no_benchmark_run_yet_is_a_decided_200_not_a_404(evals_on, monkeypatch):
     """This panel's ORDINARY state, permanently so for most users — the paired design is 100
     real model calls. It is therefore the state that must be distinguishable from a failure (a
-    500, below) and from "evals off"; the panel names the command."""
+    500, below) and from "evals off"; the panel names the command. On the default home the answer
+    is the flag alone."""
     monkeypatch.setattr("personalclaw.evals.learning_bench.latest_report", lambda: None)
+    monkeypatch.setattr("personalclaw.config.loader.uses_default_home", lambda env=None: True)
     resp = _run(E.api_evals_learning_benchmark(_bench_req()))
     assert resp.status == 200
     assert _body(resp) == {"ran": False}
+
+
+def test_no_benchmark_run_yet_names_a_home_that_is_not_the_default(evals_on, monkeypatch, tmp_path):
+    """The runner writes its report under the home it runs in. On a gateway running from another
+    home, the bare command the panel showed wrote the report into the default home, where this
+    page never reads it; so the answer names this home for the command to carry."""
+    home = tmp_path / "work home"
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    monkeypatch.setattr("personalclaw.evals.learning_bench.latest_report", lambda: None)
+    resp = _run(E.api_evals_learning_benchmark(_bench_req()))
+    assert resp.status == 200
+    assert _body(resp) == {"ran": False, "home": str(home)}
 
 
 def test_an_unreadable_benchmark_report_is_a_500_not_an_empty_table(evals_on, monkeypatch):

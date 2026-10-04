@@ -39,6 +39,11 @@ import type {
  *  ORDINARY state for months, so it must be distinguishable from "we could not ask". The backend
  *  answers the three distinctly — a decided "off", a decided "not run", a 500 — and this reads
  *  them. */
+/** *value* as one single-quoted shell word, so a home path with spaces or quotes pastes as it is. */
+function shellQuoted(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
 export function BenchmarkPanel({ view, error, onRetry }: {
   view: BenchmarkView | SwitchedOffView | NotRunView | undefined
   error: unknown
@@ -72,16 +77,24 @@ export function BenchmarkPanel({ view, error, onRetry }: {
     )
   }
   if (isNotRun(view)) {
+    // The runner writes its report under the home it runs in. On a gateway whose home is not the
+    // default one, the bare command would write it where this page never reads, so the route names
+    // this home and the command carries it.
+    const inHome = view.home ? `PERSONALCLAW_HOME=${shellQuoted(view.home)} ` : ''
     return (
       <section className="flex flex-col gap-s" aria-labelledby="skillbench-heading">
         <Heading />
         <p className="text-on-surface-low text-[0.8125rem]">
           No skill-impact benchmark has run yet. Start with{' '}
           <code className="text-on-surface-var">
-            python scripts/learning_benchmark.py --preflight
+            {inHome}python scripts/learning_benchmark.py --preflight
           </code>{' '}
           — it calls no model — then <code className="text-on-surface-var">--run</code>. The full
           paired design is 100 real model calls, so nothing here starts one on a click.
+          {view.home && (
+            <> Run both with this home named, as shown: the report is written under the home the
+              command runs in, and this page reads it from this one.</>
+          )}
         </p>
         <MethodologyLink doc="docs/research/learning-benchmark-protocol.md" />
       </section>

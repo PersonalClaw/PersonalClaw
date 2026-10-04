@@ -196,6 +196,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **The Learning page's skill-impact benchmark command names the home it must run in: on a gateway running from a home other than the default one, it showed the bare command, which wrote the report into the default home, where the page never reads it. The command now starts with that home's `PERSONALCLAW_HOME`, quoted for a shell.**
 - **Reconnect on an MCP server's card also starts agents' connections to it again, so they are offered the tools its card shows rather than the ones the server listed before it changed them.**
 - **Dev scripts, docs captures and harness tools act only on a scratch home you name: the task seeder, the memory and tool validators, the classify smoke, the screenshot and demo captures, the motion driver and the render smoke's gateway mode take `--home` (or `PERSONALCLAW_HOME`), find that home's gateway from the record it keeps there, and refuse no home or the default one, where they aimed at port 10000 and the default home, the install's own.**
 - **An Incognito or Temporary chat sets up no work that outlasts it: its agent creates, starts or steers no loop or project, creates or changes no automation or scheduled task, and registers no callback, and says why, since each would keep the chat's words and run on a model of its own; set them up from an ordinary chat.**

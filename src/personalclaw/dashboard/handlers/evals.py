@@ -78,6 +78,24 @@ def _not_run() -> web.Response:
     return web.json_response({"ran": False})
 
 
+def _benchmark_not_run() -> web.Response:
+    """The skill-impact benchmark's not-run answer, which also names the home its run must use.
+
+    The runner writes its report under the home it runs in, and the panel shows its command. On a
+    gateway whose home is not the default one, the bare command would write the report into the
+    default home, where this page never reads it; so the answer names this home, and the panel
+    puts it in front of the command. The default home needs no name, and gets none."""
+    from personalclaw.config import loader as config_loader
+
+    try:
+        default = config_loader.uses_default_home()
+    except OSError:
+        default = False
+    if default:
+        return _not_run()
+    return web.json_response({"ran": False, "home": str(config_loader.resolve_config_dir())})
+
+
 async def api_evals_judge_bench(request: web.Request) -> web.Response:
     """GET /api/evals/judge-bench — the newest tier-recommendation table.
 
@@ -250,7 +268,7 @@ async def api_evals_learning_benchmark(request: web.Request) -> web.Response:
             status=500,
         )
     if report is None:
-        return _not_run()
+        return _benchmark_not_run()
     _audit(request, "evals_learning_benchmark", "read", f"run_id={report.get('run_id')}")
     return web.json_response(
         {

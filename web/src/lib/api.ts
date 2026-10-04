@@ -3558,7 +3558,10 @@ export function isSwitchedOff(v: unknown): v is SwitchedOffView {
  *  ablation, learning-benchmark and retrieval answer it. They used to 404 with a code per route, so
  *  the Models page (which reads judge-bench for its recommended chip) and the Learning page logged
  *  failed requests until a CLI run happened, which for most installs is never. */
-export interface NotRunView { ran: false }
+/** A report read's "no run yet". The skill-impact benchmark's also names `home` when the gateway's
+ *  home is not the default one: its runner writes the report under the home it runs in, so the
+ *  command the panel shows must name this one. */
+export interface NotRunView { ran: false; home?: string }
 
 export function isNotRun(v: unknown): v is NotRunView {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
