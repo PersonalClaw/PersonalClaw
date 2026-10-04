@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A secret an automation's action or a workflow step was handed is masked in what the work prints, returns or fails with, however short: its run history and last error, the note that reports it, Run now's answer, a step's output and ledger, and the audit rows and log lines the work writes as it runs show `[REDACTED: credential]` where they kept the value. The agent's shell masks a value it filled in that is shorter than eight characters too, and when the gateway starts it rewrites to the reference a run's or an automation's record that kept such a value of eight characters or more.**
 - **A chat the dashboard saves keeps where each turn came from: a channel's message keeps its thread and sender, a program's message through the OpenAI-compatible door keeps that program, and only what you type in the dashboard reads as typed there (the inbound door hands a chat a message with its `source`, and the conformance kit's `CapturedSession.queue_append` takes it: channel contract change, used by `*-channel`).**
 - **The agent shell refuses commands that print live sign-in credentials, and agent apps can protect their documented sign-in stores (`kiro-cli-agent` uses it).**
+- **Retry on a turn that ended without its answer asks first when the turn finished steps that may have changed something, and names them: running it again may repeat them, so it runs only once you confirm.**
 
 ### Added
 

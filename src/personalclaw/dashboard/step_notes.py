@@ -25,6 +25,10 @@ ABOUT_CALL = "about_call"
 #: The ``meta`` key holding the line's sentence, as the call's card shows it.
 NOTE = "note"
 
+#: How the line about a call a gate refused before it ran begins (:func:`note_refusal`): what a
+#: reader of the transcript knows a refused call by, as a Retry does (``repeated_steps``).
+NOT_RUN = "Not run: "
+
 
 def _masked(text: str) -> str:
     masked, _ = redact_exfiltration_urls(text)
@@ -57,8 +61,8 @@ def note_refusal(session: Any, event: Any, why: str) -> str:
         session,
         call_id=str(getattr(event, "tool_call_id", "") or ""),
         title=str(getattr(event, "title", "") or ""),
-        note=f"Not run: {why}.",
+        note=f"{NOT_RUN}{why}.",
     )
 
 
-__all__ = ["ABOUT_CALL", "NOTE", "note_on_call", "note_refusal"]
+__all__ = ["ABOUT_CALL", "NOTE", "NOT_RUN", "note_on_call", "note_refusal"]

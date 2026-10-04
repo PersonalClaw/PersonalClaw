@@ -585,7 +585,7 @@ def native_check(runtime: Any, tool_name: str, args: Any) -> NativeCheck:
     cwd = getattr(runtime, "_cwd", None)
     scratch = runtime_scratch(runtime)
     reach, within = tool_call_reach(
-        runtime._declared(tool_name),
+        runtime.declared(tool_name),
         tool_name,
         args,
         session_key=session_key,

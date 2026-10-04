@@ -306,6 +306,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # ── chat rewind (dashboard/chat_file_rewind.py) ──
     "invalid_turn": "The addressed turn does not exist or is not rewindable.",
     "turn_running": "The turn is still executing; it cannot be rewound yet.",
+    # ── running a chat turn again (dashboard/chat_regenerate.py, dashboard/repeated_steps.py) ──
+    # 409: the turn a Retry would run again finished steps that may have changed something, so
+    # nothing was run. To the owner it is the question (`error.detail`: its `title`, what it
+    # `said`, the `steps`, and the `confirm` her yes sends back); an app, which cannot ask her, is
+    # told to retry it from the dashboard.
+    "retry_repeats_steps": (
+        "Running this turn again may repeat steps it finished that changed something, so nothing "
+        "was run."
+    ),
     # ── chat plan mode (dashboard/chat_plan.py) ──
     "session_not_found": "No such chat session.",
     "plan_session_missing": "The session has no plan in progress.",

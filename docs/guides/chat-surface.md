@@ -44,6 +44,18 @@ Five rewinds' worth of history are kept per message; a sixth pushes out the olde
 > The retained history is stored on the message itself. It is a 0.x state-shape change, so
 > if you want a restore point before updating, run `personalclaw snapshot`.
 
+### Retry, when a turn ended without its answer
+
+A turn that ends in an error, is cut short, or is cut off by a restart says so where its answer
+should be, with **Retry**. Retry runs the turn again from its message and replaces the attempt
+on screen. When that attempt finished steps that may have changed something (a file written, a
+command run, a message sent, a record created), Retry asks first: it lists those steps as their
+cards name them, and runs the turn again only when you choose **Run it again**, because the new
+attempt may make them again. A turn whose finished steps only read, or that finished none, is
+retried without asking. A step counts as a read only when its tool declares that it only reads,
+or its shell command is one PersonalClaw reads as read-only; any other step, one whose tool
+declares nothing included, is asked about.
+
 ## 2. Branch — take the same conversation two ways
 
 **Where:** hover any message, yours or the assistant's → **Branch from here**.
@@ -337,6 +349,10 @@ actions, it has two rows:
 
 Generating follow-up suggestions is recorded too (`chat_followups`), because it spends a model
 call you did not explicitly ask for.
+
+A Retry is recorded as `chat.retry_failed_turn`. When it asks first, the question is recorded
+(`needs_confirm`, naming the steps it may repeat), and so is your **Run it again** (`allowed`,
+with the steps you confirmed).
 
 A branch that is *refused* — a temporary chat, a chat an app does not own, or the ceiling on
 how many chats may exist — is recorded as well, with the reason. A refusal is a decision, not

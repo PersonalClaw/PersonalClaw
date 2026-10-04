@@ -8969,7 +8969,10 @@ export const api = {
     post<{ ok: boolean; title?: string }>(`/api/chat/sessions/${encodeURIComponent(session)}/generate-title`),
 
   // message actions (stage 4) — all stream the new reply over the dashboard WS.
-  regenerate: (session: string) => post<{ ok: boolean }>(`/api/chat/sessions/${session}/regenerate`),
+  // A Retry over steps that may have changed something is answered with the gateway's question
+  // (`retry_repeats_steps`, `pages/chat/repeatedSteps.tsx`); `confirm` is her yes to it.
+  regenerate: (session: string, confirm?: string) =>
+    post<{ ok: boolean }>(`/api/chat/sessions/${session}/regenerate`, confirm ? { confirm } : undefined),
   // Switch which regenerated answer variant is active on the latest assistant turn.
   // The backend swaps the message content + broadcasts chat_variant_switch (echoed to
   // every tab); returns the now-active index. 409 if the session is mid-turn.

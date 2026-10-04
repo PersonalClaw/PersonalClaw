@@ -1562,7 +1562,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             tool_call_id=call.tool_call_id,
             title=tool_name,
             tool_input=args,
-            risk_level=self._declared(tool_name).value,
+            risk_level=self.declared(tool_name).value,
         )
         if self._requires_approval(tool_name):
             reservations: tuple[dispatch_plan.Reservation, ...] = (dispatch_plan.EVERYTHING,)
@@ -1578,7 +1578,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             reservations=reservations,
             bkey=params_key(tool_name, args),
             arg_error=arg_error,
-            reads=not arg_error and only_reads(tool_name, "", args, self._declared(tool_name)),
+            reads=not arg_error and only_reads(tool_name, "", args, self.declared(tool_name)),
         )
 
     async def _execute_tool_batch(self, tool_calls: list[AgentEvent]) -> AsyncIterator[AgentEvent]:
@@ -1857,7 +1857,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     tool_input=args,
                     # What this tool declares (the gate resolves effective risk from it, and
                     # the dashboard's task-mode gate re-checks the call against it).
-                    risk_level=self._declared(tool_name).value,
+                    risk_level=self.declared(tool_name).value,
                     builds=tool_name in self._tool_builds,
                     proposes=tool_name in self._tool_proposes,
                     tells_owner=self._tells_owner(tool_name, args),
@@ -1962,7 +1962,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # executed — return a synthetic observation so the replay previews what
         # WOULD happen with no side effects. Declared-SAFE tools fall through and
         # run for real, so the agent reasons over actual state.
-        if self._dry_run and self._declared(tool_name) != RiskLevel.SAFE:
+        if self._dry_run and self.declared(tool_name) != RiskLevel.SAFE:
             meta[TOOL_META_REFUSED_BY] = "dry_run"
             return (
                 f"[DRY RUN — observe mode] `{tool_name}` is a write-capable tool; "
@@ -1987,7 +1987,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         tm_deny = task_mode_denies(
             self._task_mode,
-            self._declared(tool_name),
+            self.declared(tool_name),
             tool_name,
             "",
             args,
@@ -2005,7 +2005,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             try:
                 grant_deny = self._tool_grants(
                     tool_name,
-                    self._declared(tool_name),
+                    self.declared(tool_name),
                     "",
                     args,
                     proposes=tool_name in self._tool_proposes,
@@ -2232,9 +2232,11 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     # loop parks on the approval gate forever. Public: a run's host counts them as no work.
     META_TOOLS = frozenset({"tool_search", "tool_schema", "reset_tools"})
 
-    def _declared(self, tool_name: str) -> RiskLevel:
-        """What *tool_name* declares a call does. A tool this runtime has no definition for
-        declares nothing, which is CAUTION — never a read."""
+    def declared(self, tool_name: str) -> RiskLevel:
+        """What *tool_name* declares a call does, as this runtime's gates read it. A tool this
+        runtime has no definition for declares nothing, which is CAUTION — never a read. Public:
+        the run's bounds check and a Retry of a turn it ran (``dashboard.repeated_steps``) read
+        it too."""
         return self._tool_risk.get(tool_name, RiskLevel.CAUTION)
 
     def _tells_owner(self, tool_name: str, tool_input: Any) -> bool:
@@ -2636,7 +2638,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         if self._tool_offer is None or tool_name in self.META_TOOLS:
             return True
         try:
-            declared, proposes = self._declared(tool_name), tool_name in self._tool_proposes
+            declared, proposes = self.declared(tool_name), tool_name in self._tool_proposes
             tells = bool(self._tool_tells_owner.get(tool_name))  # calls that only tell the owner
             return not self._tool_offer(tool_name, declared, proposes=proposes, tells_owner=tells)
         except Exception:  # noqa: BLE001 - an offer that cannot be read shows nothing

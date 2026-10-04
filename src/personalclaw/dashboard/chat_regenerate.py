@@ -7,12 +7,13 @@ from datetime import datetime, timezone
 from aiohttp import web
 
 from personalclaw.artifacts import retakes
+from personalclaw.dashboard import repeated_steps
 from personalclaw.dashboard.chat_persistence import _TURN_DISPATCH_ROLES, save_session_to_history
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_utils import _history_key_for, take_in_the_users_links
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.mcp_artifacts import images_made_in
-from personalclaw.request_validation import bool_field
+from personalclaw.request_validation import bool_field, json_object_body, string_field
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 
@@ -47,12 +48,20 @@ async def _persist_history_off_thread(
 
 
 async def api_chat_session_regenerate(request: web.Request) -> web.Response:
-    """POST /api/chat/sessions/{session}/regenerate — regenerate the last assistant reply."""
+    """POST /api/chat/sessions/{session}/regenerate — regenerate the last assistant reply.
+
+    On a turn that ended without its answer this is its Retry, and when the attempt it replaces
+    finished steps that may have changed something (``repeated_steps``) it runs nothing until the
+    owner says yes: it answers ``409 retry_repeats_steps`` with what may repeat, and runs once the
+    request comes back with that question's ``confirm``. An app is told to retry from the
+    dashboard: it cannot ask her.
+    """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     session = state._sessions.get(name)
     if not session:
         return web.json_response({"error": "not found"}, status=404)
+    confirmed = string_field(await json_object_body(request), "confirm")
 
     async with session._lock:
         if session.running:
@@ -95,6 +104,28 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
                 {"error": "the message that started this turn is empty"}, status=400
             )
 
+        # A Retry deletes the attempt it replaces, the calls it finished included, and the turn
+        # asked again may make them again: one that may have changed something is run again only
+        # on her yes to exactly these steps.
+        repeats: list[repeated_steps.FinishedStep] = []
+        if retrying_failed_turn:
+            repeats = await repeated_steps.finished_changes(state, session, msgs[u_idx + 1 :])
+        if repeats:
+            app_name = request.get("app", "")
+            asked = repeated_steps.digest(session.key, msgs[u_idx], msgs[anchor_idx], repeats)
+            if app_name or confirmed != asked:
+                sel().log_api_access(
+                    caller=f"app:{app_name}" if app_name else "dashboard",
+                    operation="chat.retry_failed_turn",
+                    outcome="refused" if app_name else "needs_confirm",
+                    source="dashboard",
+                    resources=session.key,
+                    metadata={"repeats": repeated_steps.audited(repeats)},
+                )
+                if app_name:
+                    return repeated_steps.refusal(repeats)
+                return repeated_steps.question(repeats, asked)
+
         variants: list[dict] = []
         if not retrying_failed_turn:
             # Only a REAL answer is variant-worthy — an error bubble is not an
@@ -126,6 +157,10 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
             outcome="allowed",
             source="dashboard",
             resources=session.key,
+            # Her yes, and to what: the steps she was told this run may repeat.
+            metadata=(
+                {"confirmed": True, "repeats": repeated_steps.audited(repeats)} if repeats else None
+            ),
         )
 
         if retrying_failed_turn:

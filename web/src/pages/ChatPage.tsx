@@ -72,6 +72,7 @@ import { ChatFilePanel } from './chat/ChatFilePanel'
 import { sameSessionTarget, type CommentTarget } from '../ui/content/commentTarget'
 import { ChatActivityPanel } from './chat/ChatActivityPanel'
 import { AssistantActions, UserActions } from './chat/MessageActions'
+import { askToRepeat } from './chat/repeatedSteps'
 import { parseOptions, parseSwitchToAgent } from './chat/parseAssistant'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, expandPasteMarkers, pruneBlocks } from './chat/pasteBlocks'
 import { sessionTemplatePatch } from './chat/sessionTemplate'
@@ -2730,12 +2731,17 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     return true
   }
 
-  async function regenerate() {
+  async function regenerate() { await replay() }
+
+  // A Retry over a turn whose finished steps may have changed something is answered with the
+  // gateway's question instead (`chat/repeatedSteps`): the turn runs again only on her yes, sent
+  // back as `confirmed`, and a No leaves the page as it was.
+  async function replay(confirmed?: string) {
     await replaceTurns(
-      (s) => api.regenerate(s),
+      (s) => (confirmed ? api.regenerate(s, confirmed) : api.regenerate(s)),
       // The last answer goes; the fresh reply streams in beneath its question.
       (prev) => { const i = prev.map((t) => t.role).lastIndexOf('assistant'); return i >= 0 ? prev.slice(0, i) : prev },
-      reportActionFailure('regenerate this reply'),
+      (e) => { if (!askToRepeat(e, (yes) => replay(yes))) reportActionFailure('regenerate this reply')(e) },
     )
   }
 
