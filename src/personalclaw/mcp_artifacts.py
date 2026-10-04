@@ -579,6 +579,18 @@ def _run_async(coro: Any) -> Any:
         return pool.submit(asyncio.run, coro).result()
 
 
+def _text_refusal(
+    kind: str, *, name: str = "", description: str = "", content: str | None = None
+) -> Any:
+    """The content scan's refusal of the text an artifact tool writes, or ``None`` when it may be
+    kept (``knowledge.artifact_ingest.text_refusal``). What the agent saves is often what it read
+    on the web, and Knowledge's search keeps an artifact's text and recalls it into prompts, so
+    it is read before anything is written, and nothing is written when it is refused."""
+    from personalclaw.knowledge.artifact_ingest import text_refusal
+
+    return _run_async(text_refusal(kind, name=name, description=description, content=content))
+
+
 def _metered(
     provider: Any,
     model_id: str,
@@ -904,6 +916,16 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                         f"slug='{similar.slug}'. To save a NEW separate artifact anyway, "
                         f"call artifact_save again with force=true."
                     )
+            # The same deliverable above holds this very text already, so it is new only here.
+            refused = _text_refusal(
+                args.get("kind", "widget"),
+                name=args["name"],
+                description=args.get("description", ""),
+                content=content,
+            )
+            if refused is not None:
+                _audit("denied", error=refused.code)
+                return tool_failure(refused.nothing_made)
             art = prov.create(
                 name=args["name"],
                 content=content or "",
@@ -938,6 +960,15 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             if err:
                 _audit("denied", args.get("slug", ""), err)
                 return tool_failure(f"{err}")
+            # Read as the kind it is stored as; one that does not exist is answered below.
+            target = prov.get(args["slug"])
+            if target is not None:
+                refused = _text_refusal(
+                    target.kind, description=args.get("description") or "", content=content
+                )
+                if refused is not None:
+                    _audit("denied", target.slug, refused.code)
+                    return tool_failure(refused.not_changed)
             try:
                 upd = prov.update(
                     args["slug"],
@@ -1828,6 +1859,18 @@ def _document_create(
         similar = prov.find_similar(display_name, kind=fmt, project_id=_current_project_id())
         if similar is not None:
             target = similar.slug
+    if not binary:
+        # A text format (a csv) is text Knowledge's search keeps, read before it is written as
+        # artifact_save's is. A new version takes only the body; a new document its name too.
+        refused = _text_refusal(
+            fmt,
+            name="" if target else display_name,
+            description="" if target else str(args.get("description") or ""),
+            content=text_content,
+        )
+        if refused is not None:
+            _audit("denied", target, refused.code)
+            return tool_failure(refused.not_changed if target else refused.nothing_made)
     if target:
         if binary:
             # No `snapshot=` argument: update_binary ALWAYS bumps the version and writes a

@@ -363,6 +363,9 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
 
     A binary ``kind`` (an image or a PDF) is saved from its file as a copy of the file's bytes
     (:func:`_save_file_copy`), since a JSON body carries no bytes.
+
+    An app's text is read by the content scan before anything is written, and refused in the
+    scan's words (:func:`_app_text_refusal`); the owner's is her own and is kept as she wrote it.
     """
     state = request.app["state"]
     if _is_restricted_session(state, request):
@@ -395,17 +398,28 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     source_path = str(body.get("source_path", "")).strip()
     session_id = _session_key(request)
     kind = str(body.get("kind", "widget"))
-    save = _save_file_copy if is_binary_kind(kind) else _save_text
-    saved = save(
-        request,
-        prov,
-        body,
-        name=name,
-        kind=kind,
-        content=content,
-        source_path=source_path,
-        session_id=session_id,
-    )
+    if is_binary_kind(kind):
+        saved = _save_file_copy(
+            request,
+            prov,
+            body,
+            name=name,
+            kind=kind,
+            content=content,
+            source_path=source_path,
+            session_id=session_id,
+        )
+    else:
+        saved = await _save_text(
+            request,
+            prov,
+            body,
+            name=name,
+            kind=kind,
+            content=content,
+            source_path=source_path,
+            session_id=session_id,
+        )
     if isinstance(saved, web.Response):
         return saved
     art, status = saved
@@ -414,7 +428,93 @@ async def api_artifacts_create(request: web.Request) -> web.Response:
     return web.json_response(_serialize(art, include_content=True), status=status)
 
 
-def _save_text(
+async def _app_text_refusal(
+    request: web.Request, kind: str, *, edits: str, **said: Any
+) -> web.Response | None:
+    """The refusal of the text an app's request writes into an artifact of *kind* (*said*: its
+    ``name``, ``description`` and ``content``, each a string or absent), or ``None`` when it may
+    be kept (``knowledge.artifact_ingest.text_refusal``).
+
+    An app's text is from outside, and Knowledge's search keeps an artifact's text and recalls it
+    into prompts: so it is read by the content scan before anything is written, and refused with
+    the scan's answer, as an upload is, so nothing is made or changed (*edits*: the slug of the
+    artifact the write changes, ``""`` for a new one). What the owner writes herself is her own
+    words, as what she writes in the chat is, and is not scanned."""
+    from personalclaw.apps.permissions import request_app
+
+    if not request_app():
+        return None
+    from personalclaw.knowledge.artifact_ingest import text_refusal
+
+    text = {key: value for key, value in said.items() if isinstance(value, str)}
+    refused = await text_refusal(kind, **text)
+    if refused is None:
+        return None
+    if edits:
+        _audit(request, "artifact.update", "denied", f"slug={edits} {refused.code}")
+        return refused.response(refused.not_changed)
+    _audit(request, "artifact.create", "denied", refused.code)
+    return refused.response(refused.nothing_made)
+
+
+async def _app_save_refusal(
+    request: web.Request,
+    prov: Any,
+    body: dict[str, Any],
+    *,
+    name: str,
+    kind: str,
+    content: str | None,
+    source_path: str,
+) -> web.Response | None:
+    """:func:`_app_text_refusal` of a text save (``POST /api/artifacts``), asked before the save
+    checks the file's revision, which has no await between it and the write. A save that bumps
+    the artifact already pointing at its file (*source_path*, admitted) writes that artifact's
+    body only."""
+    from personalclaw.apps.permissions import request_app
+
+    if not request_app():
+        return None
+    bumped = prov.find_by_source_path(source_path) if source_path else None
+    if bumped is not None:
+        return await _app_text_refusal(request, bumped.kind, edits=bumped.slug, content=content)
+    return await _app_text_refusal(
+        request,
+        kind,
+        edits="",
+        name=name,
+        description=body.get("description"),
+        content=content,
+    )
+
+
+async def _app_edit_refusal(
+    request: web.Request, prov: Any, slug: str, body: dict[str, Any]
+) -> web.Response | None:
+    """:func:`_app_text_refusal` of an edit (``PATCH /api/artifacts/{slug}``): the name, the
+    description and the body it sets, read as the kind the artifact is stored as. A slug that
+    names no artifact is answered by the edit itself."""
+    from personalclaw.apps.permissions import request_app
+
+    if not request_app():
+        return None
+    try:
+        target = prov.get(slug)
+    except ValueError:
+        return None
+    if target is None:
+        return None
+    return await _app_text_refusal(
+        request,
+        target.kind,
+        edits=target.slug,
+        name=body.get("name"),
+        description=body.get("description"),
+        content=body.get("content"),
+    )
+
+
+async def _save_text(
     request: web.Request,
     prov: Any,
     body: dict[str, Any],
@@ -441,6 +541,12 @@ def _save_text(
 
             _audit(request, "artifact.create", "denied", "source_path outside the allowed places")
             return web.json_response({"error": str(exc)}, status=403 if request_app() else 400)
+    refused = await _app_save_refusal(
+        request, prov, body, name=name, kind=kind, content=content, source_path=source_path
+    )
+    if refused is not None:
+        return refused
+    if source_path:
         # Checked with no await between it and the provider write below (create or bump), so
         # nothing in this process lands on the file in between.
         stale = _source_file_refusal(request, source_path, writes=content is not None)
@@ -566,6 +672,9 @@ async def api_artifact_update(request: web.Request) -> web.Response:
     Tags are edited one name at a time — ``add_tags`` / ``remove_tags``, applied to the tags stored
     when the write lands — so they need no revision. There is no whole-list ``tags``: it replaced
     the list with the page's copy of it, dropping any tag added elsewhere since.
+
+    The name, the description and the body an app sets are read by the content scan first, and
+    an edit it refuses changes nothing (:func:`_app_edit_refusal`).
     """
     state = request.app["state"]
     if _is_restricted_session(state, request):
@@ -615,6 +724,9 @@ async def api_artifact_update(request: web.Request) -> web.Response:
                     {"error": f"{key} must be a list of tag names"}, status=400
                 )
             tag_edits[key] = names
+    refused = await _app_edit_refusal(request, prov, slug, body)
+    if refused is not None:
+        return refused
     content = body.get("content")
     what = f"the body of the artifact {slug!r}"
     try:

@@ -25,6 +25,7 @@ What is asserted here, and why each clause is load-bearing:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -381,8 +382,10 @@ def _publish(run_id: str, monkeypatch) -> Any:
     node = Node.from_dict(
         {"kind": "stage", "id": "write", "config": {"prompt": "x", "publish": "Weekly digest"}}
     )
-    return apply_publish(
-        node, NodeResult(state=InstanceState.DONE, output="a body worth reading"), run_id=run_id
+    return asyncio.run(
+        apply_publish(
+            node, NodeResult(state=InstanceState.DONE, output="a body worth reading"), run_id=run_id
+        )
     )
 
 

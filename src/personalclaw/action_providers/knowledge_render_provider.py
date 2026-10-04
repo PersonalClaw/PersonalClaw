@@ -142,6 +142,14 @@ class KnowledgeRenderReportActionProvider(ActionProvider):
         if store is None:
             return ActionResult(success=False, error="no artifact provider is registered")
 
+        refused = await _report_refusal(store, slug, spec, rendered.html, cfg)
+        if refused:
+            return ActionResult(
+                success=False,
+                error=refused,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
         try:
             spec_version = _write_spec(store, slug, spec, cfg)
             export_version = _write_export(store, slug, rendered.html, spec_version, cfg)
@@ -167,6 +175,40 @@ class KnowledgeRenderReportActionProvider(ActionProvider):
             stdout=json.dumps(payload, ensure_ascii=False),
             duration_ms=int((time.monotonic() - started) * 1000),
         )
+
+
+async def _report_refusal(
+    store: Any, slug: str, spec: dict[str, Any], document: str, cfg: dict[str, Any]
+) -> str:
+    """Why the content scan will not let this run write its report, in the scan's words, or
+    ``""`` when it may (``knowledge.artifact_ingest.text_refusal``).
+
+    A spec's strings are usually a model's words over web or inbox material, and Knowledge's
+    search keeps the text of the spec and of its export, so each is read as it is written (a new
+    artifact with its name, an update its body only, a spec that did not change not at all), and
+    neither is written when either is refused. A scan that could not run refuses too."""
+    from personalclaw.knowledge.artifact_ingest import text_refusal
+
+    text = reports.canonical_spec_text(spec)
+    spec_art = _get(store, slug)
+    if spec_art is None:
+        refused = await text_refusal(
+            "json",
+            name=str(cfg.get("name", "") or spec.get("title", "") or slug),
+            description=str(cfg.get("description", "") or ""),
+            content=text,
+        )
+    elif (spec_art.content or "") != text:
+        refused = await text_refusal(spec_art.kind, content=text)
+    else:
+        refused = None
+    if refused is not None:
+        return refused.nothing_made if spec_art is None else refused.not_changed
+    export_art = _get(store, f"{slug}{EXPORT_SUFFIX}")
+    refused = await text_refusal(export_art.kind if export_art else "html", content=document)
+    if refused is not None:
+        return refused.nothing_made if export_art is None else refused.not_changed
+    return ""
 
 
 def _write_spec(store: Any, slug: str, spec: dict[str, Any], cfg: dict[str, Any]) -> int:

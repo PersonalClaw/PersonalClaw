@@ -2535,7 +2535,7 @@ async def dispatch(
     # publish path instead of quietly dropping a declared output. Ordered after every gate
     # deliberately — publishing the output of a node that failed one would store a deliverable
     # the run does not stand behind.
-    return publish_seam.apply_publish(node, result, run_id=run_id, cwd=cwd or None)
+    return await publish_seam.apply_publish(node, result, run_id=run_id, cwd=cwd or None)
 
 
 _LEAF_DISPATCHERS = {

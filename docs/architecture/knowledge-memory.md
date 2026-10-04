@@ -141,6 +141,20 @@ the scan refuses is a failed item that keeps no text and says why, named in the 
 vault leaves the note as it was and stamps why into the page (`sync_conflict`). A note the owner
 writes in the app is her own words, as her chat message is, and is not scanned.
 
+An artifact's text reaches the library through its mirror (`knowledge/artifact_ingest.py`), so it
+is read by the same rules where it is written, as what the mirror keeps of it: its name, its
+description and its body's words, for a kind the mirror keeps (`artifact_ingest.text_refusal`). The
+doors are the agent's `artifact_save`, `artifact_update` and a csv from `sheet_create`, an app's
+`POST` or `PATCH /api/artifacts`, and a workflow's `publish:`, its `artifact-update` step and its
+`render-report` step; each answers in the scan's words and writes
+nothing, so no mirror holds the text. An artifact the owner saves or edits in the app is her own
+words and is not scanned. An artifact that points at a file holds the file's text, which any
+program can write, so the mirror scans it before keeping it whoever saved the artifact
+(`ArtifactIndexer._mirror_file`, a task when the write ran on the event loop): what the scan
+refuses, or could not check, is a mirror that keeps no text, named by the artifact's slug, says
+why and is said in the gateway log; one it could not check is read again the next time the mirror
+reads the artifact.
+
 Refused content is answered 422 `upload_content_refused`, and nothing is made from it. A scan that
 did not run is never read as a pass: a window that cannot be read, a child that cannot start, one
 silent past 60 s, and one that ends without an answer (as it does when the scanner raises on the

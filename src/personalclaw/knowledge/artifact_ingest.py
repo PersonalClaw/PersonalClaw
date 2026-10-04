@@ -28,7 +28,7 @@ same four primitives every watched feed and watched directory uses:
   HTML — reduces to the same markdown text an uploaded ``.html`` file does. The library renders
   a body as markdown only, so a mirror of markup would read as its tags.
 
-**Three decisions worth naming.**
+**Four decisions worth naming.**
 
 1. **Enrichment is RAW, not full.** The mirror is automatic and on by default, so a home
    with 300 artifacts would otherwise spend 300 model calls the user never asked for the
@@ -48,15 +48,33 @@ same four primitives every watched feed and watched directory uses:
    writes nothing and enqueues nothing. A timestamp comparison would have re-embedded the
    library on every restart. The same gate makes :meth:`ArtifactIndexer.remirror_markup`
    (a start re-mirrors the html/document rows that still hold raw HTML) a no-op once done.
+
+4. **What it keeps is text the content scan read.** A mirror's text is searched and recalled
+   into prompts, so it is read by the content scan (``knowledge.text_items``, the rules an
+   upload's text is read by) before Knowledge keeps it. An artifact the agent, an app or a
+   workflow writes is scanned at its write door (:func:`text_refusal`): a write the scan
+   refuses, or could not check, is refused and writes nothing, so no mirror ever holds its
+   text. An artifact the owner writes in the app is her own words and is not scanned, as a
+   note she writes is not. An artifact that points at a file holds the file's text, which any
+   program on the machine can write, so the mirror scans that text before it keeps it, whoever
+   saved the artifact, as a knowledge vault page's edit is scanned: what the scan refuses, or
+   could not check, becomes a mirror that keeps no text and says why (one it could not check is
+   read again the next time the mirror reads the artifact). The scan is a child process, so on
+   the event loop it runs as a task and the mirror is written once it answers.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import re
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from personalclaw.uploads.content_scan import ContentRefused
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +172,44 @@ def extract(kind: str, content: str) -> tuple[str, dict]:
     return text, {"format": ext.lstrip("."), "extension": ext, "truncated": truncated}
 
 
+#: The door an artifact's text comes in by, as the security event log names it: an artifact the
+#: agent, an app or a workflow writes (:func:`text_refusal`).
+ARTIFACT_SURFACE = "artifact"
+
+#: The door the text of a file an artifact points at comes in by: the mirror's read of it.
+ARTIFACT_FILE_SURFACE = "artifact_file"
+
+
+def kept_text(
+    kind: str, *, name: str = "", description: str = "", content: str | None = None
+) -> tuple[str, ...]:
+    """What Knowledge keeps of an artifact's text, as the content scan reads it: its name, its
+    description and its body's text (:func:`extract`), of those given. Nothing for a kind the
+    mirror does not keep (:func:`indexable_kind`), since the library never holds its text."""
+    if not indexable_kind(kind):
+        return ()
+    body = extract(kind, content)[0] if content else ""
+    return (name or "", description or "", body)
+
+
+async def text_refusal(
+    kind: str, *, name: str = "", description: str = "", content: str | None = None
+) -> ContentRefused | None:
+    """The content scan's refusal of the text an artifact write hands in (:func:`kept_text`), or
+    ``None`` when it may be kept. A scan that could not run is a refusal too.
+
+    Asked before anything is written by a door whose writer is not the owner: the agent's
+    artifact tools, an app's request, a workflow's step. Refused, nothing is written, and the
+    writer is answered in the scan's words (``ContentRefused.nothing_made`` for a new artifact,
+    ``ContentRefused.not_changed`` for an edit)."""
+    from personalclaw.knowledge import text_items
+
+    parts = kept_text(kind, name=name, description=description, content=content)
+    if not parts:
+        return None
+    return await text_items.refusal(*parts, surface=ARTIFACT_SURFACE)
+
+
 def redact(text: str) -> str:
     """Strip credentials and exfiltration URLs before the text crosses into the store.
 
@@ -181,6 +237,43 @@ def mirror_sha(title: str, text: str) -> str:
     h.update(b"\0")
     h.update((text or "").encode("utf-8", "replace"))
     return h.hexdigest()
+
+
+@dataclass(frozen=True)
+class _Mirror:
+    """What the mirror of one artifact holds, as the store keeps it: its title, its text and its
+    summary, each redacted (:func:`redact`), the hash over its title and text
+    (:func:`mirror_sha`), and its metadata."""
+
+    title: str
+    text: str
+    summary: str
+    sha: str
+    meta: dict[str, Any]
+
+
+def _mirror_of(slug: str, art: Any) -> _Mirror:
+    """The mirror of artifact *art* (whose slug is *slug*), as it reads now."""
+    title = redact((art.name or slug).strip() or slug)
+    text, fmt = extract(art.kind, art.content or "")
+    text = redact(text)
+    sha = mirror_sha(title, text)
+    return _Mirror(
+        title=title,
+        text=text,
+        summary=redact((art.description or "").strip()),
+        sha=sha,
+        meta={"artifact_slug": slug, "artifact_kind": art.kind, "artifact_sha": sha, **fmt},
+    )
+
+
+def _holds(row: dict, sha: str) -> bool:
+    """Whether the mirror *row* already holds the text whose hash is *sha*: written of it, or
+    refused for it. A row the scan could not check holds nothing yet, so it is read again."""
+    from personalclaw.knowledge import text_items
+
+    held = (row.get("file_metadata") or {}).get("artifact_sha") == sha
+    return held and not text_items.unchecked(row)
 
 
 def find_source(store: Any) -> dict | None:
@@ -243,6 +336,12 @@ class ArtifactIndexer:
     SKIPPED = "skipped"
     MISSING = "missing"
     DISABLED = "disabled"
+    #: An artifact that points at a file, whose file's text the content scan is reading in a task
+    #: on the event loop: its mirror is written, or withheld, once the scan answers.
+    SCANNING = "scanning"
+    #: An artifact whose file's text the content scan refused, or could not check: its mirror
+    #: keeps no text and says why.
+    WITHHELD = "withheld"
 
     def __init__(
         self,
@@ -256,6 +355,11 @@ class ArtifactIndexer:
         self._enqueue = enqueue
         self._provider_factory = provider_factory or self._default_provider
         self._config_loader = config_loader or self._load_config
+        # The scans running as tasks (:meth:`_mirror_file`), held so none is collected while it
+        # runs, and the bound on how many run at once on the loop they run on.
+        self._scans: set[asyncio.Task[str]] = set()
+        self._gate: asyncio.Semaphore | None = None
+        self._gate_loop: asyncio.AbstractEventLoop | None = None
 
     @staticmethod
     def _default_provider() -> Any:
@@ -317,19 +421,7 @@ class ArtifactIndexer:
                 self._store.forget_source_item(str(source["id"]), slug)
             return self.SKIPPED
         source_id, created = ensure_source(self._store)
-        title = (art.name or slug).strip() or slug
-        text, meta = extract(art.kind, art.content or "")
-        text = redact(text)
-        title = redact(title)
-        sha = mirror_sha(title, text)
-        existing = self._store.find_source_item(source_id, slug)
-        file_metadata = {
-            "artifact_slug": slug,
-            "artifact_kind": art.kind,
-            "artifact_sha": sha,
-            **meta,
-        }
-        outcome = self._write(source_id, slug, existing, title, text, art, sha, file_metadata)
+        outcome = self._mirror(source_id, slug, art)
         if created:
             # THIS call created the source row, so this is the first enable — which can
             # happen at runtime (the switch flipped on without a restart) rather than only at
@@ -338,44 +430,145 @@ class ArtifactIndexer:
             self.backfill()
         return outcome
 
-    def _write(
+    def _mirror(self, source_id: str, slug: str, art: Any) -> str:
+        """Create, refresh or leave alone the one mirror row for *slug*: an artifact that points
+        at a file once the content scan has read the file's text (:meth:`_mirror_file`)."""
+        mirror = _mirror_of(slug, art)
+        existing = self._store.find_source_item(source_id, slug)
+        if existing is not None and _holds(existing, mirror.sha):
+            # Nothing observable changed: no write, no re-embed, no queue entry, no scan. This
+            # is what makes a repeated backfill and a metadata-only PATCH free.
+            return self.UNCHANGED
+        if art.source_path:
+            return self._mirror_file(source_id, slug, art, mirror)
+        return self._write(source_id, slug, existing, mirror)
+
+    def _mirror_file(self, source_id: str, slug: str, art: Any, mirror: _Mirror) -> str:
+        """Mirror *art*, an artifact that points at a file, once the content scan has read its
+        text: that text is the file's, which any program on the machine can write, so it is read
+        whoever saved the artifact. The scan is a child process: on the event loop it runs as a
+        task, bounded to ``text_items.SCANS_AT_ONCE`` at a time, and this answers
+        :attr:`SCANNING`; on any other thread it runs here."""
+        from personalclaw.knowledge import text_items
+
+        text = extract(art.kind, art.content or "")[0]
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self._scanned(source_id, slug, text, mirror.sha, None))
+        if self._gate is None or self._gate_loop is not loop:
+            self._gate, self._gate_loop = asyncio.Semaphore(text_items.SCANS_AT_ONCE), loop
+        task = loop.create_task(self._scanned(source_id, slug, text, mirror.sha, self._gate))
+        self._scans.add(task)
+        task.add_done_callback(self._scans.discard)
+        return self.SCANNING
+
+    async def _scanned(
+        self, source_id: str, slug: str, text: str, sha: str, gate: asyncio.Semaphore | None
+    ) -> str:
+        """Scan *text*, the text of the file artifact *slug* points at (its mirror's hash *sha*),
+        and then keep it, or keep none of it. Never raises: a fault is logged, as a listener's is.
+
+        What is kept is what the scan read. An artifact whose text moved while it was read is
+        left to the change that moved it, whose own read follows."""
+        from personalclaw.knowledge import text_items
+
+        try:
+            if gate is None:
+                refused = await text_items.refusal(text, surface=ARTIFACT_FILE_SURFACE)
+            else:
+                async with gate:
+                    refused = await text_items.refusal(text, surface=ARTIFACT_FILE_SURFACE)
+            prov = self._provider_factory()
+            art = prov.get(slug) if prov is not None else None
+            if art is None or not indexable_kind(art.kind):
+                return self.MISSING
+            mirror = _mirror_of(slug, art)
+            existing = self._store.find_source_item(source_id, slug)
+            if mirror.sha != sha or (existing is not None and _holds(existing, sha)):
+                return self.UNCHANGED
+            if refused is not None:
+                return self._withhold(source_id, slug, existing, art, sha, refused)
+            return self._write(source_id, slug, existing, mirror)
+        except Exception:  # noqa: BLE001 — a mirror fault must not surface where nothing awaits it
+            logger.warning("artifact %s could not be mirrored", slug, exc_info=True)
+            return self.MISSING
+
+    def _withhold(
         self,
         source_id: str,
         slug: str,
         existing: dict | None,
-        title: str,
-        text: str,
         art: Any,
         sha: str,
-        file_metadata: dict,
+        refused: ContentRefused,
     ) -> str:
-        """Create or refresh the one mirror row for *slug*. Split out so :meth:`index` reads
-        as the decision it is (skip / unchanged / write) rather than one long branch."""
-        summary = redact((art.description or "").strip())
+        """Keep none of the text of the file artifact *slug* points at, which the content scan
+        refused or could not check (*refused*): its mirror keeps no text, says why on its status
+        line, and is named by the slug, and the gateway log says so, since no one was there to be
+        told. A mirror that held an earlier text keeps none of that either: it is no longer the
+        artifact's. The refused text's hash stays on it, so the same text is not read again."""
+        from personalclaw.knowledge import text_items
+
+        reason = refused.nothing_made
+        logger.warning(
+            "artifact %s: the text of the file it points at was not kept in Knowledge: %s",
+            slug,
+            reason,
+        )
+        meta = {"artifact_slug": slug, "artifact_kind": art.kind, "artifact_sha": sha}
+        fields = text_items.refused_fields(ARTIFACT_ITEM_TYPE, reason, meta)
         if existing is not None:
-            if (existing.get("file_metadata") or {}).get("artifact_sha") == sha:
-                # Nothing observable changed: no write, no re-embed, no queue entry. This is
-                # what makes a repeated backfill and a metadata-only PATCH free.
-                return self.UNCHANGED
+            item_id = existing["id"]
+            self._store.clear_extracted_contents(item_id)
+            self._store.clear_chunks(item_id)
+            self._store.update_item(
+                item_id,
+                title=slug,
+                content="",
+                summary="",
+                insights={},
+                embedding=None,
+                **fields,
+            )
+            return self.WITHHELD
+        self._store.create_typed_item(
+            item_type=ARTIFACT_ITEM_TYPE,
+            title=slug,
+            content="",
+            provider=ARTIFACT_SOURCE_PROVIDER,
+            source_id=source_id,
+            guid=slug,
+            extra=fields,
+        )
+        return self.WITHHELD
+
+    def _write(self, source_id: str, slug: str, existing: dict | None, mirror: _Mirror) -> str:
+        """Create or refresh the one mirror row for *slug* with *mirror*. Split out so
+        :meth:`_mirror` reads as the decision it is (unchanged / scan / write) rather than one
+        long branch."""
+        if existing is not None:
             self._store.update_item(
                 existing["id"],
-                title=title,
-                content=text,
-                summary=summary,
-                file_metadata=file_metadata,
+                title=mirror.title,
+                content=mirror.text,
+                summary=mirror.summary,
+                file_metadata=mirror.meta,
                 processing_status="queued",
+                # What a refusal said of the text the row held before is not true of this one.
+                processing_error=None,
             )
             self._enqueue_item(existing["id"])
             return self.INDEXED
         item_id = self._store.create_typed_item(
             item_type=ARTIFACT_ITEM_TYPE,
-            title=title,
-            content=text,
+            title=mirror.title,
+            content=mirror.text,
             provider=ARTIFACT_SOURCE_PROVIDER,
-            summary=summary,
+            summary=mirror.summary,
             source_id=source_id,
             guid=slug,
-            extra={"processing_status": "queued", "file_metadata": file_metadata},
+            extra={"processing_status": "queued", "file_metadata": mirror.meta},
         )
         if item_id is None:
             # The novelty gate refused: this slug's sighting is already recorded, which after
@@ -399,7 +592,8 @@ class ArtifactIndexer:
     # ── first-enable backfill ──────────────────────────────────────────────────────
 
     def backfill(self) -> int:
-        """Index every existing indexable artifact; return how many were (re-)indexed.
+        """Index every existing indexable artifact; return how many were (re-)indexed, or are
+        being read by the content scan first (:attr:`SCANNING`).
 
         Idempotent by the same hash gate the save path uses, so calling it twice is a
         measured no-op rather than a promise. Startup calls it only when
@@ -413,7 +607,7 @@ class ArtifactIndexer:
             if not indexable_kind(art.kind):
                 continue
             try:
-                if self.index(art.slug) == self.INDEXED:
+                if self.index(art.slug) in (self.INDEXED, self.SCANNING):
                     indexed += 1
             except Exception:  # noqa: BLE001 — one bad artifact must not abandon the rest
                 logger.warning("artifact %s could not be indexed", art.slug, exc_info=True)
@@ -421,7 +615,7 @@ class ArtifactIndexer:
 
     def remirror_markup(self) -> int:
         """Re-mirror the html and document artifacts whose stored text still holds raw HTML;
-        return how many were re-indexed.
+        return how many were re-indexed, or are being read by the content scan first.
 
         :meth:`backfill` runs once, at the first enable, so a mirror written before a body's
         HTML was converted on the way in would keep its markup for good — a ``document``
@@ -455,7 +649,7 @@ class ArtifactIndexer:
             if without_raw_html(content) == content:
                 continue
             try:
-                if self.index(str(row["guid"])) == self.INDEXED:
+                if self.index(str(row["guid"])) in (self.INDEXED, self.SCANNING):
                     redone += 1
             except Exception:  # noqa: BLE001 — one bad artifact must not abandon the rest
                 logger.warning("artifact %s could not be re-mirrored", row["guid"], exc_info=True)

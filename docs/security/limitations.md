@@ -891,15 +891,20 @@ not run refuses the upload as well.
 Text from outside that Knowledge keeps with no file is read by the same rules before it is stored
 (`knowledge/text_items.py`): a watched feed's or page's entries, what an app's source hands in (a
 repository's files, a shared store's items), the page or paper a bookmark fetches, a web watch's
-new items, a note an app, the agent or a workflow writes or edits, and an edit made to a page of
-the knowledge vault, which is a file any program on the machine can write. What the scan refuses,
-or could not check, is not kept: a source's entry becomes a failed item that says why and keeps no
-text (one the scan could not check is read again when the source next offers it), an app, the
-agent's tool or a workflow's step is told and nothing is written, and the vault leaves the note as
-it was and says why in the page. Each refusal is a row in the security event log, and the gateway
-log names the source and the item. A source's text is read when it is new or when it changed, not
-each time the source offers it again. A note you write yourself in Knowledge is kept as you wrote
-it, as your chat messages are: the scan is for text from someone else.
+new items, a note an app, the agent or a workflow writes or edits, an artifact one of them saves or
+edits whose text Knowledge's search keeps (a page, a document, markdown, text, JSON or CSV: its
+name, its description and its words, `knowledge/artifact_ingest.py`), and an edit made to a page of
+the knowledge vault, which is a file any program on the machine can write. So is the text of a file
+an artifact points at, before Knowledge's copy of the artifact keeps it, whoever saved the
+artifact. What the scan refuses, or could not check, is not kept: a source's entry becomes a failed
+item that says why and keeps no text (one the scan could not check is read again when the source
+next offers it), an app, the agent's tool or a workflow's step is told and nothing is written, the
+vault leaves the note as it was and says why in the page, and Knowledge's copy of an artifact that
+points at a file keeps no text and says why (the artifact is the file, as it was). Each refusal is
+a row in the security event log, and the gateway log names the source and the item. A source's
+text is read when it is new or when it changed, not each time the source offers it again. A note
+you write yourself in Knowledge, and an artifact you save or edit in Artifacts, is kept as you
+wrote it, as your chat messages are: the scan is for text from someone else.
 
 What a reader makes of an upload is scanned too, by the same rules, before a model is handed it or
 it is kept for one: the text of a chat or an Inbox attachment, of a Knowledge document or code
@@ -926,27 +931,32 @@ What the scan does not see:
   description and a transcript are a model's reading of pixels or sound, and are not scanned; they
   are fenced as data like any attachment's text.
 - **An archive's files.** An archive is scanned as the file it is: the files a project or backup
-  import writes out of it are not scanned one by one.
+  import writes out of it are not scanned one by one, nor the artifacts and the library entries a
+  backup brings.
 - **An instruction written as prose.** The scan refuses what the scanner calls dangerous. An
   instruction to the model written as ordinary prose is only a warning there, and passes; the
   fence around a file's text is what tells the model it is not an instruction.
 - **Where an item came from.** The scan reads an item's title and its text. Its link, a source's
   name for it and a file's name are kept as where it came from, and a refused item is named by
   them.
-- **Text an earlier version took in.** An entry a source took in, or a note an app or the agent
-  wrote, with an earlier version that did not scan it is left as it was. A feed's or a page's
-  entry is taken once, when it is first seen, so it is not read again; an app's source's item is
-  read again when the source says it changed.
+- **Text an earlier version took in.** An entry a source took in, or a note or an artifact an app
+  or the agent wrote, with an earlier version that did not scan it is left as it was, and so is
+  Knowledge's copy of that artifact. A feed's or a page's entry is taken once, when it is first
+  seen, so it is not read again; an app's source's item is read again when the source says it
+  changed.
 - **What is written as you.** A note you write in Knowledge is not scanned, and neither is one a
-  program writes with your session (§10).
-- **An artifact's text.** An artifact's bytes are scanned when they are uploaded, but the text of
-  one the agent, an app or you write is not scanned when it is saved, and Knowledge's search finds
-  the text of a page, document or text artifact.
+  program writes with your session (§10), an artifact you save or edit in Artifacts, or a chat you
+  share as one. An artifact that points at a file is the exception: its text is the file's, which
+  any program can write, so Knowledge's copy of it is scanned whoever saved it.
+- **An artifact Knowledge does not keep.** A widget's, a component's, a drawing's or an
+  infographic's code, and a generated document, sheet, deck or PDF, are not read when the agent or
+  an app saves one: Knowledge's search keeps none of their text. Bytes uploaded into an artifact
+  are scanned as any upload is.
 
 **What this means for you:** the scan keeps a destructive script or hidden reversed text out of
 your chats and your library, whether it sits in a text file, in a document's text, in a feed or a
-page you watch, or in a note an app or the agent writes; it is not a reading of every document.
-Treat a file, a feed or a page from someone else as you would their message.
+page you watch, or in a note or an artifact an app or the agent writes; it is not a reading of
+every document. Treat a file, a feed or a page from someone else as you would their message.
 
 ## 18. A run's egress tier holds where its requests ask the guard
 
@@ -1001,9 +1011,9 @@ inside a read-only sandbox with the program's own configuration ignored, for #14
 programs a run may start, enforced by its sandbox rather than read from the command's text, for
 #15; a network and a write fence around an unattended run's shell and an app's programs,
 enforced by the OS rather than read from a command line, for #16; reading the whole of a long
-text a reader makes of a document, an archive's files one by one as an import writes them out,
-and an artifact's text when the agent or an app saves it, for #17; an automation's action fire
-naming its own run to the guard, and a network fence for an app's own requests and a remote MCP
-server's connection, for #18). This page will shrink as those land.
+text a reader makes of a document, and an archive's files one by one as an import writes them
+out, for #17; an automation's action fire naming its own run to the guard, and a network fence
+for an app's own requests and a remote MCP server's connection, for #18). This page will shrink
+as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

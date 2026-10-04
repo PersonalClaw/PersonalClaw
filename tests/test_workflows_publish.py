@@ -17,6 +17,8 @@ keeps 50 snapshots; a refinement loop that published every round would consume t
 runs, so the window that exists to hold real revision history would hold near-duplicates.
 """
 
+import asyncio
+
 import pytest
 
 from personalclaw.workflows.publish import (
@@ -368,7 +370,9 @@ def test_a_malformed_declaration_FAILS_the_node():
     node = Node.from_dict(
         {"kind": "stage", "id": "s", "config": {"prompt": "x", "publish": {"kind": "markdown"}}}
     )
-    result = apply_publish(node, NodeResult(state=InstanceState.DONE, output="body"), run_id="r")
+    result = asyncio.run(
+        apply_publish(node, NodeResult(state=InstanceState.DONE, output="body"), run_id="r")
+    )
     assert result.state is InstanceState.FAILED
     assert "invalid publish declaration" in result.failure.cause_plain
 
@@ -379,7 +383,7 @@ def test_a_node_with_no_publish_block_is_untouched():
     from personalclaw.workflows.publish_seam import apply_publish
 
     node = Node.from_dict({"kind": "stage", "id": "s", "config": {"prompt": "x"}})
-    result = apply_publish(node, NodeResult(state=InstanceState.DONE, output="body"))
+    result = asyncio.run(apply_publish(node, NodeResult(state=InstanceState.DONE, output="body")))
     assert result.published is None
     assert result.output == "body"
 
@@ -394,7 +398,9 @@ def test_a_FAILED_node_does_not_publish():
     node = Node.from_dict(
         {"kind": "stage", "id": "s", "config": {"prompt": "x", "publish": "Report"}}
     )
-    result = apply_publish(node, NodeResult(state=InstanceState.FAILED, output="partial"))
+    result = asyncio.run(
+        apply_publish(node, NodeResult(state=InstanceState.FAILED, output="partial"))
+    )
     assert result.published is None
 
 
@@ -408,7 +414,9 @@ def test_a_non_text_output_is_a_recorded_NOOP():
     node = Node.from_dict(
         {"kind": "stage", "id": "s", "config": {"prompt": "x", "publish": "Report"}}
     )
-    result = apply_publish(node, NodeResult(state=InstanceState.DONE, output={"rows": [1, 2]}))
+    result = asyncio.run(
+        apply_publish(node, NodeResult(state=InstanceState.DONE, output={"rows": [1, 2]}))
+    )
     assert result.published["action"] == "noop"
     assert "not text" in result.published["reason"]
 
@@ -433,8 +441,8 @@ def test_a_string_output_stays_reachable_at_its_original_binding_path():
     node = Node.from_dict(
         {"kind": "stage", "id": "s", "config": {"prompt": "x", "publish": "Report"}}
     )
-    result = apply_publish(
-        node, NodeResult(state=InstanceState.DONE, output="the body"), run_id="r"
+    result = asyncio.run(
+        apply_publish(node, NodeResult(state=InstanceState.DONE, output="the body"), run_id="r")
     )
     assert result.output == "the body"
 
@@ -525,10 +533,12 @@ def test_publishing_records_the_run_on_the_artifacts_own_event(tmp_path, monkeyp
                 },
             }
         )
-        result = apply_publish(
-            node,
-            NodeResult(state=InstanceState.DONE, output="A body about the ingest internals."),
-            run_id="r-prov",
+        result = asyncio.run(
+            apply_publish(
+                node,
+                NodeResult(state=InstanceState.DONE, output="A body about the ingest internals."),
+                run_id="r-prov",
+            )
         )
         assert result.published["action"] == "create"
         art = provider.find_similar("Provenance probe")
@@ -657,14 +667,16 @@ def test_publish_copies_referenced_files_into_the_version_dir(tmp_path, monkeypa
                 "config": {"prompt": "x", "publish": {"artifact": "Media report"}},
             }
         )
-        result = apply_publish(
-            node,
-            NodeResult(
-                state=InstanceState.DONE,
-                output="The findings, with ![chart](out/chart.png) attached for reference.",
-            ),
-            run_id="r-media",
-            cwd=str(cwd),
+        result = asyncio.run(
+            apply_publish(
+                node,
+                NodeResult(
+                    state=InstanceState.DONE,
+                    output="The findings, with ![chart](out/chart.png) attached for reference.",
+                ),
+                run_id="r-media",
+                cwd=str(cwd),
+            )
         )
         media = result.published["media"]
         assert media["self_contained"] is True
@@ -713,11 +725,13 @@ def test_publish_refuses_to_copy_a_file_outside_the_run_cwd(tmp_path, monkeypatc
                 "config": {"prompt": "x", "publish": {"artifact": "Escape probe"}},
             }
         )
-        result = apply_publish(
-            node,
-            NodeResult(state=InstanceState.DONE, output="Look at [it](../secret.txt) closely."),
-            run_id="r-escape",
-            cwd=str(cwd),
+        result = asyncio.run(
+            apply_publish(
+                node,
+                NodeResult(state=InstanceState.DONE, output="Look at [it](../secret.txt) closely."),
+                run_id="r-escape",
+                cwd=str(cwd),
+            )
         )
         media = result.published["media"]
         assert media["stored"] == []
@@ -758,10 +772,12 @@ def test_publish_journals_the_outcome_for_the_outbox(tmp_path, monkeypatch):
                 "config": {"prompt": "x", "publish": {"artifact": "Outbox probe"}},
             }
         )
-        apply_publish(
-            node,
-            NodeResult(state=InstanceState.DONE, output="A body worth publishing once."),
-            run_id="r-outbox",
+        asyncio.run(
+            apply_publish(
+                node,
+                NodeResult(state=InstanceState.DONE, output="A body worth publishing once."),
+                run_id="r-outbox",
+            )
         )
         rows = store.read_jsonl("r-outbox", "publishes.jsonl")
         assert len(rows) == 1

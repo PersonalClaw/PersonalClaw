@@ -59,7 +59,7 @@ def _publish_media_resolver(cwd: str | None) -> Any:
     return _resolve
 
 
-def apply_publish(
+async def apply_publish(
     node: Node, result: NodeResult, *, run_id: str = "", cwd: str | None = None
 ) -> NodeResult:
     """Publish a node's output as an Artifact when it declares `publish:` (WORK-CONTAINERS §2,
@@ -78,6 +78,12 @@ def apply_publish(
     on the result, not worth discarding a completed stage over. The distinction is deliberate: a bad
     declaration is the author's bug (fail loudly), a registry outage is the environment's (degrade
     honestly).
+
+    The text a publish writes is the node's output, often what an earlier step read on the web,
+    and Knowledge's search keeps an artifact's text and recalls it into prompts. So it is read by
+    the content scan before anything is written (``knowledge.artifact_ingest.text_refusal``); what
+    the scan refuses, or could not check, is not published, and the result says why in the scan's
+    words, as it says why a registry write failed.
     """
     from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.publish import (
@@ -153,6 +159,10 @@ def apply_publish(
             # the nested dict was being stringified into an unparseable Python repr.
             **flatten_lineage(plan.lineage),
         }
+        if plan.action in (PublishAction.CREATE, PublishAction.VERSION):
+            refused = await _text_refusal(spec, content, existing, plan.action)
+            if refused:
+                return _with_publish(result, {"action": "error", "reason": refused})
         if plan.action is PublishAction.CREATE:
             created = provider.create(
                 name=spec.artifact,
@@ -311,6 +321,25 @@ def _land_media_copies(
                 }
             )
     return {"stored": stored, "unresolved": failed, "self_contained": not failed}
+
+
+async def _text_refusal(spec: Any, content: str, existing: Any, action: Any) -> str:
+    """Why the content scan will not let *content* be published as the artifact *spec* names, in
+    the scan's words, or ``""`` when it may (``knowledge.artifact_ingest.text_refusal``). A new
+    artifact (``create``) is read with its name and description, as it is written; a new version
+    of *existing* writes its body only."""
+    from personalclaw.knowledge.artifact_ingest import text_refusal
+    from personalclaw.workflows.publish import PublishAction
+
+    if action is PublishAction.CREATE:
+        refused = await text_refusal(
+            spec.kind, name=spec.artifact, description=spec.description, content=content
+        )
+        return refused.nothing_made if refused is not None else ""
+    if existing is None:
+        return ""  # a version of nothing writes nothing
+    refused = await text_refusal(existing.kind, content=content)
+    return refused.not_changed if refused is not None else ""
 
 
 def _with_publish(result: NodeResult, payload: dict[str, Any]) -> NodeResult:

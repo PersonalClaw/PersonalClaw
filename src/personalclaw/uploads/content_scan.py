@@ -31,8 +31,8 @@ agent opens with ``read_file``. It is read the same way and by the same surfaces
 window of it is skipped for holding a NUL byte: a reader made it, so it is text, and it is what
 the model reads. Text from outside that Knowledge keeps with no file is read the same way before
 it is kept (``knowledge.text_items``): a watched source's entries, the page a bookmark fetches, a
-web watch's new items, the notes an app, the agent or a workflow writes, and a knowledge vault
-page's edit.
+web watch's new items, the notes and the artifacts an app, the agent or a workflow writes, a
+knowledge vault page's edit, and the file an artifact points at (``knowledge.artifact_ingest``).
 
 Why a child process. The scan holds the interpreter lock for long stretches: one of its rules
 parses the window as Python, and one parse of a window that reads as Python (source code, JSON
@@ -258,10 +258,12 @@ async def scan_text(text: str, *, surface: str) -> None:
     *surface* is where the text is going, or the door it came by, for the security event log:
     ``attachment`` (a chat), ``inbox`` (an Inbox message's attachment), ``knowledge`` (the
     library), ``read_file`` (the agent's file tool), ``watched_source`` (a watched source's
-    entries), ``web_watch`` (a web watch's new items) or ``knowledge_vault`` (an edit of a vault
-    page). Read as :func:`scan_upload` reads a file, whole up to :data:`WHOLE_FILE_BYTES` and else
-    as its first and last window, except that no window is skipped for holding a NUL byte: this is
-    text already, and the model reads all of it. Returns when it may be handed on; raises
+    entries), ``web_watch`` (a web watch's new items), ``knowledge_vault`` (an edit of a vault
+    page), ``artifact`` (an artifact the agent, an app or a workflow writes) or ``artifact_file``
+    (the file an artifact points at, as Knowledge's copy of it reads it). Read as
+    :func:`scan_upload` reads a file, whole up to :data:`WHOLE_FILE_BYTES` and else as its first
+    and last window, except that no window is skipped for holding a NUL byte: this is text
+    already, and the model reads all of it. Returns when it may be handed on; raises
     :class:`ContentRefused` when it may not.
     """
     data = text.encode("utf-8", errors="replace")

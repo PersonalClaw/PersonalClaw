@@ -129,6 +129,29 @@ class ArtifactUpdateActionProvider(ActionProvider):
             logger.debug("artifact-update: could not read %s", slug, exc_info=True)
             existing = None
 
+        # What a workflow writes is often what an earlier step read on the web, and Knowledge's
+        # search keeps an artifact's text and recalls it into prompts. So it is scanned before it
+        # is written (`knowledge.artifact_ingest.text_refusal`), read as the kind the write lands
+        # in, and refused with the scan's sentence, with nothing written. An update writes the
+        # body only.
+        from personalclaw.knowledge.artifact_ingest import text_refusal
+
+        if existing is None:
+            refused = await text_refusal(
+                kind,
+                name=str(action_config.get("name", "") or slug),
+                description=str(action_config.get("description", "") or ""),
+                content=content,
+            )
+        else:
+            refused = await text_refusal(existing.kind, content=content)
+        if refused is not None:
+            return ActionResult(
+                success=False,
+                error=refused.nothing_made if existing is None else refused.not_changed,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
         try:
             if existing is None:
                 art = store.create(

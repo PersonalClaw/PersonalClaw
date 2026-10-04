@@ -3,16 +3,19 @@
 Knowledge keeps text that came from outside the gateway: a watched source's entries (a feed's, a
 page's, an app's source such as a repository's files, a shared store's), the page or the paper it
 fetches for a bookmark, a web watch's new items, the notes an app, the agent or a workflow writes
-into it, and an edit made to a note's page in the knowledge vault, which is a file. That text is
+into it, the artifacts they write, whose text its search keeps (``knowledge.artifact_ingest``),
+and an edit made to a note's page in the knowledge vault, which is a file. That text is
 searched and recalled into prompts, so it is read by the content scan before it is stored or
 ingested (``uploads.content_scan.scan_text``: the rules an upload's text is read by, which refuse a
 destructive script, an injection phrase, an invisible character). The scan reads an item's text,
 its title and its body; its link and its identity are where it came from, as a file's name is.
 
 What the owner writes herself in the app is her own words, as what she writes in the chat is, and
-the chat never scans her message: a note she writes or edits in Knowledge is kept as she wrote it.
-A file is scanned at every door, whoever made it (``knowledge.file_items``), and so is the text of
-a vault page, which any program on the machine can write (``knowledge.vault``).
+the chat never scans her message: a note she writes or edits in Knowledge, and an artifact she
+saves or edits in Artifacts, is kept as she wrote it. A file is scanned at every door, whoever made
+it (``knowledge.file_items``), and so is the text of a vault page, which any program on the
+machine can write (``knowledge.vault``), and the text of a file an artifact points at
+(``knowledge.artifact_ingest``).
 
 A door with someone to answer (an app's request, the agent's tool, a workflow's step) refuses with
 the scan's answer, and nothing is made or changed. A door with no one to answer (a watched source,
