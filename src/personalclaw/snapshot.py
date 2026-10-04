@@ -1416,31 +1416,27 @@ def _merge_sqlite_attach(
     tagged "kitchen". Such a table takes the rows whose key this store lacks under numbers of its
     own, and every reference to it, its own included, follows its row
     (``durability.numbered_rows``). A row of the same name is the same tag, so a repeated merge is
-    still a no-op.
+    still a no-op. A table whose rows nothing else names, the learning log's, merges by the
+    identity its store gives each row, both databases opened first as the store opens one
+    (``durability.merge_source``), so the archive's rows have their identities too.
 
     `memory.db` keeps its own executor and is NOT routed here: it filters `WHERE is_deleted=0`, so a
     generic all-tables merge would resurrect memories the user deleted. That filter is the reason
-    the
-    allowlist exists, not an accident of it.
+    the allowlist exists, not an accident of it.
 
-    What it could not bring in goes on *left_unchanged*: *label* when the store took nothing, and
-    ``label (table)`` for a table it skipped, so a restore's last line can say what it left.
+    What it could not bring in goes on *left_unchanged*: *label* (the store's home-relative path)
+    when the store took nothing, and ``label (table)`` for a table it skipped, so a restore's last
+    line can say what it left.
     """
-    unchanged = left_unchanged if left_unchanged is not None else []
-    try:
-        check = sqlite3.connect(f"file:{src_db}?mode=ro", uri=True)
-        try:
-            if check.execute("PRAGMA integrity_check;").fetchone()[0] != "ok":
-                print(f"  ⚠️  {label}: source integrity check failed — skipping merge")
-                unchanged.append(label)
-                return 0
-        finally:
-            check.close()
-    except Exception as exc:  # noqa: BLE001 — a corrupt source must not abort the restore
-        print(f"  ⚠️  {label}: source unreadable ({exc}) — skipping merge")
-        unchanged.append(label)
-        return 0
+    from personalclaw.durability.merge_source import ready_to_merge
 
+    unchanged = left_unchanged if left_unchanged is not None else []
+    with ready_to_merge(src_db, dst_db, label, unchanged) as ready:
+        return _merge_tables(ready, dst_db, label, unchanged) if ready else 0
+
+
+def _merge_tables(src_db: Path, dst_db: Path, label: str, unchanged: list[str]) -> int:
+    """Take *src_db*'s rows into *dst_db*, table by table (:func:`_merge_sqlite_attach`)."""
     conn = sqlite3.connect(str(dst_db))
     imported = 0
     try:

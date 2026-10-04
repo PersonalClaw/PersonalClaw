@@ -458,6 +458,7 @@ def test_the_memory_drain_compiles_pending_captures_into_a_lesson_batch(home):
     from personalclaw.learning.staging import get_store
 
     _stage(home, ["prefers tabs", "hates emoji", "ships on fridays"])
+    captures = [e.uid for e in get_store().pending()]
 
     moved = asyncio.run(degraded._memory_staging_drain(None))
 
@@ -465,7 +466,7 @@ def test_the_memory_drain_compiles_pending_captures_into_a_lesson_batch(home):
     assert get_store().pending_count() == 0, "drained entries must be marked consumed"
     filed = proposals.list_pending("lesson_batch")
     assert len(filed) == 1, [p.title for p in filed]
-    assert filed[0].staging_refs, "the proposal must carry the staging refs it compiled"
+    assert sorted(filed[0].staging_refs) == sorted(captures), "it names the captures it compiled"
     assert "hates emoji" in filed[0].body
 
 

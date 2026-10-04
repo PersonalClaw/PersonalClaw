@@ -42,6 +42,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from personalclaw.durability import numbered_rows
+
 logger = logging.getLogger(__name__)
 
 #: "Events prune at 90d on the curator tick." A flat constant rather than a config knob —
@@ -143,29 +145,50 @@ class SurfacingEventStore:
     def close(self) -> None:
         self._staging.close()
 
+    @staticmethod
+    def bootstrap(conn: Any) -> None:
+        """Make the events table in the learning log on *conn*, each event in it with its
+        identity (``numbered_rows.give_identity``). Idempotent."""
+        conn.executescript("""
+            -- One row per candidate offered per turn (LEARN-R4 / §2.5). Append-only:
+            -- `used` is written once, by the same call that observed the surfacing, because
+            -- the writer knows both facts at the same moment. An UPDATE path would exist
+            -- only to let a later caller assert a use it did not observe.
+            CREATE TABLE IF NOT EXISTS surfacing_events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind        TEXT NOT NULL,
+                entity      TEXT NOT NULL DEFAULT '',
+                arm         TEXT NOT NULL DEFAULT '',
+                confidence  REAL NOT NULL DEFAULT 0.0,
+                used        INTEGER NOT NULL DEFAULT 0,
+                query       TEXT NOT NULL DEFAULT '',
+                session     TEXT NOT NULL DEFAULT '',
+                created_ts  REAL NOT NULL,
+                uid         TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_surfacing_ts ON surfacing_events(created_ts);
+            CREATE INDEX IF NOT EXISTS idx_surfacing_kind ON surfacing_events(kind, arm);
+            """)
+        numbered_rows.give_identity(
+            conn,
+            "surfacing_events",
+            covers=(
+                "kind",
+                "entity",
+                "arm",
+                "confidence",
+                "used",
+                "query",
+                "session",
+                "created_ts",
+            ),
+        )
+
     def _ensure(self) -> None:
         if self._bootstrapped:
             return
         with self._staging._cursor() as cur:
-            cur.executescript("""
-                -- One row per candidate offered per turn (LEARN-R4 / §2.5). Append-only:
-                -- `used` is written once, by the same call that observed the surfacing, because
-                -- the writer knows both facts at the same moment. An UPDATE path would exist
-                -- only to let a later caller assert a use it did not observe.
-                CREATE TABLE IF NOT EXISTS surfacing_events (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    kind        TEXT NOT NULL,
-                    entity      TEXT NOT NULL DEFAULT '',
-                    arm         TEXT NOT NULL DEFAULT '',
-                    confidence  REAL NOT NULL DEFAULT 0.0,
-                    used        INTEGER NOT NULL DEFAULT 0,
-                    query       TEXT NOT NULL DEFAULT '',
-                    session     TEXT NOT NULL DEFAULT '',
-                    created_ts  REAL NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_surfacing_ts ON surfacing_events(created_ts);
-                CREATE INDEX IF NOT EXISTS idx_surfacing_kind ON surfacing_events(kind, arm);
-                """)
+            self.bootstrap(cur.connection)
         self._bootstrapped = True
 
     # ── Writing ──
@@ -193,6 +216,7 @@ class SurfacingEventStore:
                 e.query,
                 e.session,
                 e.created_ts or stamp,
+                numbered_rows.new_identity(),
             )
             for e in events
             if e is not None and e.kind
@@ -203,8 +227,8 @@ class SurfacingEventStore:
         with self._lock, self._staging._cursor() as cur:
             cur.executemany(
                 "INSERT INTO surfacing_events "
-                "(kind, entity, arm, confidence, used, query, session, created_ts) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+                "(kind, entity, arm, confidence, used, query, session, created_ts, uid) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
                 rows,
             )
         return len(rows)

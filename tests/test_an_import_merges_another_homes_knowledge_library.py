@@ -292,13 +292,11 @@ def test_what_this_home_keeps_of_its_own_is_named(tmp_path, monkeypatch):
     """A store an import takes only into a home without one is named when this home has it, with
     the reason, instead of passing in silence."""
     there = _home(tmp_path / "there", monkeypatch)
-    sqlite3.connect(str(there / "learning.db")).close()
     (there / "feedback.jsonl").write_text('{"id": "f-1"}\n', encoding="utf-8")
     (there / "tool_prefs.json").write_text('{"from": "there"}', encoding="utf-8")
     (there / "routing_policy.json").write_text('{"from": "there"}', encoding="utf-8")
     archive = _export(there, tmp_path / "there.zip", monkeypatch)
     here = _home(tmp_path / "here", monkeypatch)
-    sqlite3.connect(str(here / "learning.db")).close()
     (here / "feedback.jsonl").write_text('{"id": "f-2"}\n', encoding="utf-8")
     (here / "tool_prefs.json").write_text('{"from": "here"}', encoding="utf-8")
     (here / "routing_policy.json").write_text('{"from": "here"}', encoding="utf-8")
@@ -307,7 +305,6 @@ def test_what_this_home_keeps_of_its_own_is_named(tmp_path, monkeypatch):
 
     kept = "left unchanged: this home keeps its own"
     assert f"config ({kept})" in items
-    assert f"learning log ({kept})" in items
     assert f"feedback ({kept})" in items
     assert f"2 stores ({kept}: routing_policy.json, tool_prefs.json)" in items
     assert (here / "tool_prefs.json").read_text(encoding="utf-8") == '{"from": "here"}'

@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from personalclaw.durability import numbered_rows
 from personalclaw.learning.decay import DecayVerdict, active_days_between, evaluate
 
 logger = logging.getLogger(__name__)
@@ -147,30 +148,43 @@ class MutationLog:
         self._staging = StagingStore(base_dir)
         self._bootstrapped = False
 
+    @staticmethod
+    def bootstrap(conn: Any) -> None:
+        """Make the journal in the learning log on *conn*, each change in it with its identity.
+        Idempotent. ``undone_at`` is set when a change is undone, so its identity does not
+        cover it (``numbered_rows.give_identity``)."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS curator_mutations (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation TEXT NOT NULL,
+                kind      TEXT NOT NULL,
+                entity    TEXT NOT NULL,
+                before    TEXT NOT NULL DEFAULT '{}',
+                after     TEXT NOT NULL DEFAULT '{}',
+                at        TEXT NOT NULL,
+                undone_at TEXT NOT NULL DEFAULT '',
+                uid       TEXT NOT NULL DEFAULT ''
+            );
+            """)
+        numbered_rows.give_identity(
+            conn,
+            "curator_mutations",
+            covers=("operation", "kind", "entity", "before", "after", "at"),
+        )
+
     def _ensure(self) -> None:
         if self._bootstrapped:
             return
         with self._staging._cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS curator_mutations (
-                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                    operation TEXT NOT NULL,
-                    kind      TEXT NOT NULL,
-                    entity    TEXT NOT NULL,
-                    before    TEXT NOT NULL DEFAULT '{}',
-                    after     TEXT NOT NULL DEFAULT '{}',
-                    at        TEXT NOT NULL,
-                    undone_at TEXT NOT NULL DEFAULT ''
-                );
-                """)
+            self.bootstrap(cur.connection)
         self._bootstrapped = True
 
     def append(self, mutation: Mutation) -> int:
         self._ensure()
         with self._staging._cursor() as cur:
             cur.execute(
-                "INSERT INTO curator_mutations (operation, kind, entity, before, after, at) "
-                "VALUES (?, ?, ?, ?, ?, ?);",
+                "INSERT INTO curator_mutations (operation, kind, entity, before, after, at, uid) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?);",
                 (
                     mutation.operation,
                     mutation.kind,
@@ -178,16 +192,19 @@ class MutationLog:
                     json.dumps(mutation.before),
                     json.dumps(mutation.after),
                     mutation.at or _now(),
+                    numbered_rows.new_identity(),
                 ),
             )
             return int(cur.lastrowid or 0)
 
     def pending_undo(self, limit: int = 100) -> list[tuple[int, Mutation]]:
-        """Mutations that have not been undone, newest first."""
+        """Mutations that have not been undone, newest first by when each was made: a change
+        another home made comes in after this home's own, under a later number."""
         self._ensure()
         with self._staging._cursor() as cur:
             rows = cur.execute(
-                "SELECT * FROM curator_mutations WHERE undone_at = '' " "ORDER BY id DESC LIMIT ?;",
+                "SELECT * FROM curator_mutations WHERE undone_at = '' "
+                "ORDER BY at DESC, id DESC LIMIT ?;",
                 (int(limit),),
             ).fetchall()
         return [(int(r["id"]), _row_to_mutation(r)) for r in rows]
@@ -202,11 +219,12 @@ class MutationLog:
             return bool(cur.rowcount)
 
     def changelog(self, limit: int = 200) -> list[dict[str, Any]]:
-        """The dated, append-only record the curator UI renders."""
+        """The dated, append-only record the curator UI renders, newest first by date."""
         self._ensure()
         with self._staging._cursor() as cur:
             rows = cur.execute(
-                "SELECT * FROM curator_mutations ORDER BY id DESC LIMIT ?;", (int(limit),)
+                "SELECT * FROM curator_mutations ORDER BY at DESC, id DESC LIMIT ?;",
+                (int(limit),),
             ).fetchall()
         return [_row_to_mutation(r).to_dict() for r in rows]
 

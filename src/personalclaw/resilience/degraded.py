@@ -506,7 +506,7 @@ async def _memory_staging_drain(state: Optional[object] = None) -> int:
         body="\n".join(f"- {e.content}" for e in entries),
         provenance="inferred",
         source_cadence=str(entries[0].cadence or ""),
-        staging_refs=ids,
+        staging_refs=[e.uid for e in entries],
         # `occurrences=1`/`min_evidence=1`, the convention for a single first-class
         # signal: the batch IS the evidence. Passing `len(entries)` would claim N
         # independent observations of ONE claim, which is what the floor exists to

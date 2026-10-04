@@ -62,6 +62,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 from personalclaw.learning import decay
 from personalclaw.learning.hygiene import MIN_EVIDENCE_DEFAULT
@@ -297,11 +298,10 @@ class LessonEvidenceStore:
     def close(self) -> None:
         self._staging.close()
 
-    def _ensure(self) -> None:
-        if self._bootstrapped:
-            return
-        with self._staging._cursor() as cur:
-            cur.executescript("""
+    @staticmethod
+    def bootstrap(conn: Any) -> None:
+        """Make the evidence tables in the learning log on *conn*. Idempotent."""
+        conn.executescript("""
                 CREATE TABLE IF NOT EXISTS lesson_evidence (
                     lesson_key        TEXT PRIMARY KEY,
                     observations      INTEGER NOT NULL DEFAULT 0,
@@ -322,6 +322,12 @@ class LessonEvidenceStore:
                     day TEXT PRIMARY KEY
                 );
                 """)
+
+    def _ensure(self) -> None:
+        if self._bootstrapped:
+            return
+        with self._staging._cursor() as cur:
+            self.bootstrap(cur.connection)
         self._bootstrapped = True
 
     # ── Recording ──

@@ -105,11 +105,10 @@ class UsageStore:
     def close(self) -> None:
         self._staging.close()
 
-    def _ensure(self) -> None:
-        if self._bootstrapped:
-            return
-        with self._staging._cursor() as cur:
-            cur.executescript("""
+    @staticmethod
+    def bootstrap(conn: Any) -> None:
+        """Make the usage tables in the learning log on *conn*. Idempotent."""
+        conn.executescript("""
                 CREATE TABLE IF NOT EXISTS usage (
                     kind              TEXT NOT NULL,
                     entity            TEXT NOT NULL,
@@ -129,6 +128,12 @@ class UsageStore:
                     day TEXT PRIMARY KEY
                 );
                 """)
+
+    def _ensure(self) -> None:
+        if self._bootstrapped:
+            return
+        with self._staging._cursor() as cur:
+            self.bootstrap(cur.connection)
         self._bootstrapped = True
 
     # ── Recording ──

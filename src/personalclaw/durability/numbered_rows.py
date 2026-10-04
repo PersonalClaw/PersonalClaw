@@ -8,15 +8,73 @@ row of the other home's came in filed under this home's row of the same number: 
 tagged "kitchen". Such a table takes the rows whose key the store lacks under numbers of its own,
 and every reference to it follows its row (``snapshot._merge_sqlite_attach``).
 
+A numbered table whose rows nothing else names (a log: the learning log's captures, passes and
+journal) has no such key, and merged by number another home's row was dropped wherever this home
+had used its number. Its store gives each row an identity of its own instead
+(:func:`give_identity`), which is the row's in every home it reaches, and the table merges by it.
+
 Every name this module puts in a statement is read from the live schema (``main``), never from
 the archive's.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import uuid
 
 from personalclaw.sqlite_compat import sqlite3
+
+#: The column a numbered table keeps each row's identity in, for a table whose rows nothing else
+#: names (:func:`give_identity`).
+IDENTITY = "uid"
+
+
+def new_identity() -> str:
+    """The identity a store gives a row it writes: the row's own, in every home it reaches."""
+    return uuid.uuid4().hex
+
+
+def _identity_of(values: tuple) -> str:
+    """The identity of a row an earlier version wrote, from its number and what it holds."""
+    text = json.dumps(
+        list(values),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=lambda v: v.hex() if isinstance(v, bytes) else str(v),
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
+
+
+def give_identity(conn: "sqlite3.Connection", table: str, *, covers: tuple[str, ...]) -> None:
+    """Give each row of *table*, a table its store numbers and whose rows nothing else names, an
+    identity, and the table the unique key over it that a merge matches rows by
+    (:func:`numbered_tables`). Run where the store opens its database; running it again changes
+    nothing.
+
+    The store gives each row it writes an identity of its own (:func:`new_identity`). A row an
+    earlier version wrote has none, and gets one made from its number and the columns *covers*
+    names, those a row never changes once it is written. A sync or a restore copied such a row
+    with its number, so the same row in two homes, or in an archive taken before, gets the same
+    identity in each, and a later merge of one into the other takes it once."""
+    if IDENTITY not in {c[1] for c in conn.execute(f'PRAGMA main.table_info("{table}")')}:
+        try:
+            conn.execute(f"ALTER TABLE \"{table}\" ADD COLUMN {IDENTITY} TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            # Another process opening the same database added it first.
+            if IDENTITY not in {c[1] for c in conn.execute(f'PRAGMA main.table_info("{table}")')}:
+                raise
+    number = next(c[1] for c in conn.execute(f'PRAGMA main.table_info("{table}")') if c[5])
+    picked = ", ".join(f'"{c}"' for c in (number, *covers))
+    rows = conn.execute(f"SELECT {picked} FROM \"{table}\" WHERE {IDENTITY} = ''").fetchall()
+    conn.executemany(
+        f'UPDATE "{table}" SET {IDENTITY} = ? WHERE "{number}" = ?',
+        [(_identity_of(tuple(row)), row[0]) for row in rows],
+    )
+    conn.execute(
+        f'CREATE UNIQUE INDEX IF NOT EXISTS "idx_{table}_{IDENTITY}" ON "{table}"({IDENTITY})'
+    )
 
 
 def numbered_tables(conn: "sqlite3.Connection", tables: list[str]) -> dict[str, tuple[str, ...]]:

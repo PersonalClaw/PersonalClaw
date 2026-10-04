@@ -10,7 +10,9 @@ than inventing a second one:
   ``WHERE is_deleted=0`` so a synced-in copy never RESURRECTS a memory the user deleted (the
   reason memory.db keeps its own executor instead of the generic all-tables path).
 * every other ``KIND_SQLITE`` entry → ``snapshot._merge_sqlite_attach`` — every real table
-  merged with ``INSERT OR IGNORE``, FTS shadow tables skipped and the index rebuilt.
+  merged with ``INSERT OR IGNORE``, FTS shadow tables skipped and the index rebuilt, a table the
+  store numbers by the key or identity that names its rows, and a store that declares how it is
+  opened (the learning log) opened that way on both sides first.
 
 Embeddings ride the ATTACH (they live IN the DB, carried by the merge — matching the snapshot
 precedent, so a synced memory embedded by the model bound here is searchable without
@@ -67,7 +69,7 @@ def make_db_merger(home: Path) -> DbMerger:
             return PREREQ_ABSENT
         dst = Path(home) / entry.path
         try:
-            left = _apply_db_merge(entry.id, src, dst)
+            left = _apply_db_merge(entry, src, dst)
         except Exception as exc:  # noqa: BLE001 — one bad DB must not wedge the whole pull
             logger.warning("db_merge: %s failed (%s) — advancing past it", entry.id, exc)
             return PAYLOAD_BAD
@@ -84,7 +86,7 @@ def make_db_merger(home: Path) -> DbMerger:
     return _merge
 
 
-def _apply_db_merge(entry_id: str, src: Path, dst: Path) -> list[str]:
+def _apply_db_merge(entry: inv.StateEntry, src: Path, dst: Path) -> list[str]:
     """ATTACH-merge ``src`` into the live ``dst`` DB via the right snapshot merge function, and
     return what it left unchanged (empty when everything came in).
 
@@ -102,9 +104,9 @@ def _apply_db_merge(entry_id: str, src: Path, dst: Path) -> list[str]:
         shutil.copy2(src, dst)
         return []
     left: list[str] = []
-    if entry_id == _MEMORY_DB_ENTRY:
+    if entry.id == _MEMORY_DB_ENTRY:
         # memory.db: the is_deleted=0 allowlist merge, so deletes are not resurrected.
         snapshot._merge_memory(src, dst, left_unchanged=left)
     else:
-        snapshot._merge_sqlite_attach(src, dst, entry_id, left_unchanged=left)
+        snapshot._merge_sqlite_attach(src, dst, entry.path, left_unchanged=left)
     return left

@@ -189,11 +189,13 @@ def test_consumed_entries_leave_the_pending_queue(store):
 
 def test_provenance_pointers_survive_consumption(store):
     """A compiled proposal has to be traceable back to the turns that produced
-    it — that is what makes a surprising proposal auditable."""
+    it — that is what makes a surprising proposal auditable. It names them by
+    their identities, which are theirs in every home they reach."""
     ids = [store.stage(cadence="per_turn", kind="lesson", content=f"signal {i}") for i in range(2)]
+    uids = [e.uid for e in store.pending()]
     store.mark_consumed(ids, "batch-7")
-    sources = store.sources_for(ids)
-    assert len(sources) == 2
+    sources = store.sources_for(uids)
+    assert sorted(s["uid"] for s in sources) == sorted(uids)
     assert all(s["cadence"] == "per_turn" for s in sources)
 
 
@@ -245,11 +247,13 @@ def test_input_hash_is_order_insensitive():
 
 def test_pruning_removes_consumed_entries_past_retention(store):
     old = store.stage(cadence="per_turn", kind="lesson", content="ancient consumed")
+    (uid,) = [e.uid for e in store.pending()]
     store.mark_consumed([old], "batch-old")
     with store._cursor() as cur:
         cur.execute("UPDATE staging SET created_ts = ? WHERE id = ?;", (1000.0, old))
+    assert len(store.sources_for([uid])) == 1
     assert store.prune(retention_days=30) == 1
-    assert store.sources_for([old]) == []
+    assert store.sources_for([uid]) == []
 
 
 def test_pruning_never_drops_an_unconsumed_entry(store):

@@ -45,6 +45,7 @@ from typing import Any, Iterator
 
 from personalclaw import bounded_log
 from personalclaw.config import loader as config_loader
+from personalclaw.durability import numbered_rows
 from personalclaw.learning.hygiene import fingerprint
 from personalclaw.sqlite_compat import connect, sqlite3
 
@@ -59,6 +60,33 @@ DEFAULT_RETENTION_DAYS = 30
 #: The batch window: consolidation waits at least this long between passes so a
 #: burst of turns produces one expensive pass, not one per turn.
 DEFAULT_BATCH_WINDOW_SECS = 900.0
+
+#: The tables this store numbers, each with the columns a row never changes once it is written: a
+#: row an earlier version wrote gets its identity from them (``numbered_rows.give_identity``). A
+#: capture's ``consumed_by`` is set when a pass compiles it, so it is not one of them.
+_NUMBERED: dict[str, tuple[str, ...]] = {
+    "staging": (
+        "day",
+        "cadence",
+        "kind",
+        "content",
+        "content_hash",
+        "session_key",
+        "created_ts",
+        "meta",
+    ),
+    "flush_records": (
+        "cadence",
+        "outcome",
+        "detail",
+        "staged_count",
+        "proposal_ids",
+        "cost_usd",
+        "created_ts",
+    ),
+    "allocation_samples": ("used_tokens", "budget_tokens", "created_ts"),
+    "ablation_sweeps": ("sweep_ts", "heuristic", "delta", "verdict", "items"),
+}
 
 
 class FlushOutcome(str, Enum):
@@ -76,9 +104,11 @@ class FlushOutcome(str, Enum):
 
 @dataclass(frozen=True)
 class StagingEntry:
-    """One raw captured signal, as stored."""
+    """One raw captured signal, as stored. ``id`` is its number in this home; ``uid`` is its
+    identity, the same in every home it reaches, which a proposal names it by."""
 
     id: int
+    uid: str
     day: str
     cadence: str
     kind: str
@@ -148,7 +178,8 @@ class StagingStore:
                 session_key   TEXT NOT NULL DEFAULT '',
                 created_ts    REAL NOT NULL,
                 meta          TEXT NOT NULL DEFAULT '{}',
-                consumed_by   TEXT
+                consumed_by   TEXT,
+                uid           TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_staging_day ON staging(day);
             CREATE INDEX IF NOT EXISTS idx_staging_hash ON staging(content_hash);
@@ -161,7 +192,8 @@ class StagingStore:
                 staged_count INTEGER NOT NULL DEFAULT 0,
                 proposal_ids TEXT NOT NULL DEFAULT '[]',
                 cost_usd     REAL NOT NULL DEFAULT 0.0,
-                created_ts   REAL NOT NULL
+                created_ts   REAL NOT NULL,
+                uid          TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_flush_ts ON flush_records(created_ts);
 
@@ -179,7 +211,8 @@ class StagingStore:
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 used_tokens  INTEGER NOT NULL,
                 budget_tokens INTEGER NOT NULL,
-                created_ts   REAL NOT NULL
+                created_ts   REAL NOT NULL,
+                uid          TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_alloc_ts ON allocation_samples(created_ts);
 
@@ -190,7 +223,8 @@ class StagingStore:
                 heuristic  TEXT NOT NULL,
                 delta      REAL NOT NULL,
                 verdict    TEXT NOT NULL,
-                items      INTEGER NOT NULL DEFAULT 0
+                items      INTEGER NOT NULL DEFAULT 0,
+                uid        TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_ablation_ts ON ablation_sweeps(sweep_ts);
             """)
@@ -198,6 +232,8 @@ class StagingStore:
             "CREATE INDEX IF NOT EXISTS idx_staging_consumed ON staging(consumed_by) "
             "WHERE consumed_by IS NOT NULL;"
         )
+        for table, covers in _NUMBERED.items():
+            numbered_rows.give_identity(conn, table, covers=covers)
         conn.commit()
 
     def close(self) -> None:
@@ -237,7 +273,7 @@ class StagingStore:
                 return 0
             cur.execute(
                 "INSERT INTO staging (day, cadence, kind, content, content_hash, "
-                "session_key, created_ts, meta) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+                "session_key, created_ts, meta, uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
                 (
                     day,
                     str(cadence),
@@ -247,6 +283,7 @@ class StagingStore:
                     session_key or "",
                     time.time(),
                     json.dumps(meta or {}, ensure_ascii=False),
+                    numbered_rows.new_identity(),
                 ),
             )
             return int(cur.lastrowid or 0)
@@ -267,7 +304,7 @@ class StagingStore:
         with self._cursor() as cur:
             cur.execute(
                 "INSERT INTO flush_records (cadence, outcome, detail, staged_count, "
-                "proposal_ids, cost_usd, created_ts) VALUES (?, ?, ?, ?, ?, ?, ?);",
+                "proposal_ids, cost_usd, created_ts, uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
                 (
                     str(cadence),
                     outcome.value,
@@ -276,6 +313,7 @@ class StagingStore:
                     json.dumps(list(proposal_ids or [])),
                     float(cost_usd),
                     time.time(),
+                    numbered_rows.new_identity(),
                 ),
             )
             return int(cur.lastrowid or 0)
@@ -356,15 +394,17 @@ class StagingStore:
             )
             return cur.rowcount if cur.rowcount and cur.rowcount > 0 else len(ids)
 
-    def sources_for(self, ids: list[int]) -> list[dict[str, Any]]:
-        """Provenance pointers for a compiled proposal."""
-        if not ids:
+    def sources_for(self, uids: list[str]) -> list[dict[str, Any]]:
+        """The captures a compiled proposal names (its ``staging_refs``), by their identities,
+        which are theirs in every home a capture and its proposal reach."""
+        if not uids:
             return []
-        marks = ",".join("?" for _ in ids)
+        marks = ",".join("?" for _ in uids)
         with self._cursor() as cur:
             rows = cur.execute(
-                f"SELECT id, day, cadence, kind, content_hash FROM staging WHERE id IN ({marks});",
-                [int(i) for i in ids],
+                "SELECT uid, day, cadence, kind, content_hash FROM staging "
+                f"WHERE uid IN ({marks});",
+                [str(u) for u in uids],
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -503,9 +543,9 @@ class StagingStore:
         ts = time.time() if now is None else now
         with self._cursor() as cur:
             cur.execute(
-                "INSERT INTO allocation_samples (used_tokens, budget_tokens, created_ts) "
-                "VALUES (?, ?, ?);",
-                (max(0, int(used_tokens)), int(budget_tokens), ts),
+                "INSERT INTO allocation_samples (used_tokens, budget_tokens, created_ts, uid) "
+                "VALUES (?, ?, ?, ?);",
+                (max(0, int(used_tokens)), int(budget_tokens), ts, numbered_rows.new_identity()),
             )
             # The newest by when each was taken (`bounded_log`), never the highest ids: a merge
             # brings another home's samples in with their own ids, which say nothing about when.
@@ -545,14 +585,15 @@ class StagingStore:
         with self._cursor() as cur:
             for row in rows:
                 cur.execute(
-                    "INSERT INTO ablation_sweeps (sweep_ts, heuristic, delta, verdict, items) "
-                    "VALUES (?, ?, ?, ?, ?);",
+                    "INSERT INTO ablation_sweeps (sweep_ts, heuristic, delta, verdict, items, uid) "
+                    "VALUES (?, ?, ?, ?, ?, ?);",
                     (
                         ts,
                         str(row.get("heuristic", "")),
                         float(row.get("delta", 0.0) or 0.0),
                         str(row.get("verdict", "")),
                         int(row.get("items", 0) or 0),
+                        numbered_rows.new_identity(),
                     ),
                 )
         return len(rows)
@@ -749,6 +790,35 @@ def reset_store() -> None:
         _INSTANCE = None
 
 
+def open_log(path: Path | str) -> None:
+    """Open the learning log at *path* as every store that keeps a table in it opens it: each of
+    their tables made, and each numbered table's rows given the identity a merge matches them by.
+
+    Each store makes its own tables the first time it is used, so a home holds only those of the
+    stores that have run there, and a log an earlier version wrote holds rows with no identity. A
+    merge restore, an import and a folder sync open both logs this way before merging one into the
+    other (``StateEntry.open_database``), so every table of the other log has one here to come
+    into, and the rows both logs hold are matched by the same identities."""
+    from personalclaw.learning.curator import MutationLog
+    from personalclaw.learning.lesson_confidence import LessonEvidenceStore
+    from personalclaw.learning.surfacing_events import SurfacingEventStore
+    from personalclaw.learning.usage import UsageStore
+
+    conn = connect(str(path))
+    try:
+        for bootstrap in (
+            StagingStore._bootstrap,
+            UsageStore.bootstrap,
+            LessonEvidenceStore.bootstrap,
+            MutationLog.bootstrap,
+            SurfacingEventStore.bootstrap,
+        ):
+            bootstrap(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -760,6 +830,7 @@ def _row_to_entry(row: sqlite3.Row) -> StagingEntry:
         meta = {}
     return StagingEntry(
         id=int(row["id"]),
+        uid=str(row["uid"]),
         day=str(row["day"]),
         cadence=str(row["cadence"]),
         kind=str(row["kind"]),

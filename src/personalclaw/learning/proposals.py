@@ -213,7 +213,9 @@ class Proposal:
     #: FENCED excerpt of the driving evidence — review-only, never executable.
     source_excerpt: str = ""
     evidence_refs: list[str] = field(default_factory=list)
-    staging_refs: list[int] = field(default_factory=list)
+    #: The captures this was compiled from, by their identities in the learning log
+    #: (``StagingEntry.uid``), which are theirs in every home the proposal and they reach.
+    staging_refs: list[str] = field(default_factory=list)
     change_manifest: dict[str, Any] = field(default_factory=dict)
     manifest_valid: bool = True
     manifest_issues: list[str] = field(default_factory=list)
@@ -624,7 +626,7 @@ def enqueue(
     run_id: str = "",
     source_excerpt: str = "",
     evidence_refs: list[str] | None = None,
-    staging_refs: list[int] | None = None,
+    staging_refs: list[str] | None = None,
     change_manifest: ChangeManifest | dict | None = None,
     evidence_strength: str = "correlated",
     confidence: float = 0.0,

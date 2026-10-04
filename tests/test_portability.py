@@ -470,35 +470,6 @@ class TestImportMerge:
         finally:
             os.unlink(str(zip_path))
 
-    def test_import_never_merges_two_staging_logs(self, patched_config_dir, tmp_path):
-        """An existing log is left alone rather than merged.
-
-        Merging would double-count evidence occurrences, and the evidence floor
-        (`learning.min_evidence`) is what decides whether a pattern is real — so a
-        merge would manufacture proposals out of a restore rather than out of the
-        user's actual behaviour.
-        """
-        zip_path = self._make_export(patched_config_dir)
-        try:
-            target = tmp_path / "target_learn_existing"
-            target.mkdir()
-            local = StagingStore(target)
-            local.stage(cadence="per_turn", kind="lesson", content="a local signal only")
-            local.close()
-
-            with patch("personalclaw.portability.config_dir", return_value=target):
-                with patch.dict(os.environ, {"PERSONALCLAW_HOME": str(target)}):
-                    apply_import_zip(zip_path, mode="merge")
-
-            after = StagingStore(target)
-            try:
-                contents = [e.content for e in after.pending()]
-                assert contents == ["a local signal only"]
-            finally:
-                after.close()
-        finally:
-            os.unlink(str(zip_path))
-
     def test_import_merge_workspace_no_overwrite(self, patched_config_dir, tmp_path):
         """Merge doesn't overwrite existing workspace files."""
         zip_path = self._make_export(patched_config_dir)

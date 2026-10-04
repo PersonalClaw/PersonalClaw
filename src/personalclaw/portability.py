@@ -881,6 +881,7 @@ _KEEPS_ITS_OWN = "left unchanged: this home keeps its own"
 _DATABASE_NAMES = {
     "workspace/knowledge/knowledge.db": "knowledge library",
     "workspace/lexicon/lexicon.db": "vocabulary",
+    "learning.db": "learning log",
 }
 
 
@@ -1007,9 +1008,10 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # The `workspace` walk below copies a file only into a home that lacks it, and each of
             # these stores is ONE file: a home with a knowledge library of its own took none of
             # the archive's items, watched sources or tags, and the summary read "workspace
-            # (merged)". A project's memories merge as `memory.db`'s do; the knowledge library and
-            # the vocabulary one row at a time (`_attach_merge_paths`, the restore's projection),
-            # each into a home without it copied whole.
+            # (merged)". A project's memories merge as `memory.db`'s do; the knowledge library, the
+            # vocabulary, the learning log and each project's learning log one row at a time
+            # (`_attach_merge_paths`, the restore's projection), each into a home without it
+            # copied whole.
             project_memories = _partition_paths(snap, of="memory_db")
             merged_projects = copied_projects = 0
             for rel in project_memories:
@@ -1030,39 +1032,35 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                 if rel in left
             )
 
-            # The learning log stays a home's own: copied into a home without one, never merged.
-            # Merging two capture logs would double-count evidence occurrences, and the evidence
-            # floor (`learning.min_evidence`) is what decides whether a pattern is real —
-            # inflating it would manufacture proposals from a restore rather than from the
-            # user's actual behaviour. A project keeps its own log beside its memories, and it
-            # takes the same rule.
-            learning = ["learning.db", *_partition_paths(snap, of="learning_db")]
-            took = kept = False
-            for rel in learning:
-                if not (snap / rel).is_file():
-                    continue
-                if (pc / rel).is_file():
-                    kept = True
-                    continue
-                (pc / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(snap / rel), str(pc / rel))
-                took = True
-            if took:
-                items.append("learning log (copied)")
-            if kept:
-                items.append(f"learning log ({_KEEPS_ITS_OWN})")
-
+            # The learning log merges as the rest do. Each of its rows has an identity, the same
+            # in every home it reaches, so a capture or a pass both homes hold comes in once:
+            # importing an archive again, or one from a home that took this home's log, adds
+            # nothing. The evidence a lesson's confidence stands on is kept by lesson and never
+            # added up by a merge, so no pattern reads as seen more often than it was.
+            project_logs = set(_partition_paths(snap, of="learning_db"))
+            merged_logs = copied_logs = 0
             for rel in _attach_merge_paths(snap):
-                if rel in learning or not (snap / rel).is_file():
+                if not (snap / rel).is_file():
                     continue
                 what = _DATABASE_NAMES.get(rel, rel)
                 if (pc / rel).is_file():
                     _merge_sqlite_attach(snap / rel, pc / rel, rel, left_unchanged=left)
-                    items.append(_merge_said(what, rel, left))
+                    line = _merge_said(what, rel, left)
+                    if rel in project_logs and line == f"{what} (merged)":
+                        merged_logs += 1
+                    else:
+                        items.append(line)
                 else:
                     (pc / rel).parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(str(snap / rel), str(pc / rel))
-                    items.append(f"{what} (copied)")
+                    if rel in project_logs:
+                        copied_logs += 1
+                    else:
+                        items.append(f"{what} (copied)")
+            if merged_logs:
+                items.append("project learning logs (merged)")
+            elif copied_logs:
+                items.append("project learning logs (copied)")
 
             # The automations and hooks an archive brings arrive by the rule a row from another
             # home arrives by — switched off, with no grant and nothing of what happened to them
@@ -1157,8 +1155,8 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # imported **none of them**, because this branch is a fourth hand-written list — the
             # same
             # shape as the export's own, and the same defect. The blocks above are kept as-is: each
-            # encodes a per-entry decision (learning.db copy-only so evidence is not double-counted,
-            # feedback copy-only, cron-history no-overwrite) that a generic pass would erase.
+            # encodes a per-entry decision (feedback copy-only, cron-history no-overwrite) that a
+            # generic pass would erase.
             #
             # Copy-if-missing, matching `_copy_tree_no_overwrite` above: an import must not
             # overwrite state the receiving home already has. A store of records — the inbox,

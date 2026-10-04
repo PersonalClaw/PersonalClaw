@@ -137,6 +137,14 @@ class StateEntry:
     # copy `path`, a merge restore merges it as it merges `path`, and the undeclared-database audit
     # counts it declared (`partition_paths`). Every memory partition keeps its own memory database.
     partitions: tuple[str, ...] = field(default_factory=tuple)
+    # For a ``sqlite`` store whose tables its stores make one by one as each is first used: how this
+    # version opens a database file of it, given its path, as all of them open it — every table
+    # made, and each table the store numbers given the identities its rows merge by
+    # (`numbered_rows.give_identity`). A merge restore, an import and a folder sync open both
+    # databases this way before merging one into the other (`snapshot._merge_sqlite_attach`), so
+    # an archive or a machine on an earlier version merges by the same identities, and a table this
+    # home has not used yet takes the other's rows. ``None``: both are merged as they are.
+    open_database: Callable[[Path], None] | None = None
     # For a ``json_file`` that holds user records (a list of them, or a document holding one):
     # where they are (`record_files.Shape`). A sync (`reconcile.reconcile_entry`), a restore's merge
     # and an import (`reconcile.bring_in`) take another machine's in one record at a time — by its
@@ -171,6 +179,14 @@ class StateEntry:
     # it.
     arrival: str = ""
     edit_arrival: str = ""
+
+
+def _open_learning_log(path: Path) -> None:
+    """A learning log, opened as every store that keeps a table in it opens it
+    (``learning.staging.open_log``)."""
+    from personalclaw.learning.staging import open_log
+
+    open_log(path)
 
 
 def _trigger_arrives(row: dict) -> dict:
@@ -1016,6 +1032,10 @@ INVENTORY: tuple[StateEntry, ...] = (
         # key in every partition, and one file would let a reversal in one void the rule in the
         # others. Undeclared, no snapshot carried it, and Doctor read "undeclared databases".
         partitions=("workspace/_ext/*/learning.db",),
+        # Its stores number their rows, and nothing else in a capture, a pass or a journal entry
+        # names it: merged by number, another home's row was dropped wherever this home had used
+        # its number. Each row has an identity, given when the log is opened.
+        open_database=_open_learning_log,
     ),
     StateEntry(
         id="inbox",

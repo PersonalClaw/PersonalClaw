@@ -719,11 +719,28 @@ item vector).
   and the Doctor's `memory.keyword-search` check (also shown on Settings → Memory →
   Health) says so, tries the index again before it reports, and names every damaged
   copy still set aside.
+- The learning log (`learning.db`: the captures waiting to be compiled, each capture
+  pass's outcome, the prompt budget samples, the ablation sweeps, the curator's undo
+  journal and the surfacing events) comes into another home row by row whichever way it
+  arrives: a merge restore, an archive import in merge mode and a folder sync all run
+  `snapshot._merge_sqlite_attach`. Its stores number its rows, and nothing else in a
+  capture or a pass names it, so each row also has an identity, the same in every home
+  it reaches (`durability.numbered_rows.give_identity`), and the merge matches rows by
+  it: every row of the other log comes in, under a number of this home's, and a row both
+  logs hold comes in once, so merging the same archive again adds nothing. A row an
+  earlier version wrote gets its identity when the log is opened, made from its number
+  and what it holds, so the same row has the same identity in every home that holds it
+  and in an archive taken before. The merge opens both logs as their stores open them
+  first (`StateEntry.open_database`, `learning.staging.open_log`), so a table of the
+  other log that this home's stores have not made yet is made and takes its rows. A
+  proposal names the captures it was compiled from by their identities (`staging_refs`,
+  `StagingStore.sources_for`), and the curator's journal reads its changes newest first
+  by when each was made, not by number. The evidence a lesson's confidence stands on
+  (`lesson_evidence`) is kept by lesson and never added up by a merge.
 - A partition's `learning.db` holds the evidence its lessons stand on
   (`VectorMemoryStore._lesson_evidence_store`; a lesson with none falls below the
   confidence gate), so it is declared a partition of `learning.db` and travels and
-  merges the same way (an archive import keeps this home's log, as it keeps
-  `learning.db`, and copies one only into a project that has none). It stays the
+  merges the same way, by a merge restore and an archive import alike. It stays the
   partition's: a global lesson has the same key in every partition, and one shared file
   would let a reversal in one void it in all.
 - A folder of PersonalClaw's own that sessions run in, a task's git worktree

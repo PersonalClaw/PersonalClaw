@@ -404,12 +404,12 @@ def test_provenance_pointers_are_kept():
         session_key="s-1",
         run_id="r-1",
         evidence_refs=["evt-1", "evt-2"],
-        staging_refs=[7, 8],
+        staging_refs=["capture-a", "capture-b"],
     )
     assert prop.source_cadence == "session_end"
     assert prop.run_id == "r-1"
     assert prop.evidence_refs == ["evt-1", "evt-2"]
-    assert prop.staging_refs == [7, 8]
+    assert prop.staging_refs == ["capture-a", "capture-b"]
 
 
 # ── accept / reject mechanics ──
