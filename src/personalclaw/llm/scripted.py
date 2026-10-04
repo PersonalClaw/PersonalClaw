@@ -18,9 +18,9 @@ state that advances is a turn counter, so turn *N* of a process always emits tur
 of the script.
 
 Zero network by construction: this module imports ``json``/``os``/``pathlib`` plus
-``llm.base`` and ``llm.events``. ``tests/test_scripted_provider.py`` proves it two ways
-rather than grepping for a word — it walks the ASTs of this module and its module-scope
-first-party closure for any HTTP client, socket or vendor SDK, and it measures in a
+``llm.base``, ``llm.events`` and ``turn_streams``. ``tests/test_scripted_provider.py`` proves
+it two ways rather than grepping for a word — it walks the ASTs of this module and its
+module-scope first-party closure for any HTTP client, socket or vendor SDK, and it measures in a
 subprocess that importing this module adds **no** networking module to ``sys.modules``
 beyond what ``import personalclaw.llm`` already loaded (the package ``__init__``s pull
 ``socket``/``ssl``/``urllib``/``jsonschema`` on their own; this module adds nothing).
@@ -130,6 +130,7 @@ from personalclaw.llm.events import (
     EVENT_TOOL_CALL,
 )
 from personalclaw.llm.events import AgentEvent as LLMEvent
+from personalclaw.turn_streams import closing_stream
 
 #: The opt-in. Names the script path, so "enabled" and "what it will say" are one act.
 SCRIPT_ENV_VAR = "PERSONALCLAW_SCRIPTED_MODEL_SCRIPT"
@@ -511,8 +512,9 @@ class ScriptedProvider(ModelProvider):
         )
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
-        async for event in self._emit(message):
-            yield event
+        async with closing_stream(self._emit(message)) as events:
+            async for event in events:
+                yield event
 
     async def complete(
         self,
@@ -538,8 +540,9 @@ class ScriptedProvider(ModelProvider):
             if message.get("role") == "user":
                 last_user = str(message.get("content", ""))
                 break
-        async for event in self._emit(last_user):
-            yield event
+        async with closing_stream(self._emit(last_user)) as events:
+            async for event in events:
+                yield event
 
     # ── Tool approval ─────────────────────────────────────────────────
 

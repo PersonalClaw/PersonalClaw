@@ -71,6 +71,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     ProviderResolutionError,
     PullProgress,
     StructuredOutput,
+    closing_stream,
     declared_context_window,
     get_default_registry,
     infer_capabilities,
@@ -662,8 +663,9 @@ class OllamaProvider(ModelProvider):
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         """Stream a chat turn (:meth:`_stream_chat`), closable by :meth:`cancel`."""
-        async for event in self._requests.relay(self._stream_chat(message)):
-            yield event
+        async with closing_stream(self._requests.relay(self._stream_chat(message))) as events:
+            async for event in events:
+                yield event
 
     async def _stream_chat(self, message: str) -> AsyncIterator[LLMEvent]:
         """Stream a chat turn; translate NDJSON lines to :class:`LLMEvent`.
@@ -772,10 +774,10 @@ class OllamaProvider(ModelProvider):
         reasoning_effort: str = "",  # accepted for interface parity; Ollama has no effort axis
     ) -> AsyncIterator[LLMEvent]:
         """Stream a stateless chat turn (:meth:`_complete_chat`), closable by :meth:`cancel`."""
-        async for event in self._requests.relay(
-            self._complete_chat(messages, tools=tools, model=model)
-        ):
-            yield event
+        chat = self._complete_chat(messages, tools=tools, model=model)
+        async with closing_stream(self._requests.relay(chat)) as events:
+            async for event in events:
+                yield event
 
     async def _complete_chat(
         self,
@@ -842,8 +844,10 @@ class OllamaProvider(ModelProvider):
                             model or self._model,
                         )
                         self._tools_unsupported = True
-                        async for ev in self._complete_chat(messages, tools=None, model=model):
-                            yield ev
+                        without_tools = self._complete_chat(messages, tools=None, model=model)
+                        async with closing_stream(without_tools) as events:
+                            async for ev in events:
+                                yield ev
                         return
                     logger.error(
                         "Ollama %d: %s (model=%r, msg_count=%d)",

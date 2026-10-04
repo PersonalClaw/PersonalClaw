@@ -41,6 +41,7 @@ from personalclaw.llm.credentials import Credential
 from personalclaw.llm.inflight import InFlightRequests
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, VOLATILE_KEY, PromptCache
 from personalclaw.llm.registry import CredentialMissing, require_model
+from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
 
@@ -531,8 +532,9 @@ class AnthropicProvider(ModelProvider):
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         """Stream a turn (:meth:`_stream_chat`), closable by :meth:`cancel`."""
-        async for event in self._requests.relay(self._stream_chat(message)):
-            yield event
+        async with closing_stream(self._requests.relay(self._stream_chat(message))) as events:
+            async for event in events:
+                yield event
 
     async def _stream_chat(self, message: str) -> AsyncIterator[LLMEvent]:
         """Stream a Messages turn; translate deltas to :class:`LLMEvent`.
@@ -722,8 +724,9 @@ class AnthropicProvider(ModelProvider):
         chat = self._complete_chat(
             messages, tools=tools, model=model, reasoning_effort=reasoning_effort
         )
-        async for event in self._requests.relay(chat):
-            yield event
+        async with closing_stream(self._requests.relay(chat)) as events:
+            async for event in events:
+                yield event
 
     async def _complete_chat(
         self,

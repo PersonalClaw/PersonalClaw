@@ -76,6 +76,7 @@ from personalclaw.llm.subscription_credentials import (  # noqa: F401
     register_subscription_source,
     resolve_subscription_credential,
 )
+from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
 
@@ -264,8 +265,9 @@ class BrandedCatalog(ModelCatalog):
                 base_url=self._endpoint or None,
                 max_tokens=1,
             )
-            async for _ in prov.complete([{"role": "user", "content": "hi"}]):
-                break
+            async with closing_stream(prov.complete([{"role": "user", "content": "hi"}])) as probe:
+                async for _ in probe:
+                    break
             return ConnectionResult(ok=True, detail="Connected (completion probe)")
         except Exception as exc:  # noqa: BLE001
             msg = str(exc).lower()

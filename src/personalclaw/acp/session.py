@@ -57,6 +57,7 @@ from personalclaw.acp.types import (
 from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
 from personalclaw.security import redact_credentials
 from personalclaw.textfmt import clip_words
+from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
 
@@ -757,52 +758,75 @@ class AcpSession:
 
     # ── turn API (the surface acp_agent drives, mirrors AcpClient) ──────────────
 
-    async def stream_events(
+    def stream_events(
         self, message: str, timeout: float = _DEFAULT_PROMPT_TIMEOUT
     ) -> AsyncIterator[AcpEvent]:
-        """Send a prompt on THIS session and yield AcpEvents. Holds the per-session
-        turn lock (one prompt in flight per session — never process-wide, so co-tenant
-        sessions stream concurrently)."""
-        from personalclaw.acp.errors import AcpProcessDied
+        """Send a prompt on THIS session and yield AcpEvents: one turn (:meth:`_turn`)."""
+        prompt = translate.encode_prompt_content(message)
+        return self._turn(METHOD_PROMPT, {"sessionId": self.session_id, "prompt": prompt}, timeout)
 
-        async with self._turn_lock:
-            if not await self.settle_owed_answer():
-                raise AcpProcessDied("the agent is still busy with a turn it was told to stop")
-            self._cancelled = False
-            self._turn_done.clear()
-            req_id, fut = await self._send_request(
-                METHOD_PROMPT,
-                {"sessionId": self.session_id, "prompt": translate.encode_prompt_content(message)},
-            )
-            async for event in self._dispatch_frames(req_id, fut, timeout, method=METHOD_PROMPT):
-                yield event
-
-    async def stream_command(
+    def stream_command(
         self, command: str, timeout: float = _DEFAULT_PROMPT_TIMEOUT
     ) -> AsyncIterator[AcpEvent]:
         """Execute a slash command on THIS session and yield streaming AcpEvents
-        (``commands/execute`` — output arrives in the terminal result, not chunks).
+        (``commands/execute`` — output arrives in the terminal result, not chunks): one turn
+        (:meth:`_turn`).
 
         This is the raw wire write; the capability gate lives one layer up, at the two
         provider seams that own the ``agentCapabilities`` snapshot (``AcpClient`` and
         ``AcpSessionProvider``). Callers reaching a session directly are asking for the
         frame they asked for."""
+        name, args = _parse_slash_command(command)
+        return self._turn(
+            METHOD_COMMANDS_EXECUTE,
+            {"sessionId": self.session_id, "command": {"command": name, "args": args}},
+            timeout,
+            extract_agent_from_result=True,
+        )
+
+    async def _turn(
+        self,
+        method: str,
+        params: dict,
+        timeout: float,
+        *,
+        extract_agent_from_result: bool = False,
+    ) -> AsyncIterator[AcpEvent]:
+        """One turn on THIS session: the request *method* with *params* sent, and its frames
+        yielded as AcpEvents. The turn holds the session's turn lock, one request in flight per
+        session (never process-wide, so co-tenant sessions stream concurrently).
+
+        The lock is given back where the turn ends: before its terminal ``EVENT_COMPLETE`` is
+        handed on, or as the error that ends it is raised, or as the reader closes the stream
+        part way. Never later: a reader that stops at the terminal event and keeps the stream
+        would otherwise hold the session until the interpreter collected the stream, and the
+        session's next prompt would wait that long, unsent."""
         from personalclaw.acp.errors import AcpProcessDied
 
-        async with self._turn_lock:
+        await self._turn_lock.acquire()
+        held = True
+        try:
             if not await self.settle_owed_answer():
                 raise AcpProcessDied("the agent is still busy with a turn it was told to stop")
             self._cancelled = False
             self._turn_done.clear()
-            name, args = _parse_slash_command(command)
-            req_id, fut = await self._send_request(
-                METHOD_COMMANDS_EXECUTE,
-                {"sessionId": self.session_id, "command": {"command": name, "args": args}},
+            req_id, fut = await self._send_request(method, params)
+            frames = self._dispatch_frames(
+                req_id,
+                fut,
+                timeout,
+                extract_agent_from_result=extract_agent_from_result,
+                method=method,
             )
-            async for event in self._dispatch_frames(
-                req_id, fut, timeout, extract_agent_from_result=True, method=METHOD_COMMANDS_EXECUTE
-            ):
-                yield event
+            async with closing_stream(frames) as events:
+                async for event in events:
+                    if event.kind == EVENT_COMPLETE and held:
+                        held = False
+                        self._turn_lock.release()
+                    yield event
+        finally:
+            if held:
+                self._turn_lock.release()
 
     async def _dispatch_frames(
         self,
@@ -855,22 +879,24 @@ class AcpSession:
         deadline = time.monotonic() + timeout
         while True:
             carry_on = False
+            turn = self._turn_events(
+                req_id,
+                response_future,
+                max(deadline - time.monotonic(), 0.0),
+                extract_agent_from_result,
+                method,
+            )
             try:
-                async for event in self._turn_events(
-                    req_id,
-                    response_future,
-                    max(deadline - time.monotonic(), 0.0),
-                    extract_agent_from_result,
-                    method,
-                ):
-                    if event is _RELEASED:
-                        released = True
-                        continue
-                    if event is _CARRY_ON:
-                        carry_on = True
-                        continue
-                    got_complete = got_complete or event.kind == EVENT_COMPLETE
-                    yield event
+                async with closing_stream(turn) as events:
+                    async for event in events:
+                        if event is _RELEASED:
+                            released = True
+                            continue
+                        if event is _CARRY_ON:
+                            carry_on = True
+                            continue
+                        got_complete = got_complete or event.kind == EVENT_COMPLETE
+                        yield event
             finally:
                 if not response_future.done() and not released:
                     self._owe_answer(response_future)
@@ -947,135 +973,143 @@ class AcpSession:
         from personalclaw.acp.errors import AcpMethodNotFound, AcpRequestError
 
         saw_agent_switch = False
-        async for msg in self._drain_turn(req_id, response_future, timeout):
-            action = classify_frame(msg, req_id)
-            self.last_prompt_stats.event_count += 1
+        frames = self._drain_turn(req_id, response_future, timeout)
+        async with closing_stream(frames) as drained:
+            async for msg in drained:
+                action = classify_frame(msg, req_id)
+                self.last_prompt_stats.event_count += 1
 
-            if action == "complete":
-                result = msg.result or {}
-                reason = result.get("stopReason", "") or "" if isinstance(result, dict) else ""
-                if extract_agent_from_result and isinstance(result, dict):
-                    text = translate.format_command_result(result)
-                    if text:
-                        yield AcpEvent(kind=EVENT_TEXT_CHUNK, text=text)
-                    if not saw_agent_switch:
-                        data = result.get("data", {})
-                        agent_info = data.get("agent") if isinstance(data, dict) else None
-                        name = agent_info.get("name", "") if isinstance(agent_info, dict) else ""
-                        if name:
-                            yield AcpEvent(kind=EVENT_AGENT_SWITCHED, text=name)
-                for tr in self._read_new_tool_results():  # flush remaining JSONL results
-                    yield tr
-                if self._carries_on(reason, method):
-                    yield _CARRY_ON
-                    return
-                self._last_stop_reason = reason
-                self._turn_done.set()
-                yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=reason)
-                return
-            if action == "error":
-                if self._cancelled:
-                    # The agent answered the cancel with an error rather than with
-                    # `stopReason: cancelled`. It answered, and the turn is stopped either way.
-                    self._last_stop_reason = STOP_REASON_CANCELLED
-                    self._turn_done.set()
-                    yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_CANCELLED)
-                    return
-                _err = msg.error if isinstance(msg.error, dict) else {}
-                if _err.get("code") == JSONRPC_METHOD_NOT_FOUND:
-                    # The ONE error that means "this agent cannot do that at all", so the
-                    # only one a caller may answer by substituting another path.
-                    # Typed here rather than string-matched upstairs so the substitution
-                    # can never widen to errors that mean a real attempt failed.
-                    raise AcpMethodNotFound(method, msg.error)
-                raise AcpRequestError(method or METHOD_PROMPT, msg.error)
-            if action == "permission":
-                permission = translate.build_permission_event(
-                    msg,
-                    self._dialect,
-                    self._tool_call_inputs,
-                    self._tool_call_seen,
-                    self._offered_options,
-                )
-                rid = str(permission.request_id)
-                if permission.request_id != "" and rid not in self._answered:
-                    self._unanswered[rid] = permission.request_id
-                    self._asked[rid] = (
-                        permission.title,
-                        step_words(permission.title, permission.tool_input),
-                    )
-                if self._cancelled:
-                    # Asked after the turn was stopped: nobody is asked any more, and the
-                    # protocol's answer for a cancelled turn's request is `cancelled`.
-                    if self._mark_answered(rid):
-                        await self._send_response(
-                            permission.request_id, self._dialect.reject_outcome("")
-                        )
-                    continue
-                yield permission
-            elif action == "elicitation":
-                await self._answer_question(msg)
-            elif action == "request":
-                await self._refuse_request(msg)
-            elif action == "update":
-                chunk, is_thinking = translate.extract_text_chunk(msg)
-                if chunk:
-                    for tr in self._read_new_tool_results():  # results before this text
+                if action == "complete":
+                    result = msg.result or {}
+                    reason = result.get("stopReason", "") or "" if isinstance(result, dict) else ""
+                    if extract_agent_from_result and isinstance(result, dict):
+                        text = translate.format_command_result(result)
+                        if text:
+                            yield AcpEvent(kind=EVENT_TEXT_CHUNK, text=text)
+                        if not saw_agent_switch:
+                            data = result.get("data", {})
+                            agent_info = data.get("agent") if isinstance(data, dict) else None
+                            name = (
+                                agent_info.get("name", "") if isinstance(agent_info, dict) else ""
+                            )
+                            if name:
+                                yield AcpEvent(kind=EVENT_AGENT_SWITCHED, text=name)
+                    for tr in self._read_new_tool_results():  # flush remaining JSONL results
                         yield tr
-                    kind = EVENT_THINKING_CHUNK if is_thinking else EVENT_TEXT_CHUNK
-                    if not is_thinking:
-                        self.last_prompt_stats.text_chunks += 1
-                    yield AcpEvent(kind=kind, text=chunk)
-                    if not is_thinking and translate.is_tool_interrupted_marker(chunk):
-                        # The backend security filter cancelled the turn's tools and will
-                        # never send `result` — synthesize a complete so the caller exits. The
-                        # agent said the turn is over, so no answer is owed for it.
-                        yield _RELEASED
-                        for tr in self._read_new_tool_results():
-                            yield tr
-                        self._turn_done.set()
-                        yield AcpEvent(kind=EVENT_COMPLETE)
+                    if self._carries_on(reason, method):
+                        yield _CARRY_ON
                         return
-                tool_event = translate.extract_tool_event(
-                    msg,
-                    self._tool_call_inputs,
-                    self._tool_call_seen,
-                    self.last_prompt_stats.tool_calls,
-                )
-                if tool_event:
-                    for tr in self._read_new_tool_results():  # prior tool's results first
-                        yield tr
-                    yield tool_event
-                upd_events = translate.extract_tool_update_events(
-                    msg, self._tool_call_inputs, self._tool_call_seen
-                )
-                for upd_event in upd_events:
-                    yield upd_event
-                if tool_event or upd_events:
-                    # ── THE ACP TOOL BOUNDARY ──
-                    # A tool frame is the one point mid-turn where this host knows the agent
-                    # is between decisions, so a steer written now can still change the
-                    # answer being written. Everything else in this loop is text already
-                    # committed to the transcript. No-op unless a drain source is armed,
-                    # which only a dialect declaring `supports_mid_turn_prompt` can do.
-                    await self._deliver_steers_at_tool_boundary()
-            elif action == "metadata":
-                pct = translate.extract_context_pct(msg)
-                if pct is not None:
-                    self.last_prompt_stats.context_pct = pct
-            elif action == "compaction":
-                params = msg.params or {}
-                status = params.get("status", {})
-                status_type = status.get("type", "") if isinstance(status, dict) else str(status)
-                yield AcpEvent(
-                    kind=EVENT_COMPACTION_STATUS, text=status_type, title=params.get("summary", "")
-                )
-            elif action == "clear":
-                yield AcpEvent(kind=EVENT_CLEAR_STATUS)
-            elif action == "agent_switched":
-                saw_agent_switch = True
-                params = msg.params or {}
-                yield AcpEvent(kind=EVENT_AGENT_SWITCHED, text=params.get("agentName", ""))
+                    self._last_stop_reason = reason
+                    self._turn_done.set()
+                    yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=reason)
+                    return
+                if action == "error":
+                    if self._cancelled:
+                        # The agent answered the cancel with an error rather than with
+                        # `stopReason: cancelled`. It answered, and the turn is stopped either way.
+                        self._last_stop_reason = STOP_REASON_CANCELLED
+                        self._turn_done.set()
+                        yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=STOP_REASON_CANCELLED)
+                        return
+                    _err = msg.error if isinstance(msg.error, dict) else {}
+                    if _err.get("code") == JSONRPC_METHOD_NOT_FOUND:
+                        # The ONE error that means "this agent cannot do that at all", so the
+                        # only one a caller may answer by substituting another path.
+                        # Typed here rather than string-matched upstairs so the substitution
+                        # can never widen to errors that mean a real attempt failed.
+                        raise AcpMethodNotFound(method, msg.error)
+                    raise AcpRequestError(method or METHOD_PROMPT, msg.error)
+                if action == "permission":
+                    permission = translate.build_permission_event(
+                        msg,
+                        self._dialect,
+                        self._tool_call_inputs,
+                        self._tool_call_seen,
+                        self._offered_options,
+                    )
+                    rid = str(permission.request_id)
+                    if permission.request_id != "" and rid not in self._answered:
+                        self._unanswered[rid] = permission.request_id
+                        self._asked[rid] = (
+                            permission.title,
+                            step_words(permission.title, permission.tool_input),
+                        )
+                    if self._cancelled:
+                        # Asked after the turn was stopped: nobody is asked any more, and the
+                        # protocol's answer for a cancelled turn's request is `cancelled`.
+                        if self._mark_answered(rid):
+                            await self._send_response(
+                                permission.request_id, self._dialect.reject_outcome("")
+                            )
+                        continue
+                    yield permission
+                elif action == "elicitation":
+                    await self._answer_question(msg)
+                elif action == "request":
+                    await self._refuse_request(msg)
+                elif action == "update":
+                    chunk, is_thinking = translate.extract_text_chunk(msg)
+                    if chunk:
+                        for tr in self._read_new_tool_results():  # results before this text
+                            yield tr
+                        kind = EVENT_THINKING_CHUNK if is_thinking else EVENT_TEXT_CHUNK
+                        if not is_thinking:
+                            self.last_prompt_stats.text_chunks += 1
+                        yield AcpEvent(kind=kind, text=chunk)
+                        if not is_thinking and translate.is_tool_interrupted_marker(chunk):
+                            # The backend security filter cancelled the turn's tools and will
+                            # never send `result` — synthesize a complete so the caller exits. The
+                            # agent said the turn is over, so no answer is owed for it.
+                            yield _RELEASED
+                            for tr in self._read_new_tool_results():
+                                yield tr
+                            self._turn_done.set()
+                            yield AcpEvent(kind=EVENT_COMPLETE)
+                            return
+                    tool_event = translate.extract_tool_event(
+                        msg,
+                        self._tool_call_inputs,
+                        self._tool_call_seen,
+                        self.last_prompt_stats.tool_calls,
+                    )
+                    if tool_event:
+                        for tr in self._read_new_tool_results():  # prior tool's results first
+                            yield tr
+                        yield tool_event
+                    upd_events = translate.extract_tool_update_events(
+                        msg, self._tool_call_inputs, self._tool_call_seen
+                    )
+                    for upd_event in upd_events:
+                        yield upd_event
+                    if tool_event or upd_events:
+                        # ── THE ACP TOOL BOUNDARY ──
+                        # A tool frame is the one point mid-turn where this host knows the agent
+                        # is between decisions, so a steer written now can still change the
+                        # answer being written. Everything else in this loop is text already
+                        # committed to the transcript. No-op unless a drain source is armed,
+                        # which only a dialect declaring `supports_mid_turn_prompt` can do.
+                        await self._deliver_steers_at_tool_boundary()
+                elif action == "metadata":
+                    pct = translate.extract_context_pct(msg)
+                    if pct is not None:
+                        self.last_prompt_stats.context_pct = pct
+                elif action == "compaction":
+                    params = msg.params or {}
+                    status = params.get("status", {})
+                    status_type = (
+                        status.get("type", "") if isinstance(status, dict) else str(status)
+                    )
+                    yield AcpEvent(
+                        kind=EVENT_COMPACTION_STATUS,
+                        text=status_type,
+                        title=params.get("summary", ""),
+                    )
+                elif action == "clear":
+                    yield AcpEvent(kind=EVENT_CLEAR_STATUS)
+                elif action == "agent_switched":
+                    saw_agent_switch = True
+                    params = msg.params or {}
+                    yield AcpEvent(kind=EVENT_AGENT_SWITCHED, text=params.get("agentName", ""))
 
     async def wait_turn_done(self, timeout: float) -> str:
         """Block until the current turn completes; return its stop reason."""

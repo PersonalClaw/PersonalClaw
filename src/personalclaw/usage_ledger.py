@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import bounded_log, spend_day
+from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
 
@@ -136,10 +137,11 @@ async def spent_rows(
     ``EVENT_COMPLETE``, where its consumer reads it."""
     from personalclaw.llm.events import EVENT_SPENT
 
-    async for event in events:
-        if getattr(event, "kind", "") == EVENT_SPENT:
-            record(event)
-        yield event
+    async with closing_stream(events) as turn:
+        async for event in turn:
+            if getattr(event, "kind", "") == EVENT_SPENT:
+                record(event)
+            yield event
 
 
 def _path() -> Path:

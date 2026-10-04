@@ -32,6 +32,7 @@ from personalclaw.llm.inflight import InFlightRequests
 from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import CredentialMissing, require_model
 from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter
+from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
 
@@ -218,8 +219,9 @@ class OpenAIProvider(ModelProvider):
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         """Stream a turn (:meth:`_stream_chat`), closable by :meth:`cancel`."""
-        async for event in self._requests.relay(self._stream_chat(message)):
-            yield event
+        async with closing_stream(self._requests.relay(self._stream_chat(message))) as events:
+            async for event in events:
+                yield event
 
     async def _stream_chat(self, message: str) -> AsyncIterator[LLMEvent]:
         """Stream a chat completion; translate deltas to :class:`LLMEvent`.
@@ -435,8 +437,9 @@ class OpenAIProvider(ModelProvider):
         chat = self._complete_chat(
             messages, tools=tools, model=model, reasoning_effort=reasoning_effort
         )
-        async for event in self._requests.relay(chat):
-            yield event
+        async with closing_stream(self._requests.relay(chat)) as events:
+            async for event in events:
+                yield event
 
     async def _complete_chat(
         self,

@@ -26,6 +26,7 @@ from personalclaw.acp.spend import AcpTurnMeter
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_END_TURN
 from personalclaw.agents.provider import AgentProvider
 from personalclaw.llm.base import CancelOutcome, LLMEvent
+from personalclaw.turn_streams import closing_stream
 
 if TYPE_CHECKING:
     from personalclaw.acp.session import AcpConnection, AcpSession
@@ -122,14 +123,16 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         # metered axis. See acp/outcomes.py and acp/spend.py.
         self._outcome_accumulator.begin_turn()
         turn = self._events(self._session.stream_events(message))
-        async for event in self._metered(turn, prompt=message):
-            self._outcome_accumulator.observe(event)
-            yield event
+        async with closing_stream(self._metered(turn, prompt=message)) as events:
+            async for event in events:
+                self._outcome_accumulator.observe(event)
+                yield event
 
     async def _events(self, frames: AsyncIterator[Any]) -> AsyncIterator[LLMEvent]:
-        async for e in frames:
-            self._stamp_turn_telemetry(e)
-            yield self._to_llm_event(e)
+        async with closing_stream(frames) as turn:
+            async for e in turn:
+                self._stamp_turn_telemetry(e)
+                yield self._to_llm_event(e)
 
     @property
     def supports_native_commands(self) -> bool:
@@ -145,9 +148,10 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
             raise AcpCommandsUnsupported(command)
         self._outcome_accumulator.begin_turn()
         turn = self._events(self._session.stream_command(command))
-        async for event in self._metered(turn, prompt=command):
-            self._outcome_accumulator.observe(event)
-            yield event
+        async with closing_stream(self._metered(turn, prompt=command)) as events:
+            async for event in events:
+                self._outcome_accumulator.observe(event)
+                yield event
 
     def _stamp_turn_telemetry(self, event: Any) -> None:
         from personalclaw.acp.types import EVENT_COMPLETE

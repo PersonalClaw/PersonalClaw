@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -169,6 +169,7 @@ from personalclaw.session_pid import tie_to_session
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.turn_source import shared_source
+from personalclaw.turn_streams import close_stream
 from personalclaw.usage_ledger import Attribution, recorder, spent_rows
 
 if TYPE_CHECKING:
@@ -2625,6 +2626,9 @@ async def run_chat(
     # The app that started this conversation (`started_by_app`), "" for one of yours. Read again by
     # the approval gate below, which must not let YOLO into an app's conversation.
     _app_chat = ""
+    # The turn's stream. Its reading below stops at the terminal event, or part way on an error, a
+    # Stop or a cancel, so the finally closes it on every way out (`turn_streams`).
+    _turn_events: AsyncIterator[Any] | None = None
     try:
         # Resolve agent bindings early so we pass the correct ACP agent
         # name (e.g. "personalclaw") instead of the PersonalClaw session name
@@ -3488,7 +3492,8 @@ async def run_chat(
             _acp_cli = _prov_id[4:]
         _turn_agent = turn_endings.serving_agent_name(client)
         running_turn.end_if_moved(session)  # nothing awaits from here to the runtime's prompt
-        async for event in spent_rows(event_stream, recorder(client, chat_usage(session))):
+        _turn_events = spent_rows(event_stream, recorder(client, chat_usage(session)))
+        async for event in _turn_events:
             # Heartbeat every 5s during long operations
             if time.time() - last_heartbeat > 5:
                 state.broadcast_ws("heartbeat", {"session": session.key, "ts": time.time()})
@@ -5530,6 +5535,15 @@ async def run_chat(
         await _fire(HOOK_EVENT_ERROR, _err_text)
         await state.sessions.record_failure(session_key)
     finally:
+        # First, before anything here awaits: until the turn's stream is closed, what it holds is
+        # held, and an agent CLI's session sends no other prompt.
+        if _turn_events is not None:
+            try:
+                await close_stream(_turn_events)
+            except Exception:
+                logger.warning(
+                    "could not close the turn's stream for %s", session.key, exc_info=True
+                )
         # Stopped at its time limit (`turn_deadline`): it ends in the error that says so, which no
         # fault caused and no one pressed.
         _past_limit = turn_deadline.limit_passed()

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from personalclaw import run_processes
 from personalclaw.cancellation import kill_timed_out, terminate_and_reap
 from personalclaw.security import mask_child_output
+from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
 
@@ -351,20 +352,21 @@ async def judge_verdict(prompt: str, *, loop_id: str) -> str:
         chunks: list[str] = []
         record = recorder(provider, who)
         try:
-            async for event in provider.stream(prompt):
-                if event.kind == EVENT_TEXT_CHUNK:
-                    chunks.append(event.text)
-                elif event.kind == EVENT_PERMISSION_REQUEST:
-                    # The judge must not act — deny any tool call (it should only reason).
-                    try:
-                        await provider.respond_permission(event, allow=False)  # type: ignore[attr-defined]  # noqa: E501
-                    except Exception:
-                        pass
-                elif event.kind == EVENT_SPENT:
-                    record(event)
-                elif event.kind == EVENT_COMPLETE:
-                    record(event)
-                    break
+            async with closing_stream(provider.stream(prompt)) as events:
+                async for event in events:
+                    if event.kind == EVENT_TEXT_CHUNK:
+                        chunks.append(event.text)
+                    elif event.kind == EVENT_PERMISSION_REQUEST:
+                        # The judge must not act — deny any tool call (it should only reason).
+                        try:
+                            await provider.respond_permission(event, allow=False)  # type: ignore[attr-defined]  # noqa: E501
+                        except Exception:
+                            pass
+                    elif event.kind == EVENT_SPENT:
+                        record(event)
+                    elif event.kind == EVENT_COMPLETE:
+                        record(event)
+                        break
         except Exception:
             partial[:] = chunks
             raise

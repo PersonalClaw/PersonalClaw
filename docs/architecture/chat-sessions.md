@@ -676,6 +676,17 @@ acknowledged — tells the agent to stop, and the session settles that answer
 and drops what came with it before it takes another turn; an agent that never
 answers is restarted.
 
+An agent CLI's session sends one prompt at a time, and a turn gives the session
+back the moment it ends: as its terminal event is handed on, or as the error that
+ends it is raised (`AcpSession._turn`). Whatever reads a turn's stream and stops
+before the stream's end — the chat runner at the terminal event, a Stop, a reader
+whose own work fails part way — closes it, and every layer that passes a stream
+on reads it with `turn_streams.closing_stream`, so closing the outer stream closes
+the session's at once. A turn closed part way tells the agent to stop and owes its
+answer before the session is given back. Nothing waits for the interpreter to
+collect a stream: that came at once on one Python and not for seconds on another,
+and the next prompt on the session waited, unsent, all that time.
+
 A **Deny** answers the agent with its own refusal that declines the call and lets
 it continue — an agent can offer another refusal that ends its turn, under the same
 `reject_once` kind — and the refused step's row names the option that was sent.

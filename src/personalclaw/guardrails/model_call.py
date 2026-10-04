@@ -75,6 +75,7 @@ from personalclaw.llm.base import (
 )
 from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import served_on_this_machine
+from personalclaw.turn_streams import closing_stream
 
 if TYPE_CHECKING:
     from personalclaw.routing.rates import CallPrice
@@ -415,8 +416,9 @@ class ModelCallGuard(ModelProvider):
         guarded = self._guarded(
             self._inner.stream(message), strategy="direct", prompt_chars=len(message)
         )
-        async for event in guarded:
-            yield event
+        async with closing_stream(guarded) as events:
+            async for event in events:
+                yield event
 
     async def complete(
         self,
@@ -438,8 +440,9 @@ class ModelCallGuard(ModelProvider):
             prompt_chars=request_chars(messages, tools),
             model=model or "",
         )
-        async for event in guarded:
-            yield event
+        async with closing_stream(guarded) as events:
+            async for event in events:
+                yield event
 
     @property
     def supports_native_commands(self) -> bool:
@@ -502,8 +505,9 @@ class ModelCallGuard(ModelProvider):
         guarded = self._guarded(
             self._inner.stream_command(command), strategy="direct", prompt_chars=len(command)
         )
-        async for event in guarded:
-            yield event
+        async with closing_stream(guarded) as events:
+            async for event in events:
+                yield event
 
     def _prescan(self, text: str) -> str:
         """Scan an outbound prompt for secrets/PII and apply the mode ladder.

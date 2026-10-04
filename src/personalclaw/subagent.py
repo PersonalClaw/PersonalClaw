@@ -71,6 +71,7 @@ from personalclaw.subagent_tier import (
     tier_for,
 )
 from personalclaw.textfmt import extract_options
+from personalclaw.turn_streams import closing_stream
 from personalclaw.usage_ledger import spent_rows
 from personalclaw.validation import _AGENT_NAME_RE
 
@@ -2248,259 +2249,270 @@ class SubagentManager:
         spent = functools.partial(self._record_subagent_usage, info, session_key)
         # The turn's terminal event, which says how it stopped (`SubagentTier.settle`).
         ending: LLMEvent | None = None
-        async for event in spent_rows(client.stream(full_message), spent):
-            if event.kind == EVENT_TEXT_CHUNK:
-                result_text += event.text
-                write_result_chunk(info.id, event.text)
-                redacted = _redact(event.text)
-                info.streaming_text += redacted
-                if len(info.streaming_text) > 50_000:
-                    info.streaming_text = "…(truncated)\n" + info.streaming_text[-40_000:]
-                await self._fire_event("subagent_chunk", info, {"text": redacted})
-            elif event.kind == EVENT_PERMISSION_REQUEST:
-                asked.add(event.tool_call_id or "")
-                call_id = event.tool_call_id or f"ask:{event.request_id}"
-                if await counted(info, event, call_id):
-                    info.result = result_text or "_Partial output._"
-                    return
-                # The spawn's TOOL GRANTS decide, and they are enforced HERE, at the
-                # tool-approval layer, BEFORE any auto-approve branch below can admit the call.
-                # Placement is load-bearing: an auto-fired research run resolves
-                # parent_policy="auto" (from approval_mode="auto"), so a denial placed AFTER that
-                # branch would be dead code and the grant would be a label, not a control. It is
-                # the check the native runtime is handed, on what the request says its tool
-                # declares; so a ceiling that narrowed this spawn's tools refuses the rest even for
-                # a MUTATING class. An ACP child's own tool declares nothing, so only its read-only
-                # shell commands pass a `read` grant.
-                _grant_deny = tier.refusal(
-                    event.title or "",
-                    event.risk_level,
-                    event.tool_kind,
-                    event.tool_input,
-                    proposes=event.proposes,
-                    tells_owner=event.tells_owner,
-                )
-                if _grant_deny:
-                    tier.refused(call_id, event.title or "", _grant_deny, limit=True)
-                    await self._reject_and_log(
-                        client,
-                        event.request_id,
-                        session_key,
-                        event,
-                        decided_by="tool_grants",
-                        error="tool_grants_deny",
-                        metadata={
-                            "subagent_id": info.id,
-                            "capability_class": _capability_class,
-                            "tool_grants": _tool_profile.tool_grants,
-                            "tool": event.title or "",
-                            "reason": _grant_deny,
-                        },
+        async with closing_stream(spent_rows(client.stream(full_message), spent)) as events:
+            async for event in events:
+                if event.kind == EVENT_TEXT_CHUNK:
+                    result_text += event.text
+                    write_result_chunk(info.id, event.text)
+                    redacted = _redact(event.text)
+                    info.streaming_text += redacted
+                    if len(info.streaming_text) > 50_000:
+                        info.streaming_text = "…(truncated)\n" + info.streaming_text[-40_000:]
+                    await self._fire_event("subagent_chunk", info, {"text": redacted})
+                elif event.kind == EVENT_PERMISSION_REQUEST:
+                    asked.add(event.tool_call_id or "")
+                    call_id = event.tool_call_id or f"ask:{event.request_id}"
+                    if await counted(info, event, call_id):
+                        info.result = result_text or "_Partial output._"
+                        return
+                    # The spawn's TOOL GRANTS decide, and they are enforced HERE, at the
+                    # tool-approval layer, BEFORE any auto-approve branch below can admit the call.
+                    # Placement is load-bearing: an auto-fired research run resolves
+                    # parent_policy="auto" (from approval_mode="auto"), so a denial placed AFTER
+                    # that branch would be dead code and the grant would be a label, not a control.
+                    # It is the check the native runtime is handed, on what the request says its
+                    # tool declares; so a ceiling that narrowed this spawn's tools refuses the rest
+                    # even for a MUTATING class. An ACP child's own tool declares nothing, so only
+                    # its read-only shell commands pass a `read` grant.
+                    _grant_deny = tier.refusal(
+                        event.title or "",
+                        event.risk_level,
+                        event.tool_kind,
+                        event.tool_input,
+                        proposes=event.proposes,
+                        tells_owner=event.tells_owner,
                     )
-                    continue
-                # Shell checks see the command that would RUN, not only the CLI's title, and a host
-                # off the allowed hosts is put to a person past every grant (`run_bounds.screen`).
-                tool_result, off_list = run_bounds.screen(
-                    self._ctx_builder.hooks, event, session_key, info.cwd or None
-                )
-                if tool_result.action == TOOL_DENY:
-                    tier.refused(
-                        call_id, event.title or "", tool_result.reason or "a hook blocked it"
-                    )
-                    control = tool_result.audit()
-                    await self._reject_and_log(
-                        client,
-                        event.request_id,
-                        session_key,
-                        event,
-                        decided_by=control.get("control", "hook_deny"),
-                        error="hook_deny",
-                        metadata={"subagent_id": info.id, **control},
-                        refused=bool(control),
-                    )
-                    continue
-                # The operator's own hook pattern is a grant too, and "a hook decides" is a level
-                # an `ask` ceiling refuses (`approval_grants.LEVEL_HOOK`). It used to be checked
-                # before, and instead of, the one ceiling check a subagent's calls had.
-                if tool_result.action == TOOL_AUTO_APPROVE and approval_grants.stands(
-                    approval_grants.HOOK_PATTERN,
-                    caller=f"subagent:{info.id}",
-                    subject=_redact(event.title or "")[:80],
-                    level=approval_grants.LEVEL_HOOK,
-                ):
-                    await self._approve_and_log(
-                        client,
-                        event.request_id,
-                        session_key,
-                        event,
-                        decided_by=approval_grants.HOOK_PATTERN,
-                        metadata={"subagent_id": info.id, "reason": "hook_auto_approve"},
-                    )
-                    await self._fire_granted(info, event, approval_grants.HOOK_PATTERN, call_inputs)
-                    continue
-                # A call whose tool declares it only reads, or that its work asks for itself, asks
-                # nobody, as a native agent's never does: an ACP child asks about every call, so it
-                # is answered here, past the grants and hooks above, and never relayed to a person.
-                if unasked := approval_grants.declared_answer(event):
-                    await self._approve_and_log(
-                        client,
-                        event.request_id,
-                        session_key,
-                        event,
-                        decided_by=unasked,
-                        metadata={"subagent_id": info.id, "reason": unasked},
-                    )
-                    await self._fire_granted(info, event, unasked, call_inputs)
-                    continue
-                # A standing grant, read at THIS call (it may have been revoked since the agent
-                # started) and bounded by the ceiling.
-                grant = "" if off_list else self._grant_now(info, audit=True)
-                if grant:
-                    await self._approve_and_log(
-                        client,
-                        event.request_id,
-                        session_key,
-                        event,
-                        decided_by=grant,
-                        metadata={"subagent_id": info.id, "reason": "parent_policy_auto"},
-                    )
-                    await self._fire_granted(info, event, grant, call_inputs)
-                    continue
-                if self._on_tool_approval_factory:
-                    approve_cb = self._on_tool_approval_factory(info)
-                    with self._waiting_for_owner(info, event.title or ""):
-                        decision = decision_of(await approve_cb(event))
-                elif self._on_tool_approval:
-                    # The callback lists the call under an id that names THIS subagent; the
-                    # client is still answered on the agent's own raw id (`event` below).
-                    with self._waiting_for_owner(info, event.title or ""):
-                        decision = decision_of(
-                            await self._on_tool_approval(
-                                replace(
-                                    event, request_id=tool_approval_id(info.id, event.request_id)
-                                ),
-                                info.parent_session_key,
-                            )
+                    if _grant_deny:
+                        tier.refused(call_id, event.title or "", _grant_deny, limit=True)
+                        await self._reject_and_log(
+                            client,
+                            event.request_id,
+                            session_key,
+                            event,
+                            decided_by="tool_grants",
+                            error="tool_grants_deny",
+                            metadata={
+                                "subagent_id": info.id,
+                                "capability_class": _capability_class,
+                                "tool_grants": _tool_profile.tool_grants,
+                                "tool": event.title or "",
+                                "reason": _grant_deny,
+                            },
                         )
-                else:
-                    # No callback, no auto policy — deny by default
-                    tier.refused(call_id, event.title or "", "nobody could approve it", limit=True)
-                    await self._reject_and_log(
-                        client,
-                        event.request_id,
-                        session_key,
-                        event,
-                        decided_by="no_approval_mechanism",
-                        metadata={"subagent_id": info.id, "reason": "no_policy_deny_default"},
+                        continue
+                    # Shell checks see the command that would RUN, not only the CLI's title, and a
+                    # host off the allowed hosts is put to a person past every grant
+                    # (`run_bounds.screen`).
+                    tool_result, off_list = run_bounds.screen(
+                        self._ctx_builder.hooks, event, session_key, info.cwd or None
                     )
-                    continue
-                if not decision:
-                    tier.declined(call_id, event, decision)
-                    await self._reject_and_log(
+                    if tool_result.action == TOOL_DENY:
+                        tier.refused(
+                            call_id, event.title or "", tool_result.reason or "a hook blocked it"
+                        )
+                        control = tool_result.audit()
+                        await self._reject_and_log(
+                            client,
+                            event.request_id,
+                            session_key,
+                            event,
+                            decided_by=control.get("control", "hook_deny"),
+                            error="hook_deny",
+                            metadata={"subagent_id": info.id, **control},
+                            refused=bool(control),
+                        )
+                        continue
+                    # The operator's own hook pattern is a grant too, and "a hook decides" is a
+                    # level an `ask` ceiling refuses (`approval_grants.LEVEL_HOOK`). It used to be
+                    # checked before, and instead of, the one ceiling check a subagent's calls had.
+                    if tool_result.action == TOOL_AUTO_APPROVE and approval_grants.stands(
+                        approval_grants.HOOK_PATTERN,
+                        caller=f"subagent:{info.id}",
+                        subject=_redact(event.title or "")[:80],
+                        level=approval_grants.LEVEL_HOOK,
+                    ):
+                        await self._approve_and_log(
+                            client,
+                            event.request_id,
+                            session_key,
+                            event,
+                            decided_by=approval_grants.HOOK_PATTERN,
+                            metadata={"subagent_id": info.id, "reason": "hook_auto_approve"},
+                        )
+                        await self._fire_granted(
+                            info, event, approval_grants.HOOK_PATTERN, call_inputs
+                        )
+                        continue
+                    # A call whose tool declares it only reads, or that its work asks for itself,
+                    # asks nobody, as a native agent's never does: an ACP child asks about every
+                    # call, so it is answered here, past the grants and hooks above, and never
+                    # relayed to a person.
+                    if unasked := approval_grants.declared_answer(event):
+                        await self._approve_and_log(
+                            client,
+                            event.request_id,
+                            session_key,
+                            event,
+                            decided_by=unasked,
+                            metadata={"subagent_id": info.id, "reason": unasked},
+                        )
+                        await self._fire_granted(info, event, unasked, call_inputs)
+                        continue
+                    # A standing grant, read at THIS call (it may have been revoked since the agent
+                    # started) and bounded by the ceiling.
+                    grant = "" if off_list else self._grant_now(info, audit=True)
+                    if grant:
+                        await self._approve_and_log(
+                            client,
+                            event.request_id,
+                            session_key,
+                            event,
+                            decided_by=grant,
+                            metadata={"subagent_id": info.id, "reason": "parent_policy_auto"},
+                        )
+                        await self._fire_granted(info, event, grant, call_inputs)
+                        continue
+                    if self._on_tool_approval_factory:
+                        approve_cb = self._on_tool_approval_factory(info)
+                        with self._waiting_for_owner(info, event.title or ""):
+                            decision = decision_of(await approve_cb(event))
+                    elif self._on_tool_approval:
+                        # The callback lists the call under an id that names THIS subagent; the
+                        # client is still answered on the agent's own raw id (`event` below).
+                        with self._waiting_for_owner(info, event.title or ""):
+                            decision = decision_of(
+                                await self._on_tool_approval(
+                                    replace(
+                                        event,
+                                        request_id=tool_approval_id(info.id, event.request_id),
+                                    ),
+                                    info.parent_session_key,
+                                )
+                            )
+                    else:
+                        # No callback, no auto policy — deny by default
+                        tier.refused(
+                            call_id, event.title or "", "nobody could approve it", limit=True
+                        )
+                        await self._reject_and_log(
+                            client,
+                            event.request_id,
+                            session_key,
+                            event,
+                            decided_by="no_approval_mechanism",
+                            metadata={"subagent_id": info.id, "reason": "no_policy_deny_default"},
+                        )
+                        continue
+                    if not decision:
+                        tier.declined(call_id, event, decision)
+                        await self._reject_and_log(
+                            client,
+                            event.request_id,
+                            session_key,
+                            event,
+                            decided_by=decision.decided_by,
+                            unanswered=(
+                                decision.outcome
+                                if decision.outcome in ("expired", "cancelled")
+                                else ""
+                            ),
+                            metadata={"subagent_id": info.id},
+                        )
+                        continue
+                    await self._approve_and_log(
                         client,
                         event.request_id,
                         session_key,
                         event,
                         decided_by=decision.decided_by,
-                        unanswered=(
-                            decision.outcome if decision.outcome in ("expired", "cancelled") else ""
-                        ),
                         metadata={"subagent_id": info.id},
                     )
-                    continue
-                await self._approve_and_log(
-                    client,
-                    event.request_id,
-                    session_key,
-                    event,
-                    decided_by=decision.decided_by,
-                    metadata={"subagent_id": info.id},
-                )
-            elif event.kind == EVENT_TOOL_CALL:
-                # The call is being MADE, and nothing is decided yet: the native loop yields this
-                # card before its own gates run. It is audited where it is decided — the branch
-                # above for an asked call, its result for any other. A row here said
-                # `auto_approved` for every call, a refused one and a person's Allow included.
-                if event.tool_call_id:
-                    call_inputs[event.tool_call_id] = event.tool_input
-                    if await counted(info, event, event.tool_call_id):
-                        info.result = result_text or "_Partial output._"
-                        return
-                await fire_tool_hooks(
-                    self.hook_store,
-                    event.title,
-                    event.tool_input,
-                    subagent_id=info.id,
-                    parent_session_key=info.parent_session_key,
-                    agent_role=info.agent,
-                )
-            elif event.kind == EVENT_TOOL_RESULT:
-                meta = event.tool_meta or {}
-                tier.result(event.tool_call_id or "", event.title or "", meta if native else {})
-                if (event.tool_call_id or "") not in asked:
-                    # Nobody was asked, so this is the call's one audit row, from what its runtime
-                    # stamped: refused by one of its gates, declined with nobody to ask, answered
-                    # from the live policy source (the grant standing at that moment, named), or
-                    # a tool that asks nobody. An ACP CLI stamps nothing: a call it never asked
-                    # the host about ran on the CLI's own say.
-                    refusal = refusal_audit(meta)
-                    waived = bool(meta.get(TOOL_META_APPROVAL_WAIVED)) and not refusal
-                    decided_by = (
-                        self._waived_by.get(info.id) or approval_grants.SESSION_POLICY
-                        if waived
-                        else (unasked_reason(meta) if native else "not_asked_by_cli")
+                elif event.kind == EVENT_TOOL_CALL:
+                    # The call is being MADE, and nothing is decided yet: the native loop yields
+                    # this card before its own gates run. It is audited where it is decided — the
+                    # branch above for an asked call, its result for any other. A row here said
+                    # `auto_approved` for every call, a refused one and a person's Allow included.
+                    if event.tool_call_id:
+                        call_inputs[event.tool_call_id] = event.tool_input
+                        if await counted(info, event, event.tool_call_id):
+                            info.result = result_text or "_Partial output._"
+                            return
+                    await fire_tool_hooks(
+                        self.hook_store,
+                        event.title,
+                        event.tool_input,
+                        subagent_id=info.id,
+                        parent_session_key=info.parent_session_key,
+                        agent_role=info.agent,
                     )
-                    sel().log_tool_invocation(
-                        session_key=session_key,
-                        source="subagent",
-                        tool_name=event.title,
-                        tool_kind=event.tool_kind,
-                        outcome=unasked_outcome(meta),
-                        request_id=event.tool_call_id or "",
-                        tool_input=call_inputs.get(event.tool_call_id or ""),
-                        metadata={
-                            "subagent_id": info.id,
-                            "reason": decided_by,
-                            "decided_by": decided_by,
-                            **refusal,
-                        },
-                    )
-                    if waived:
-                        await self._fire_granted(info, event, decided_by, call_inputs)
-                if meta.get(TOOL_META_AUTO_DENIED):
-                    # The native runtime declined a call that needed an approval: a subagent is
-                    # unattended, so nobody could be asked. It told the model; this tells the
-                    # owner, through the gateway, which can reach the Inbox.
-                    await self._fire_event(
-                        "subagent_auto_denied", info, {"tool": _redact(event.title or "")}
-                    )
-                call_inputs.pop(event.tool_call_id or "", None)
-            elif event.kind == EVENT_COMPLETE:
-                # Capture the child's token/cost accounting before breaking — S2k
-                # discarded it here (subagent site).
-                from personalclaw.routing.rates import price_event
-                from personalclaw.usage_ledger import answered_model, answered_provider
+                elif event.kind == EVENT_TOOL_RESULT:
+                    meta = event.tool_meta or {}
+                    tier.result(event.tool_call_id or "", event.title or "", meta if native else {})
+                    if (event.tool_call_id or "") not in asked:
+                        # Nobody was asked, so this is the call's one audit row, from what its
+                        # runtime stamped: refused by one of its gates, declined with nobody to ask,
+                        # answered from the live policy source (the grant standing at that moment,
+                        # named), or a tool that asks nobody. An ACP CLI stamps nothing: a call it
+                        # never asked the host about ran on the CLI's own say.
+                        refusal = refusal_audit(meta)
+                        waived = bool(meta.get(TOOL_META_APPROVAL_WAIVED)) and not refusal
+                        decided_by = (
+                            self._waived_by.get(info.id) or approval_grants.SESSION_POLICY
+                            if waived
+                            else (unasked_reason(meta) if native else "not_asked_by_cli")
+                        )
+                        sel().log_tool_invocation(
+                            session_key=session_key,
+                            source="subagent",
+                            tool_name=event.title,
+                            tool_kind=event.tool_kind,
+                            outcome=unasked_outcome(meta),
+                            request_id=event.tool_call_id or "",
+                            tool_input=call_inputs.get(event.tool_call_id or ""),
+                            metadata={
+                                "subagent_id": info.id,
+                                "reason": decided_by,
+                                "decided_by": decided_by,
+                                **refusal,
+                            },
+                        )
+                        if waived:
+                            await self._fire_granted(info, event, decided_by, call_inputs)
+                    if meta.get(TOOL_META_AUTO_DENIED):
+                        # The native runtime declined a call that needed an approval: a subagent is
+                        # unattended, so nobody could be asked. It told the model; this tells the
+                        # owner, through the gateway, which can reach the Inbox.
+                        await self._fire_event(
+                            "subagent_auto_denied", info, {"tool": _redact(event.title or "")}
+                        )
+                    call_inputs.pop(event.tool_call_id or "", None)
+                elif event.kind == EVENT_COMPLETE:
+                    # Capture the child's token/cost accounting before breaking — S2k
+                    # discarded it here (subagent site).
+                    from personalclaw.routing.rates import price_event
+                    from personalclaw.usage_ledger import answered_model, answered_provider
 
-                info.input_tokens = int(getattr(event, "input_tokens", 0) or 0)
-                info.output_tokens = int(getattr(event, "output_tokens", 0) or 0)
-                ending = event
-                # Priced by the entry and model that answered, which a spawn with no model of its
-                # own never named: its child ran on the chain's head and was charged nothing. An
-                # ACP child names neither, and is priced by its runtime and the model it chose.
-                cost = price_event(
-                    event,
-                    provider=answered_provider(event, "acp"),
-                    model=answered_model(event, info.model),
-                ).dollars
-                info.cost_usd = cost
-                # Write the resolved cost back so the ledger records it without a
-                # redundant second estimate (see _record_subagent_usage).
-                try:
-                    event.cost_usd = cost  # type: ignore[attr-defined]
-                except (AttributeError, TypeError):
-                    pass
-                self._record_subagent_usage(info, session_key, event)
-                break
+                    info.input_tokens = int(getattr(event, "input_tokens", 0) or 0)
+                    info.output_tokens = int(getattr(event, "output_tokens", 0) or 0)
+                    ending = event
+                    # Priced by the entry and model that answered, which a spawn with no model of
+                    # its own never named: its child ran on the chain's head and was charged
+                    # nothing. An ACP child names neither, and is priced by its runtime and the
+                    # model it chose.
+                    cost = price_event(
+                        event,
+                        provider=answered_provider(event, "acp"),
+                        model=answered_model(event, info.model),
+                    ).dollars
+                    info.cost_usd = cost
+                    # Write the resolved cost back so the ledger records it without a
+                    # redundant second estimate (see _record_subagent_usage).
+                    try:
+                        event.cost_usd = cost  # type: ignore[attr-defined]
+                    except (AttributeError, TypeError):
+                        pass
+                    self._record_subagent_usage(info, session_key, event)
+                    break
 
         # Strip [OPTIONS: ...] tags and redact sensitive content
         cleaned, _ = extract_options(result_text) if result_text else (result_text, [])

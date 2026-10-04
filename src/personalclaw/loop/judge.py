@@ -35,6 +35,7 @@ import re
 
 from personalclaw.loop.files import file_inside
 from personalclaw.safety_flags import yes_or_no
+from personalclaw.turn_streams import closing_stream
 from personalclaw.usage_ledger import Attribution, recorder
 from personalclaw.workflows.judge_contract import (
     JudgeVerdict,
@@ -434,18 +435,19 @@ async def _stream(judge, prompt: str, usage: Attribution) -> str:
         raise RuntimeError("judge provider not started")
     record = recorder(provider, usage)
     chunks: list[str] = []
-    async for event in provider.stream(prompt):
-        if event.kind == EVENT_TEXT_CHUNK:
-            chunks.append(event.text)
-        elif event.kind == EVENT_PERMISSION_REQUEST:
-            # The judge has no write tools; reject anything it tries to call.
-            if event.request_id:
-                await provider.reject_tool(event.request_id)
-        elif event.kind == EVENT_SPENT:
-            record(event)
-        elif event.kind == EVENT_COMPLETE:
-            record(event)
-            break
+    async with closing_stream(provider.stream(prompt)) as events:
+        async for event in events:
+            if event.kind == EVENT_TEXT_CHUNK:
+                chunks.append(event.text)
+            elif event.kind == EVENT_PERMISSION_REQUEST:
+                # The judge has no write tools; reject anything it tries to call.
+                if event.request_id:
+                    await provider.reject_tool(event.request_id)
+            elif event.kind == EVENT_SPENT:
+                record(event)
+            elif event.kind == EVENT_COMPLETE:
+                record(event)
+                break
     return "".join(chunks)
 
 

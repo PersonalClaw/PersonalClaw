@@ -38,6 +38,7 @@ from personalclaw.llm.registry import (
     ProviderResolutionError,
     get_default_registry,
 )
+from personalclaw.turn_streams import closing_stream
 
 if TYPE_CHECKING:
     from personalclaw.agents.provider import DiscoveredAgent, ReadinessStatus
@@ -673,13 +674,15 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         # goes out against the spend ceilings, and charged at its end.
         self._outcome_accumulator.begin_turn()
         turn = self._events(self._client.stream_events(message))
-        async for event in self._metered(turn, prompt=message):
-            self._outcome_accumulator.observe(event)
-            yield event
+        async with closing_stream(self._metered(turn, prompt=message)) as events:
+            async for event in events:
+                self._outcome_accumulator.observe(event)
+                yield event
 
     async def _events(self, frames: AsyncIterator[Any]) -> AsyncIterator[LLMEvent]:
-        async for e in frames:
-            yield self._to_llm_event(e)
+        async with closing_stream(frames) as turn:
+            async for e in turn:
+                yield self._to_llm_event(e)
 
     @property
     def supports_native_commands(self) -> bool:
@@ -690,9 +693,10 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
         self._outcome_accumulator.begin_turn()
         turn = self._events(self._client.stream_command(command))
-        async for event in self._metered(turn, prompt=command):
-            self._outcome_accumulator.observe(event)
-            yield event
+        async with closing_stream(self._metered(turn, prompt=command)) as events:
+            async for event in events:
+                self._outcome_accumulator.observe(event)
+                yield event
 
     async def approve_tool(self, request_id: str | int) -> None:
         await self._client.approve_tool(request_id)

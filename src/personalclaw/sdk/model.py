@@ -146,12 +146,20 @@ from personalclaw.providers.media_scanners import register_scanner  # noqa: F401
 # loads at all. tests/test_sdk_import_cycle.py drives both orders and fails if it comes back.
 from personalclaw.sdk.provider_helpers import register_branded_app  # noqa: F401
 
+# How a stream that passes another one on reads it, and how a reader that stops before a
+# stream's end reads it: inside ``closing_stream``, so the stream beneath is closed the moment
+# its reader stops rather than whenever the interpreter collects it.
+from personalclaw.turn_streams import closing_stream  # noqa: F401
+
 __all__ = [
     "ModelProvider",
     "LLMEvent",
     "CancelOutcome",
     # What a provider's `cancel()` closes: the requests it relays (the bundled `ollama-models`).
     "InFlightRequests",
+    # A provider whose stream passes another one on reads it inside this, so closing its own
+    # stream closes the one beneath (the bundled `ollama-models` and `bundled-chat`).
+    "closing_stream",
     "EVENT_COMPLETE",
     "EVENT_TEXT_CHUNK",
     "EVENT_THINKING_CHUNK",

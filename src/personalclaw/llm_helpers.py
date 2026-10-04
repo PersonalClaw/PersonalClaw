@@ -34,6 +34,7 @@ from personalclaw.llm.events import (
     unasked_reason,
 )
 from personalclaw.sel import sel as _sel
+from personalclaw.turn_streams import closing_stream
 
 _PROMPT_BUSY_RETRIES = 2
 _PROMPT_BUSY_DELAY = 1.5  # seconds between retries
@@ -139,77 +140,81 @@ async def stream_and_collect(
         if on_substitution is not None:
             let_fail_over(provider)
         try:
-            async for event in provider.stream(message):
-                if event.kind == EVENT_TEXT_CHUNK:
-                    result_text += event.text
-                    if on_chunk:
-                        on_chunk(event.text)
-                elif event.kind == EVENT_MODEL_SUBSTITUTION:
-                    if on_substitution is not None:
-                        on_substitution(event.text)
-                elif event.kind == EVENT_PERMISSION_REQUEST:
-                    asked.add(str(event.tool_call_id or ""))
-                    approved = await _resolve_permission(
-                        provider,
-                        event,
-                        approval_policy,
-                        hooks,
-                        on_tool_approval,
-                        session_key=session_key,
-                        agent=agent,
-                    )
-                    if not approved:
-                        continue
-                elif event.kind == EVENT_TOOL_CALL:
-                    # The card of a call being made, before any gate has run (the native loop
-                    # checks its deny-list, task mode and approval only after yielding it), so it
-                    # is not audited here: this row said `auto_approved` for every call, a refused
-                    # one included. PreToolUse hooks fire, informational only.
-                    called[str(event.tool_call_id or "")] = event
-                    await fire_tool_hooks(
-                        get_global_hook_store(),
-                        event.title,
-                        event.tool_input,
-                    )
-                elif event.kind == EVENT_TOOL_RESULT and str(event.tool_call_id or "") not in asked:
-                    card = called.pop(str(event.tool_call_id or ""), None)
-                    if acp_cli:
-                        await _report_ungated(
+            async with closing_stream(provider.stream(message)) as events:
+                async for event in events:
+                    if event.kind == EVENT_TEXT_CHUNK:
+                        result_text += event.text
+                        if on_chunk:
+                            on_chunk(event.text)
+                    elif event.kind == EVENT_MODEL_SUBSTITUTION:
+                        if on_substitution is not None:
+                            on_substitution(event.text)
+                    elif event.kind == EVENT_PERMISSION_REQUEST:
+                        asked.add(str(event.tool_call_id or ""))
+                        approved = await _resolve_permission(
                             provider,
-                            acp_cli,
-                            card or event,
+                            event,
+                            approval_policy,
+                            hooks,
+                            on_tool_approval,
                             session_key=session_key,
                             agent=agent,
-                            on_ungated=on_ungated,
                         )
-                        continue
-                    # A call nobody was asked about: its one audit row, from what the runtime
-                    # stamped on its result (`llm.events.unasked_outcome`).
-                    meta = event.tool_meta or {}
-                    decided_by = unasked_reason(meta)
-                    _sel().log_tool_invocation(
-                        session_key=session_key,
-                        agent=agent,
-                        source="llm_helpers",
-                        tool_name=event.title,
-                        tool_kind=event.tool_kind,
-                        outcome=unasked_outcome(meta),
-                        request_id=str(event.tool_call_id or ""),
-                        tool_input=card.tool_input if card is not None else None,
-                        metadata={
-                            "reason": decided_by,
-                            "decided_by": decided_by,
-                            **refusal_audit(meta),
-                        },
-                    )
-                elif event.kind in (EVENT_COMPLETE, EVENT_SPENT):
-                    if on_complete is not None:
-                        try:
-                            on_complete(event)
-                        except Exception:  # noqa: BLE001 — telemetry must never break a turn
-                            logger.debug("stream_and_collect on_complete failed", exc_info=True)
-                    if event.kind == EVENT_COMPLETE:
-                        break
+                        if not approved:
+                            continue
+                    elif event.kind == EVENT_TOOL_CALL:
+                        # The card of a call being made, before any gate has run (the native loop
+                        # checks its deny-list, task mode and approval only after yielding it), so
+                        # it is not audited here: this row said `auto_approved` for every call, a
+                        # refused one included. PreToolUse hooks fire, informational only.
+                        called[str(event.tool_call_id or "")] = event
+                        await fire_tool_hooks(
+                            get_global_hook_store(),
+                            event.title,
+                            event.tool_input,
+                        )
+                    elif (
+                        event.kind == EVENT_TOOL_RESULT
+                        and str(event.tool_call_id or "") not in asked
+                    ):
+                        card = called.pop(str(event.tool_call_id or ""), None)
+                        if acp_cli:
+                            await _report_ungated(
+                                provider,
+                                acp_cli,
+                                card or event,
+                                session_key=session_key,
+                                agent=agent,
+                                on_ungated=on_ungated,
+                            )
+                            continue
+                        # A call nobody was asked about: its one audit row, from what the runtime
+                        # stamped on its result (`llm.events.unasked_outcome`).
+                        meta = event.tool_meta or {}
+                        decided_by = unasked_reason(meta)
+                        _sel().log_tool_invocation(
+                            session_key=session_key,
+                            agent=agent,
+                            source="llm_helpers",
+                            tool_name=event.title,
+                            tool_kind=event.tool_kind,
+                            outcome=unasked_outcome(meta),
+                            request_id=str(event.tool_call_id or ""),
+                            tool_input=card.tool_input if card is not None else None,
+                            metadata={
+                                "reason": decided_by,
+                                "decided_by": decided_by,
+                                **refusal_audit(meta),
+                            },
+                        )
+                    elif event.kind in (EVENT_COMPLETE, EVENT_SPENT):
+                        if on_complete is not None:
+                            try:
+                                on_complete(event)
+                            except Exception:  # noqa: BLE001 — telemetry must never break a turn
+                                logger.debug("stream_and_collect on_complete failed", exc_info=True)
+                        if event.kind == EVENT_COMPLETE:
+                            break
             return result_text
         except AcpError as exc:
             if "already in progress" not in str(exc) or attempt >= _PROMPT_BUSY_RETRIES:

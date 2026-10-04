@@ -14,7 +14,8 @@ functions, methods on ``self`` and on annotated locals, a class built in place, 
 returning an annotated class, a nested coroutine, and the coroutines handed to
 ``asyncio.wait_for`` and its siblings. A handler waits on a model when the walk reaches
 
-* ``async for … in <x>.stream(…)``: a model's answer streaming in;
+* ``async for … in <x>.stream(…)``: a model's answer streaming in, or the same stream read inside
+  ``closing_stream(<x>.stream(…))``, which closes it when the reading stops;
 * ``await <x>.sessions.get_or_create(…)``: taking a model session, which waits for whatever turn
   or chore holds it;
 * a function in :data:`RUNS_MODELS_BY_DISPATCH`: model work chosen at run time, which no name in
@@ -109,6 +110,29 @@ def _imports_in(node: ast.AST, module: str) -> dict[str, Any]:
                     head = alias.name.split(".")[0]
                     bound[head] = importlib.import_module(head)
     return bound
+
+
+def _streamed(node: ast.AST) -> ast.expr | None:
+    """The ``<x>.stream`` whose answer *node* reads: an ``async for`` over ``<x>.stream(…)``, or a
+    ``closing_stream(<x>.stream(…))`` block (``turn_streams.closing_stream`` where the module is
+    imported whole), whose ``async for`` reads it by the name it binds. ``None`` for any other
+    node."""
+    calls: list[ast.expr] = []
+    if isinstance(node, ast.AsyncFor):
+        calls.append(node.iter)
+    elif isinstance(node, ast.AsyncWith):
+        for item in node.items:
+            held = item.context_expr
+            if not (isinstance(held, ast.Call) and held.args):
+                continue
+            named = getattr(held.func, "id", None) or getattr(held.func, "attr", None)
+            if named == "closing_stream":
+                calls.append(held.args[0])
+    for call in calls:
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute):
+            if call.func.attr == "stream":
+                return call.func
+    return None
 
 
 def _own_nodes(stmts: list[ast.stmt]) -> Iterator[ast.AST]:
@@ -286,10 +310,9 @@ class _Walk:
 
     def _body(self, stmts: list[ast.stmt], scope: _Scope, nested_seen: set[str]) -> list[str]:
         for node in _own_nodes(stmts):
-            if isinstance(node, ast.AsyncFor) and isinstance(node.iter, ast.Call):
-                func = node.iter.func
-                if isinstance(func, ast.Attribute) and func.attr == "stream":
-                    return [f"async for … in {ast.unparse(func)}(…)"]
+            streamed = _streamed(node)
+            if streamed is not None:
+                return [f"async for … in {ast.unparse(streamed)}(…)"]
             if not (isinstance(node, ast.Await) and isinstance(node.value, ast.Call)):
                 continue
             handed = [*node.value.args, *(k.value for k in node.value.keywords)]
@@ -406,6 +429,9 @@ def test_every_dispatcher_it_names_is_real() -> None:
 _SHAPES = """
 import asyncio
 
+from personalclaw import turn_streams
+from personalclaw.turn_streams import closing_stream
+
 
 class Session:
     async def stream(self, prompt):
@@ -422,8 +448,32 @@ async def ask_the_model(prompt):
     return text
 
 
+async def ask_and_close(prompt):
+    text = ""
+    async with closing_stream(client.stream(prompt)) as chunks:
+        async for chunk in chunks:
+            text += chunk
+    return text
+
+
+async def ask_and_close_by_module(prompt):
+    text = ""
+    async with turn_streams.closing_stream(client.stream(prompt)) as chunks:
+        async for chunk in chunks:
+            text += chunk
+    return text
+
+
 async def a_read_that_waits(request):
     return await asyncio.wait_for(ask_the_model("sort this chat"), timeout=60)
+
+
+async def a_read_that_waits_on_a_closed_stream(request):
+    return await ask_and_close("sort this chat")
+
+
+async def a_read_that_waits_on_a_stream_closed_by_module(request):
+    return await ask_and_close_by_module("sort this chat")
 
 
 async def a_read_that_answers_at_once(request):
@@ -463,6 +513,12 @@ def test_a_read_shaped_like_the_one_that_held_the_browser_is_caught(shapes) -> N
     walk = _Walk()
     assert walk.of(shapes.a_read_that_waits, get_branch=True), "a read that waits went unseen"
     assert walk.of(shapes.a_get_branch_that_waits, get_branch=True), "a nested wait went unseen"
+    assert walk.of(
+        shapes.a_read_that_waits_on_a_closed_stream, get_branch=True
+    ), "a stream read inside closing_stream went unseen"
+    assert walk.of(
+        shapes.a_read_that_waits_on_a_stream_closed_by_module, get_branch=True
+    ), "a stream read inside turn_streams.closing_stream went unseen"
     assert not walk.of(shapes.a_read_that_answers_at_once, get_branch=True)
     assert not walk.of(shapes.one_route_for_both_verbs, get_branch=True)
     assert walk.of(shapes.one_route_for_both_verbs), "its POST branch does wait"

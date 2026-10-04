@@ -14,6 +14,7 @@ from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.guardrails.failure import BudgetExceededError
 from personalclaw.request_validation import bool_field
+from personalclaw.turn_streams import closing_stream
 
 if TYPE_CHECKING:
     from personalclaw.webhook_callbacks import Callback
@@ -453,14 +454,15 @@ async def _run_hook_inner(
             client, Attribution(source="background", session_key=session_key, agent=agent or "")
         )
         result_text = ""
-        async for event in client.stream(full_message):
-            if event.kind == EVENT_TEXT_CHUNK:
-                result_text += event.text
-            elif event.kind == EVENT_SPENT:
-                record(event)
-            elif event.kind == EVENT_COMPLETE:
-                record(event)
-                break
+        async with closing_stream(client.stream(full_message)) as events:
+            async for event in events:
+                if event.kind == EVENT_TEXT_CHUNK:
+                    result_text += event.text
+                elif event.kind == EVENT_SPENT:
+                    record(event)
+                elif event.kind == EVENT_COMPLETE:
+                    record(event)
+                    break
     state.sessions.record_success(session_key)  # sync; record_failure is async
     return result_text
 

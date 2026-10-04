@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from personalclaw.agents.tool_list import AgentTools
+from personalclaw.turn_streams import closing_stream
 
 if TYPE_CHECKING:
     # Annotation-only (PEP 563 strings) — importing at runtime would create a
@@ -203,8 +204,9 @@ class AgentProvider(ABC):
         return False
 
     async def stream_command(self, command: str) -> AsyncIterator[AgentEvent]:
-        async for ev in self.stream(command):
-            yield ev
+        async with closing_stream(self.stream(command)) as events:
+            async for ev in events:
+                yield ev
 
     def stage_image_part(self, data_url: str) -> bool:
         """Put *data_url* (``data:<media-type>;base64,…``) on the NEXT turn as an image part.

@@ -99,6 +99,7 @@ from personalclaw.sdk.model import (
     ProviderEntry,
     ProviderResolutionError,
     StructuredOutput,
+    closing_stream,
     get_default_registry,
     output_cap,
     per_call_temperature,
@@ -1490,8 +1491,9 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
     # ── inference ──
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
-        async for event in self.complete([{"role": "user", "content": message}]):
-            yield event
+        async with closing_stream(self.complete([{"role": "user", "content": message}])) as events:
+            async for event in events:
+                yield event
 
     async def complete(
         self,

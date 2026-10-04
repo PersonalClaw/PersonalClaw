@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import cancellation, run_bounds, run_processes
+from personalclaw import cancellation, run_bounds, run_processes, turn_streams
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
 from personalclaw.agents.native.approval import REJECT, ApprovalGate, refusal_of
@@ -1049,30 +1049,33 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                             next_ref=self._fallback.next_ref() if turns == 1 else "",
                         )
                         try:
-                            async for ev in self._model.complete(
-                                msgs,
-                                tools=tools_kwarg,
-                                model=self._definition.model or None,
-                                reasoning_effort=owed.effort(self._reasoning_effort),
-                            ):
-                                if self._cancelled:
-                                    break
-                                if self._fallback.pending:
-                                    # A fallback is answering: said before anything it streams.
-                                    yield AgentEvent(
-                                        kind=EVENT_MODEL_SUBSTITUTION,
-                                        text=self._fallback.take_pending(),
-                                    )
-                                agg_events += 1
-                                if ev.kind in (EVENT_TEXT_CHUNK, EVENT_THINKING_CHUNK):
-                                    if ev.kind == EVENT_TEXT_CHUNK:
-                                        assistant_text += ev.text
-                                    visible_streamed = True
-                                    yield ev
-                                elif ev.kind == EVENT_TOOL_CALL:
-                                    tool_calls.append(ev)
-                                elif ev.kind == EVENT_COMPLETE:
-                                    usage = ev
+                            async with turn_streams.closing_stream(
+                                self._model.complete(
+                                    msgs,
+                                    tools=tools_kwarg,
+                                    model=self._definition.model or None,
+                                    reasoning_effort=owed.effort(self._reasoning_effort),
+                                )
+                            ) as answer:
+                                async for ev in answer:
+                                    if self._cancelled:
+                                        break
+                                    if self._fallback.pending:
+                                        # A fallback is answering: said before anything it streams.
+                                        yield AgentEvent(
+                                            kind=EVENT_MODEL_SUBSTITUTION,
+                                            text=self._fallback.take_pending(),
+                                        )
+                                    agg_events += 1
+                                    if ev.kind in (EVENT_TEXT_CHUNK, EVENT_THINKING_CHUNK):
+                                        if ev.kind == EVENT_TEXT_CHUNK:
+                                            assistant_text += ev.text
+                                        visible_streamed = True
+                                        yield ev
+                                    elif ev.kind == EVENT_TOOL_CALL:
+                                        tool_calls.append(ev)
+                                    elif ev.kind == EVENT_COMPLETE:
+                                        usage = ev
                         finally:
                             if local_turn is not None:
                                 local_turn.release()
@@ -1375,11 +1378,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 )
             raise
         finally:
-            # A fallback answered THIS turn only: the next one starts on the model it was chosen
-            # for. Only while this turn is still the current one: a caller that stops reading at
-            # its last event (``stream_and_collect``, at EVENT_COMPLETE) leaves it to be closed when
-            # collected, after the next turn may have begun (measured: one turn's late cleanup
-            # undid the next turn's fallback).
+            # Undo this turn's fallback unless the next began, as when an unclosed stream ends late.
             if self._turn_seq == turn:
                 self._model, self._definition.model = home
                 self._turn_home = None
@@ -2353,8 +2352,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         reclaim, which is a truthful outcome rather than a failure.
         """
         if command.strip().split()[:1] != ["/compact"]:
-            async for ev in super().stream_command(command):
-                yield ev
+            async with turn_streams.closing_stream(super().stream_command(command)) as events:
+                async for ev in events:
+                    yield ev
             return
         before, after = self._compact_now(self._last_context_pct)
         if after < before:

@@ -30,6 +30,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from personalclaw.llm.base import EVENT_COMPLETE, LLMEvent
+from personalclaw.turn_streams import closing_stream
 
 if TYPE_CHECKING:
     from personalclaw.guardrails.budgets import Budget
@@ -88,8 +89,9 @@ class AcpTurnMeter:
         at its ``EVENT_COMPLETE``. Passes through untouched on no metered axis."""
         axis = self._spend_axis
         if not axis:
-            async for event in events:
-                yield event
+            async with closing_stream(events) as turn:
+                async for event in turn:
+                    yield event
             return
 
         from personalclaw.guardrails.audit import (
@@ -148,35 +150,36 @@ class AcpTurnMeter:
         started = now_ms()
         charged = False
         try:
-            async for event in events:
-                if event.kind == EVENT_COMPLETE and not charged:
-                    tokens_in = int(getattr(event, "input_tokens", 0) or 0)
-                    tokens_out = int(getattr(event, "output_tokens", 0) or 0)
-                    price = price_event(event, provider=provider, model=model)
-                    meter.settle(
-                        hold,
-                        ref=f"{provider}:{model}",
-                        tokens=tokens_in + tokens_out,
-                        answer_tokens=tokens_out,
-                        dollars=price.dollars,
-                        priced=price.priced,
-                        run_key=current_run_key() or None,
-                    )
-                    _record(
-                        FailureMode.NONE,
-                        latency_ms=round(now_ms() - started, 1),
-                        tokens_in=tokens_in,
-                        tokens_out=tokens_out,
-                        dollars_est=round(price.dollars, 6),
-                        estimated=price.source != "reported",
-                        passed=True,
-                        priced=price.priced,
-                    )
-                    charged = True
-                    # The turn's usage row is written from this event and takes this price, the
-                    # one charged above and recorded in the model-call log.
-                    event = naming_the_call(event, audit_id, price)
-                yield event
+            async with closing_stream(events) as turn:
+                async for event in turn:
+                    if event.kind == EVENT_COMPLETE and not charged:
+                        tokens_in = int(getattr(event, "input_tokens", 0) or 0)
+                        tokens_out = int(getattr(event, "output_tokens", 0) or 0)
+                        price = price_event(event, provider=provider, model=model)
+                        meter.settle(
+                            hold,
+                            ref=f"{provider}:{model}",
+                            tokens=tokens_in + tokens_out,
+                            answer_tokens=tokens_out,
+                            dollars=price.dollars,
+                            priced=price.priced,
+                            run_key=current_run_key() or None,
+                        )
+                        _record(
+                            FailureMode.NONE,
+                            latency_ms=round(now_ms() - started, 1),
+                            tokens_in=tokens_in,
+                            tokens_out=tokens_out,
+                            dollars_est=round(price.dollars, 6),
+                            estimated=price.source != "reported",
+                            passed=True,
+                            priced=price.priced,
+                        )
+                        charged = True
+                        # The turn's usage row is written from this event and takes this price, the
+                        # one charged above and recorded in the model-call log.
+                        event = naming_the_call(event, audit_id, price)
+                    yield event
         finally:
             # A turn that ended without completing charged nothing: what it set aside is given
             # back, as a settled one's already was.

@@ -18,6 +18,7 @@ from personalclaw.given_details import ungiven
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK
 from personalclaw.llm.events import EVENT_SPENT
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.turn_streams import closing_stream
 from personalclaw.usage_ledger import Attribution, recorder
 
 logger = logging.getLogger(__name__)
@@ -135,16 +136,17 @@ async def handle_optimize(request: web.Request) -> web.Response:
                 who = Attribution(source="chat", session_key="_optimizer", agent=LITE_AGENT_NAME)
                 record = recorder(client, who)
                 text = ""
-                async for event in client.stream(full_prompt):
-                    if event.kind == EVENT_TEXT_CHUNK:
-                        text += event.text
-                    elif event.kind == EVENT_PERMISSION_REQUEST:
-                        await client.reject_tool(event.request_id)
-                    elif event.kind == EVENT_SPENT:
-                        record(event)
-                    elif event.kind == EVENT_COMPLETE:
-                        record(event)
-                        break
+                async with closing_stream(client.stream(full_prompt)) as events:
+                    async for event in events:
+                        if event.kind == EVENT_TEXT_CHUNK:
+                            text += event.text
+                        elif event.kind == EVENT_PERMISSION_REQUEST:
+                            await client.reject_tool(event.request_id)
+                        elif event.kind == EVENT_SPENT:
+                            record(event)
+                        elif event.kind == EVENT_COMPLETE:
+                            record(event)
+                            break
                 return text
             finally:
                 logger.debug("Optimizer: ending the request's session")

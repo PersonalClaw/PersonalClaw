@@ -29,6 +29,7 @@ from personalclaw.dashboard.state import (
 from personalclaw.llm.events import COMPACTION_AUTOMATIC
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import SecurityEvent, sel
+from personalclaw.turn_streams import closing_stream
 from personalclaw.usage_ledger import Attribution
 from personalclaw.validation import MAX_TOOL_NAME_LEN, sanitize_string
 
@@ -329,29 +330,33 @@ async def stream_slash_command(
     # Outcome 0 — a command the provider performs on its OWN state. No wire, no
     # substitution, no notice: the command really ran, so there is nothing to disclose.
     if command == "/compact" and bool(getattr(client, "compacts_in_process", False)):
-        async for event in client.stream_command(command):
-            yield event
+        async with closing_stream(client.stream_command(command)) as events:
+            async for event in events:
+                yield event
         return
 
     if not bool(getattr(client, "supports_native_commands", False)):
         notify(f"`{command}` isn't a command this agent can run — sent as a plain message.")
-        async for event in client.stream(prompt):
-            yield event
+        async with closing_stream(client.stream(prompt)) as events:
+            async for event in events:
+                yield event
         return
 
     produced = 0
     try:
-        async for event in client.stream_command(command):
-            produced += 1
-            yield event
+        async with closing_stream(client.stream_command(command)) as events:
+            async for event in events:
+                produced += 1
+                yield event
         return
     except (AcpCommandsUnsupported, AcpMethodNotFound) as exc:
         if produced:
             raise AcpCommandFailedAfterOutput(command) from exc
         logger.info("slash command %s unsupported (%s) — substituting a plain prompt", command, exc)
         notify(f"`{command}` was rejected as an unknown command — re-sent as a plain message.")
-    async for event in client.stream(prompt):
-        yield event
+    async with closing_stream(client.stream(prompt)) as events:
+        async for event in events:
+            yield event
 
 
 # The slash commands the DASHBOARD handles directly — the only ones the composer

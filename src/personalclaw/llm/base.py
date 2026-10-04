@@ -38,6 +38,7 @@ from personalclaw.llm.events import (  # noqa: F401
 )
 from personalclaw.llm.events import AgentEvent as LLMEvent  # noqa: F401
 from personalclaw.llm.prompt_cache import PromptCache
+from personalclaw.turn_streams import closing_stream
 
 
 def wire_temperature(value: object) -> float | None:
@@ -286,8 +287,9 @@ class ModelProvider(ABC):
         command support. That fallback is silent by design at this layer — it is the
         caller's job to say so, because only the caller owns a user-visible surface.
         """
-        async for event in self.stream(command):
-            yield event
+        async with closing_stream(self.stream(command)) as events:
+            async for event in events:
+                yield event
 
     async def compact(self, context: str = "") -> None:
         """Trigger context compaction. No-op for providers without native support."""
@@ -389,5 +391,6 @@ class ModelProvider(ABC):
                 else:
                     last_user = str(content)
                 break
-        async for ev in self.stream(last_user):
-            yield ev
+        async with closing_stream(self.stream(last_user)) as events:
+            async for ev in events:
+                yield ev

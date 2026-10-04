@@ -35,6 +35,7 @@ from personalclaw.llm.base import (
 from personalclaw.llm.events import EVENT_SPENT, refusal_audit, unasked_outcome, unasked_reason
 from personalclaw.memory import MemoryStore
 from personalclaw.sel import sel
+from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
 
@@ -508,41 +509,42 @@ class EvalRunner:
 
         record = recorder(provider, Attribution(source="eval", session_key=session_key))
 
-        async for event in provider.stream(turn_def.user):
-            if event.kind == EVENT_TEXT_CHUNK:
-                chunks.append(event.text)
-            elif event.kind == EVENT_TOOL_CALL:
-                # The card of a call being made, before any gate has run: not a decision, so it is
-                # not audited (the row this wrote said `invoked` for a call later refused).
-                tool_calls.append(event.text)
-                called[str(event.tool_call_id or "")] = event.tool_input
-            elif event.kind == EVENT_PERMISSION_REQUEST:
-                asked.add(str(event.tool_call_id or ""))
-                await self._decide_permission(provider, event, session_key)
-            elif event.kind == EVENT_TOOL_RESULT and str(event.tool_call_id or "") not in asked:
-                # A call nobody was asked about: its one row, from what the runtime stamped on
-                # its result (`llm.events.unasked_outcome`).
-                meta = event.tool_meta or {}
-                decided_by = unasked_reason(meta)
-                sel().log_tool_invocation(
-                    session_key=session_key,
-                    source="eval_runner",
-                    tool_name=event.title,
-                    tool_kind=event.tool_kind,
-                    outcome=unasked_outcome(meta),
-                    request_id=str(event.tool_call_id or ""),
-                    tool_input=called.pop(str(event.tool_call_id or ""), None),
-                    metadata={
-                        "reason": decided_by,
-                        "decided_by": decided_by,
-                        **refusal_audit(meta),
-                    },
-                )
-            elif event.kind == EVENT_SPENT:
-                record(event)
-            elif event.kind == EVENT_COMPLETE:
-                record(event)
-                break
+        async with closing_stream(provider.stream(turn_def.user)) as events:
+            async for event in events:
+                if event.kind == EVENT_TEXT_CHUNK:
+                    chunks.append(event.text)
+                elif event.kind == EVENT_TOOL_CALL:
+                    # The card of a call being made, before any gate has run: not a decision, so it
+                    # is not audited (the row this wrote said `invoked` for a call later refused).
+                    tool_calls.append(event.text)
+                    called[str(event.tool_call_id or "")] = event.tool_input
+                elif event.kind == EVENT_PERMISSION_REQUEST:
+                    asked.add(str(event.tool_call_id or ""))
+                    await self._decide_permission(provider, event, session_key)
+                elif event.kind == EVENT_TOOL_RESULT and str(event.tool_call_id or "") not in asked:
+                    # A call nobody was asked about: its one row, from what the runtime stamped on
+                    # its result (`llm.events.unasked_outcome`).
+                    meta = event.tool_meta or {}
+                    decided_by = unasked_reason(meta)
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        source="eval_runner",
+                        tool_name=event.title,
+                        tool_kind=event.tool_kind,
+                        outcome=unasked_outcome(meta),
+                        request_id=str(event.tool_call_id or ""),
+                        tool_input=called.pop(str(event.tool_call_id or ""), None),
+                        metadata={
+                            "reason": decided_by,
+                            "decided_by": decided_by,
+                            **refusal_audit(meta),
+                        },
+                    )
+                elif event.kind == EVENT_SPENT:
+                    record(event)
+                elif event.kind == EVENT_COMPLETE:
+                    record(event)
+                    break
 
         response = "".join(chunks).strip()
         elapsed = time.monotonic() - t0

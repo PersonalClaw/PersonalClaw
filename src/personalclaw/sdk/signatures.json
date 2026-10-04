@@ -7383,6 +7383,13 @@
   "members": {"JSON_MODE": "'json_mode'", "JSON_SCHEMA": "'json_schema'", "NONE": "'none'"}
  },
  "personalclaw.sdk.model.VOLATILE_KEY": {"kind": "value", "type": "str", "value": "'_volatile'"},
+ "personalclaw.sdk.model.closing_stream": {
+  "kind": "function",
+  "params": [
+   {"annotation": "AsyncIterator[_E]", "kind": "positional_or_keyword", "name": "events"}
+  ],
+  "returns": "AsyncIterator[AsyncIterator[_E]]"
+ },
  "personalclaw.sdk.model.declared_context_window": {
   "kind": "function",
   "params": [

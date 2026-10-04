@@ -58,6 +58,7 @@ from personalclaw.acp.types import (
     AcpEvent,
     AcpPromptStats,
 )
+from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
 
@@ -850,11 +851,12 @@ class AcpClient:
         # must follow the session that is about to run the turn.
         self._session.set_steer_source(self._steer_pull)
         self._session.set_question_handler(self._question_handler)
-        async for event in self._session.stream_events(message, timeout=timeout):
-            self._stamp_turn_telemetry(event)
-            self.last_prompt_stats = self._session.last_prompt_stats
-            self._last_stop_reason = self._session._last_stop_reason
-            yield event
+        async with closing_stream(self._session.stream_events(message, timeout=timeout)) as turn:
+            async for event in turn:
+                self._stamp_turn_telemetry(event)
+                self.last_prompt_stats = self._session.last_prompt_stats
+                self._last_stop_reason = self._session._last_stop_reason
+                yield event
 
     async def _ready_for_a_turn(self) -> None:
         """:meth:`ensure_ready`, plus the answer an earlier turn still owes settled first
@@ -939,11 +941,12 @@ class AcpClient:
             raise AcpCommandsUnsupported(command)
         assert self._session is not None
         self._session.set_question_handler(self._question_handler)
-        async for event in self._session.stream_command(command, timeout=timeout):
-            self._stamp_turn_telemetry(event)
-            self.last_prompt_stats = self._session.last_prompt_stats
-            self._last_stop_reason = self._session._last_stop_reason
-            yield event
+        async with closing_stream(self._session.stream_command(command, timeout=timeout)) as turn:
+            async for event in turn:
+                self._stamp_turn_telemetry(event)
+                self.last_prompt_stats = self._session.last_prompt_stats
+                self._last_stop_reason = self._session._last_stop_reason
+                yield event
 
     async def send_message(self, message: str, timeout: float = _DEFAULT_PROMPT_TIMEOUT) -> str:
         """Send a prompt and return the full response text (thinking excluded).

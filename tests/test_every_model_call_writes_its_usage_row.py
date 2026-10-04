@@ -8,8 +8,9 @@ the knowledge nodes, a screenshot's description and every one-shot call whose ca
 → Usage could state as "not included"; the rest left no record of their spend at all.
 
 Two halves. The rail reads every place core consumes a model's stream (an ``async for`` over a
-``.stream(...)`` or ``.complete(...)`` call, and every ``stream_and_collect(...)``) and fails for
-one whose function writes no row. The behaviour half drives a chore, a one-shot call and three
+``.stream(...)`` or ``.complete(...)`` call, or over the same call read inside
+``closing_stream(...)``, and every ``stream_and_collect(...)``) and fails for one whose function
+writes no row. The behaviour half drives a chore, a one-shot call and three
 judges through the real resolution seam, the real guard and a scripted model, and reads the row
 each wrote, and that the model-call census no longer counts the call.
 
@@ -94,6 +95,28 @@ def _on_self(func: ast.expr) -> bool:
 #: What a site wraps its stream in to write the row of a turn that ends in an error from its
 #: ``EVENT_SPENT`` (``usage_ledger.spent_rows``): the stream inside it is still the site.
 _SPENT_WRAPPERS = {"spent_rows"}
+#: What a site reads its stream inside, so the stream is closed when the reading stops
+#: (``turn_streams.closing_stream``): the stream it is handed is the site, and the ``async for``
+#: inside reads it by the name the block binds.
+_CLOSERS = {"closing_stream"}
+
+
+def _read_stream(node: ast.AST) -> ast.Call | None:
+    """The call whose stream *node* reads: an ``async for`` over a call, or a ``closing_stream``
+    block over one. ``None`` for any other node."""
+    if isinstance(node, ast.AsyncFor) and isinstance(node.iter, ast.Call):
+        return node.iter
+    if isinstance(node, ast.AsyncWith):
+        for item in node.items:
+            held = item.context_expr
+            if (
+                isinstance(held, ast.Call)
+                and _name(held.func) in _CLOSERS
+                and held.args
+                and isinstance(held.args[0], ast.Call)
+            ):
+                return held.args[0]
+    return None
 
 
 def _sites(source: str):
@@ -106,8 +129,9 @@ def _sites(source: str):
         for child in ast.iter_child_nodes(node):
             parents[child] = node
     for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFor) and isinstance(node.iter, ast.Call):
-            stream = node.iter
+        read = _read_stream(node)
+        if read is not None:
+            stream = read
             wrapped = _name(stream.func) in _SPENT_WRAPPERS and bool(stream.args)
             if wrapped and isinstance(stream.args[0], ast.Call):
                 stream = stream.args[0]
@@ -210,8 +234,12 @@ def test_the_rail_fails_a_stream_that_writes_nothing():
         "        pass\n"
         "async def collect(client, prompt):\n"
         "    return await stream_and_collect(client, prompt)\n"
+        "async def closed(client, prompt):\n"
+        "    async with closing_stream(client.stream(prompt)) as events:\n"
+        "        async for event in events:\n"
+        "            pass\n"
     )
-    assert missing == ["chore", "collect"]
+    assert sorted(missing) == ["chore", "closed", "collect"]
 
 
 def test_the_rail_passes_a_stream_whose_function_writes_its_row():

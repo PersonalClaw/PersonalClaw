@@ -13,6 +13,7 @@ from personalclaw.llm.base import (
 )
 from personalclaw.llm.events import EVENT_SPENT
 from personalclaw.sel import sel
+from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
 
@@ -90,29 +91,30 @@ class LLMJudge:
 
         record = recorder(self._provider, Attribution(source="eval", session_key="eval_judge"))
         chunks: list[str] = []
-        async for event in self._provider.stream(prompt):
-            if event.kind == EVENT_TEXT_CHUNK:
-                chunks.append(event.text)
-            elif event.kind == EVENT_PERMISSION_REQUEST:
-                if not event.request_id:
-                    logger.warning(
-                        "Judge received permission request with falsy request_id for tool %s",
-                        log_title(event.title),
+        async with closing_stream(self._provider.stream(prompt)) as events:
+            async for event in events:
+                if event.kind == EVENT_TEXT_CHUNK:
+                    chunks.append(event.text)
+                elif event.kind == EVENT_PERMISSION_REQUEST:
+                    if not event.request_id:
+                        logger.warning(
+                            "Judge received permission request with falsy request_id for tool %s",
+                            log_title(event.title),
+                        )
+                    sel().log_tool_invocation(
+                        session_key="eval_judge",
+                        tool_name=event.title,
+                        tool_input=event.tool_input,
+                        outcome="rejected",
+                        source="eval_judge",
                     )
-                sel().log_tool_invocation(
-                    session_key="eval_judge",
-                    tool_name=event.title,
-                    tool_input=event.tool_input,
-                    outcome="rejected",
-                    source="eval_judge",
-                )
-                if event.request_id:
-                    await self._provider.reject_tool(event.request_id)
-            elif event.kind == EVENT_SPENT:
-                record(event)
-            elif event.kind == EVENT_COMPLETE:
-                record(event)
-                break
+                    if event.request_id:
+                        await self._provider.reject_tool(event.request_id)
+                elif event.kind == EVENT_SPENT:
+                    record(event)
+                elif event.kind == EVENT_COMPLETE:
+                    record(event)
+                    break
         raw = "".join(chunks)
         # Read the way every model's JSON answer is read: a fence, or prose either side of it.
         data = parse_llm_json(raw) or {}
