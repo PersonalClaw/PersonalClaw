@@ -1562,6 +1562,7 @@ class GatewayOrchestrator:
             trigger_id=str(getattr(trigger, "id", "") or ""),
             fire_facts=facts.text,
             fire_files=facts.files,
+            secret_references=_trigger_secrets.handed(provider, config),
         )
 
         # 🔴 THE DENYLIST, at the seam that lost it. §1.2 says
@@ -3380,6 +3381,11 @@ class GatewayOrchestrator:
             # package — no boot-time copy into the user's home, so an upgrade ships new
             # templates with no "did the user edit it?" reconciliation.
             register_bundled_provider()
+            # A record a run kept a stored secret's value in, from before a run was handed the
+            # reference, holds the reference now: done before the supervisor drives any run.
+            from personalclaw.workflows.input_secrets import redact_home
+
+            redact_home()
 
             wf_cfg = self._cfg.workflows
             # The run-end learner writes through a MemoryService over

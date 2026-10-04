@@ -63,7 +63,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "fire_facts"},
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "fire_files"},
-    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "project_id"}
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "project_id"},
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "secret_references"}
    ],
    "returns": "None"
   },
@@ -94,6 +95,7 @@
     "returns": "ActionResult"
    },
    "hands_config_to_a_model": {"kind": "property", "returns": "bool", "settable": false},
+   "hands_config_to_a_run": {"kind": "property", "returns": "bool", "settable": false},
    "internal": {"kind": "property", "returns": "bool", "settable": false},
    "name": {"kind": "property", "returns": "str", "settable": false},
    "reversal_kinds": {"kind": "property", "returns": "tuple[str, ...]", "settable": false},

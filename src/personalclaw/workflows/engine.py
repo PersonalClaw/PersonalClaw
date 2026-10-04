@@ -43,6 +43,7 @@ from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 from personalclaw.workflows import (
     engine_support,
     incident_hold,
+    input_secrets,
     leases,
     longrun,
     ownership,
@@ -1077,15 +1078,12 @@ async def dispatch_subworkflow(
 
     # Inputs are RESOLVED against the parent's context before the child is created, so the child
     # receives values rather than bindings it has no way to interpret — its own `{{nodes.…}}`
-    # namespace is a different graph's.
-    raw_inputs = cfg.get("inputs") if isinstance(cfg.get("inputs"), dict) else {}
-    child_inputs: dict[str, Any] = {}
-    for key, value in (raw_inputs or {}).items():
-        try:
-            child_inputs[str(key)] = resolve(value, ctx)
-        except BindingError as exc:
-            failure = binding_failure(exc, f"subworkflow input {key!r} did not resolve")
-            return NodeResult(state=InstanceState.FAILED, failure=failure)
+    # namespace is a different graph's — but a secret reference, which the child fills itself.
+    parent = store.get(run_id) if run_id else None
+    project = parent.project_id if parent else ""
+    child_inputs, handed, failure = input_secrets.hand_to_child(cfg.get("inputs"), ctx, project)
+    if failure is not None:
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
     # A child that says it continues a run is held to what a started run is: an input bound from
     # anything upstream names a run, and a folder is read from it.
     from personalclaw.workflows.deliverable import continuation_refusal
@@ -1097,7 +1095,6 @@ async def dispatch_subworkflow(
             "name an earlier run of this workflow in `continue_from`, or leave it blank",
         )
 
-    parent = store.get(run_id) if run_id else None
     child = store.create(
         WorkflowRun(
             id="",
@@ -1109,10 +1106,10 @@ async def dispatch_subworkflow(
             # The ROOT, not the parent: "everything this user request did" is the query that
             # matters, and at depth 3 the parent alone cannot answer it.
             root_run_id=(parent.root_run_id if parent else "") or run_id or "",
-            project_id=parent.project_id if parent else "",
+            project_id=project,
             origin=RunOrigin(kind=OriginKind.SUBAGENT_TOOL, trigger_id=node.id),
             # Its parent's work: what a Temporary or Incognito origin's run keeps, it keeps.
-            extra=ownership.inherited_extra(parent) if parent else {},
+            extra={**(ownership.inherited_extra(parent) if parent else {}), **handed},
         )
     )
     store.write_spec(child.id, spec)
@@ -1205,8 +1202,9 @@ async def dispatch_action(
     `_park_answers`, single-use). None on every other dispatch.
     """
     cfg, failure = engine_support.resolve_config(node, ctx)
-    if failure:
-        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    handed, handoff_failure = input_secrets.handed_on(ctx.secret_resolver, cfg)
+    if failure or handoff_failure:
+        return NodeResult(state=InstanceState.FAILED, failure=failure or handoff_failure)
     name = str(cfg.get("provider", "") or "")
     if not name:
         return _fail(
@@ -1281,6 +1279,8 @@ async def dispatch_action(
         answer=answer,
         # The run's project, from its record: an agent this step starts works for it.
         project_id=project_id,
+        # The references it kept, which the run it starts with its config fills (`input_secrets`).
+        secret_references=handed,
     )
     # 🔴 The action denylist, as a trigger's fire asks it: among its rules, a step that would stop
     # or replace the gateway its run lives in is refused (`guardrails.self_destruct`). A run is

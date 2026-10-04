@@ -49,6 +49,7 @@ while not terminal:
 | `stage_settlement.py` | settling `stage` nodes, whose work runs in a spawned subagent the controller polls rather than awaits: the one out-of-band predicate, the settle, re-queueing after a restart, stopping on cancel and pause. A stage whose answer ignored its declared `schema` settles `failed` (`protocol`), naming what was asked for and what came (`engine.apply_declared_schema`, the same gate every node kind meets at the dispatch seam; a judge is held to its contract instead of every key); one whose time limit ended a wait for the owner's answer settles `timeout` with the typed reason the run's ending reads (`approval_timeout`); one whose subagent's model can't use tools (`subagent_tier.without_tools_ending`) settles `user`, with a fix about its model rather than its tools. The owner's Allow of an attempt's start is kept on its instance (`approved_request`, `approved_at`), so the attempt a restart re-queues starts on it when it asks the same thing (`engine.stage_request_key`) within the step's time limit; a settle or a rewind drops it |
 | `step_dispatch.py` | running one node's dispatcher under its knobs: the retry correction and carried context on a copy of the node, the write-scope snapshot, `timeout_total` as a real kill, `success_when` |
 | `node_bindings.py` | the `BindingContext` a node's `{{…}}` resolve against, built per dispatch from durable run state: outputs, artifacts, `last`, `previous`, siblings, the Session Brief, the secret resolver, the run's own document path |
+| `input_secrets.py` | the `{{secret:…}}` references a run is handed in its inputs: which inputs its record says carry one, the resolver a step that starts a run keeps them with, the refusal of text from elsewhere that names a secret the step hands on, and the start-up pass that writes the reference over a stored secret's value in a record written before |
 | `iteration_context.py` | the handoff / carryover / decisions lifecycle across a loop's iterations: captured from an iteration's own output, journaled, rehydrated on resume, rendered into a fresh iteration's prompt; and the steering queued for the next iteration, taken at the boundary (`consume_steering`) |
 | `loop_iteration.py` | a loop's iteration boundary: the counter, the `until_dry` streak, the breaker fed and asked, steering, the long-run seen-set, and the continue/stop decision |
 | `declines.py` | a Deny of a call inside a `stage`: kept on the step (`NodeInstance.declined`, from `SubagentInfo.declined_calls`), the rest of its loop cycle not run, the cycle journaled `declined` and the loop waiting for its owner (a paused run, its sentence, one Inbox item) instead of running the next cycle into the same ask; her Resume carries her steering into that cycle. What the run page lists under "Declined by you" |
@@ -390,6 +391,27 @@ tool fills it in as the command runs, with the run's project: the stage's lineag
 starts works for the run's project the same way: the engine sets `ActionContext.project_id`
 from the run's record, never from the step's config, and the provider starts its agent with it
 (`SubagentManager.spawn(project_id=…)`), so that agent's session is the project's.
+
+**A run is handed a secret's reference, never its value** (`workflows/input_secrets.py`). An
+automation's Run workflow action (a fire or Run now), a step that starts a run with that action
+(`ActionProvider.hands_config_to_a_run`) and a `subworkflow` step hand the run they start its
+inputs, and a `{{secret:KEY}}` in them stays the reference: filled in there, the value would be in
+the run's inputs, the opening row of its ledger, the run list and the prompt of a model step that
+reads the input. The run's record names the inputs it was handed a reference in, and the secrets
+each refers to (`secret_inputs` on the run, carried over by a fork); a step that reads one of those
+inputs has those references filled as one written in the step itself is
+(`bindings.resolve_expr`): the run's project's secret first, then the global one, recorded as a
+`secret_read` row, and kept as the name where the step's text goes to a model. A run fills only
+those. Text that reads as a reference in any other input — typed at Run, given by an agent's call or
+a caller from outside, or produced by a step — stays text. A step that hands a run its inputs keeps
+its references as references (`input_secrets.Handed`) and checks each against the secrets the run
+it starts reads, failing before anything starts when one is missing; and when text it takes from
+another step or an input refers to a secret it hands on, the run could not tell that text from the
+reference its author wrote, so the step is refused (`input_secrets.handed_on`). A record written
+before this rule that holds a stored secret's value is rewritten when the gateway starts, before any
+run is driven (`input_secrets.redact_home`): the run's inputs, ledger, state and prompts, and the
+automations' run history, hold the reference instead, and the run database is rebuilt so no old
+copy of a row is left in its file. A snapshot taken before keeps what it was taken with.
 
 Each secret a step uses goes on the run's record as a `secret_read` ledger row: the secret's
 name and where it came from (this project's secrets, the global ones, or the gateway's

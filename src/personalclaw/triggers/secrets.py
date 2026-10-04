@@ -30,6 +30,9 @@ project's runs alone (a workflow run an automation starts in a project reads it 
   cannot trace back to a missing credential. Refusing names the key.
 * **Resolved values NEVER travel back.** The resolved dict is handed to the provider and dropped;
   nothing writes it, and `redact_credentials` still guards the output path.
+* **An action that starts a workflow run is handed its references unfilled.** Its config is the
+  run's inputs, which the run's record keeps, so filling them here wrote the value into the run,
+  its ledger and the run list (`resolve_for`). The run fills them where a step uses them.
 """
 
 from __future__ import annotations
@@ -168,9 +171,52 @@ def resolve_for(provider: Any, config: Any) -> Any:
     """*config* as the action *provider* is handed it, by either dispatch (a fire, and a run by
     hand or from outside): every `{{secret:KEY}}` filled (:func:`resolve`, which raises
     `UnresolvedSecret`), except in an action that IS a model turn
-    (`ActionProvider.hands_config_to_a_model`). Its config is what an agent's model is handed, so a
-    reference there stays the name and the agent's tools fill it when they run; resolved here, it
-    would put the value in the model's context."""
+    (`ActionProvider.hands_config_to_a_model`) or that starts a workflow run with its config
+    (`ActionProvider.hands_config_to_a_run`).
+
+    A model turn's config is what an agent's model is handed, so a reference there stays the name
+    and the agent's tools fill it when they run; resolved here, it would put the value in the
+    model's context. A run's inputs are what its record keeps, so a reference there stays the
+    reference and the run fills it where a step uses it; resolved here, the record would hold the
+    value. The second is checked all the same, against the secrets that run reads (:func:`check`),
+    so a fire whose run could not read one is refused as any other such fire is."""
     if getattr(provider, "hands_config_to_a_model", False):
         return config
+    if getattr(provider, "hands_config_to_a_run", False):
+        project = config.get("project_id", "") if isinstance(config, dict) else ""
+        check(references(config), project_id=str(project or ""))
+        return config
     return resolve(config)
+
+
+def handed(provider: Any, config: Any) -> tuple[str, ...]:
+    """The secrets whose references *config* hands on to the run *provider* starts with it, for
+    `ActionContext.secret_references`: every one, since a trigger's config is all its author's
+    text. ``()`` for any other provider, whose dispatch fills its references or keeps them as
+    names."""
+    if not getattr(provider, "hands_config_to_a_run", False):
+        return ()
+    return tuple(references(config))
+
+
+def check(keys: list[str] | tuple[str, ...], *, project_id: str = "") -> None:
+    """Raise `UnresolvedSecret` for the first of *keys* a run of *project_id* could not read: a
+    name nothing reads by name, or one neither its project's secrets nor the global ones hold.
+
+    Through the one resolver (`llm.credentials.resolve_secret`), as the run will read each when a
+    step uses it. The value it reads is dropped here."""
+    from personalclaw.llm import credentials as llm_credentials
+
+    for key in keys:
+        refused = llm_credentials.name_refusal(key)
+        if refused is not None:
+            raise UnresolvedSecret(key, refused=refused)
+        try:
+            present = bool(llm_credentials.resolve_secret(key, project_id=project_id).secret)
+        except KeyError:
+            present = False
+        except Exception:  # noqa: BLE001 - an unreadable store is a missing secret, not a crash
+            logger.debug("credential store unreadable while checking %r", key, exc_info=True)
+            present = False
+        if not present:
+            raise UnresolvedSecret(key)

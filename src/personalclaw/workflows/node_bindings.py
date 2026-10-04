@@ -15,7 +15,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.knowledge import session_brief
-from personalclaw.workflows import deliverable, store
+from personalclaw.workflows import deliverable, input_secrets, store
 from personalclaw.workflows.bindings import BindingContext, BindingError
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
@@ -92,6 +92,7 @@ def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
         seen_filter=seen.unseen if seen else None,
         brief=_session_brief(ctl),
         secret_resolver=_secrets_for(ctl, item),
+        input_secrets=input_secrets.of_run(ctl.run),
         run_document=deliverable.document_path(ctl.run, ctl.spec),
     )
 
@@ -126,6 +127,14 @@ def _config_reaches_a_model(node: Node, provider: Any) -> bool:
     return bool(getattr(provider, "hands_config_to_a_model", False))
 
 
+def _hands_a_run_its_inputs(node: Node, provider: Any) -> bool:
+    """Whether *node*'s bound config is the inputs of a run it starts: a ``subworkflow``'s, or an
+    action whose provider starts a run with its config (``hands_config_to_a_run``)."""
+    if node.kind == NodeKind.SUBWORKFLOW:
+        return True
+    return bool(getattr(provider, "hands_config_to_a_run", False))
+
+
 def _agent_works_for_the_run(node: Node, provider: Any) -> bool:
     """Whether the model *node*'s config reaches is an agent that works for this run's project, so
     PersonalClaw's bash tool there fills a reference from the run's project's secrets first: a
@@ -151,6 +160,10 @@ def _secrets_for(ctl: RunController, item: ReadyNode) -> Callable[[str], str]:
     with it — with this run's project, for an agent that works for the run — so the agent can
     use the credential and never see it.
 
+    A step that starts a run with its config (:func:`_hands_a_run_its_inputs`) keeps each as the
+    reference too, and counts them (``input_secrets.Handed``): the run it starts keeps its inputs
+    on its record, and fills the reference where one of its own steps uses it.
+
     Every other step gets the value, through the one resolver
     (``llm.credentials.resolve_secret``): the run's project's secret first, then the global one;
     a run with no project reads only the global one. An unknown name returns ``""``: ``resolve()``
@@ -172,6 +185,8 @@ def _secrets_for(ctl: RunController, item: ReadyNode) -> Callable[[str], str]:
 
     project = str(getattr(ctl.run, "project_id", "") or "")
     provider = _step_provider(ctl, item.node)
+    if _hands_a_run_its_inputs(item.node, provider):
+        return input_secrets.Handed()
     handed_on = _config_reaches_a_model(item.node, provider)
     records_handed_on = handed_on and _agent_works_for_the_run(item.node, provider)
     recorded: set[str] = set()

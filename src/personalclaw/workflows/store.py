@@ -319,6 +319,38 @@ def save(run: WorkflowRun) -> WorkflowRun:
     return run
 
 
+def overwrite(runs: list[WorkflowRun]) -> None:
+    """Write *runs* over their rows, leaving nothing of what they replaced in the database's
+    files. For a rewrite that takes something out of a record (``input_secrets.redact_home``);
+    every other write is :func:`save`.
+
+    An update leaves the old copy of a row in the file's free space, and every save a run's
+    controller made left one more, so the file is rebuilt (``VACUUM``) and the write-ahead log
+    folded in and emptied."""
+    if not runs:
+        return
+    conn = _connect()
+    try:
+        assignments = ", ".join(f"{c} = :{c}" for c in _COLUMNS if c != "id")
+        for run in runs:
+            conn.execute(f"UPDATE runs SET {assignments} WHERE id = :id", _run_to_params(run))
+        conn.commit()
+        conn.execute("VACUUM")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        conn.close()
+
+
+def all_runs() -> list[WorkflowRun]:
+    """Every run of this home, oldest first."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM runs ORDER BY created_at, id").fetchall()
+    finally:
+        conn.close()
+    return [_row_to_run(r) for r in rows]
+
+
 def list_runs(
     *,
     workflow_name: str = "",

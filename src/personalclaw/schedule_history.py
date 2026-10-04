@@ -26,7 +26,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
@@ -421,6 +421,23 @@ class ScheduleRunStore:
                 pass
             self._rotate_job_locked(run.job_id)
             self._rotate_index_locked()
+
+    def rewrite_sync(self, change: Callable[[dict[str, Any]], dict[str, Any]]) -> bool:
+        """Pass every row of the history through *change*, under the lock, and write back each
+        file a row of which it changed; whether any did. For a pass that takes something out of
+        what was recorded (``workflows.input_secrets.redact_home``): no row is added, dropped or
+        moved."""
+        if not self._dir.is_dir():
+            return False
+        changed = False
+        with self._lock():
+            for path in sorted(self._dir.glob("*.jsonl")):
+                rows = self._read_jsonl(path)
+                rewritten = [change(row) for row in rows]
+                if rewritten != rows:
+                    self._write_jsonl(path, rewritten)
+                    changed = True
+        return changed
 
     async def append(self, run: ScheduleRun) -> None:
         import asyncio

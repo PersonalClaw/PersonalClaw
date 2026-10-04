@@ -413,7 +413,11 @@ Data leaving the running system:
   never a setting's own key, never a project's secret by its stored key) — and masks every value
   it handed the command out of what the command prints (`redact_known_values`). Text handed to a model keeps the reference as the name: a
   trigger whose action is a model turn (`ActionProvider.hands_config_to_a_model`) and a workflow's
-  stage, infer and visualize steps do not fill it in, so the agent's tools do. What this cannot
+  stage, infer and visualize steps do not fill it in, so the agent's tools do. A workflow run is
+  handed a reference in its inputs as the reference, by an automation's Run workflow action and by
+  a step that starts a run, so no record of the run holds the value; the run fills only the
+  references the one who started it wrote, where a step uses them (`workflows/input_secrets.py`),
+  and text that reads as a reference in an input anyone else supplied stays text. What this cannot
   cover is in [limitations §11](limitations.md#11-what-reaches-a-model-is-masked-by-shape-and-an-agent-clis-own-tools-are-outside-it).
 - **Credential-excluding exports** (`portability.py`): `.env`, `sel_hmac.key`,
   and `session_map.json` are on the export exclusion list.

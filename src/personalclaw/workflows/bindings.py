@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from personalclaw.workflows.models import NO_OUTPUT_KINDS, NodeKind
+from personalclaw.workflows.secrets import SECRET_BINDING_RE
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,11 @@ class BindingContext:
     #: Resolver for `{{secret:KEY}}`. Injected so nothing here reads the credential
     #: store directly — that also keeps secrets out of unit tests by default.
     secret_resolver: Any = None
+    #: The inputs the run was handed a `{{secret:KEY}}` reference in, by name, with the secrets
+    #: each refers to (`input_secrets.of_run`). A read of one of them has those references filled
+    #: by `secret_resolver`, as one written in the step itself is; a reference in any other input
+    #: is text the run was given.
+    input_secrets: dict[str, tuple[str, ...]] | None = None
     #: The node's OWN output, exposed as `output.*` — for `success_when` only, which is
     #: evaluated AFTER the node produced it (LOOPS-EVOLUTION R5f). Deliberately absent
     #: everywhere else: a prompt that could read its own output does not have one yet, and
@@ -792,17 +798,7 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
                 expr,
                 "the engine had no credential store to read for this run; check the gateway log",
             )
-        value: Any = ctx.secret_resolver(key)
-        # "" is how the run's resolver answers for a key neither its project nor the global
-        # secrets hold (`node_bindings._secrets_for`). Substituted, a request carrying it fails at
-        # the receiver with nothing naming the key, so the trigger path refuses it too.
-        if value is None or value == "":
-            raise BindingError(
-                f"secret {key!r} is not set",
-                expr,
-                f"store {key!r} in Settings → Secrets, then fork this run to try again",
-                caller_supplied=True,
-            )
+        value: Any = _secret(key, ctx, expr)
     else:
         try:
             value = _walk_path(ctx.as_root(), head, expr)
@@ -813,6 +809,7 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
             if not _prior_cycle_field_miss(head, ctx, pipe_names):
                 raise
             return _run_pipes(None, parts[1:], expr, ctx)
+        value = _with_input_secrets(head, value, ctx, expr)
 
     # `siblings.<id>.output` always FLATTENS iteration envelopes to items — that is what the
     # reference means, and without it `| full` / `| window(N)` / `| unseen` each operated on a
@@ -827,6 +824,58 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
             value = _default_sibling_view(value)
 
     return _run_pipes(value, parts[1:], expr, ctx)
+
+
+def _secret(key: str, ctx: BindingContext, expr: str) -> Any:
+    """What the step's resolver answers for the secret *key*, refused when it answers nothing.
+
+    "" is how the run's resolver answers for a key neither its project nor the global secrets
+    hold (`node_bindings._secrets_for`). Substituted, a request carrying it fails at the receiver
+    with nothing naming the key, so the trigger path refuses it too."""
+    value = ctx.secret_resolver(key)
+    if value is None or value == "":
+        raise BindingError(
+            f"secret {key!r} is not set",
+            expr,
+            f"store {key!r} in Settings → Secrets, then fork this run to try again",
+            caller_supplied=True,
+        )
+    return value
+
+
+def _with_input_secrets(head: str, value: Any, ctx: BindingContext, expr: str) -> Any:
+    """*value*, read at *head*, with the references the run was handed in that input filled
+    (`BindingContext.input_secrets`) by the step's resolver: the value for a step that runs its
+    config, the name again for one whose text goes to a model or that hands the run's inputs on.
+
+    Only the secrets the run was handed in that very input: any other text that reads as a
+    reference is text its run was given, typed at Run, sent by a caller or produced by a step."""
+    held = ctx.input_secrets or {}
+    segs = [s.strip() for s in head.split(".") if s.strip()]
+    if not held or ctx.secret_resolver is None or not segs or segs[0] != "inputs":
+        return value
+    if len(segs) > 1:
+        return _filled(value, held.get(segs[1], ()), ctx, expr)
+    if not isinstance(value, dict):
+        return value
+    return {key: _filled(item, held.get(key, ()), ctx, expr) for key, item in value.items()}
+
+
+def _filled(value: Any, names: tuple[str, ...], ctx: BindingContext, expr: str) -> Any:
+    if not names:
+        return value
+    if isinstance(value, str):
+
+        def _one(match: re.Match[str]) -> str:
+            key = match.group(1)
+            return str(_secret(key, ctx, expr)) if key in names else match.group(0)
+
+        return SECRET_BINDING_RE.sub(_one, value)
+    if isinstance(value, dict):
+        return {key: _filled(item, names, ctx, expr) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_filled(item, names, ctx, expr) for item in value]
+    return value
 
 
 def _run_pipes(value: Any, raw_pipes: list[str], expr: str, ctx: BindingContext) -> Any:

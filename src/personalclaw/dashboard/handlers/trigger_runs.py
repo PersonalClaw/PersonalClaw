@@ -661,6 +661,7 @@ async def _dispatch_store_action(
         answer=answer,
         fire_facts=facts.text,
         fire_files=facts.files,
+        secret_references=trigger_secrets.handed(provider, config),
     )
     trigger_id = str(getattr(trigger, "id", "") or "")
     # Asked on the config the provider is handed, its secrets filled, as the fire asks it, and

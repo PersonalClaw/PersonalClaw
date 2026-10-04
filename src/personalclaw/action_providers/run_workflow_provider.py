@@ -29,6 +29,12 @@ failing at every fire. A fire checks again, because the workflow can change afte
 saved, and starts the run with the inputs coerced and the declared defaults applied, as the Run
 button does.
 
+**A secret its inputs name is handed to the run as the reference** (`hands_config_to_a_run`). The
+run's record keeps its inputs, its ledger opens with them, the run list serves them and a preview
+reports them: filled in by the dispatch, every one of those held the secret's value, and a model
+step reading the input was sent it. The run fills the reference where one of its steps uses the
+input (`workflows.input_secrets`).
+
 **`on_overlap` is honoured here**, not left to the caller. A per-minute trigger against
 a ten-minute workflow must not stack runs, and the def's declared policy (`skip` by
 default) is the single place that decision belongs. The decision itself lives in
@@ -65,6 +71,12 @@ class RunWorkflowActionProvider(ActionProvider):
     @property
     def supports_dry_run(self) -> bool:
         """A workflow run is spawn-based, so an observe-mode preview is meaningful."""
+        return True
+
+    @property
+    def hands_config_to_a_run(self) -> bool:
+        """Its ``inputs`` are the run's: a ``{{secret:…}}`` in them is handed on as the reference,
+        and the run fills it where a step uses it (``workflows.input_secrets``)."""
         return True
 
     async def execute(
@@ -154,6 +166,26 @@ class RunWorkflowActionProvider(ActionProvider):
                 failure_class="user",
             )
         run_inputs = with_declared_defaults(spec, coerced)
+        # A secret its inputs name is handed on as the reference, never the value: the run keeps
+        # its inputs on its record and fills the reference where a step uses it. The run reads
+        # only the ones its dispatch names as the author's (`ActionContext.secret_references`),
+        # checked here against the secrets that run reads; any other text that reads as one is
+        # text the run was given.
+        from personalclaw.triggers.secrets import UnresolvedSecret, check
+        from personalclaw.workflows import input_secrets
+
+        project = str((action_config or {}).get("project_id", "") or "")
+        kept = set(getattr(ctx, "secret_references", ()) or ())
+        handed = sorted(set(input_secrets.references_in(coerced)) & kept)
+        try:
+            check(handed, project_id=project)
+        except UnresolvedSecret as missing:
+            return ActionResult(
+                success=False,
+                error=f"workflow {name!r}: {missing}",
+                stderr="a secret its inputs name is not stored where the run reads it",
+                failure_class="user",
+            )
 
         # on_overlap — the def's declared policy, applied before a second run exists. The
         # branch lives in `overlap.decide`, exhaustive over the enum with a raising tail.
@@ -240,6 +272,8 @@ class RunWorkflowActionProvider(ActionProvider):
         chain_state = carried_chain(getattr(ctx, "payload", None))
         if chain_state:
             extra = {**extra, CHAIN_EXTRA_KEY: chain_state}
+        # Which inputs the run was handed a reference in, so it fills them where they are used.
+        extra = input_secrets.stamp(extra, coerced, handed)
         run = store.create(
             WorkflowRun(
                 id="",

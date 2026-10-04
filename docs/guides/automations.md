@@ -75,8 +75,12 @@ An automation can also be **refused before it runs**, because something its acti
 the app that provides the action is deactivated, was removed or did not start, a `{{secret:…}}` the
 action uses is not in Settings → Secrets, or it has no action at all. An automation runs in no
 project, so its action reads the global secrets only; a secret kept for one project is read by that
-project's work (a workflow run an automation starts in a project reads it in its own steps). Each
-such fire is recorded as
+project's work (a workflow run an automation starts in a project reads it in its own steps). A
+`{{secret:…}}` in a **Run workflow** action's inputs is handed to the run as the reference, never the
+value: the run's record, its run list entry, a preview's row in the run history and the prompt of a
+model step that reads the input hold the reference, and the run fills it in where one of its steps
+uses the input, the run's project's secret first, then the global one. Such a fire is refused only
+when the run could read the secret from neither. Each such fire is recorded as
 `refused` in its run history, in a sentence that names the app and its action, or the secret by its
 name (never a value), and says what to do; the Triggers page shows it as the automation's last run,
 refused, with the same sentence. It is reported on the same failure route ("<name> did not run")

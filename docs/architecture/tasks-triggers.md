@@ -127,7 +127,11 @@ relative to `PersonalClaw/src/personalclaw/`.
   owner allows it; an unattended refusal is a `skipped_gate` row in the
   trigger's Runs history. Both also resolve what the trigger runs, the
   provider before the grant and its `{{secret:…}}` references after it
-  (`secrets.resolve_for`), and a run with nothing to run (no app running here
+  (`secrets.resolve_for`) — except an action that starts a workflow run
+  (`ActionProvider.hands_config_to_a_run`), whose references are checked
+  against the secrets that run reads and handed on unfilled, named in
+  `ActionContext.secret_references`, so the run's record never holds a value —
+  and a run with nothing to run (no app running here
   provides its action, a secret in it does not resolve, or it names no
   action) is a `refused` run (`triggers/cannot_run.py`): its row and its last
   run on the Triggers page say which, naming the app or the secret and never

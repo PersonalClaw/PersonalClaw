@@ -47,6 +47,13 @@ class ActionContext:
     (`SubagentManager.spawn(project_id=…)`), so that agent's work is the project's: its shell fills
     a ``{{secret:NAME}}`` from that project's secrets first. Out of `payload` for `answer`'s reason:
     a step's config or an event must not be able to name another project.
+    `secret_references` names the secrets whose ``{{secret:NAME}}`` references the config holds
+    for a provider that hands its config on to a run (`ActionProvider.hands_config_to_a_run`): the
+    ones its author wrote, in an automation's action or in a workflow step (directly, or through an
+    input of the step's run that was handed one), and never text an event or a step's output
+    carried in. The run fills those in where its steps use them, and any other text that reads as a
+    reference stays text. Set by the dispatches that fill references (a trigger's fire, Run now and
+    a workflow step), empty from every other. Out of `payload` for `answer`'s reason.
     """
 
     event: str
@@ -58,6 +65,7 @@ class ActionContext:
     fire_facts: str = ""
     fire_files: tuple[str, ...] = ()
     project_id: str = ""
+    secret_references: tuple[str, ...] = ()
 
 
 @dataclass
@@ -240,6 +248,19 @@ class ActionProvider(ABC):
         (``triggers.secrets.resolve``): it stays the name, and the agent's own tools fill it when
         they run (the ``bash`` tool does), so the value never reaches the model. False by default,
         because every other provider runs its config itself, and resolving there is the point.
+        """
+        return False
+
+    @property
+    def hands_config_to_a_run(self) -> bool:
+        """Whether this provider's action starts a workflow run with its config's ``inputs`` as the
+        run's inputs, naming the run's project in its ``project_id`` ("" for none).
+
+        A ``{{secret:KEY}}`` there is never filled in at dispatch either: the run's record would
+        hold the value. The dispatch checks that the run can read each one, hands the config on
+        unfilled and names its references in ``ActionContext.secret_references``; the run keeps
+        them as references and fills them where its steps use them (``workflows.input_secrets``).
+        False by default.
         """
         return False
 
