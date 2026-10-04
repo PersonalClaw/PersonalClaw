@@ -140,6 +140,15 @@ LOOP_FIELD_MAP: tuple[FieldHome, ...] = (
         "translation, and `auto` (route it) has no `Rigor` member — it is the absence of a "
         "decision, which is what `route_rigor` produces.",
     ),
+    FieldHome(
+        "asked_by",
+        RUN,
+        "WorkflowRun.extra",
+        "Who asked for the loop when someone other than the owner did, recorded when it is made "
+        "and never edited. A run keeps the same record under `lasting_work.ASKED_BY` in its "
+        "`extra`, which `lasting_work.asker_of` already reads for a run's steps, so a loop that "
+        "IS a run carries it there under the same key.",
+    ),
     # ── the phased plan ──
     FieldHome(
         "plan",
