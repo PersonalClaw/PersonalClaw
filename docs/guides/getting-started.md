@@ -457,6 +457,14 @@ defaults flipped, and some routes refuse input they used to accept. Run
   asking you). An app you installed that still declares `"agent": true` runs no agent tasks
   until you update it to a version that names its tier, and that update asks you again in the
   tier's words. Minutes and Growth declare `text`.
+- **A home other than the default one keeps its keychain secrets under a name of its own.** With
+  Store credentials in the OS keychain on, the default home (`~/.personalclaw`) reads what it
+  stored before, where it is. Any other home now files its items under a namespace of its own,
+  which `personalclaw doctor` and Settings → Secrets name, so what it stored in the keychain
+  before, under the default home's name, it no longer reads. Store those secrets again in
+  Settings → Secrets, or, if Move to keychain put them there, Roll back and move them again. The
+  old copies stay under the default home's name, where the default home's Settings → Secrets
+  lists them: remove them there if that home should not have them.
 
 ## Where to go next
 

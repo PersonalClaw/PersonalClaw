@@ -74,6 +74,8 @@ const payload = (rows: Row[]) => {
       host: secrets.filter((s) => s.scope === 'host').length,
     },
     empty_hint: secrets.length === 0 ? HINT : '',
+    // No OS keychain answers here, so the page names no keychain namespace.
+    store: { backend: 'dotenv' as const, keychain_namespace: '', keychain_scope: '' as const },
   }
 }
 

@@ -100,10 +100,11 @@ if not _IMPORTED_PACKAGE_ROOT.is_relative_to(_INVOKING_REPO_ROOT):
     )
 
 # ── The machine's keychain stays out ────────────────────────────────────
-# One OS keychain serves every home on the machine, so a scratch home does not keep a test out
-# of the developer's secrets: the credential store reads the keychain, writes it and deletes from
-# it whenever `keyring` is importable, and a credential it reads is mirrored into this process's
-# environment. So the suite runs with it OFF, from before the first test module is collected —
+# The OS keychain is the machine's, not a home's. A scratch home keeps the store to that home's
+# own namespace there, but the store still writes the machine's keychain and deletes from it
+# whenever `keyring` is importable, and a test that stands in the default home would read the
+# developer's own secrets and mirror them into this process's environment. So the suite runs
+# with it OFF, from before the first test module is collected —
 # the switch the apps suite throws too (`personalclaw.sdk.testing.keychain_off`). A test of the
 # keychain seam itself stands a stub in with `keychain_stub.stand_in`, the only way back on.
 # Proof: tests/test_the_suite_never_reaches_the_machines_keychain.py.

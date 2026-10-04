@@ -112,6 +112,24 @@ def _empty_state_hint(rows: list[SecretPresence]) -> str:
     )
 
 
+def _store() -> dict:
+    """Where this home keeps its secrets: the active backend, and the home's own namespace in the
+    OS keychain when one answers (``scope`` is ``""`` when none does). Names a store, never a key.
+    """
+    from personalclaw.config.credentials import (
+        credential_backend,
+        keychain_available,
+        keychain_namespace,
+    )
+
+    namespace = keychain_namespace() if keychain_available() else None
+    return {
+        "backend": credential_backend(),
+        "keychain_namespace": namespace.service if namespace else "",
+        "keychain_scope": namespace.scope if namespace else "",
+    }
+
+
 async def api_secrets_list(request: web.Request) -> web.Response:
     """GET /api/secrets — the vault, presence only.
 
@@ -137,6 +155,7 @@ async def api_secrets_list(request: web.Request) -> web.Response:
                 "host": sum(1 for r in rows if r.scope == SCOPE_HOST),
             },
             "empty_hint": _empty_state_hint(rows),
+            "store": _store(),
         }
     )
 

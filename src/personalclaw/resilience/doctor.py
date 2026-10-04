@@ -1750,6 +1750,8 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
         "env_exists": state.env_exists,
         "env_mode": state.env_mode,
         "env_readable": state.env_readable,
+        "keychain_namespace": state.keychain.service if state.keychain else "",
+        "keychain_scope": state.keychain.scope if state.keychain else "",
     }
 
     if warning:
@@ -1758,16 +1760,15 @@ async def _probe_credential_backend(_ctx: DoctorContext) -> ProbeResult:
             detail=warning,
             evidence=evidence,
             remedy=(
-                "No automatic fix — make an OS keyring available to this process, or stop "
-                'asking for one: turn off "Store credentials in the OS keychain" under '
+                f"No automatic fix — {state.keychain_fix}, or stop "
+                'asking for the keychain: turn off "Store credentials in the OS keychain" under '
                 "Settings → Security, and unset PERSONALCLAW_CREDENTIAL_BACKEND if it is set."
             ),
         )
 
     if state.backend == "keychain":
-        return ProbeResult(
-            ok=True, detail="credentials stored in the OS keychain (keyring)", evidence=evidence
-        )
+        detail = f"credentials stored in the OS keychain, namespace {state.keychain_summary}"
+        return ProbeResult(ok=True, detail=detail, evidence=evidence)
 
     if not state.env_readable:
         return ProbeResult(

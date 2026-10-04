@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { KeyRound, Server, FolderLock, Trash2, Plus, Workflow, Zap, Globe } from 'lucide-react'
 import { api } from '../../lib/api'
-import type { ProjectItem, SecretPresenceWire, SecretsVaultState } from '../../lib/api'
+import type { ProjectItem, SecretPresenceWire, SecretStoreWire, SecretsVaultState } from '../../lib/api'
 import { useQuery } from '../../lib/data/useQuery'
 import { Button } from '../../ui/Button'
 import { TextInput } from '../../ui/forms'
@@ -96,7 +96,7 @@ export function SecretsPanel() {
           + 'read back — not by this page and not by any API.'}
       />
 
-      <AddSecret onSaved={refresh} projectLabel={projectLabel} />
+      <AddSecret onSaved={refresh} projectLabel={projectLabel} store={v.store} />
 
       {v.secrets.length === 0 ? (
         <EmptyState
@@ -297,8 +297,49 @@ function SecretRow({ s, index, onChanged, removeTitle, removeBody }: {
   )
 }
 
+/** Whose namespace in the OS keychain this home's secrets are filed under, keyed by the read's
+ *  `keychain_scope`. Each home has its own: the default home keeps the name every home used before
+ *  (`personalclaw`), any other home a name made from an id it keeps, so no home reads, changes or
+ *  deletes another's. A scope of '' means no keychain answers here, and there is no namespace. */
+const KEYCHAIN_SCOPE: Record<string, { pill: string; tone: 'ok' | 'warn' | 'muted'; hint: string }> = {
+  default: { pill: 'default home', tone: 'muted', hint: "is the default home's namespace in the OS keychain." },
+  own: {
+    pill: "this home's own",
+    tone: 'ok',
+    hint: "is this home's own namespace in the OS keychain. Other homes keep their secrets under names of their own.",
+  },
+  unnamed: {
+    pill: 'none yet',
+    tone: 'muted',
+    hint: 'This home gets a namespace of its own in the OS keychain when it first stores a secret there.',
+  },
+  unreadable: {
+    pill: 'unreadable',
+    tone: 'warn',
+    hint: "This home's keychain_namespace file holds no namespace id, so the OS keychain is not used here. "
+      + "Write the id back into it (this home's keychain items are filed under personalclaw-<id>), or delete "
+      + 'it to start a new, empty namespace.',
+  },
+}
+
+/** The keychain namespace this home's secrets are filed under, named where a secret is stored. */
+function KeychainNamespaceRow({ store }: { store: SecretStoreWire }) {
+  const scope = KEYCHAIN_SCOPE[store.keychain_scope]
+  if (!scope) return null
+  return (
+    <Row
+      label="Keychain namespace"
+      hint={store.keychain_namespace
+        ? <><span className="break-all font-mono">{store.keychain_namespace}</span> {scope.hint}</>
+        : scope.hint}
+    >
+      <StatusPill label={scope.pill} tone={scope.tone} />
+    </Row>
+  )
+}
+
 /** The write-only add form. The value leaves in a POST body and is cleared on success. */
-function AddSecret({ onSaved, projectLabel }: { onSaved: () => void; projectLabel: ProjectLabel }) {
+function AddSecret({ onSaved, projectLabel, store }: { onSaved: () => void; projectLabel: ProjectLabel; store: SecretStoreWire }) {
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
   const [projectId, setProjectId] = useState('')
@@ -330,6 +371,7 @@ function AddSecret({ onSaved, projectLabel }: { onSaved: () => void; projectLabe
         <Row label="Value" hint="Write-only. It is stored in the credential store and never returned.">
           <TextInput value={value} onChange={setValue} ariaLabel="Secret value" type="password" size="sm" />
         </Row>
+        <KeychainNamespaceRow store={store} />
         <Row
           label="Project"
           hint={'Every project, or one: then only that project\'s work reads it — ahead of a global '

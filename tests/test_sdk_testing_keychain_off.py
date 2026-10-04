@@ -1,7 +1,8 @@
 """``personalclaw.sdk.testing.keychain_off``: a test process never reaches the machine's keychain.
 
-One keychain serves every home on a machine, so a scratch ``PERSONALCLAW_HOME`` does not keep
-an app's tests out of the owner's secrets. The apps repo's root ``conftest.py`` used to patch
+The OS keychain is the machine's: a scratch ``PERSONALCLAW_HOME`` keeps an app's tests to that
+home's own namespace there, not out of the keychain, and a test on the default home reaches the
+owner's own secrets. The apps repo's root ``conftest.py`` used to patch
 ``personalclaw.config.credentials._usable_keyring`` to keep it out, which an app's harness may
 not import (``tests/test_apps_import_boundary.py``). This is the switch it calls instead.
 
@@ -22,7 +23,6 @@ import pytest
 from personalclaw.config import credentials, loader
 from personalclaw.sdk.testing import keychain_off
 
-_SERVICE = "personalclaw"
 _KEY = "SDK_TESTING_TOKEN"
 
 
@@ -94,14 +94,16 @@ def test_with_it_on_the_calls_below_do_reach_the_keychain(home, keychain):
     """The floor for every case below: without the switch, the stub is reached."""
     assert credentials.keychain_available() is True
     credentials.save_credential(_KEY, "in-the-keychain")
-    assert f"{_SERVICE}\x00{_KEY}" in keychain.values
+    assert f"{credentials.keychain_service()}\x00{_KEY}" in keychain.values
     assert credentials.get_credential(_KEY) == "in-the-keychain"
     credentials.delete_credential(_KEY)
     assert f"delete {_KEY}" in keychain.calls
 
 
 def test_off_nothing_reads_writes_or_deletes_the_keychain(home, keychain, off):
-    keychain.values[f"{_SERVICE}\x00{_KEY}"] = "the-owners-secret"
+    # Planted under this home's own namespace, where a read would find it if the switch let one in.
+    service = credentials.keychain_service(mint=True)
+    keychain.values[f"{service}\x00{_KEY}"] = "the-owners-secret"
     keychain.calls.clear()
 
     assert credentials.keychain_available() is False
@@ -113,7 +115,7 @@ def test_off_nothing_reads_writes_or_deletes_the_keychain(home, keychain, off):
     credentials.delete_credential(_KEY)
 
     assert keychain.calls == [], f"the keychain was reached: {keychain.calls}"
-    assert keychain.values == {f"{_SERVICE}\x00{_KEY}": "the-owners-secret"}, "left as it was"
+    assert keychain.values == {f"{service}\x00{_KEY}": "the-owners-secret"}, "left as it was"
 
 
 def test_restore_lets_it_back_in(home, keychain):

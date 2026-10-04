@@ -509,6 +509,14 @@ Data leaving the running system:
   searches every member for every value the store holds). What a reference cannot cover (copies
   made before the upgrade, a value with a NUL character, Claude Code's own config) is in
   [limitations.md §6](limitations.md).
+- **Each home's own keychain namespace** (`config/credentials.py`, `keychain_service`): the OS
+  keychain is the machine's, so every keychain read, write, delete and index entry names the home's
+  own service there: `personalclaw` for the default home, `personalclaw-<id>` for any other, the id
+  minted once and kept in the home, never derived from its path. A dev, scratch or test home never
+  lists, reads, mirrors into its children's environment, overwrites or deletes the default home's
+  secrets. `tests/test_keychain_namespace_census.py` fails a keychain call that names any other
+  service, and an id file that holds no id turns the keychain off for that home rather than falling
+  back to another's name.
 - **One home, and read-only places outside it only by choice** (`outside_home.py`): PersonalClaw
   installs, writes and deletes inside its home. Skills install into `<home>/skills`, the workspace
   defaults to `<home>/workspace`, and neither a session restart nor an MCP sync writes

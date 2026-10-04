@@ -87,6 +87,8 @@ def test_the_stand_in_reaches_its_stub_and_only_for_as_long_as_it_is_in(machine)
     with pytest.MonkeyPatch.context() as scoped:
         keychain_stub.stand_in(scoped, stub.module)
         assert credentials.keychain_available() is True
+        # A home that never stored a secret in the keychain asks it nothing: name this one first.
+        assert credentials.keychain_service(mint=True)
         assert credentials.get_credential("SUITE_KEYCHAIN_PROBE") == "the-developers-real-secret"
         assert stub.calls == ["get SUITE_KEYCHAIN_PROBE"]
     assert credentials.keychain_available() is False

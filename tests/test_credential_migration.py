@@ -133,7 +133,8 @@ def _mode(p: Path) -> int:
 
 
 def _kc(store: dict[str, str], key: str) -> str | None:
-    return store.get(f"personalclaw\x00{key}")
+    """*key* as the stub keychain holds it under this home's own namespace."""
+    return store.get(f"{cred.keychain_service()}\x00{key}")
 
 
 # ── the move ─────────────────────────────────────────────────────────────────
@@ -193,7 +194,7 @@ def test_verify_is_vacuously_true_with_no_snapshot_and_says_so(home: Path) -> No
 def test_verify_fails_when_the_keychain_lost_a_key_it_was_handed(keychain_on) -> None:
     """The falsification rail for verify: it must be able to say NO."""
     mig.migrate_credentials_to_keychain(confirm=True)
-    keychain_on.pop("personalclaw\x00SH2_ALPHA")
+    keychain_on.pop(f"{cred.keychain_service()}\x00SH2_ALPHA")
     ok, evidence = mig.verify_credential_migration()
     assert not ok and evidence["missing"] == ["SH2_ALPHA"]
 

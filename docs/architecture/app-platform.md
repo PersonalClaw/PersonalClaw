@@ -504,7 +504,8 @@ backend has no access to the gateway's SecurityEventLog).
   security helpers, `provider_helpers.register_branded_app` for
   protocol-thin branded model apps, and `testing.keychain_off` for an app's
   test harness, which keeps the test process out of the machine's OS keychain
-  (one keychain serves every home, so a scratch `PERSONALCLAW_HOME` does not).
+  (a scratch `PERSONALCLAW_HOME` keeps it to that home's own namespace there,
+  not out of the keychain).
   `testing.neutral_git_env` and `testing.refuse_git_helpers` keep a suite's git
   off the machine's credential helpers, a Mac's keychain one among them: every
   test's git reads no system configuration and a global file of its own, and a

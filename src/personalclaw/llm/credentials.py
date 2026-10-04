@@ -176,8 +176,8 @@ def resolve_secret(
     owner's own configuration: a workflow step, an automation, a provider entry). The agent's
     shell passes ``False``: there the agent chooses the name, and the gateway's environment holds
     what a sandbox keeps from the command. A project's secret is read from the store only — it is
-    never copied into the environment. *home* names the ``.env`` to read (the active home's by
-    default).
+    never copied into the environment. *home* names the store to read, its ``.env`` and its own
+    keychain namespace (the active home's by default).
 
     Raises :class:`SecretNameRefused` (a ``KeyError``) for a name nothing reads by name, before any
     value is read, and :class:`KeyError` when no scope holds *name*.
@@ -210,9 +210,9 @@ def resolve_secret(
 class CredentialStore:
     """Read a credential by name from the credential store of *home*.
 
-    The ``.env`` half is ``<home>/.env``; the OS keychain has one namespace for every home. Each
-    :meth:`resolve` reads the store as it is now, so a secret saved or deleted in Settings →
-    Secrets takes effect on the next read.
+    The ``.env`` half is ``<home>/.env``; the keychain half is that home's own namespace in the
+    OS keychain (``config.credentials.keychain_service``). Each :meth:`resolve` reads the store as
+    it is now, so a secret saved or deleted in Settings → Secrets takes effect on the next read.
     """
 
     def __init__(self, home: Path) -> None:

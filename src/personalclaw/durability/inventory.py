@@ -2141,6 +2141,13 @@ IGNORED: tuple[str, ...] = (
     "session_key",
     "sessions.json",
     "machine_id",
+    # The id this home's namespace in the OS keychain is named from
+    # (`config.credentials.keychain_service`). MACHINE-LOCAL identity for the same reason as
+    # `machine_id`: it names which of this machine's keychain items are this home's, so a copy
+    # planted by a restore or an import would make two homes one namespace, each reading,
+    # overwriting and deleting the other's secrets. A home restored or made from an archive names
+    # its own on its first keychain write.
+    "keychain_namespace",
     # 🔴 BA-4 — the per-site browser profiles (`browse/profiles/<site_slug>/`). IGNORED for the
     # SAME reason as `session_key`/`sessions.json` directly above, and deliberately NOT a
     # `secret=True` entry, because those two postures differ in exactly the way that matters here:

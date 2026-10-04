@@ -5501,6 +5501,16 @@ export interface SecretsVaultState {
   /** The server-composed "what to do next" sentence for an empty vault; '' when non-empty.
    *  Server-composed on purpose — the CLI and the dashboard must say the same thing. */
   empty_hint: string
+  /** Where this home keeps its secrets. */
+  store: SecretStoreWire
+}
+/** The active backend, and this home's own namespace in the OS keychain: `keychain_scope` is ''
+ *  when no keychain answers, else whose the namespace is; `keychain_namespace` is the service name
+ *  its items are filed under, '' while the home has none to use. */
+export interface SecretStoreWire {
+  backend: 'keychain' | 'dotenv'
+  keychain_namespace: string
+  keychain_scope: '' | 'default' | 'own' | 'unnamed' | 'unreadable'
 }
 export interface SecretWriteResult {
   secret: SecretPresenceWire | Record<string, never>

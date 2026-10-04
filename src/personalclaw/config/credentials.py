@@ -31,6 +31,18 @@ The write/read asymmetry is deliberate:
     not make an already-stored secret vanish, and the ``credentials_to_keychain`` move
     needs both halves readable while it carries keys across.
 
+🔴 **EACH HOME HAS ITS OWN KEYCHAIN NAMESPACE.** The OS keychain is the machine's, not a
+home's: every PersonalClaw home on the machine reaches the same one. So the keychain half of a
+home's store is filed under a service name that belongs to that home, and
+:func:`keychain_service` is the one place the name is made — every keychain read, write, delete
+and index entry passes it (``tests/test_keychain_namespace_census.py``). The default home keeps
+the name every earlier release used, ``personalclaw``, so an existing install's secrets stay
+where they are. Any other home is named ``personalclaw-<id>``, from an id minted on its first
+keychain write and kept in the home (:data:`KEYCHAIN_NAMESPACE_FILE`) — never from the home's
+path, which can move. One name for every home let a scratch or dev home list the default home's
+secrets, read them, mirror them into the environment its children inherit, overwrite them and
+delete them.
+
 The consented move itself lives in :mod:`personalclaw.config.credential_migration`, which
 is a *one-time operation* on this store rather than part of it.
 
@@ -49,6 +61,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,10 +83,27 @@ CredentialLocation = Literal["keychain", "file", ""]
 #: direction — an unreadable request must never be read as "use the fancier store".
 CREDENTIAL_BACKEND_ENV = "PERSONALCLAW_CREDENTIAL_BACKEND"
 
-#: Keyring service name every PersonalClaw credential is filed under.
-_KEYCHAIN_SERVICE = "personalclaw"
+#: The keychain service name the DEFAULT home files its credentials under: the name every release
+#: before per-home namespaces filed every home's credentials under, kept so an existing install's
+#: secrets stay where they are. Only :func:`keychain_service` hands it to a keychain.
+_DEFAULT_HOME_SERVICE = "personalclaw"
 
-#: Keyring holds one entry per credential plus this index entry, whose value is a
+#: The file in a home other than the default one that holds the id its keychain namespace is
+#: named from (:func:`keychain_service`). Minted on the home's first keychain write and never
+#: rewritten: a new id would leave every item filed under the old one out of the home's reach.
+KEYCHAIN_NAMESPACE_FILE = "keychain_namespace"
+
+#: What that file holds: one ``uuid4().hex``.
+_NAMESPACE_ID = re.compile(r"[0-9a-f]{32}")
+
+#: What makes a namespace file that holds no id usable again, in the words every surface uses. No
+#: snapshot carries the file, but the keychain's own item names still spell the id.
+_UNREADABLE_NAMESPACE_FIX = (
+    f"write the id back into this home's {KEYCHAIN_NAMESPACE_FILE} file (its keychain items are "
+    f"filed under {_DEFAULT_HOME_SERVICE}-<id>), or delete the file to start a new, empty namespace"
+)
+
+#: Each namespace holds one entry per credential plus this index entry, whose value is a
 #: JSON list of the credential KEY NAMES stored there. The index exists because
 #: ``keyring`` has no portable enumeration API, and ``load_credentials()`` must be
 #: able to list what the keychain holds. It lives INSIDE the keychain rather than
@@ -130,9 +161,11 @@ _keychain_off = False
 def keychain_off() -> Callable[[], None]:
     """Keep the OS keychain out of this process, and return the call that lets it back in.
 
-    For a test process on a developer's machine. One keychain serves every home on the machine,
-    so a scratch ``PERSONALCLAW_HOME`` does not keep a test out of the owner's secrets: this
-    module reads the keychain, writes it and deletes from it whenever ``keyring`` is importable.
+    For a test process on a developer's machine. The OS keychain is the machine's, not a home's:
+    a scratch ``PERSONALCLAW_HOME`` keeps a test out of the default home's items (each home has a
+    namespace of its own, :func:`keychain_service`), but not out of the keychain. This module
+    still writes the machine's keychain and deletes from it whenever ``keyring`` is importable,
+    and a test that stands in the default home reads the owner's own secrets there.
     After this call every one of those finds no keychain (:func:`_usable_keyring`), and
     credentials live in ``<home>/.env`` alone. Call it before anything resolves a credential,
     and call what it returns when the process is done; each restore puts back what its own call
@@ -201,6 +234,132 @@ def keychain_absence() -> str:
     return KEYCHAIN_NO_SERVICE
 
 
+# ── the home's keychain namespace ────────────────────────────────────────────
+
+#: Whose namespace a home's keychain items are filed under: ``default`` (the default home's,
+#: ``personalclaw``), ``own`` (a home named from the id it keeps), ``unnamed`` (a home with no id
+#: yet, which holds nothing in the keychain until its first keychain write names it), or
+#: ``unreadable`` (a home whose id file holds no id: no keychain is used for it).
+KeychainNamespaceScope = Literal["default", "own", "unnamed", "unreadable"]
+
+
+@dataclass(frozen=True)
+class KeychainNamespace:
+    """The keychain service name a home's credentials are filed under (``""`` when the home has
+    none to use), and whose it is."""
+
+    service: str
+    scope: KeychainNamespaceScope
+
+
+def _is_the_default_home(home: Path | None) -> bool:
+    """Whether *home* — the active home when ``None`` — is the default one."""
+    if home is None:
+        return _loader.uses_default_home()
+    return Path(home).resolve() == _loader.default_config_dir().resolve()
+
+
+def _namespace_file(home: Path | None) -> Path:
+    """``<home>/keychain_namespace``, worked out without making the home."""
+    base = Path(home) if home is not None else _loader.resolve_config_dir()
+    return base / KEYCHAIN_NAMESPACE_FILE
+
+
+def _recorded_namespace_id(path: Path) -> str | None:
+    """The id *path* holds: ``None`` when there is no such file, ``""`` when it holds no id."""
+    try:
+        raw = path.read_text(encoding="ascii")
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError):
+        logger.debug("keychain namespace file %s is unreadable", path, exc_info=True)
+        return ""
+    value = raw.strip()
+    return value if _NAMESPACE_ID.fullmatch(value) else ""
+
+
+def _mint_namespace_id(path: Path) -> str | None:
+    """Give the home *path* is in its id, once, and return the id it holds afterwards.
+
+    The id is written whole to a file of its own (0600), then LINKED to its name, which fails
+    when the name exists. So the name appears with the whole id or not at all, and of two
+    processes naming one home at the same moment exactly one id lands: the other reads it back
+    and files under it, rather than writing an item under an id the home never reads again.
+    """
+    from personalclaw.atomic_write import atomic_write
+
+    fresh = uuid.uuid4().hex
+    staged = path.with_name(f".{path.name}.{fresh}.tmp")
+    try:
+        atomic_write(staged, fresh + "\n", mode=0o600, fsync=True)
+        try:
+            os.link(staged, path)
+        except FileExistsError:
+            pass  # another process named the home first, and its id is the home's
+    finally:
+        staged.unlink(missing_ok=True)
+    return _recorded_namespace_id(path)
+
+
+def _namespace(home: Path | None, *, mint: bool) -> KeychainNamespace:
+    """What :func:`keychain_service` and :func:`keychain_namespace` answer: the name *home*'s
+    items are filed under and whose it is, the home given its id first when *mint*."""
+    try:
+        if _is_the_default_home(home):
+            return KeychainNamespace(_DEFAULT_HOME_SERVICE, "default")
+        path = _namespace_file(home)
+        recorded = _recorded_namespace_id(path)
+        if recorded is None and mint:
+            recorded = _mint_namespace_id(path)
+    except OSError:
+        # Fail closed: a home whose namespace cannot be worked out uses no keychain at all.
+        logger.warning("this home's keychain namespace could not be read", exc_info=True)
+        return KeychainNamespace("", "unreadable")
+    if recorded is None:
+        return KeychainNamespace("", "unnamed")
+    if not recorded:
+        return KeychainNamespace("", "unreadable")
+    return KeychainNamespace(f"{_DEFAULT_HOME_SERVICE}-{recorded}", "own")
+
+
+def keychain_service(home: Path | None = None, *, mint: bool = False) -> str:
+    """The keychain service name *home*'s credentials are filed under — the active home's when
+    none is named — or ``""`` when that home has none to use.
+
+    🔴 The one place that name is made. Every keychain read, write, delete and index entry passes
+    what this returns, and nothing else does (``tests/test_keychain_namespace_census.py``).
+
+    The default home answers ``personalclaw``, the name every home used before each had its own.
+    Any other home answers ``personalclaw-<id>``, the id read from its
+    :data:`KEYCHAIN_NAMESPACE_FILE`. A home with no id yet holds nothing in the keychain, so it
+    answers ``""`` and a read finds nothing — unless *mint*, which only a keychain WRITE passes:
+    the home is given its id first. A file that holds no id answers ``""`` and is left as it is.
+    Replacing it would put the items filed under the old id out of this home's reach for good,
+    and the default home's name in its place is the leak this function exists to close.
+    """
+    return _namespace(home, mint=mint).service
+
+
+def keychain_namespace() -> KeychainNamespace:
+    """The active home's keychain namespace, for the surfaces that name it: ``personalclaw
+    doctor``, its probe and Settings → Secrets. Never mints."""
+    return _namespace(None, mint=False)
+
+
+def keychain_namespace_summary(namespace: KeychainNamespace) -> str:
+    """*namespace* by name and whose it is, in the words both doctor surfaces print."""
+    if namespace.scope == "default":
+        return f"{namespace.service} — the default home's"
+    if namespace.scope == "own":
+        return f"{namespace.service} — this home's own"
+    if namespace.scope == "unnamed":
+        return "none yet — this home's own is named when it first stores a secret in the keychain"
+    return (
+        f"unreadable — this home's {KEYCHAIN_NAMESPACE_FILE} file holds no namespace id, so no "
+        f"keychain is used here: {_UNREADABLE_NAMESPACE_FIX}"
+    )
+
+
 def requested_credential_backend() -> CredentialBackend:
     """The backend the operator ASKED for — intent, not outcome.
 
@@ -244,13 +403,14 @@ def requested_credential_backend() -> CredentialBackend:
 def credential_backend() -> CredentialBackend:
     """The ACTIVE credential backend — the resolved outcome, never the request.
 
-    ``keychain`` only when it was asked for AND an OS secret service answers;
-    otherwise ``dotenv``. Everything that reports the backend to a human must call
-    THIS, so a box that asked for a keychain it does not have never claims to have one.
+    ``keychain`` only when it was asked for AND an OS secret service answers AND this home has
+    a namespace there it can use (:func:`keychain_service`); otherwise ``dotenv``. Everything
+    that reports the backend to a human must call THIS, so a box that asked for a keychain it
+    does not have never claims to have one.
     """
-    if requested_credential_backend() != "keychain":
+    if requested_credential_backend() != "keychain" or not keychain_available():
         return "dotenv"
-    return "keychain" if keychain_available() else "dotenv"
+    return "dotenv" if keychain_namespace().scope == "unreadable" else "keychain"
 
 
 def credential_backend_warning() -> str:
@@ -260,12 +420,17 @@ def credential_backend_warning() -> str:
     ``security.credential_backend`` probe) so they can never disagree about whether
     the fallback happened.
     """
-    if requested_credential_backend() == "keychain" and credential_backend() == "dotenv":
+    if requested_credential_backend() != "keychain" or credential_backend() != "dotenv":
+        return ""
+    if keychain_available():
         return (
-            "keychain requested but no usable OS keyring backend is available — "
-            "credentials stay in .env at mode 0600 (never plaintext elsewhere)"
+            f"keychain requested but this home's {KEYCHAIN_NAMESPACE_FILE} file holds no "
+            "namespace id — credentials stay in .env at mode 0600 (never plaintext elsewhere)"
         )
-    return ""
+    return (
+        "keychain requested but no usable OS keyring backend is available — "
+        "credentials stay in .env at mode 0600 (never plaintext elsewhere)"
+    )
 
 
 @dataclass(frozen=True)
@@ -284,11 +449,29 @@ class CredentialStoreState:
     env_exists: bool
     env_mode: str
     env_readable: bool
+    #: This home's keychain namespace when an OS keychain answers (reads consult it whichever
+    #: backend is active), else ``None``.
+    keychain: KeychainNamespace | None = None
 
     @property
     def env_group_or_world_readable(self) -> bool:
         """True only when a mode was READ and it grants group/other any bit."""
         return bool(self.env_mode) and bool(int(self.env_mode, 8) & 0o077)
+
+    @property
+    def keychain_summary(self) -> str:
+        """The keychain namespace by name and whose it is, as both doctor surfaces print it
+        (:func:`keychain_namespace_summary`), or ``""`` when no keychain answered."""
+        return keychain_namespace_summary(self.keychain) if self.keychain else ""
+
+    @property
+    def keychain_fix(self) -> str:
+        """What makes the keychain usable again after a request for it fell back
+        (:func:`credential_backend_warning`): an OS keyring for this process, or, when one
+        answered, a namespace id this home can read."""
+        if self.keychain is not None:
+            return _UNREADABLE_NAMESPACE_FIX
+        return "make an OS keyring available to this process"
 
 
 def credential_store_state() -> CredentialStoreState:
@@ -330,16 +513,21 @@ def credential_store_state() -> CredentialStoreState:
         env_exists=exists,
         env_mode=mode,
         env_readable=readable,
+        keychain=keychain_namespace() if keychain_available() else None,
     )
 
 
 def _keychain_index() -> list[str]:
-    """Credential key names the keychain holds (empty when it holds nothing)."""
+    """Credential key names the active home's keychain namespace holds, and empty when it holds
+    nothing or the home has no namespace yet."""
     kr = _usable_keyring()
     if kr is None:
         return []
+    service = keychain_service()
+    if not service:
+        return []
     try:
-        raw = kr.get_password(_KEYCHAIN_SERVICE, _KEYCHAIN_INDEX_KEY)  # type: ignore[attr-defined]
+        raw = kr.get_password(service, _KEYCHAIN_INDEX_KEY)  # type: ignore[attr-defined]
     except Exception:
         logger.debug("keychain index unreadable", exc_info=True)
         return []
@@ -355,20 +543,24 @@ def _keychain_index() -> list[str]:
     return [str(k) for k in parsed if str(k) and str(k) != _KEYCHAIN_INDEX_KEY]
 
 
-def _keychain_get(key: str) -> str:
-    """One credential out of the keychain, or ``""`` when absent/unavailable."""
+def _keychain_get(key: str, home: Path | None = None) -> str:
+    """One credential out of *home*'s keychain namespace (the active home's when none is
+    named), or ``""`` when it is absent, no keychain answers, or the home has no namespace."""
     kr = _usable_keyring()
     if kr is None:
         return ""
+    service = keychain_service(home)
+    if not service:
+        return ""
     try:
-        return kr.get_password(_KEYCHAIN_SERVICE, key) or ""  # type: ignore[attr-defined]
+        return kr.get_password(service, key) or ""  # type: ignore[attr-defined]
     except Exception:
         logger.debug("keychain read failed for %s", key, exc_info=True)
         return ""
 
 
 def _keychain_credentials() -> dict[str, str]:
-    """Every credential the keychain holds, keyed by name."""
+    """Every credential the active home's keychain namespace holds, keyed by name."""
     out: dict[str, str] = {}
     for key in _keychain_index():
         value = _keychain_get(key)
@@ -378,16 +570,23 @@ def _keychain_credentials() -> dict[str, str]:
 
 
 def _keychain_save(key: str, value: str) -> bool:
-    """Write one credential + index it. False on any failure, so the caller falls back."""
+    """Write one credential into the active home's keychain namespace + index it. False on any
+    failure, so the caller falls back. A home's first keychain write names its namespace."""
     kr = _usable_keyring()
     if kr is None:
         return False
+    service = keychain_service(mint=True)
+    if not service:
+        logger.warning(
+            "this home has no keychain namespace for %s; falling back to .env (0600)", key
+        )
+        return False
     try:
-        kr.set_password(_KEYCHAIN_SERVICE, key, value)  # type: ignore[attr-defined]
+        kr.set_password(service, key, value)  # type: ignore[attr-defined]
         index = _keychain_index()
         if key not in index:
             kr.set_password(  # type: ignore[attr-defined]
-                _KEYCHAIN_SERVICE,
+                service,
                 _KEYCHAIN_INDEX_KEY,
                 json.dumps(sorted([*index, key])),
             )
@@ -415,9 +614,14 @@ def _keychain_delete(key: str) -> bool:
     kr = _usable_keyring()
     if kr is None:
         return False
+    service = keychain_service()
+    if not service:
+        # A home never named holds nothing in the keychain, so the key is absent there; a home
+        # whose namespace cannot be read cannot say whether it is.
+        return keychain_namespace().scope == "unnamed"
     ok = True
     try:
-        kr.delete_password(_KEYCHAIN_SERVICE, key)  # type: ignore[attr-defined]
+        kr.delete_password(service, key)  # type: ignore[attr-defined]
     except Exception:
         # Absent is the post-condition this asks for, so a delete of a key that is not
         # there is not a failure — but a real backend error must not be reported as one
@@ -429,7 +633,7 @@ def _keychain_delete(key: str) -> bool:
         index = _keychain_index()
         if key in index:
             kr.set_password(  # type: ignore[attr-defined]
-                _KEYCHAIN_SERVICE,
+                service,
                 _KEYCHAIN_INDEX_KEY,
                 json.dumps(sorted(k for k in index if k != key)),
             )
@@ -639,10 +843,10 @@ def find_credential(key: str, *, home: Path | None = None) -> tuple[str, Credent
 
     Keychain first (it is where a migrated or keychain-written secret lives), then ``.env``.
     Both halves are consulted whichever backend is active — see the selector note above for why
-    reads are a union while writes are not. *home* names the ``.env`` to read (the active home's
-    by default); the OS keychain has one namespace for every home.
+    reads are a union while writes are not. *home* names the store to read (the active home's by
+    default): its ``.env``, and its own keychain namespace (:func:`keychain_service`).
     """
-    value = _keychain_get(key)
+    value = _keychain_get(key, home)
     if value:
         return value, "keychain"
     value = _dotenv_credentials(home).get(key, "")

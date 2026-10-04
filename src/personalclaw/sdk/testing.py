@@ -2,10 +2,11 @@
 
 An app's tests run on a developer's machine, and some of what core reaches there is not
 inside any PersonalClaw home. ``keychain_off()`` is the one such switch today. The OS keychain
-serves every home on the machine, and core reads it, writes it and deletes from it whenever
-``keyring`` is importable, so a scratch ``PERSONALCLAW_HOME`` alone leaves a test able to read
-or delete the owner's real secrets. After the call, core finds no keychain and credentials live
-in the scratch home's ``.env``. It returns the call that lets the keychain back in. A
+is the machine's, not a home's: a scratch ``PERSONALCLAW_HOME`` keeps core to that home's own
+namespace there, but core still writes the machine's keychain and deletes from it whenever
+``keyring`` is importable, and a test that runs on the default home reads the owner's real
+secrets. After the call, core finds no keychain and credentials live in the scratch home's
+``.env``. It returns the call that lets the keychain back in. A
 ``conftest.py``'s ``pytest_configure`` turns it off before anything is collected, and
 ``pytest_unconfigure`` calls what it returned.
 

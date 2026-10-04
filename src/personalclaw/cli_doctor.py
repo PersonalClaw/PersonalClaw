@@ -416,6 +416,11 @@ def _doctor_credentials() -> list[str]:
                 f"               ⚠️  mode {state.env_mode} is group/world readable —"
                 " repaired to 0600 on the next credential read"
             )
+    if state.keychain is not None:
+        # Whose items the keychain half reads and writes. Reads consult it whichever backend is
+        # active, so it is named whenever a keychain answers.
+        mark = "⚠️  " if state.keychain.scope == "unreadable" else ""
+        print(f"               {mark}keychain namespace: {state.keychain_summary}")
     warning = credential_backend_warning()
     if not warning:
         return []

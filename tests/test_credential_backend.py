@@ -41,6 +41,7 @@ from personalclaw.config.credentials import (
     credential_backend_warning,
     get_credential,
     keychain_available,
+    keychain_service,
     requested_credential_backend,
     save_credential,
 )
@@ -283,9 +284,10 @@ def test_the_keychain_backend_stores_secrets_in_the_keychain_and_not_in_env(
 
     save_credential(_KEY, "keychain-value")
 
-    assert values[f"personalclaw\x00{_KEY}"] == "keychain-value"
+    service = keychain_service()  # this home's own namespace, named by the write
+    assert values[f"{service}\x00{_KEY}"] == "keychain-value"
     assert not loader.env_path().exists(), "a keychain write must not also spill to .env"
-    index = json.loads(values["personalclaw\x00__personalclaw_key_index__"])
+    index = json.loads(values[f"{service}\x00__personalclaw_key_index__"])
     assert index == [_KEY], "the keychain must stay enumerable for load_credentials()"
 
 
@@ -299,7 +301,7 @@ def test_the_key_index_accumulates_and_stays_sorted(
     save_credential(_KEY, "a")
     save_credential(_KEY, "a2")  # a re-save must not duplicate the index entry
 
-    index = json.loads(values["personalclaw\x00__personalclaw_key_index__"])
+    index = json.loads(values[f"{keychain_service()}\x00__personalclaw_key_index__"])
     assert index == sorted([_KEY, _OTHER])
     assert get_credential(_KEY) == "a2"
 
