@@ -41,7 +41,6 @@ class _FakeSession:
         self.acp_provider = ""
         self.acp_provider_agent = ""
         self.reasoning_effort = ""
-        self.acp_mode = ""
 
     @property
     def running(self):

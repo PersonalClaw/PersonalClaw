@@ -1472,13 +1472,14 @@ def resolve_provider_for_use_case(
     # dry-run replay): strips interactive tools + fails the approval gate fast so a
     # background turn can't wedge waiting for a human (T5). Popped here so it never
     # leaks into the MODEL-axis resolvers (which don't expect it) and re-injected
-    # below for the ACP branch — ACP consumes it too as of §2.3 (it is what lets the
-    # acp_agent factory pair a Zed dialect's ``bypassPermissions`` with host-side
-    # fail-fast; before that it was popped and DISCARDED, so an unattended ACP loop
-    # got neither the mode nor the fail-fast). The "auto"/"yolo" approval policy is a
-    # separate, complementary lever (it auto-approves) — unattended is about never
-    # blocking, set independently.
+    # below for the ACP branch, where it tells the agent CLI nobody can answer its own
+    # questions. The "auto"/"yolo" approval policy is a separate, complementary lever
+    # (it auto-approves) — unattended is about never blocking, set independently.
     _unattended = bool(kwargs.pop("unattended", False))
+    # The owner let this work's agent CLI approve its own calls (``agent_cli_self_approval``,
+    # decided by ``chat_runner``): popped for the same reason, and re-injected below for the
+    # ACP branch alone, the only runtime with a CLI to let approve its own calls.
+    _self_approval = bool(kwargs.pop("self_approval", False))
     # Dry-run replay (T9): observe-mode — write-capable tools return a synthetic
     # observation instead of executing. Pop unconditionally (native-only).
     _dry_run = bool(kwargs.pop("dry_run", False))
@@ -1508,15 +1509,16 @@ def resolve_provider_for_use_case(
         if _provider_kind
         else _agent_provider_kind(agent)
     )
-    # §2.3 (gap 3): re-inject ``unattended`` for the ACP branch. Only the acp_agent
-    # factory sees these kwargs on that branch, and it is the one place that can
-    # honour the flag — it hands it to AcpClient, which is what lets sanitize_mode
-    # accept ``bypassPermissions`` for a genuinely unattended run while every
-    # interactive session stays clamped. Restricted to _kind == "acp" on
-    # purpose: a native turn already took the explicit-argument path above, and the
-    # MODEL-axis resolvers must never see this key.
+    # §2.3 (gap 3): re-inject ``unattended`` and ``self_approval`` for the ACP branch. Only the
+    # acp_agent factory sees these kwargs on that branch, and it is the one place that can
+    # honour them — it hands them to AcpClient, whose ``sanitize_mode`` accepts a self-approving
+    # mode only for work whose owner allowed it, while every other session stays clamped.
+    # Restricted to _kind == "acp" on purpose: a native turn already took the explicit-argument
+    # path above, and the MODEL-axis resolvers must never see these keys.
     if _kind == "acp" and _unattended:
         kwargs["unattended"] = True
+    if _kind == "acp" and _self_approval:
+        kwargs["self_approval"] = True
     # An explicit ``acp:<cli>`` NAMES the runtime to build — honour it here. Until now
     # ``_kind`` was only ever read to SKIP the native builder below, and an ACP kind then
     # fell through into the MODEL-axis resolution, which deliberately excludes

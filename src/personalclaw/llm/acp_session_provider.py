@@ -52,7 +52,7 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         runtime_id: str,
         model: str = "",
         agent_name: str = "",
-        unattended: bool = False,
+        self_approval: bool = False,
         compacts_itself: bool = False,
     ) -> None:
         self._conn = connection
@@ -60,10 +60,10 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         self._runtime_id = runtime_id
         self._model = model
         self._agent_name = agent_name
-        # §2.3 gap 3 — same contract as AcpClient._unattended, on the POOLED door.
-        # Defaults False so a pooled session a caller forgot to classify keeps AAP-5's
-        # clamp; only an explicitly unattended session may keep an auto-approve mode.
-        self._unattended = bool(unattended)
+        # The same contract as ``AcpClient._self_approval``, on the POOLED door. Defaults False
+        # so a pooled session keeps AAP-5's clamp; only work whose owner let its CLI approve its
+        # own calls may keep an auto-approve mode.
+        self._self_approval = bool(self_approval)
         # What the runtime's app declared about its CLI (``acp_agent.options_compacts_itself``),
         # answered here as the N=1 provider answers it.
         self._compacts_itself = bool(compacts_itself)
@@ -280,22 +280,22 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         # very sessions AcpClient refuses to.
         from personalclaw.acp.permission_authority import sanitize_mode
 
-        decision = sanitize_mode(mode, unattended=self._unattended)
+        decision = sanitize_mode(mode, self_approval=self._self_approval)
         if decision.reason and not decision.downgraded and decision.requested:
-            # Allowed, not clamped (only an unattended session is): written down as the
-            # AcpClient door writes it, so the audit shows every session whose CLI approved its
-            # own calls, whichever door opened it.
+            # Allowed, not clamped (only the owner's choice is): written down as the AcpClient
+            # door writes it, so the audit shows every session whose CLI approved its own calls,
+            # whichever door opened it.
             try:
                 from personalclaw.sel import sel
 
                 sel().log_api_access(
                     caller="acp:permission_authority",
-                    operation="mode_change:unattended_auto_approve",
+                    operation="mode_change:self_approval_allowed",
                     outcome="allowed",
                     resources=f"pooled mode={decision.mode}",
                 )
             except Exception:
-                logger.warning("SEL audit failed for pooled unattended ACP mode", exc_info=True)
+                logger.warning("SEL audit failed for a pooled self-approving mode", exc_info=True)
         if decision.downgraded:
             logger.warning("ACP pooled permission mode clamped: %s", decision.reason)
             try:
@@ -324,14 +324,13 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         )
         await self._send_dialect_request(req)
 
-    def set_unattended(self, unattended: bool) -> None:
-        """Declare this session unattended BEFORE :meth:`set_mode` (§2.3).
+    def set_self_approval(self, allowed: bool) -> None:
+        """Say BEFORE :meth:`set_mode` whether the owner let this work's CLI approve its own calls.
 
-        A pooled connection is warmed generic — attended by default — so a session
-        claimed for an unattended run must say so here or its ``bypassPermissions``
-        is clamped back to the host-authority mode on the next line. Ordering is
-        load-bearing: ``set_mode`` reads this flag."""
-        self._unattended = bool(unattended)
+        A pooled connection is opened generic, so a session claimed for work whose owner allowed
+        that must say so here or its self-approving mode is clamped back to the host-authority
+        one on the next line. Ordering is load-bearing: ``set_mode`` reads this flag."""
+        self._self_approval = bool(allowed)
 
     def set_session_key(self, session_key: str, channel_id: str | None = None) -> None:
         return None  # the session key was bound at connection spawn (env)
@@ -369,7 +368,6 @@ async def open_acp_session_provider(
     agent_name: str = "",
     session_key: str | None = "",
     mcp_servers: list | None = None,
-    unattended: bool = False,
     compacts_itself: bool = False,
 ) -> "AcpSessionProvider":
     """Open a new session on an already-live (spawned + ``initialize``-d) connection and
@@ -395,6 +393,5 @@ async def open_acp_session_provider(
         runtime_id=runtime_id,
         model=model,
         agent_name=agent_name,
-        unattended=unattended,
         compacts_itself=compacts_itself,
     )

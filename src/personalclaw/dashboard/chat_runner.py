@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from personalclaw import (
+    agent_cli_self_approval,
     approval_grants,
     auto_denials,
     memory_locality,
@@ -2835,16 +2836,6 @@ async def run_chat(
                     },
                 )
 
-        # Per-session ACP permission-mode override (e.g. an unattended goal loop
-        # worker sets bypassPermissions so an ACP agent freely executes file
-        # writes instead of avoiding them in the default "prompts for writes"
-        # mode). The host approval gate + SEL audit still govern via auto-approve.
-        # The _plan rung below still wins when active (it's behavioral, not
-        # auto-approve).
-        _sess_acp_mode = getattr(session, "acp_mode", "") or ""
-        if _sess_acp_mode:
-            acp_mode = _sess_acp_mode
-
         # §2.3 (gap 3) — who answers this turn's asks. A session whose owner decided it says
         # so (``session._unattended``): the loop manager sets it from the loop's Mode each time it
         # arms a worker, True for an Unattended loop and False for an Attended one, because a
@@ -2865,22 +2856,31 @@ async def run_chat(
         _unattended_turn = (
             bool(_decided) if _decided is not None else is_unattended_session(session.key)
         )
-        if _unattended_turn and provider_kind.startswith("acp") and not acp_mode:
-            # No human can answer a prompt on this turn, so ask the dialect for the
-            # mode that stops it asking. Zed dialects honour it; kiro has no mode axis
-            # and ignores it (the documented asymmetry) — kiro gets the fail-fast half
-            # only, which is what actually prevents the wedge for it.
-            acp_mode = "bypassPermissions"
+        # An unattended turn on an agent CLI asks its CLI for the ASKING mode, as every turn does:
+        # each call the CLI asks about reaches the gate below (the task mode, the deny-list and the
+        # owner-only screen, the run's bounds), where the run's standing grant answers what it
+        # covers and the unattended fail-fast refuses the rest with its reason. Its CLI approves its
+        # own calls only where the owner chose that for this loop (`agent_cli_self_approval`, read
+        # now), while the loop's own grant stands (`loop_posture.runs_on_its_loops_grant`: its
+        # trust window ends both, and a Trust of another kind, an agent's "Always allow" seeded
+        # after it, answers none of it), and the operator ceiling bounds even that
+        # (`permission_authority.sanitize_mode`).
+        _self_approving = bool(
+            _unattended_turn
+            and provider_kind.startswith("acp")
+            and loop_posture.runs_on_its_loops_grant(session)
+            and agent_cli_self_approval.chosen_for(session.key, provider_kind)
+        )
+        if _self_approving and not acp_mode:
+            acp_mode = agent_cli_self_approval.SELF_APPROVING_MODE
 
         # Plan task-mode → forward acp_mode=plan so an ACP backend that supports it
-        # (claude) plans NATIVELY (cleaner output). Permission AUTHORITY stays
-        # with the host gate for every rung — we never forward an auto-approve
-        # mode (acceptEdits/dontAsk/bypassPermissions); claude always escalates
-        # via session/request_permission and the host trust ladder decides. Plan
-        # is the sole forwarded mode (it's behavioral, not an approval bypass —
-        # the adapter denies execution in plan, it does not auto-allow). Runtimes
-        # without a plan mode (the default dialect) ignore it; the host task-mode
-        # gate suppresses execution universally regardless.
+        # (claude) plans NATIVELY (cleaner output). Permission AUTHORITY stays with the host
+        # gate: an auto-approve mode (acceptEdits/dontAsk/bypassPermissions) is forwarded only
+        # for a loop its owner let approve its own calls (above), and plan replaces even that.
+        # Plan is behavioral, not an approval bypass — the adapter denies execution in plan, it
+        # does not auto-allow. Runtimes without a plan mode (the default dialect) ignore it; the
+        # host task-mode gate suppresses execution universally regardless.
         if getattr(session, "_task_mode", "agent") == "plan":
             acp_mode = "plan"
 
@@ -2902,10 +2902,13 @@ async def run_chat(
             extra_tool_roots=list(getattr(session, "_extra_tool_roots", []) or []) or None,
             # Unattended worker/scheduled turn: strip interactive tools + fail the
             # approval gate fast so a background run can't wedge waiting for a human
-            # (T5). Consumed by the native runtime AND — as — by the ACP
-            # branch of the bridge, which hands it to AcpClient so an unattended
-            # session may keep an auto-approve mode.
+            # (T5). Consumed by the native runtime AND by the ACP branch of the bridge,
+            # which tells the agent CLI nobody can answer its own questions.
             unattended=_unattended_turn,
+            # The owner let this loop's agent CLI approve its own calls (above): the one input
+            # that lets the client forward a self-approving mode, and a change of it rebuilds
+            # the cached runtime (`session._POSTURE_KEYS`).
+            self_approval=_self_approving,
             # The Project this session scopes under — the native runtime binds it per
             # turn so artifact_save stamps the artifact's project_id, tying artifacts
             # created here back to the Project. "" for an unscoped session.

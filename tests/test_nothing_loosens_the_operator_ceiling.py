@@ -11,10 +11,10 @@ approved on its own:
   flag without asking the ceiling;
 * the chat's Trust, YOLO and Trust reads switches, a card's wider scope, an agent's "Always
   allow", a Trust chat's own calls and an operator's hook pattern all approved;
-* an unattended ACP session kept ``bypassPermissions``; an unattended desktop drive needed no
-  standing grant; a subagent's announce turn in your chat, and a background turn given
-  ``AUTO_APPROVE``, approved every call; a workflow gate approved on its run's policy or a
-  remembered "always allow"; the triage digest ran its trivial actions.
+* an ACP session allowed to approve its own calls kept ``bypassPermissions``; an unattended
+  desktop drive needed no standing grant; a subagent's announce turn in your chat, and a
+  background turn given ``AUTO_APPROVE``, approved every call; a workflow gate approved on its
+  run's policy or a remembered "always allow"; the triage digest ran its trivial actions.
 
 Each of those now asks :func:`approval_grants.stands`, and a refusal is audited
 (``approval.grant_refused``), so a downgraded grant is never indistinguishable from none. Every test
@@ -384,12 +384,12 @@ async def test_an_operator_hook_pattern_stands_under_hook_based_and_not_under_as
 # ── the other doors ───────────────────────────────────────────────────────────────────────────
 
 
-def test_an_unattended_acp_session_keeps_the_host_as_its_authority(ceiling):
+def test_an_acp_cli_its_owner_let_approve_its_calls_keeps_the_host_as_its_authority(ceiling):
     from personalclaw.acp.permission_authority import HOST_AUTHORITY_MODE, sanitize_mode
 
-    assert sanitize_mode("bypassPermissions", unattended=True).mode == "bypassPermissions"
+    assert sanitize_mode("bypassPermissions", self_approval=True).mode == "bypassPermissions"
     ceiling("ask")
-    decision = sanitize_mode("bypassPermissions", unattended=True)
+    decision = sanitize_mode("bypassPermissions", self_approval=True)
     assert decision.mode == HOST_AUTHORITY_MODE
     assert decision.downgraded and "operator ceiling" in decision.reason
 
@@ -400,7 +400,7 @@ def test_nor_does_one_under_a_ceiling_that_narrows_the_tools(ceiling):
     from personalclaw.acp.permission_authority import HOST_AUTHORITY_MODE, sanitize_mode
 
     ceiling(tools={"allow": ["read_*"]})
-    assert sanitize_mode("bypassPermissions", unattended=True).mode == HOST_AUTHORITY_MODE
+    assert sanitize_mode("bypassPermissions", self_approval=True).mode == HOST_AUTHORITY_MODE
 
 
 def test_an_unattended_desktop_drive_still_needs_its_standing_grant(ceiling):

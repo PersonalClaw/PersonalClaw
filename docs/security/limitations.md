@@ -10,7 +10,7 @@ This page is referenced from the public
 [threat model](threat-model.md) and from `SECURITY.md`. Verified against the
 codebase at the commit that introduced this file.
 
-## 1. ACP agents under auto-approve (YOLO) rely on system-prompt framing, not rails
+## 1. An agent CLI is held to the rails only for the calls it asks about
 
 Task modes (`agent` / `ask` / `plan` / `build`) decide *which tools may run*. For
 the **native runtime**, this gate is hard-enforced: `task_modes.py` is enforced
@@ -18,28 +18,39 @@ in `_guard_and_invoke` **before approval is consulted, so a Trust/YOLO
 auto-approve can never bypass a task-mode restriction**
 (`src/personalclaw/task_modes.py`).
 
-For **ACP agents** (external CLI agents driven over the Agent Client Protocol),
-the same module is applied in the dashboard's permission handler as
-"belt-and-suspenders for ACP runtimes that gate via their own protocol path"
-(`task_modes.py`). But an ACP agent running under YOLO ultimately gates through
-its own protocol path, and the architecture states the tradeoff plainly:
+An **agent CLI** (an external CLI agent driven over the Agent Client Protocol) runs
+its own tools and decides itself which of its calls to ask the host about.
+PersonalClaw tells every agent CLI it runs the mode in which it asks, in a chat you
+watch and in unattended work alike (`acp/permission_authority.py`: `default`, or
+the CLI's own most restrictive spelling of it). Each call the CLI asks about meets
+the rails before anything can approve it: the task mode, the deny-list and the
+screen that keeps what only you may change out of reach, the hooks, an automation's
+capability class, and, in work nobody watches, the run's bounds (§16). Only then do
+Trust, YOLO or a run's standing grant answer it, and in work nobody watches a call
+nothing approves is refused at once, with its reason, instead of waiting for a
+person who is not there.
 
-> Task-mode tool-gating postures are hard-enforced at the permission prompt for
-> the native runtime; ACP agents under YOLO rely on system-prompt framing (a
-> documented tradeoff — `task_modes.py`).
-> — [`docs/architecture/security.md`](../architecture/security.md#trust--yolo-state-trust_modepy)
+What the CLI runs **without asking** never reaches those rails: what its own
+settings let it run, and the tools it never asks about at all, which PersonalClaw
+measures and declares for each CLI ([ACP parity](../agents/acp-parity.md)).
+PersonalClaw learns of such a call once it has run: its card says it ran without
+asking you, the audit log records it as `ungated`, and under `ask` or `plan` a call
+that may have changed something stops the turn. For those calls the task mode and
+the capability class reach the CLI only as framing.
 
-**What this means for you:** if you enable auto-approve (YOLO) *and* run an
-external ACP agent, that agent's tool use is bounded by prompt framing rather than
-by the same hard rail the native runtime enforces. Running a trusted native agent,
-or leaving approval prompts on, keeps the hard rail in force.
+The one exception is your choice for a single loop. An Unattended loop that runs on
+an agent CLI can let that CLI approve its own calls instead of asking: a switch on
+the loop's page, off by default, turned on only once you confirm what it does,
+audited each time it changes, and offered only for a CLI whose unasked calls
+PersonalClaw has measured. That loop's CLI then asks about none of its calls, so the
+rails above reach them only as framing. An operator ceiling that narrows `tools`, or
+says `"approval": "ask"`, takes the permission away again, and every call then
+reaches the host's gate.
 
-The same holds for a spawn's capability class. An automation's agent is read-only
-by default (the `research` class), and the native runtime refuses its write tools
-even while a grant approves its calls. An unattended ACP CLI allowed to approve its
-own calls asks the host about none of them, so the class reaches it only as framing.
-An operator ceiling that narrows `tools`, or says `"approval": "ask"`, takes that
-permission away from the CLI, and every call then reaches the host's gate.
+**What this means for you:** an agent CLI's own settings decide what it runs without
+asking, so keep them as tight as you want its work to be (Claude Code's allowed
+tools, for one), and leave a loop's "approve its own calls" off unless you want that
+loop's CLI to answer for itself. A native agent keeps every call on the hard rail.
 
 ## 2. The app `network` permission is declaration-only
 

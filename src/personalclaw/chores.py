@@ -17,7 +17,8 @@ turn when one fails, does not answer in time, is paused by its breaker, answers 
 in a shape the chore cannot read. The spend guard counts it against the day's ceiling. On a model
 on this machine it waits its turn behind the calls somebody is waiting for. It writes one usage
 row. And its model is offered no tools: a chore answers in text from what its prompt carries, and
-that prompt quotes chats, pages and messages nobody vetted.
+that prompt quotes chats, pages and messages nobody vetted. An agent CLI brings tools of its own,
+so on one every call it asks about is refused.
 
 Three rules are a chore's own. Its prompt is masked (``security.redact_for_model``): no person
 typed it, and every part of it was read out of stored text. What one answer may run to is bounded

@@ -13,9 +13,9 @@ This module owns the three host-side answers:
 
 1. :func:`sanitize_mode` — never hand the CLI a mode that lets it self-approve.
    The host forwards the most-restrictive native mode (``default``) so every tool
-   escalates, and refuses ``acceptEdits`` / ``dontAsk`` / ``bypassPermissions``
-   unless the caller declares an explicit unattended session (§2.3, which owns
-   the auto-deny-with-reason half that makes that safe).
+   escalates, on an attended turn and an unattended one alike, and refuses
+   ``acceptEdits`` / ``dontAsk`` / ``bypassPermissions`` unless the owner let this
+   work's CLI approve its own calls (``agent_cli_self_approval``, one loop at a time).
 2. :func:`screen_tool_call` — the deny-list must see the REAL command, on every
    path that approves or asks about a call. A permission frame carries a truncated
    human title (``"unknown"`` on codex), so a deny pattern evaluated on the title
@@ -114,20 +114,18 @@ class ModeDecision:
     reason: str = ""
 
 
-def sanitize_mode(requested: str | None, *, unattended: bool = False) -> ModeDecision:
+def sanitize_mode(requested: str | None, *, self_approval: bool = False) -> ModeDecision:
     """Resolve the permission mode the host is willing to forward.
 
     * empty → :data:`HOST_AUTHORITY_MODE`. "Whatever the CLI defaults to" is the
       hole: the host asserts the restrictive mode positively instead.
     * ``default`` / ``plan`` → forwarded verbatim.
     * an auto-approve mode → clamped to :data:`HOST_AUTHORITY_MODE`, unless
-      ``unattended`` (§2.3's explicit path, which pairs it with host-side
-      auto-deny so a background run resolves deterministically instead of
-      wedging). Nothing wires ``unattended=True`` yet — the bridge pops
-      ``unattended`` for ACP (``provider_bridge.py``), which §2.3 fixes. Until
-      then every ACP session gets the authority mode, and unattended runs still
-      execute because their session carries ``_trust`` (the host auto-approves
-      at the gate, and the approval is AUDITED instead of invisible).
+      ``self_approval``: the owner let this work's CLI approve its own calls
+      (``agent_cli_self_approval``), and the operator ceiling permits it. Nobody
+      watching is not that permission: an unattended turn asks like any other, and
+      the host's unattended fail-fast refuses, with its reason, what no grant
+      answers, so a background run ends a wait it cannot get answered.
     * anything unrecognized → clamped. An adapter-specific mode we have never
       seen might be an auto-approve mode under another name, and a silent
       downgrade of safety is never the fail-open we take.
@@ -144,17 +142,18 @@ def sanitize_mode(requested: str | None, *, unattended: bool = False) -> ModeDec
     if canon in PASSTHROUGH_MODES:
         return ModeDecision(mode=raw, requested=raw)
     if canon in AUTO_APPROVE_MODES:
-        if unattended and _ceiling_permits_self_approval():
+        if self_approval and _ceiling_permits_self_approval():
             return ModeDecision(
                 mode=raw,
                 requested=raw,
-                reason="unattended session — auto-approve mode allowed by §2.3",
+                reason="the owner let this work's agent CLI approve its own calls",
             )
-        if unattended:
+        if self_approval:
             # The one exception above is a grant (`approval_grants`): the CLI approving its own
             # calls. The operator ceiling bounds it like every other, so under `approval: ask`, or
-            # a `tools` scope the host can only enforce on a call it is asked about, an unattended
-            # session gets the host-authority mode too, and each call reaches the host gate.
+            # a `tools` scope the host can only enforce on a call it is asked about, work its owner
+            # let approve its own calls gets the host-authority mode too, and each call reaches
+            # the host gate.
             return ModeDecision(
                 mode=HOST_AUTHORITY_MODE,
                 requested=raw,
@@ -185,7 +184,7 @@ def sanitize_mode(requested: str | None, *, unattended: bool = False) -> ModeDec
 
 
 def _ceiling_permits_self_approval() -> bool:
-    """Whether the operator ceiling lets an unattended CLI approve its own calls.
+    """Whether the operator ceiling lets a CLI its owner allowed approve its own calls.
 
     Two of its scopes decide. ``approval`` bounds every grant, this one included. ``tools`` is
     enforced by the host on each call it is asked about (``guardrails.policy.tool_grant_denial``),

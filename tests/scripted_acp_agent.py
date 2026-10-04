@@ -1,7 +1,7 @@
 """A scripted ACP agent for tests: it speaks the Agent Client Protocol over stdio.
 
-Run as ``python scripted_acp_agent.py <scenario> <record.jsonl> [spec|id-label]``. It answers
-``initialize``,
+Run as ``python scripted_acp_agent.py <scenario> <record.jsonl> [spec|id-label] [file]``. It
+answers ``initialize``,
 ``session/new`` and the session configuration requests the way an ACP agent does, then plays
 one scripted turn per ``session/prompt``. Every frame it receives is appended to the record
 file, one JSON object per line, together with a ``spawn`` line per process, so a test can read
@@ -50,12 +50,20 @@ In both of those, a prompt that follows a refused one is answered without the co
     ``locations`` and a ``diff``, and the permission request carries only the call's id and
     title. It writes :data:`EDITED_TEXT` there only once the request is answered yes, and leaves
     the file as it was on a refusal.
+``writes-a-file``
+    Asks to write the file its fourth argument names, and writes :data:`FILE_TEXT` into it only
+    when the call is allowed (:data:`WROTE`); refused, it writes nothing and says so
+    (:data:`DID_NOT_WRITE`). Told a mode that lets it approve its own calls
+    (``session/set_config_option`` with ``configId: mode``, one of :data:`SELF_APPROVING_MODES`), it
+    asks nothing and writes the file at once, as an agent CLI in that mode does. Each write is
+    recorded as a ``wrote`` line.
 
 Every scenario advertises ``loadSession`` and answers ``session/load``, so a resume of a session
 it served is recorded like any other request.
 
-Standard library only, and nothing outside its two arguments is read or written, but the one file
-``edits`` edits in the folder it was started in.
+Standard library only. Nothing outside its arguments is read or written (the record file, and
+the file ``writes-a-file`` writes when it may), but the one file ``edits`` edits in the folder it
+was started in.
 """
 
 from __future__ import annotations
@@ -86,6 +94,12 @@ LATER_REVIEW = "Next, check that the changelog names the new version."
 #: The file ``edits`` edits, in the folder the agent was started in, and its text after the edit.
 EDITED_FILE = "plan.md"
 EDITED_TEXT = "The plan, rewritten by the agent.\n"
+#: What ``writes-a-file`` writes, and what it says after it did or did not.
+FILE_TEXT = "Pantry: flour, rice, lentils.\n"
+WROTE = "I saved the pantry list."
+DID_NOT_WRITE = "I was not allowed to save the pantry list, so I wrote nothing."
+#: The modes in which ``writes-a-file`` approves its own calls, as an agent CLI does in them.
+SELF_APPROVING_MODES = frozenset({"bypassPermissions", "acceptEdits", "dontAsk"})
 
 _OPTIONS = {
     "deny-continues": [
@@ -117,6 +131,7 @@ _OPTIONS = {
 _OPTIONS["ignores-stop"] = _OPTIONS["wait-for-stop"]
 _OPTIONS["edits"] = _OPTIONS["wait-for-stop"]
 _OPTIONS["deny-and-give-up"] = _OPTIONS["deny-only-cancel"]
+_OPTIONS["writes-a-file"] = _OPTIONS["wait-for-stop"]
 
 ANSWER_WITHOUT_THE_COMMAND = (
     "I did not run the command, so this review reads the commit message only."
@@ -126,13 +141,18 @@ ANSWER_AFTER_CARRY_ON = "Without git show I read the commit message only: it is 
 
 
 class Agent:
-    def __init__(self, scenario: str, record_path: str, keys: str = "spec") -> None:
+    def __init__(
+        self, scenario: str, record_path: str, keys: str = "spec", target: str = ""
+    ) -> None:
         self.scenario = scenario
         self.keys = keys
+        self.target = target
         self.record = open(record_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
         self.prompt_id: object = None
         self.prompts_seen = 0
         self.refused = False
+        #: The permission mode the client set (``session/set_config_option``, ``configId: mode``).
+        self.mode = ""
         self.log("spawn")
 
     def log(self, kind: str, **fields: object) -> None:
@@ -240,6 +260,54 @@ class Agent:
             return dict(option)
         return {"id": option["optionId"], "label": option["name"], "kind": option["kind"]}
 
+    # ── ``writes-a-file``'s turn ───────────────────────────────────────────────
+    def ask_to_write(self, request_id: object) -> None:
+        self.prompt_id = request_id
+        self.update(
+            {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "call-1",
+                "title": f"Write {os.path.basename(self.target)}",
+                "kind": "edit",
+                "status": "pending",
+                "rawInput": {"file_path": self.target, "content": FILE_TEXT},
+            }
+        )
+        if self.mode in SELF_APPROVING_MODES:
+            self.write_the_file()
+            return
+        self.send(
+            {
+                "id": PERMISSION_ID,
+                "method": "session/request_permission",
+                "params": {
+                    "sessionId": SESSION_ID,
+                    "toolCall": {"toolCallId": "call-1", "kind": "edit", "status": "pending"},
+                    "options": [self.keyed(o) for o in _OPTIONS[self.scenario]],
+                },
+            }
+        )
+
+    def write_the_file(self) -> None:
+        with open(self.target, "w", encoding="utf-8") as handle:
+            handle.write(FILE_TEXT)
+        self.log("wrote", path=self.target)
+        self.update(
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed"}
+        )
+        self.say(WROTE)
+        self.end_turn("end_turn")
+
+    def write_answered(self, allowed: bool) -> None:
+        if allowed:
+            self.write_the_file()
+            return
+        self.update(
+            {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "failed"}
+        )
+        self.say(DID_NOT_WRITE)
+        self.end_turn("end_turn")
+
     def permission_answered(self, result: dict) -> None:
         outcome = (result or {}).get("outcome") or {}
         chosen = outcome.get("optionId", "")
@@ -250,6 +318,8 @@ class Agent:
         kind = offered.get(chosen, {}).get("kind", "")
         if self.scenario == "edits":
             self.finish_edit(outcome.get("outcome") == "selected" and kind.startswith("allow"))
+        elif self.scenario == "writes-a-file":
+            self.write_answered(outcome.get("outcome") == "selected" and kind.startswith("allow"))
         elif outcome.get("outcome") != "selected" or not kind:
             self.end_turn("cancelled")
         elif kind.startswith("allow"):
@@ -353,6 +423,8 @@ class Agent:
             self.end_turn("end_turn")
         elif method == "session/prompt" and self.scenario == "edits":
             self.start_edit(req_id)
+        elif method == "session/prompt" and self.scenario == "writes-a-file":
+            self.ask_to_write(req_id)
         elif method == "session/prompt" and self.refused:
             self.prompt_id = req_id
             if self.scenario == "deny-and-give-up":
@@ -368,6 +440,8 @@ class Agent:
             if self.scenario != "ignores-stop":
                 self.end_turn("cancelled")
         elif method.startswith("session/set_"):
+            if params.get("configId") == "mode":
+                self.mode = str(params.get("value") or "")
             self.send({"id": req_id, "result": {}})
         elif req_id is not None:
             self.send({"id": req_id, "error": {"code": -32601, "message": f"no {method}"}})
@@ -386,4 +460,4 @@ class Agent:
 
 
 if __name__ == "__main__":
-    Agent(*sys.argv[1:4]).run()
+    Agent(*sys.argv[1:5]).run()

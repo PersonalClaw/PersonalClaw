@@ -272,10 +272,11 @@ def grant_every_worker(state, loop_id: str) -> None:
 
 def end_unattended_grant(state, loop_id: str) -> None:
     """An Unattended run's trust window ended: none of its workers runs a call unasked any more,
-    its task workers included, and an agent CLI is no longer told to skip its asks. With nobody
-    there to answer, their calls are declined until the owner resumes the loop, which arms each
-    worker afresh (:func:`_arm_posture`). A standing grant of the owner's own (an agent's "Always
-    allow") re-seeds at the worker's next turn, as it does in a chat."""
+    its task workers included, and an agent CLI its owner let approve its own calls no longer does
+    (that rides the run's grant, ``chat_runner``). With nobody there to answer, their calls are
+    declined until the owner resumes the loop, which arms each worker afresh
+    (:func:`_arm_posture`). A standing grant of the owner's own (an agent's "Always allow")
+    re-seeds at the worker's next turn, as it does in a chat."""
     for key in worker_session_keys(state, loop_id):
         worker = state._sessions.get(key)
         if worker is None:
@@ -284,8 +285,6 @@ def end_unattended_grant(state, loop_id: str) -> None:
         worker._trust_reads = False
         worker._trust_from_floor = ""
         worker._agent_floor_seeded = False
-        if getattr(worker, "acp_mode", "") == "bypassPermissions":
-            worker.acp_mode = ""
 
 
 def _context_dir(loop: Loop) -> str:

@@ -915,6 +915,10 @@ async def one_shot_completion(
 ) -> str:
     """Send a single prompt to the system's configured LLM and return the response.
 
+    The answer is text alone: the model is offered no tools, and a model that brings tools of its
+    own (an agent CLI, which the last-resort build below can reach) has every call it asks about
+    refused.
+
     Resolves the provider through the same use-case bridge the chat path uses —
     which reads the active model selection from ``active_models.json`` (Settings →
     Models) — then builds a temporary instance, streams the response, and returns
@@ -1155,6 +1159,16 @@ async def _one_shot_completion(
         except Exception as exc:  # noqa: BLE001 — an answer its reader fails on is unusable
             return f"it could not be read ({type(exc).__name__})"
 
+    async def _ask(provider, text: str, on_complete: Callable[[LLMEvent], None]) -> str:
+        """*text*'s answer from *provider*, in text alone. A one-shot call offers its model no
+        tools: it answers from what its prompt carries, and that prompt can quote text nobody
+        vetted. So a model that brings tools of its own (an agent CLI) has every call it asks
+        about refused, and what such a CLI runs without asking is the residual
+        ``acp.permission_authority`` declares, audited as ``ungated``."""
+        return await stream_and_collect(
+            provider, text, approval_policy=ToolApprovalPolicy.REJECT_ALL, on_complete=on_complete
+        )
+
     async def _run(provider) -> str:
         from personalclaw.guardrails.local_queue import moving_on_to
 
@@ -1162,7 +1176,7 @@ async def _one_shot_completion(
             await provider.start()
             on_complete = recorder(provider, who)
             served = str(getattr(provider, "served_ref", "") or "")
-            text = await stream_and_collect(provider, prompt, on_complete=on_complete)
+            text = await _ask(provider, prompt, on_complete)
             # No text is no answer, on every path: the chain moves on, and a caller with one
             # model sees a failure rather than an empty string it would have to tell apart.
             if not text.strip():
@@ -1179,7 +1193,7 @@ async def _one_shot_completion(
 
             note = correction_note(FailureMode.SCHEMA_VIOLATION)
             retry_prompt = f"{prompt}\n\n{note} What was wrong: {miss}."
-            retry_text = await stream_and_collect(provider, retry_prompt, on_complete=on_complete)
+            retry_text = await _ask(provider, retry_prompt, on_complete)
             if not retry_text.strip():
                 raise EmptyCompletion(served)
             miss = _miss(retry_text)

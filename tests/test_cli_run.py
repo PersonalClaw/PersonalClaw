@@ -291,7 +291,7 @@ def test_ask_mode_denies_an_unclassifiable_tool(monkeypatch):
     assert task_mode_denies("ask", "", "memory_recall", "", "{}") != ""
 
 
-# ── ACP: refuse a posture that cannot be enforced ───────────────────────────────
+# ── An agent CLI: read-only holds for what it asks about, and the posture line says so ────
 
 
 def _bind_provider(monkeypatch, kind: str) -> None:
@@ -301,31 +301,41 @@ def _bind_provider(monkeypatch, kind: str) -> None:
     monkeypatch.setattr("personalclaw.config.loader.resolve_agent_bindings", lambda cfg, name: _B())
 
 
-def test_readonly_run_on_an_acp_agent_is_refused(monkeypatch, capsys):
-    """An ACP runtime never receives the task mode, and an unattended ACP turn runs with
-    permissions bypassed — so the read-only rail cannot hold. Refuse rather than promise."""
-    _bind_provider(monkeypatch, "acp:claude-code")
-    assert cli_run._run_one(_args(prompt="hi")) == 2
-    err = capsys.readouterr().err
-    assert "refusing a read-only headless turn" in err
-    assert "--allow" in err, "the refusal must name the way forward"
-
-
-def test_allow_on_an_acp_agent_proceeds(monkeypatch):
-    """VACUITY 1: the ACP refusal is scoped to the read-only posture, not to ACP."""
-    _bind_provider(monkeypatch, "acp:claude-code")
+def _reach_the_gateway(monkeypatch) -> list[int]:
     reached: list[int] = []
     _a_gateway_of_this_home_runs(monkeypatch, reached)
     monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
     monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
+    return reached
+
+
+def test_a_read_only_run_on_an_agent_cli_runs_and_says_what_holds(monkeypatch, capsys):
+    """Its turn tells the CLI its asking mode, so read-only holds for every call it asks about
+    and the fail-fast ends a wait nobody can answer (``test_an_unattended_agent_cli_turn_asks_
+    before_it_acts``). 🔴 Before: refused outright with exit 2, because the CLI approved its own
+    calls on an unattended turn."""
+    _bind_provider(monkeypatch, "acp:claude-code")
+    reached = _reach_the_gateway(monkeypatch)
+    assert cli_run._run_one(_args(prompt="hi")) == 1
+    assert reached, "a read-only run on an agent CLI was refused before gateway discovery"
+    err = capsys.readouterr().err
+    assert "denies every non-read-only call Claude Code asks about" in err
+    assert "stops the turn if it may have changed something" in err
+
+
+def test_allow_on_an_agent_cli_proceeds(monkeypatch):
+    _bind_provider(monkeypatch, "acp:claude-code")
+    reached = _reach_the_gateway(monkeypatch)
     assert cli_run._run_one(_args(prompt="hi", allow=True)) == 1
-    assert reached, "--allow on an ACP agent was refused before gateway discovery"
+    assert reached, "--allow on an agent CLI was refused before gateway discovery"
 
 
-def test_readonly_run_on_a_native_agent_proceeds(monkeypatch):
-    """VACUITY 2: the refusal keys off the RUNTIME, not off read-only mode."""
+def test_a_native_agents_read_only_line_names_no_cli(monkeypatch):
+    """The CLI clause keys off the RUNTIME, not off read-only mode."""
     _bind_provider(monkeypatch, "native")
-    assert cli_run.acp_readonly_refusal("PersonalClaw") == ""
+    assert cli_run.agent_cli_of("PersonalClaw") == ""
+    _bind_provider(monkeypatch, "acp:claude-code")
+    assert cli_run.agent_cli_of("helper") == "Claude Code"
 
 
 # ── Auth rides the Authorization header, never the URL ───────────────────────────
@@ -436,6 +446,15 @@ def test_collector_marks_a_denied_tool_not_ok():
     c2.feed({"type": "tool_call", "data": {"session": "inbound:cli:x", "tool": "read_file"}})
     c2.feed({"type": "tool_result", "data": {"session": "inbound:cli:x", "output": "contents"}})
     assert c2.tool_calls[0]["ok"] is True
+
+
+def test_collector_marks_an_agent_clis_refused_call_not_ok():
+    """An agent CLI's call refused at the gate ends as the CLI's own failed call: its result
+    frame says ``ok: false`` and carries no refusal text. 🔴 Before: reported ``ok: true``."""
+    c = cli_run._Collector("inbound:cli:x", "json")
+    c.feed({"type": "tool_call", "data": {"session": "inbound:cli:x", "tool": "Write pantry.md"}})
+    c.feed({"type": "tool_result", "data": {"session": "inbound:cli:x", "output": "", "ok": False}})
+    assert c.tool_calls[0]["ok"] is False
 
 
 def test_an_error_frame_makes_the_turn_fail(monkeypatch, capsys):
@@ -558,6 +577,7 @@ def test_a_clean_turn_exits_zero(monkeypatch, capsys):
 def test_the_posture_is_printed_for_both_modes():
     """A read-only default that says nothing is indistinguishable from no posture."""
     assert "read-only" in cli_run.grant_notice("inbound:cli:x", "ask")
+    assert "read-only" in cli_run.grant_notice("inbound:cli:x", "ask", agent_cli="Claude Code")
     assert "WRITE GRANT" in cli_run.grant_notice("inbound:cli:x", "agent")
 
 

@@ -207,10 +207,12 @@ def _meter_agent_turns(provider: Any, axis: str, *, unmetered: bool = False) -> 
         setter("" if unmetered else axis)
 
 
-#: What a request says about who answers the runtime it builds and whose spend that runtime is.
-#: A cached runtime built for other answers is rebuilt rather than reused: a loop's Mode can change
-#: between its runs, and a runtime keeps both from when it was built.
-_POSTURE_KEYS = ("unattended", "unmetered")
+#: What a request says about who answers the runtime it builds, whose spend that runtime is, and
+#: whether its owner let its agent CLI approve its own calls. A cached runtime built for other
+#: answers is rebuilt rather than reused: a loop's Mode can change between its runs, its owner can
+#: take that permission back between two turns, and a runtime keeps all three from when it was
+#: built.
+_POSTURE_KEYS = ("unattended", "unmetered", "self_approval")
 
 
 def _built_posture(asked: dict[str, Any]) -> dict[str, bool]:
@@ -696,11 +698,11 @@ class SessionManager:
                     await provider.set_agent(agent)
                 if model:
                     await provider.set_model(model)
-                # Unattended BEFORE the mode: the session starts attended, and an attended
-                # session's permission gate clamps an auto-approve mode straight back to the
-                # host-authority one, so an unattended loop's mode would silently stay default.
-                if hasattr(provider, "set_unattended"):
-                    provider.set_unattended(bool(extra_factory_kwargs.get("unattended")))
+                # The owner's permission BEFORE the mode: the session opens without it, and the
+                # permission gate clamps a self-approving mode straight back to the host-authority
+                # one, so a loop allowed to approve its own calls would silently stay asking.
+                if hasattr(provider, "set_self_approval"):
+                    provider.set_self_approval(bool(extra_factory_kwargs.get("self_approval")))
                 _mode = str(extra_factory_kwargs.get("acp_mode") or "")
                 if _mode and hasattr(provider, "set_mode"):
                     await provider.set_mode(_mode)

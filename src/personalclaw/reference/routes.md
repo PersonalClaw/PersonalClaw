@@ -468,6 +468,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/loops/{id}` — _(no summary)_
 - `PATCH /api/loops/{id}` — {action: start|pause|resume|stop}.
 - `PUT /api/loops/{id}` — edit a pre-launch spec, or a name-only rename in any
+- `PUT /api/loops/{id}/agent-cli-self-approval` — {allowed: bool} — its CLI approves its calls.
 - `POST /api/loops/{id}/autopilot` — {on: bool} — toggle the execution drive live.
 - `GET /api/loops/{id}/conflict` — the finished task's work that conflicts with your branch.
 - `POST /api/loops/{id}/conflict` — {choice, task_id, tip, confirm: true} — redo or drop that work.

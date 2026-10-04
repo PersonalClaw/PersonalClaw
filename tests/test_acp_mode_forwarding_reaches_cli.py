@@ -82,9 +82,9 @@ def test_codex_host_authority_mode_is_its_most_restrictive():
 
 
 def test_every_mode_the_authority_can_emit_is_a_value_codex_declares():
-    """``sanitize_mode`` emits ``default``/``plan``, or (unattended) any auto-approve
-    alias verbatim. Every one of them must translate into codex's option set — an
-    untranslated value is silently dropped by the adapter, not clamped by it."""
+    """``sanitize_mode`` emits ``default``/``plan``, or (for work its owner let approve its
+    own calls) any auto-approve alias verbatim. Every one of them must translate into codex's
+    option set — an untranslated value is silently dropped by the adapter, not clamped by it."""
     emitted = set(PASSTHROUGH_MODES) | set(AUTO_APPROVE_MODES)
     for mode in sorted(emitted):
         sent = _sent_mode(CodexDialect(), mode)
@@ -134,13 +134,13 @@ def test_the_authority_still_clamps_before_the_dialect_translates():
     """Translation is not a widening path: an auto-approve mode from an ATTENDED
     session is clamped to the authority mode first, so codex gets ``read-only`` —
     the dialect only ever translates what the authority already approved."""
-    decision = sanitize_mode("bypassPermissions", unattended=False)
+    decision = sanitize_mode("bypassPermissions", self_approval=False)
     assert decision.downgraded
     assert _sent_mode(CodexDialect(), decision.mode) == "read-only"
     # The explicit exception is the only route to a widened codex mode.
-    unattended = sanitize_mode("bypassPermissions", unattended=True)
-    assert not unattended.downgraded
-    assert _sent_mode(CodexDialect(), unattended.mode) == "agent-full-access"
+    allowed = sanitize_mode("bypassPermissions", self_approval=True)
+    assert not allowed.downgraded
+    assert _sent_mode(CodexDialect(), allowed.mode) == "agent-full-access"
 
 
 # ── 2. a refusal is never silent ─────────────────────────────────────────────

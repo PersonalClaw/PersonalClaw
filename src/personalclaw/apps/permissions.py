@@ -1130,6 +1130,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     # One route starts, resumes, pauses and stops; an app stops unattended work with the incident.
     "PATCH /api/loops/{id}": OwnerOnly(_STARTS_LOOP),
     "POST /api/loops/{id}/autopilot": OwnerOnly(_STARTS_LOOP),
+    "PUT /api/loops/{id}/agent-cli-self-approval": OwnerOnly(
+        "letting a loop's agent CLI approve its own tool calls instead of asking PersonalClaw"
+    ),
     "POST /api/loops/{id}/merge": OwnerOnly("merging a loop's work into your branch"),
     "POST /api/loops/{id}/conflict": OwnerOnly(
         "redoing or dropping a loop task's work that conflicts"

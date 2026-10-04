@@ -1,10 +1,11 @@
 """Unattended threading (gap 3) + the runtime-agnostic loop breaker (gap 5).
 
-Two mechanisms, one tension. AAP-5 made the host the permission authority, so
-``bypassPermissions`` is clamped to ``default`` at every door. §2.3 needs the exact
-opposite for a genuinely unattended run — and only for one. So every widening test
-here is paired with the INTERACTIVE floor that must stay clamped: that pairing is the
-point, because the way this change could quietly undo AAP-5 is to widen both.
+AAP-5 made the host the permission authority, so ``bypassPermissions`` is clamped to
+``default`` at every door, on an unattended session too: its asks fail fast instead of
+parking on a human. The one widening is work whose owner let its CLI approve its own calls
+(``self_approval``), so every widening test here is paired with the floor that must stay
+clamped: that pairing is the point, because the way this could quietly undo AAP-5 is to
+widen both.
 
 The breaker half is driven the same way the gate tests are: ``run_chat`` over a
 synthetic ACP event stream, not a predicate call. Phase 1's `G6` measured six
@@ -55,38 +56,43 @@ class TestAcpClientModeDoor:
     def test_interactive_session_still_clamps_bypass(self):
         """THE regression that matters: the clamp must survive AAP-6.
 
-        An ordinary interactive session passes no ``unattended``, so the default has
-        to be the safe one. If this ever goes green-to-red, the unattended plumbing
-        has been wired unconditionally and every chat session just became its own
-        permission authority.
+        An ordinary interactive session passes no ``self_approval``, so the default has
+        to be the safe one. If this ever goes green-to-red, the plumbing has been wired
+        unconditionally and every chat session just became its own permission authority.
         """
         c = AcpClient(mode="bypassPermissions", command=["true"])
         assert c._mode == HOST_AUTHORITY_MODE
-        assert c._unattended is False
+        assert c._self_approval is False
 
     def test_interactive_clamps_every_auto_approve_spelling(self):
         for spelling in ("acceptEdits", "accept-edits", "dontAsk", "yolo", "bypassPermissions"):
             assert AcpClient(mode=spelling, command=["true"])._mode == HOST_AUTHORITY_MODE
 
-    def test_unattended_session_keeps_bypass(self):
-        """The explicit path — and the reason gap 3 was a gap."""
+    def test_nobody_watching_is_not_a_permission(self):
+        """An unattended session asks like any other: the fail-fast ends a wait nobody can
+        answer, so being unattended no longer widens the mode."""
         c = AcpClient(mode="bypassPermissions", command=["true"], unattended=True)
-        assert c._mode == "bypassPermissions"
+        assert c._mode == HOST_AUTHORITY_MODE
         assert c._unattended is True
 
-    def test_unattended_does_not_widen_an_unknown_mode(self):
-        """Unattended is not a blanket pass: an unrecognized mode is still clamped.
+    def test_the_owners_choice_keeps_bypass(self):
+        """The one explicit path: work whose owner let its CLI approve its own calls."""
+        c = AcpClient(mode="bypassPermissions", command=["true"], self_approval=True)
+        assert c._mode == "bypassPermissions"
+
+    def test_the_owners_choice_does_not_widen_an_unknown_mode(self):
+        """The choice is not a blanket pass: an unrecognized mode is still clamped.
 
         Only modes we have positively classified as auto-approve are honoured. A
-        never-seen adapter mode could mean anything, so the unattended path inherits
+        never-seen adapter mode could mean anything, so the choice inherits
         sanitize_mode's fail-closed default rather than becoming an escape hatch.
         """
-        c = AcpClient(mode="someModeNobodyHasSeen", command=["true"], unattended=True)
+        c = AcpClient(mode="someModeNobodyHasSeen", command=["true"], self_approval=True)
         assert c._mode == HOST_AUTHORITY_MODE
 
     def test_plan_mode_unaffected_either_way(self):
         assert AcpClient(mode="plan", command=["true"])._mode == "plan"
-        assert AcpClient(mode="plan", command=["true"], unattended=True)._mode == "plan"
+        assert AcpClient(mode="plan", command=["true"], self_approval=True)._mode == "plan"
 
 
 # ── door 2: the POOLED path (a warmed connection, specialized on claim) ──────
@@ -107,48 +113,48 @@ class _FakeSession:
 
 
 class TestPooledModeDoor:
-    """A warmed pool connection is ATTENDED by default, so an unattended claim must
-    declare itself. Both directions asserted, because the ordering (set_unattended
-    before set_mode) is load-bearing and silent when wrong."""
+    """A pooled connection opens without the owner's permission, so a claim for work she let
+    approve its own calls must say so. Both directions asserted, because the ordering
+    (set_self_approval before set_mode) is load-bearing and silent when wrong."""
 
-    def _mk(self, unattended=False):
+    def _mk(self, self_approval=False):
         conn = _FakeConn()
         p = AcpSessionProvider(
-            conn, _FakeSession(), runtime_id="acp:demo-cli", unattended=unattended
+            conn, _FakeSession(), runtime_id="acp:demo-cli", self_approval=self_approval
         )
         p._send_dialect_request = AsyncMock()
         return p, conn
 
     @pytest.mark.asyncio
     async def test_pooled_interactive_still_clamps(self):
-        p, conn = self._mk(unattended=False)
+        p, conn = self._mk(self_approval=False)
         with patch("personalclaw.sel.sel", MagicMock()):
             await p.set_mode("bypassPermissions")
         assert conn._dialect.set_mode_request.call_args.kwargs["mode"] == HOST_AUTHORITY_MODE
 
     @pytest.mark.asyncio
-    async def test_pooled_unattended_forwards_bypass(self):
-        p, conn = self._mk(unattended=True)
+    async def test_pooled_choice_forwards_bypass(self):
+        p, conn = self._mk(self_approval=True)
         await p.set_mode("bypassPermissions")
         assert conn._dialect.set_mode_request.call_args.kwargs["mode"] == "bypassPermissions"
 
     @pytest.mark.asyncio
-    async def test_set_unattended_before_set_mode_is_what_lets_it_through(self):
-        """The claim path calls set_unattended() then set_mode(). Prove the sequence
+    async def test_set_self_approval_before_set_mode_is_what_lets_it_through(self):
+        """The claim path calls set_self_approval() then set_mode(). Prove the sequence
         matters: the same set_mode call clamps or forwards purely on that flag."""
-        p, conn = self._mk(unattended=False)
-        p.set_unattended(True)
+        p, conn = self._mk(self_approval=False)
+        p.set_self_approval(True)
         await p.set_mode("bypassPermissions")
         assert conn._dialect.set_mode_request.call_args.kwargs["mode"] == "bypassPermissions"
 
 
-# ── the bridge kwarg: unattended must STOP being popped for ACP ──────────────
+# ── the bridge kwargs: what reaches the agent CLI's factory ──────────────────
 
 
-class TestBridgeThreadsUnattendedToAcp:
-    """Plan §"Bridge kwargs": ``unattended`` stops being popped for ACP. Asserted on
-    the acp_agent factory — the only consumer on that branch — because that is where
-    a pop would show up as a missing kwarg."""
+class TestBridgeThreadsThePostureToAcp:
+    """``unattended`` and ``self_approval`` reach the acp_agent factory and no model-axis
+    resolver. Asserted on the factory — the only consumer on that branch — because that is
+    where a pop would show up as a missing kwarg."""
 
     def _entry(self):
         from personalclaw.llm.registry import ProviderEntry
@@ -160,12 +166,18 @@ class TestBridgeThreadsUnattendedToAcp:
             options={"command": ["true"]},
         )
 
-    def test_factory_honours_unattended_true(self):
+    def test_factory_honours_the_owners_choice(self):
+        from personalclaw.llm.acp_agent import _factory
+
+        p = _factory(entry=self._entry(), acp_mode="bypassPermissions", self_approval=True)
+        assert p._client._mode == "bypassPermissions"
+
+    def test_factory_of_an_unattended_session_stays_clamped(self):
         from personalclaw.llm.acp_agent import _factory
 
         p = _factory(entry=self._entry(), acp_mode="bypassPermissions", unattended=True)
         assert p._unattended is True
-        assert p._client._mode == "bypassPermissions"
+        assert p._client._mode == HOST_AUTHORITY_MODE
 
     def test_factory_without_the_kwarg_stays_clamped(self):
         """The pre-AAP-6 behaviour, kept as the floor: no flag → the clamp."""
@@ -176,8 +188,8 @@ class TestBridgeThreadsUnattendedToAcp:
         assert p._client._mode == HOST_AUTHORITY_MODE
 
     def test_bridge_injects_for_acp_and_not_for_native(self):
-        """The bridge pops ``unattended`` (the model-axis resolvers must never see it)
-        and re-injects it ONLY on the ACP branch.
+        """The bridge pops ``unattended`` and ``self_approval`` (the model-axis resolvers must
+        never see them) and re-injects them ONLY on the ACP branch.
 
         Updated: the ACP branch now RESOLVES THE NAMED RUNTIME rather than
         falling through to the model axis, so the flag is observed where it is actually
@@ -209,8 +221,10 @@ class TestBridgeThreadsUnattendedToAcp:
                     model_override="Prov/m",
                     provider_kind="acp:demo-cli",
                     unattended=True,
+                    self_approval=True,
                 )
         assert seen.get("unattended") is True
+        assert seen.get("self_approval") is True
         assert seen.get("runtime_id") == "acp:demo-cli"
         assert model_axis_called == [], "an acp: binding must never resolve a MODEL"
 
@@ -224,10 +238,13 @@ class TestBridgeThreadsUnattendedToAcp:
                     agent="a",
                     provider_kind="native",
                     unattended=True,
+                    self_approval=True,
                 )
-        # The native branch takes it as an EXPLICIT argument, never via **kwargs — so
-        # it is present as a real parameter and absent from the forwarded kwargs.
+        # The native branch takes `unattended` as an EXPLICIT argument, never via **kwargs — so
+        # it is present as a real parameter. It has no CLI to let approve its own calls, so the
+        # choice never reaches it.
         assert seen.get("unattended") is True
+        assert "self_approval" not in seen
 
 
 # ── translate: the failure bit the breaker needs (was dropped entirely) ──────
@@ -546,18 +563,20 @@ class TestUnattendedClassification:
         kw = state.sessions.get_or_create.call_args.kwargs
         assert kw["unattended"] is False
         assert kw["acp_mode"] is None
+        assert kw["self_approval"] is False
 
     @pytest.mark.asyncio
-    async def test_cron_session_is_unattended_and_gets_bypass(self, tmp_path):
-        """§2.3's "unify so cron/scheduled runs get it too, not just loops". Before
-        this, only loop/manager.py set the mode, so a cron ACP turn ran in the
-        prompting mode AND parked on a human who was asleep."""
+    async def test_cron_session_is_unattended_and_still_asks(self, tmp_path):
+        """A scheduled ACP turn is unattended by its key, so its asks fail fast instead of
+        parking on a human who is asleep. Nobody watching is not a permission: its CLI is
+        told no mode that skips its asks, even holding a grant."""
         state, client = _make_state(tmp_path)
         _set_stream(client, [LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")])
-        await _drive(state, _session("cron:nightly"))
+        await _drive(state, _session("cron:nightly", trust=True))
         kw = state.sessions.get_or_create.call_args.kwargs
         assert kw["unattended"] is True
-        assert kw["acp_mode"] == "bypassPermissions"
+        assert kw["acp_mode"] is None
+        assert kw["self_approval"] is False
 
     @pytest.mark.asyncio
     async def test_loop_worker_session_still_works_the_old_way(self, tmp_path):
@@ -571,12 +590,12 @@ class TestUnattendedClassification:
         assert state.sessions.get_or_create.call_args.kwargs["unattended"] is True
 
     @pytest.mark.asyncio
-    async def test_explicit_session_mode_is_not_overridden(self, tmp_path):
-        """An explicitly-set session mode wins; the default only fills a blank."""
+    async def test_plan_task_mode_is_forwarded_on_an_unattended_turn(self, tmp_path):
+        """Plan is behavioral, not an approval bypass, so it reaches the CLI on any turn."""
         state, client = _make_state(tmp_path)
         _set_stream(client, [LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")])
         s = _session("cron:nightly")
-        s.acp_mode = "plan"
+        s._task_mode = "plan"
         await _drive(state, s)
         assert state.sessions.get_or_create.call_args.kwargs["acp_mode"] == "plan"
 

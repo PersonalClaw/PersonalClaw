@@ -11,9 +11,10 @@ by :func:`frame`, so none of them can run looser than the Mode its loop was star
   unattended work does not count it. The scheduler merges a task's work into the workspace only
   once its owner approves the merge (``kinds.sdlc``).
 * **Unattended** — nobody is there to ask, so the session runs on a standing grant: its calls go
-  ahead inside the deny-list, the hooks and the operator ceiling. Its cycle message says no person
-  is there to reply, and its spend counts against the daily cap. The scheduler merges each finished
-  task's work by itself.
+  ahead inside the deny-list, the hooks and the operator ceiling, on an agent CLI too, whose calls
+  are asked about like any other session's unless the owner let this loop's CLI approve its own
+  (``agent_cli_self_approval``). Its cycle message says no person is there to reply, and its spend
+  counts against the daily cap. The scheduler merges each finished task's work by itself.
 
 A Mode that cannot be read — no loop, or an ``attended`` that is neither ``True`` nor ``False`` —
 is the cautious reading of both halves: its sessions ask a person, and their spend still counts
@@ -106,7 +107,9 @@ def arm(session: Any, posture: Posture, *, granted: bool = False) -> None:
     agent's own standing grants re-seed at the session's next turn
     (``chat_runner._apply_approval_floor``).
 
-    An agent CLI is told the mode that stops it asking only when nobody is there to ask.
+    An agent CLI asks about its calls under either Mode. The chat runner tells it the mode that
+    stops it asking only for an Unattended loop whose owner let its CLI approve its own calls, read
+    at each turn (``agent_cli_self_approval``).
     """
     unattended = not posture.asks
     session._unattended = unattended
@@ -115,8 +118,6 @@ def arm(session: Any, posture: Posture, *, granted: bool = False) -> None:
     session._trust_from_floor = ""
     session._agent_floor_seeded = False
     session._spend_metered = posture.metered
-    if getattr(session, "acp_provider", ""):
-        session.acp_mode = "bypassPermissions" if unattended else ""
 
 
 def runs_on_its_loops_grant(session: Any) -> bool:

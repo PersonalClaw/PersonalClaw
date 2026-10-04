@@ -124,6 +124,7 @@ class AcpClient:
         mode: str | None = None,
         reasoning_effort: str | None = None,
         unattended: bool = False,
+        self_approval: bool = False,
         session_meta: dict | None = None,
     ):
         from personalclaw.acp.dialect import DefaultDialect
@@ -147,20 +148,21 @@ class AcpClient:
         resolved_work_dir = Path(work_dir) if work_dir else workspace_root()
         self._model = model or DEFAULT_MODEL
         self._agent = agent
-        # Unattended run (§2.3 gap 3): set BEFORE the mode clamp below, which reads it.
-        # This is the single input that widens the mode gate, so it defaults False —
-        # an interactive session, or any caller that forgets to say otherwise, keeps
-        # The clamp. It is paired with host-side fail-fast in chat_runner: the two
-        # ship together on purpose, because forwarding ``bypassPermissions`` to a CLI
-        # whose prompts could still park on a human is the wedge, not a fix for it.
+        # Unattended run (§2.3 gap 3): nobody can answer this agent's own questions, so it is
+        # not told at ``initialize`` that it may ask them (:meth:`_owner_answers`). Its tool
+        # calls still ask the host, whose unattended fail-fast refuses, with its reason, what no
+        # grant answers.
         self._unattended: bool = bool(unattended)
+        # The owner let this work's CLI approve its own calls (``agent_cli_self_approval``):
+        # the single input that widens the mode gate below, so it is set before it and defaults
+        # False — a session, or any caller that does not say otherwise, keeps the clamp.
+        self._self_approval: bool = bool(self_approval)
         # The host is the permission authority: never hand the CLI a mode
         # that lets it self-approve, and assert the restrictive mode positively
         # instead of inheriting "whatever the CLI defaults to". Clamped HERE — the
         # one chokepoint every mode path crosses (factory kwarg, bundle entry
-        # option, per-session override, loop/planning worker) — so no caller can
-        # forget it. An unattended session is the explicit exception and is the
-        # ONLY way through.
+        # option, an agent's own mode) — so no caller can forget it. Work its owner
+        # let approve its own calls is the explicit exception and the ONLY way through.
         self._mode: str = self._authority_mode(mode)
         self._reasoning_effort: str = reasoning_effort or ""
         self._sandbox_mode = sandbox_mode
@@ -451,24 +453,23 @@ class AcpClient:
         off ``session/request_permission``. A downgrade is AUDITED, never silent, so
         a caller that thought it had an auto-approve session can see why it did not.
 
-        §2.3: an UNATTENDED session is the one declared exception — it may keep an
-        auto-approve mode, because the host pairs it with fail-fast permission
-        handling so the run resolves deterministically instead of wedging. The grant
-        is audited too (not just the clamp), so an auditor can see WHICH sessions ran
-        with the CLI self-approving and why they were allowed to.
+        The one declared exception is work whose owner let its CLI approve its own calls
+        (``self_approval``, an Unattended loop's choice). That grant is audited too (not
+        just the clamp), so an auditor can see WHICH sessions ran with the CLI
+        self-approving and on whose choice.
         """
         from personalclaw.acp.permission_authority import sanitize_mode
 
-        decision = sanitize_mode(mode, unattended=self._unattended)
+        decision = sanitize_mode(mode, self_approval=self._self_approval)
         if decision.reason and not decision.downgraded and decision.requested:
-            # A widened (not clamped) decision: only the unattended path produces one.
-            logger.info("ACP permission mode allowed unattended: %s", decision.reason)
+            # A widened (not clamped) decision: only the owner's choice produces one.
+            logger.info("ACP permission mode allowed: %s", decision.reason)
             try:
                 from personalclaw.sel import sel
 
                 sel().log_api_access(
                     caller="acp:permission_authority",
-                    operation="mode_change:unattended_auto_approve",
+                    operation="mode_change:self_approval_allowed",
                     outcome="allowed",
                     resources=(
                         f"session={getattr(self, '_session_key', None) or '-'} "
@@ -476,7 +477,7 @@ class AcpClient:
                     ),
                 )
             except Exception:
-                logger.warning("SEL audit failed for unattended ACP mode", exc_info=True)
+                logger.warning("SEL audit failed for a self-approving ACP mode", exc_info=True)
         if decision.downgraded:
             logger.warning("ACP permission mode clamped: %s", decision.reason)
             try:

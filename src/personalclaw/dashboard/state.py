@@ -216,7 +216,6 @@ class _ChatSession(ChatQueue):
         "acp_provider",
         "acp_provider_agent",
         "_acp_meta_binding",
-        "acp_mode",
         "mode",
         "workspace_dir",
         "project_id",
@@ -336,12 +335,6 @@ class _ChatSession(ChatQueue):
         # once consumed, and cleared outright when the user picks a runtime by hand —
         # an explicit choice is not a silent fallback.
         self._acp_meta_binding: str = ""
-        # ACP permission-mode override for this session (Zed dialect: acceptEdits
-        # / bypassPermissions / plan …). Empty = adapter default ("default",
-        # which PROMPTS for writes). Set for unattended goal-loop workers so an
-        # ACP agent (claude-code) actually executes its file writes instead of
-        # avoiding them; the host gate + SEL audit still govern via auto-approve.
-        self.acp_mode: str = ""
         self.mode = mode
         # The session's working directory. Memory is scoped to it. Empty = root.
         self.workspace_dir: str = workspace_dir

@@ -1850,7 +1850,9 @@ class AgentProfile:
             "ACP permission/operating mode for adapters that expose one "
             "(claude-code/codex: default, acceptEdits, plan, dontAsk, "
             "bypassPermissions; set via session/set_config_option). Distinct from "
-            "Approval Mode (the host gate). Empty inherits the adapter default; "
+            "Approval Mode (the host gate). A mode that lets the CLI approve its own "
+            "calls is sent as default instead, except on an Unattended loop whose owner "
+            "let its CLI approve its own calls. Empty asks the adapter for default; "
             "ignored by runtimes with no separate mode axis (the default dialect).",
         ),
     )

@@ -188,8 +188,8 @@ unattended (see the safety posture below): nobody is there to answer an approval
 
 Exit code is `0` when the turn completed, `1` when it ended with an error, was stopped before
 it finished, the transport failed, or `--allow` could not grant the run's writes (the operator's
-approval ceiling refuses it), and `2` on a refused invocation (blank prompt, or a read-only run
-on an ACP agent). The code follows how the gateway says the turn ended, not the
+approval ceiling refuses it), and `2` on a refused invocation (a blank prompt). The code
+follows how the gateway says the turn ended, not the
 error rows along the way: a transient failure the gateway retried and then finished exits `0`.
 
 ### Safety posture
@@ -211,11 +211,13 @@ it resolves through the `HEADLESS` safety profile by construction.
   turn, saying why.
 * **The posture is always announced on stderr**, for both modes, so stdout stays
   pipeable and a script is self-documenting about what it asked for.
-* **ACP-backed agents are refused in read-only mode** (exit 2). An unattended ACP turn
-  runs with permissions bypassed so the dialect never asks, which means the task-mode
-  gate never sees a tool call and read-only cannot be enforced. Use `--allow` to opt
-  into the full grant you would really be getting, or point `--agent` at a
-  native-runtime agent where read-only *is* enforced.
+* **An agent CLI is held the same way, for the calls it asks about.** The turn tells the
+  CLI the mode in which it asks PersonalClaw first, so in read-only mode each change it asks
+  about is denied before anything could approve it, and a call nothing approves is declined
+  at once, with its reason, since nobody is there to answer it. A call the CLI's own settings
+  let it run without asking is outside that: the run reports it, and stops the turn if it may
+  have changed something, which the posture line says
+  ([limitations §1](../security/limitations.md#1-an-agent-cli-is-held-to-the-rails-only-for-the-calls-it-asks-about)).
 * Spend is attributed to the SpendMeter run scope `cli`, under the `HEADLESS` profile's
   budget (your configured per-day ceiling).
 

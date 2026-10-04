@@ -18,9 +18,9 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import approval_answer, lasting_work
+from personalclaw import agent_cli_self_approval, approval_answer, lasting_work
 from personalclaw.config.loader import AppConfig
-from personalclaw.http_errors import json_error
+from personalclaw.http_errors import consent_required, json_error
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import kinds, manager, store, validation
 from personalclaw.loop.loop import (
@@ -53,12 +53,16 @@ def _as_list(v) -> list:
 
 
 def _loop_view(loop_id: str) -> dict | None:
-    """Detail view plus host-local diagnostics that must never enter persisted state."""
+    """Detail view plus host-local diagnostics that must never enter persisted state, and whether
+    its owner let its agent CLI approve its own calls (``agent_cli_self_approval``)."""
     view = store.get_redacted(loop_id)
-    if view is None or view.get("kind") != "code":
+    if view is None:
         return view
     loop = store.get(loop_id)
     if loop is None:
+        return view
+    view = {**view, "agent_cli_self_approval": agent_cli_self_approval.view(loop)}
+    if view.get("kind") != "code":
         return view
     from personalclaw.loop.kinds.sdlc import command_runnability_view
     from personalclaw.loop.loop import effective_dir
@@ -1419,6 +1423,54 @@ async def api_loop_autopilot(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "autopilot": updated.autopilot})
 
 
+async def api_loop_agent_cli_self_approval(request: web.Request) -> web.Response:
+    """PUT /api/loops/{id}/agent-cli-self-approval {allowed: bool} — its CLI approves its calls.
+
+    Whether this Unattended loop's agent CLI approves its own calls instead of asking PersonalClaw
+    first, ``{"allowed": true, "confirm": true}`` to turn it on. Off for every loop until its owner
+    turns it on. Turning it on is a loosening, so it lands only
+    with her yes (``"confirm": true``; without it the answer is the consent question), and only for
+    a loop that can have it (``agent_cli_self_approval.not_offered``). Turning it off always lands.
+    Either change is audited, and the loop's next turn reads it."""
+    from personalclaw.loop.loop import TERMINAL_STATUSES
+    from personalclaw.safety_flags import confirm_granted
+
+    cid = request.match_info["id"]
+    if not loop_files.valid_loop_id(cid):
+        return json_error("invalid_id", status=400)
+    body = await json_object_body(request)
+    allowed = require_bool(body, "allowed")
+    loop = store.get(cid)
+    if loop is None:
+        return json_error("not_found", status=404)
+    if LoopStatus(loop.status) in TERMINAL_STATUSES:
+        return json_error(
+            "loop_finished",
+            message=f"This loop has ended ({loop.status}), so it runs no more turns to change.",
+            status=409,
+        )
+    if allowed:
+        why_not = agent_cli_self_approval.not_offered(loop)
+        if why_not:
+            return json_error(
+                "loop_agent_cli_self_approval_unavailable", message=why_not, status=409
+            )
+        if not confirm_granted(body):
+            return consent_required(
+                "loop.agent_cli_self_approval",
+                agent_cli_self_approval.consent(loop),
+                title=f"Let {agent_cli_self_approval.cli_name(loop)} approve its own calls?",
+            )
+    agent_cli_self_approval.set_for_loop(loop, allowed, caller=request.get("user", "dashboard"))
+    try:
+        request.app["state"].push_refresh("loops")
+    except Exception:
+        logger.debug("loop self-approval refresh failed", exc_info=True)
+    return web.json_response(
+        {"ok": True, "agent_cli_self_approval": agent_cli_self_approval.view(loop)}
+    )
+
+
 # ── an Attended code loop's merge review ──
 
 
@@ -1889,6 +1941,7 @@ def register_unified_loop_routes(app: web.Application) -> None:
     app.router.add_post("/api/loops/{id}/nudge", api_loop_nudge)
     app.router.add_post("/api/loops/{id}/queue", api_loop_queue)
     app.router.add_post("/api/loops/{id}/autopilot", api_loop_autopilot)
+    app.router.add_put("/api/loops/{id}/agent-cli-self-approval", api_loop_agent_cli_self_approval)
     app.router.add_get("/api/loops/{id}/merge", api_loop_merge_review)
     app.router.add_post("/api/loops/{id}/merge", api_loop_merge)
     app.router.add_get("/api/loops/{id}/conflict", api_loop_conflict_review)

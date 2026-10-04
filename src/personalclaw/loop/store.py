@@ -832,6 +832,10 @@ def delete(loop_id: str) -> bool:
         shutil.rmtree(d, ignore_errors=True)
         # The memory a planner kept while it worked in the folder goes with it.
         drop_partition(str(d))
+    # So does whether its owner let its agent CLI approve its own calls.
+    from personalclaw.agent_cli_self_approval import forget_loop
+
+    forget_loop(loop_id)
     if deleted:
         _announce()
     return deleted

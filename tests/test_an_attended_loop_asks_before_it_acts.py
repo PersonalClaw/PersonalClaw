@@ -127,7 +127,6 @@ def test_an_attended_loops_workers_hold_no_standing_grant():
         worker = state._sessions[key]
         assert worker._trust is False, f"{key} runs every tool without asking"
         assert worker._unattended is False, f"{key} would have its asks declined unasked"
-        assert worker.acp_mode == "", f"{key} hands its agent CLI an ask-nobody mode"
 
 
 def test_an_unattended_loops_workers_run_on_their_grant():
@@ -140,7 +139,6 @@ def test_an_unattended_loops_workers_run_on_their_grant():
         worker = state._sessions[key]
         assert worker._trust is True
         assert worker._unattended is True
-        assert worker.acp_mode == "bypassPermissions"
 
 
 def test_this_loop_reaches_every_worker_and_ends_with_the_run():
@@ -354,7 +352,6 @@ def test_the_end_of_an_unattended_runs_trust_window_reaches_every_worker():
     for key in (manager.session_key(loop.id), skey):
         worker = state._sessions[key]
         assert worker._trust is False, f"{key} still runs every call unasked"
-        assert worker.acp_mode == "", f"{key} still tells its agent CLI to skip its asks"
 
 
 def test_a_worker_waiting_on_its_owners_answer_is_not_failed_as_wedged():

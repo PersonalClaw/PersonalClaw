@@ -371,7 +371,7 @@ agent name. Every field is optional — empty inherits the global default.
 |---|---|---|---|
 | `agents.*.provider` | string | `""` | Runtime backend: `native` (in-process loop) or `acp:<cli>` (external CLI). Empty inherits the global `agent.provider`. |
 | `agents.*.provider_agent` | string | `""` | ACP provider agent name (modeId for `session/set_mode`). |
-| `agents.*.acp_mode` | string | `""` | ACP permission/operating mode for adapters that expose one (e.g. `default`, `acceptEdits`, `plan`, `bypassPermissions`). Distinct from Approval Mode (the host gate). |
+| `agents.*.acp_mode` | string | `""` | ACP permission/operating mode for adapters that expose one (e.g. `default`, `acceptEdits`, `plan`, `bypassPermissions`). Distinct from Approval Mode (the host gate). A mode that lets the CLI approve its own calls is sent as `default` instead, except on an Unattended loop whose owner let its CLI approve its own calls. |
 | `agents.*.default_dir` | string | `""` | Working directory this agent opens in. Empty inherits the workspace root. Overridable per-session. |
 | `agents.*.memory_store` | string | `""` | Memory provider for this agent. Empty uses the filesystem fallback scoped by working directory. |
 | `agents.*.description` | string | `""` | Human-readable agent description. |

@@ -139,7 +139,7 @@ describe('the triage, pinned per site', () => {
     }
   })
 
-  it('the census is reproducible — 28 disabled Toggle sites, not vacuously zero', () => {
+  it('the census is reproducible — 29 disabled Toggle sites, not vacuously zero', () => {
     // If this count drops, a site was converted or deleted; if it climbs, a new one arrived
     // un-triaged. Either way it should be a deliberate line in a PR, not a silent drift.
     const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
@@ -192,7 +192,11 @@ describe('the triage, pinned per site', () => {
     // 🔺 27 → 28: Settings → Inbox gained "Sort new messages", disabled only until the config read
     // that holds its value resolves: the PRECONDITION class, beside the two triage switches, so it
     // names what unlocks it (`cfgUnread`). Reasoned 9 → 10.
-    expect(sites.length).toBe(28)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'ten carry a reason; eighteen stay native').toBe(10)
+    // 🔺 28 → 29: an Unattended loop's page gained "Let <CLI> approve its own calls"
+    // (`pages/loop/LoopSelfApproval.tsx`), the same two classes in one control as "Open at login":
+    // a reason only for the precondition (a loop that cannot have it, `choice.unavailable`) and
+    // native while its own PUT is in flight. Reasoned 10 → 11.
+    expect(sites.length).toBe(29)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'eleven carry a reason; eighteen stay native').toBe(11)
   })
 })

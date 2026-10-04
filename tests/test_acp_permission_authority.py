@@ -74,9 +74,10 @@ class TestSanitizeMode:
         assert d.mode == HOST_AUTHORITY_MODE
         assert d.downgraded
 
-    def test_unattended_is_the_only_declared_escape(self):
-        """§2.3 owns the unattended path; it must be an EXPLICIT opt-in, not a default."""
-        assert sanitize_mode("bypassPermissions", unattended=True).mode == "bypassPermissions"
+    def test_the_owners_choice_is_the_only_declared_escape(self):
+        """Work whose owner let its CLI approve its own calls is the one way through; it must
+        be an EXPLICIT opt-in, not a default."""
+        assert sanitize_mode("bypassPermissions", self_approval=True).mode == "bypassPermissions"
         assert sanitize_mode("bypassPermissions").mode == HOST_AUTHORITY_MODE
 
 
@@ -258,10 +259,10 @@ class TestPooledSessionProviderClampsToo:
         provider = AcpSessionProvider.__new__(AcpSessionProvider)
         provider._conn = MagicMock()
         provider._session = MagicMock(session_id="sess-1")
-        # __init__ is bypassed here, so state it explicitly: these are ATTENDED
-        # sessions. AAP-6 added the unattended axis that set_mode reads, and the
-        # clamp asserted below is precisely what an attended session must keep.
-        provider._unattended = False
+        # __init__ is bypassed here, so state it explicitly: no owner let these sessions'
+        # CLI approve its own calls, the one input set_mode reads to widen, and the clamp
+        # asserted below is precisely what every such session must keep.
+        provider._self_approval = False
         provider._conn._dialect.set_mode_request.side_effect = lambda **kw: kw
         provider._send_dialect_request = AsyncMock()
         return provider

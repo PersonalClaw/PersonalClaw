@@ -904,6 +904,18 @@ from nothing else except a shell command's own text:
   told which servers' reads it was not shown and why: a server whose read-only labels the owner
   has not trusted, named, with where to trust them, and a trusted server's tools that are new or
   changed since, with where she reviews them (`policy.unshown_reads_note`).
+- **An agent CLI is told to ask on every turn, unattended work included**
+  (`acp.permission_authority.sanitize_mode`). The host forwards the CLI's asking mode (`default`,
+  or the CLI's own most restrictive spelling of it), never one that lets it approve its own calls,
+  so each call it asks about meets the task mode, the deny-list and the owner-only screen
+  (`screen_tool_call`), the hooks and, in work nobody watches, the run's bounds, before Trust, YOLO
+  or a run's standing grant can approve it. In work nobody watches a call nothing approves is
+  refused at once, with its reason (`chat_refusals.refuse_unattended`), not left waiting on a
+  person who is not there. The one exception is the owner's choice for one Unattended loop whose
+  agent CLI's unasked calls PersonalClaw declares (`agent_cli_self_approval`: the loop's page, off
+  by default, turned on only with her consent, audited as `loop.agent_cli_self_approval` either
+  way and read at each turn): while the loop's own grant stands, and under the operator ceiling,
+  its CLI is told its self-approving mode, audited as `mode_change:self_approval_allowed`.
 - **A call an ACP CLI ran without asking is said on its own card** (`dashboard/ungated_calls.py`).
   The CLI decides which of its calls ask first, so one its own settings allow runs with no approval
   request and the host learns of it when its result lands. Its card says so, live and after a reload
@@ -994,8 +1006,9 @@ the ceiling did not bound.
   batch's tasks starting on what allowed that batch's start (`approval_grants.BATCH_ALLOWED`: her
   answer to its one ask, or, for a batch that only reads, the grant that starts its chat's
   subagents; an app's batch never starts on a grant of hers, `apps.app_work`),
-  the triage digest's auto-execution, a subagent's announce turn, an app's conversation, an
-  unattended ACP CLI approving its own calls, a session policy that never asks, and the eval
+  the triage digest's auto-execution, a subagent's announce turn, an app's conversation, the
+  agent CLI of an Unattended loop its owner let approve its own calls, a session policy that never
+  asks, and the eval
   runner's allowlist of read-only tools. A channel app that runs a conversation itself (Slack's
   threads) approves a call only on core's answer (`chat_trust.chat_grant`): the decision a chat
   makes for a call put to its gate (an operator's hook pattern, what the call's tool declares,
@@ -1059,9 +1072,10 @@ the ceiling did not bound.
   the host is asked about a call, and a runtime that answers its own asks (the native one, while
   a grant stands) asked about none: a read-only research run's write tools ran. The native
   runtime now asks the spawn's tool grants before its own approval
-  (`NativeAgentRuntime.set_tool_grants`), and an unattended ACP CLI may approve its own calls only
-  when the ceiling leaves the tools unrestricted. What that leaves for an ACP CLI is in
-  [limitations §1](../security/limitations.md#1-acp-agents-under-auto-approve-yolo-rely-on-system-prompt-framing-not-rails).
+  (`NativeAgentRuntime.set_tool_grants`), and the agent CLI of an Unattended loop its owner let
+  approve its own calls does so only while the ceiling leaves the tools unrestricted. What that
+  leaves for an ACP CLI is in
+  [limitations §1](../security/limitations.md#1-an-agent-cli-is-held-to-the-rails-only-for-the-calls-it-asks-about).
 - **A workflow stage is a leaf to its own tools on every runtime.** A stage runs with its lineage
   and posture — its run, its depth, whether it may write (`engine.leaf_spawn_env`) — and
   `mcp_shared.leaf_tool_denial` refuses an orchestration tool to every leaf and holds a research
@@ -1355,7 +1369,12 @@ and skill refinement, a Slack thread's title — each answer in text from what t
 and that prompt quotes chats, pages and messages nobody vetted. Each is one call of its own to a
 model on the Background chain (`chores.run_chore`, over `llm_helpers.one_shot_completion`): the
 model is built for the call, sent the chore's own prompt, masked, and nothing of any other chore,
-and it is offered no tools. No session is kept for them, so what one chat's chore reads never
+and it is offered no tools. An agent CLI brings tools of its own, and a home whose one provider is
+an agent CLI has its chores answered there: every call the CLI asks about is refused
+(`llm_helpers.one_shot_completion`), so what a chore's prompt quotes cannot get such a call run,
+and what the CLI runs without asking is the residual
+[limitations §1](../security/limitations.md#1-an-agent-cli-is-held-to-the-rails-only-for-the-calls-it-asks-about)
+describes. No session is kept for them, so what one chat's chore reads never
 reaches another's: the chores used to share one long-lived session whose conversation carried
 every chore of every chat, and a consolidation stored words read there as the user's own facts.
 `tests/test_session_acquisition_census.py` fails a chore that takes a session. The one-shot
@@ -1452,9 +1471,10 @@ Config-driven YOLO is read back from `agent.yolo` while it is on, by `is_yolo_ac
 `yolo_from_config()` alike, so a channel asked "is YOLO permanent?" gets the config's answer, not
 a cached one.
 Dashboard and channel apps delegate to it — there is deliberately no second
-implementation. Task-mode tool-gating postures are hard-enforced at the
-permission prompt for the native runtime; ACP agents under YOLO rely on
-system-prompt framing (a documented tradeoff — `task_modes.py`).
+implementation. Task-mode tool-gating postures are hard-enforced before approval
+for the native runtime, and for every call an agent CLI asks about, YOLO or not;
+what an agent CLI runs without asking reaches it only as framing (a documented
+tradeoff — [limitations §1](../security/limitations.md#1-an-agent-cli-is-held-to-the-rails-only-for-the-calls-it-asks-about)).
 
 ## Audit — the Security Event Log (`sel.py`)
 

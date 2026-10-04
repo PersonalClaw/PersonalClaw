@@ -374,14 +374,21 @@ is judged unattended: for these checks that is the cautious reading.
   automation's and are metered as before.
 - **Unattended.** Nobody is there to ask, so the sessions run on a standing grant: their calls go
   ahead without asking, inside the deny-list, your hooks and the operator ceiling, and a call the
-  grant cannot cover is declined at once rather than left waiting. An agent CLI is told the mode
-  that stops it asking. Each cycle message is framed as an autonomous run (`autonomous_framing`).
+  grant cannot cover is declined at once rather than left waiting. An agent CLI is told its asking
+  mode, as under the other Mode, so each call it asks about meets those rules before the grant
+  answers it. It is told the mode that stops it asking only where you let this loop's CLI approve
+  its own calls (`agent_cli_self_approval`: the switch beside "Runs on" on the loop's page,
+  `PUT /api/loops/{id}/agent-cli-self-approval`, off by default, turned on only with your consent,
+  audited either way, read at each turn, and offered only for a CLI whose unasked calls
+  PersonalClaw declares), and only while the run's grant stands. Each cycle message is framed as an
+  autonomous run (`autonomous_framing`).
   A running loop's grant lasts `loops.trust_ttl_secs` from the start of the running stretch; then
   every worker loses it (`manager.end_unattended_grant`) and the loop waits for you (`needs_input`)
   to resume it. A stray question is discarded. Its spend counts against the daily cap.
 
-A cached runtime is rebuilt when who answers its session or whose spend it is changes
-(`session._posture_moved`), since a runtime keeps both from when it was built.
+A cached runtime is rebuilt when who answers its session, whose spend it is, or whether its agent
+CLI may approve its own calls changes (`session._posture_moved`), since a runtime keeps all three
+from when it was built.
 
 A loop session's model call rides the guard every automated call does (`ModelCallGuard`: the
 breaker, the clock, the attempt audit and the outbound scan), whatever the loop's Mode; only an

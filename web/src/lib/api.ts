@@ -6924,6 +6924,18 @@ export interface LoopPhase {
  *  Present on the loop DETAIL only (`GET /api/loops/{id}`) — never on the list, and never on the
  *  SSE snapshot, so a consumer must not store it inside the loop entity it re-derives from a
  *  snapshot or it will vanish on the first lifecycle event. */
+/** Whether an Unattended loop's agent CLI approves its own calls instead of asking PersonalClaw
+ *  first (`agent_cli_self_approval.view`): off until its owner turns it on, and offered only for
+ *  an Unattended loop on an agent CLI whose unasked calls PersonalClaw has measured. */
+export interface LoopAgentCliSelfApproval {
+  allowed: boolean
+  available: boolean
+  /** Why it can't be turned on for this loop, in a sentence; '' when it can. */
+  unavailable: string
+  /** The agent CLI's name, '' for a loop on PersonalClaw's own agent. */
+  cli: string
+}
+
 export interface LoopSpend {
   dollars_est: number
   turns: number
@@ -6960,6 +6972,8 @@ export interface Loop {
   agent: string; model: string; provider?: string; provider_agent?: string; reasoning_effort?: string
   skill_ids?: string[]; workflow_ids?: string[]
   workspace_dir?: string; attended: boolean; autopilot?: boolean
+  /** Detail-only: whether its agent CLI approves its own calls. Absent on the list. */
+  agent_cli_self_approval?: LoopAgentCliSelfApproval
   // The loop's own server-local file dir — where brief/findings live and doc
   // deliverables (REPORT.md/MONITOR_LOG.md) land when no workspace is bound. The
   // cockpit roots its file tree + terminal here for no-workspace loops.
@@ -9206,6 +9220,11 @@ export const api = {
     post<{ ok: boolean; queued_task_ids: string[] }>(`/api/loops/${encodeURIComponent(id)}/queue`, { task_ids: taskIds, action }),
   uLoopAutopilot: (id: string, on: boolean) =>
     post<{ ok: boolean; autopilot: boolean }>(`/api/loops/${encodeURIComponent(id)}/autopilot`, { on }),
+  /** Let an Unattended loop's agent CLI approve its own calls, or take that back. Turning it on is
+   *  asked of the owner in the gateway's own words first (`withSecurityConsent`); off never asks. */
+  setLoopAgentCliSelfApproval: (id: string, allowed: boolean) =>
+    withSecurityConsent((c) => put<{ ok: boolean; agent_cli_self_approval: LoopAgentCliSelfApproval }>(
+      `/api/loops/${encodeURIComponent(id)}/agent-cli-self-approval`, c ? { allowed, confirm: true } : { allowed })),
   /** The finished work an Attended code loop waits for you to merge, for review. */
   uLoopMergeReview: (id: string) => get<LoopMergeReview>(`/api/loops/${encodeURIComponent(id)}/merge`),
   /** Approve merging the reviewed work, each task at the commit the review showed; the loop resumes. */

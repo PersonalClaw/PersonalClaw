@@ -1385,6 +1385,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "loop_conflict_moved": (
         "The work changed since you read it, so nothing was redone or dropped. Read it again."
     ),
+    # ── whether a loop's agent CLI approves its own calls (dashboard/handlers/loop_routes.py —
+    #    PUT /api/loops/{id}/agent-cli-self-approval) ──
+    # 409 `loop_agent_cli_self_approval_unavailable`: the loop can't have it (it runs on
+    # PersonalClaw's own agent, it is Attended, or PersonalClaw hasn't measured what its CLI runs
+    # without asking); the message says which. 409 `loop_finished`: the loop has ended, so it runs
+    # no more turns to change. Nothing was changed either way.
+    "loop_agent_cli_self_approval_unavailable": (
+        "This loop's agent CLI can't be let approve its own calls, so nothing was changed."
+    ),
+    "loop_finished": "This loop has ended, so it runs no more turns to change.",
     # ── updating PersonalClaw in place (dashboard/handlers/updates.py — POST /api/update) ──
     # 409: the tool that made PersonalClaw's environment, uv or pip, is the one that installs an
     # update into it, and it is not there. Refused before anything moved; the message names what

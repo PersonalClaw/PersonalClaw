@@ -114,6 +114,11 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("dashboard/handlers/loop_routes.py", "_build_loop_from_body", "autopilot"): True,
     ("dashboard/handlers/loop_routes.py", "_create_ported_kind_as_run", "attended"): "optional",
     ("dashboard/handlers/loop_routes.py", "api_loop_autopilot", "on"): "required",
+    (
+        "dashboard/handlers/loop_routes.py",
+        "api_loop_agent_cli_self_approval",
+        "allowed",
+    ): "required",
     ("dashboard/handlers/mcp.py", "api_mcp_toggle", "enabled"): "required",
     ("dashboard/handlers/mcp.py", "api_mcp_toggle_all", "enabled"): "required",
     ("dashboard/handlers/mcp.py", "api_mcp_toggle_tool", "enabled"): "required",

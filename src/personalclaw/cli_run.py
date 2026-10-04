@@ -38,6 +38,11 @@ Safety posture (fail-CLOSED, and the reason this module exists at all):
   run is refused, saying why, rather than started with a grant that does not hold.
 * Without ``--allow`` the run's chat is not trusted: a tool that declares it only reads runs,
   since a read asks nobody, and a call that would ask is declined.
+* An agent CLI is held the same way: an unattended turn tells it its asking mode, so every call
+  it asks about meets the task mode before anything could approve it, and the unattended
+  fail-fast declines, with its reason, what nothing approves. A call its own settings let it run
+  without asking is outside that, as in any chat on it: the run reports it, and stops the turn
+  when it may have changed something (:func:`grant_notice` says so).
 """
 
 from __future__ import annotations
@@ -214,66 +219,49 @@ def task_mode_for(allow: bool) -> str:
     return "agent" if allow else "ask"
 
 
-def acp_readonly_refusal(agent: str) -> str:
-    """A refusal message when read-only cannot be enforced for ``agent``, else ``""``.
+def agent_cli_of(agent: str) -> str:
+    """The name of the agent CLI ``agent`` runs on, or ``""`` for PersonalClaw's own agent.
 
-    🔴 The read-only rail does NOT hold for an ACP-backed agent, and this refuses rather
-    than pretending otherwise. Three facts compose into the hole:
-
-    1. ``SessionManager.set_task_mode``'s own docstring: "ACP runtimes are gated in the
-       dashboard permission handler instead (they have no such setter)" — so an ACP
-       runtime never receives the task mode.
-    2. That dashboard-side gate (``chat_runner``'s ``task_mode_denies`` call) fires only
-       on an ``EVENT_PERMISSION_REQUEST`` frame.
-    3. An unattended turn — which every ``inbound:cli:`` turn is, by construction —
-       makes ``chat_runner`` set ``acp_mode = "bypassPermissions"``, whose entire purpose
-       is to stop the dialect asking so a background run cannot wedge on a human.
-
-    So the one gate that could enforce read-only on an ACP runtime is the one the
-    unattended posture switches off. Announcing "read-only" and then running an ACP
-    agent with permissions bypassed would be a worse defect than not offering the mode:
-    the operator would have a written promise and no enforcement. Suppressing the bypass
-    instead is not an option — the turn would hang forever waiting for an approval no
-    human is there to give.
-
-    Fail-closed: refuse, and name ``--allow`` as the explicit way to proceed. ``--allow``
-    is honest about what an ACP headless turn actually is (a full grant), so the operator
-    opts into the posture they are really getting instead of inheriting it silently.
+    Read from this home's configuration, the one the gateway resolves the run's agent from. A
+    binding this process cannot read names no CLI: the posture line then says what holds for
+    PersonalClaw's own agent, and the gateway still runs the turn on what the agent is bound to.
     """
     try:
         from personalclaw.config import AppConfig
         from personalclaw.config.loader import resolve_agent_bindings
+        from personalclaw.providers.image_input import agent_label
 
-        cfg = AppConfig.load()
-        kind = getattr(resolve_agent_bindings(cfg, agent or None), "provider", "") or ""
-    except Exception:  # noqa: BLE001 — an unresolvable binding is not this gate's call
+        kind = getattr(resolve_agent_bindings(AppConfig.load(), agent or None), "provider", "")
+    except Exception:  # noqa: BLE001 — an unreadable binding names no CLI
         return ""
-    if not kind.startswith("acp"):
-        return ""
-    return (
-        f"personalclaw run: refusing a read-only headless turn on ACP-backed agent "
-        f"{agent or '(default)'} (runtime {kind!r}).\n"
-        f"  WHY: an unattended ACP turn runs with permissions bypassed, so the task-mode "
-        f"gate that enforces read-only never sees a tool call. The rail cannot hold, and "
-        f"announcing it anyway would be a promise with no enforcement.\n"
-        f"  FIX: pass --allow to run with an explicit full grant, or --agent <name> to "
-        f"pick a native-runtime agent, where read-only IS enforced before approval."
-    )
+    kind = str(kind or "")
+    return agent_label(kind) if kind.startswith("acp") else ""
 
 
-def grant_notice(session_key: str, task_mode: str) -> str:
+def grant_notice(session_key: str, task_mode: str, *, agent_cli: str = "") -> str:
     """The stderr posture line. Printed for BOTH modes, not only for ``--allow``.
 
     §9.5 asks for the write grant to be printed "so scripts are self-documenting".
     Printing only the grant would make the read-only default the silent case — the one
     a reader cannot distinguish from "no posture was applied at all". Announcing both
     means the absence of this line is itself a signal.
+
+    *agent_cli* names the agent CLI the run's agent runs on (:func:`agent_cli_of`), whose
+    read-only holds for the calls it asks about: a call its own settings let it run without
+    asking is reported, and stops the turn when it may have changed something.
     """
     if task_mode == "agent":
         return (
             f"personalclaw run: WRITE GRANT active (--allow) — session {session_key} runs "
             f"with full tool access under the headless safety profile, and trusts its own "
             f"calls, since nobody is there to approve them."
+        )
+    if agent_cli:
+        return (
+            f"personalclaw run: read-only — session {session_key} denies every non-read-only "
+            f"call {agent_cli} asks about; a call its own settings let it run without asking "
+            f"is reported, and stops the turn if it may have changed something. Pass --allow "
+            f"to grant writes."
         )
     return (
         f"personalclaw run: read-only — session {session_key} denies every non-read-only "
@@ -372,11 +360,13 @@ class _Collector:
                 {"name": str(data.get("tool", "")), "ok": True, "kind": str(data.get("kind", ""))}
             )
         elif kind == "tool_result":
-            # A denied tool is reported as a tool_result carrying the deny reason; mark
-            # the matching call not-ok so `tool_calls[].ok` is a measured field rather
-            # than a constant True (which would make the json doc's `ok` decorative).
+            # A denied tool is reported as a tool_result carrying the deny reason, and a call
+            # that failed (an agent CLI's call refused at the gate among them) as one saying
+            # `ok: false`; mark the matching call not-ok so `tool_calls[].ok` is a measured
+            # field rather than a constant True (which would make the json doc's `ok` decorative).
             out = str(data.get("output", ""))
-            if self.tool_calls and ("mode —" in out or "denied" in out.lower()):
+            failed = data.get("ok") is False
+            if self.tool_calls and (failed or "mode —" in out or "denied" in out.lower()):
                 self.tool_calls[-1]["ok"] = False
         elif kind == "chat_message" and str(data.get("role", "")) == "error":
             self.errors.append(str(data.get("content", "")))
@@ -509,12 +499,8 @@ def _run_one(args) -> int:
 
     session_key = session_key_for(getattr(args, "session", "") or "")
     task_mode = task_mode_for(bool(getattr(args, "allow", False)))
-    if task_mode == "ask":
-        refusal = acp_readonly_refusal(getattr(args, "agent", "") or "")
-        if refusal:
-            print(refusal, file=sys.stderr)
-            return 2
-    print(grant_notice(session_key, task_mode), file=sys.stderr, flush=True)
+    agent_cli = agent_cli_of(getattr(args, "agent", "") or "") if task_mode == "ask" else ""
+    print(grant_notice(session_key, task_mode, agent_cli=agent_cli), file=sys.stderr, flush=True)
 
     transient: subprocess.Popen | None = None
     started = time.monotonic()

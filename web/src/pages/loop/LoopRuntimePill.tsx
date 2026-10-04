@@ -7,7 +7,9 @@ import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { PillButton, cleanAgentHint } from '../../ui/composer/controls'
 import { useRuntimeGroups, type RuntimeGroup } from '../../lib/agents'
+import type { LoopAgentCliSelfApproval } from '../../lib/api'
 import { providerMeta } from '../agents/agentMeta'
+import { LoopSelfApproval } from './LoopSelfApproval'
 import { ON_PERSONALCLAW, notReadyWhy, runtimeOf, runtimeOfAgent, sameRuntime, showRuntime, type LoopRuntime } from './loopRuntime'
 
 /** "Runs on" — what a loop's planner and workers run on: PersonalClaw, or an agent CLI set up here
@@ -118,13 +120,21 @@ export function RunsOnChip({ shown, onClick, expanded }: {
 }
 
 /** What *loop* runs on, on its own page: a picker until it launches (`onChange`, when given), the
- *  runtime's name after — and, either way, marked when that runtime can't run it now. */
+ *  runtime's name after — and, either way, marked when that runtime can't run it now. Beside it,
+ *  for an Unattended loop on an agent CLI, whether that CLI asks PersonalClaw about its calls
+ *  (`LoopSelfApproval`). */
 export function LoopRunsOn({ loop, onChange }: {
-  loop: { provider?: string; provider_agent?: string }
+  loop: {
+    id?: string; attended?: boolean; provider?: string; provider_agent?: string
+    agent_cli_self_approval?: LoopAgentCliSelfApproval
+  }
   onChange?: (rt: LoopRuntime) => void
 }) {
   const { groups, loaded } = useRuntimeGroups()
   const value = runtimeOf(loop)
-  if (onChange) return <LoopRuntimePill chip value={value} onChange={onChange} />
-  return <RunsOnChip shown={showRuntime(value, loaded ? groups : undefined)} />
+  const runsOn = onChange
+    ? <LoopRuntimePill chip value={value} onChange={onChange} />
+    : <RunsOnChip shown={showRuntime(value, loaded ? groups : undefined)} />
+  if (!loop.id) return runsOn
+  return <>{runsOn}<LoopSelfApproval loop={{ ...loop, id: loop.id, attended: loop.attended !== false }} /></>
 }
