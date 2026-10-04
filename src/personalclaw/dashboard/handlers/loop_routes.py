@@ -18,7 +18,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import approval_answer
+from personalclaw import approval_answer, lasting_work
 from personalclaw.config.loader import AppConfig
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
@@ -1494,6 +1494,9 @@ async def api_loop_merge(request: web.Request) -> web.Response:
     approve = getattr(strat, "approve_merge", None)
     if approve is None:
         return json_error("loop_merge_not_waiting", status=409)
+    # The approval resumes the loop (`manager.start`), so work that may not set a loop going is
+    # refused before the approval is written.
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.START)
     approve(cid, now)
     loop_files.clear_question(cid)
     try:
@@ -1584,6 +1587,9 @@ async def api_loop_conflict(request: web.Request) -> web.Response:
         return json_error(
             "service_unavailable", message="The loop scheduler is not running.", status=503
         )
+    # The choice resumes the loop (`manager.start`), so work that may not set a loop going is
+    # refused before the choice changes anything.
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.START)
     outcome = await conflicts.choose(svc, loop, task_id, tip.strip(), choice)
     if outcome.code == "loop_conflict_moved":
         return json_error("loop_conflict_moved", status=409)

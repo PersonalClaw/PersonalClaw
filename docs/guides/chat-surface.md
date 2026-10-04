@@ -157,6 +157,15 @@ under Subagents in the chat's Activity panel by their step names. An ask still w
 PersonalClaw restarts is asked again, or, if its window passed meanwhile, the chat is told the
 batch never started.
 
+### Loops and automations from a private chat
+
+In a **Temporary** or **Incognito** chat the agent sets up no work that lasts after the chat: it
+creates, starts or steers no loop or project, creates or changes no automation or scheduled task,
+and registers no callback. Each of those is kept after the chat and works on by itself, on a model
+of its own, so what you said there would leave the chat. The agent tells you so, and you can set it
+up from an ordinary chat, or on the Loops or Triggers page. A workflow the agent starts from such a
+chat keeps the chat's mode and runs on its model.
+
 ## 5. Find in the conversation
 
 **Where:** `⌘F` (`Ctrl+F` on Windows/Linux) with a chat open.

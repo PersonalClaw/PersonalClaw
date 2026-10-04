@@ -586,7 +586,11 @@ Data leaving the running system:
   it before its transcript is written, and a mode nothing can say is taken as a
   Temporary chat's), except what the person gives the chat in a form its model
   cannot read (an
-  attached file, a shared screen), which the model set up for it reads. Whether
+  attached file, a shared screen), which the model set up for it reads. Its work
+  leaves nothing behind that lasts after it and runs as work of its own, on its
+  own model: no loop or project is made, started or steered for it, no
+  automation, scheduled task or lifecycle trigger made or changed, no callback
+  registered (`lasting_work.py`). Whether
   work may read memory at all is one answer, `memory_reads.reach_of`: a
   Temporary chat's work reads none (its subagents, theirs, and the steps of a run
   it started included), and neither does an app's (a conversation it started, an

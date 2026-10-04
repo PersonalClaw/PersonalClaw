@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from personalclaw import lasting_work
 from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.owner_grants import GrantBook
 
@@ -127,7 +128,11 @@ def register(callback_id: str, context_summary: str) -> Callback:
     """Save *callback_id* with *context_summary*, replacing an earlier registration of it.
 
     What the chat's ``hook_register`` does. It gives nothing: a new callback is not allowed to run,
-    and one re-registered with other context no longer matches the yes it had (`allowed`)."""
+    and one re-registered with other context no longer matches the yes it had (`allowed`).
+
+    Refused, before anything is written, for the work of an Incognito or Temporary chat: the
+    context would be kept after the chat and start a turn of its own (`lasting_work`)."""
+    lasting_work.refuse(lasting_work.CALLBACK, lasting_work.CREATE)
     with _locked():
         callbacks = _read()
         callback = Callback(

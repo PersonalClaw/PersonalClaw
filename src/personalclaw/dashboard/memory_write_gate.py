@@ -7,7 +7,9 @@ request makes for an Incognito or Temporary session, whichever handler makes it,
 refusal as the API always has: 403 ``Memory writes are not allowed in this session mode.``, with a
 security-log row. Such a session's request also runs on the one model its work stays on
 (``memory_writes.as_work_of``): the model its turn named, so a subagent its agent starts here runs
-on it, and nothing the request does reaches another.
+on it, and nothing the request does reaches another. Nor does it leave work behind that lasts after
+the chat (:mod:`personalclaw.lasting_work`: a loop, an automation, a callback): that refusal is
+answered ``403 restricted_session``, in its own words.
 
 The scope also names the app whose work the request is: the app whose own token made it, or the
 one whose conversation, agent, agent run or scheduled job the session names
@@ -35,7 +37,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import approval_answer, memory_reads, memory_writes
+from personalclaw import approval_answer, lasting_work, memory_reads, memory_writes
 from personalclaw.http_errors import json_error
 from personalclaw.sel import sel
 
@@ -100,6 +102,10 @@ def memory_write_middleware() -> Any:
                     error=refused.what,
                 )
                 return web.json_response({"error": refused.reason}, status=403)
+            except lasting_work.Refused as refused:
+                # Audited where it was refused. The code is `lasting_work.CODE`, written out for
+                # the wire-code registry's rail.
+                return json_error("restricted_session", message=str(refused), status=403)
 
     _mw._is_memory_write_gate = True  # type: ignore[attr-defined]
     return _mw

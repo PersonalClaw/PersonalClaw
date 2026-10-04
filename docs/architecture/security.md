@@ -1392,7 +1392,11 @@ runs). The work it starts away from its turn (a subagent, its own subagents, the
 steps of a run it started) is handed that model with its mode and runs on it,
 after a restart too, and a start that cannot is refused before anything is sent.
 A side question asked beside it reads its conversation and runs as its own work,
-as a turn does (`memory_writes.as_its_session`), held to the same answer.
+as a turn does (`memory_writes.as_its_session`), held to the same answer. Nor
+does its work leave anything behind that lasts after it and runs as work of its
+own: a loop or project, an automation or scheduled task, a callback
+(`lasting_work.py`, refused where the loop store, the loop manager, the trigger
+tools and the callback store are reached, before anything is written).
 Every one of these reads a session's mode through one reader
 (`memory_writes.session_mode`): the live chat first, then the registry, the
 transcript and a workflow step's run. So work a chat starts on its first turn,

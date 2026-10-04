@@ -980,14 +980,34 @@ class NativeBuiltinToolProvider(ToolProvider):
         )
 
     # ── SDLC: create/launch a Code project or Goal Loop from chat (sdlc_tools.py) ──
+    def _p_project_run_create(self, a: dict) -> ToolResult | None:
+        """What ``project_run_create`` refuses first (:meth:`preflight`): a loop made for the work
+        of an Incognito or Temporary chat."""
+        from personalclaw.agents.native import sdlc_tools
+        from personalclaw.lasting_work import CREATE
+
+        return sdlc_tools.refused(CREATE)
+
     async def _t_project_run_create(self, a: dict) -> ToolResult:
         from personalclaw.agents.native import sdlc_tools
 
+        if (refused := self._p_project_run_create(a)) is not None:
+            return refused
         return await sdlc_tools.project_create(a)
+
+    def _p_project_run_start(self, a: dict) -> ToolResult | None:
+        """What ``project_run_start`` refuses first (:meth:`preflight`): a loop started for the work
+        of an Incognito or Temporary chat."""
+        from personalclaw.agents.native import sdlc_tools
+        from personalclaw.lasting_work import START
+
+        return sdlc_tools.refused(START)
 
     async def _t_project_run_start(self, a: dict) -> ToolResult:
         from personalclaw.agents.native import sdlc_tools
 
+        if (refused := self._p_project_run_start(a)) is not None:
+            return refused
         return await sdlc_tools.project_start(a)
 
     async def _t_project_run_status(self, a: dict) -> ToolResult:

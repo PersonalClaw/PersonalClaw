@@ -260,6 +260,28 @@ chat, channel thread, loop worker, webhook, subagent).
     mode its caller holds) or made in its work runs on the chat's own model only
     in the chat's own turn, once the turn has named it, and is refused
     (`OtherModelRefused`) anywhere else, before anything is sent.
+  - Nothing of a restricted session is left behind in work that lasts after it
+    (`lasting_work.py`). A loop or project, an automation or scheduled task (a
+    lifecycle trigger among them) and a callback are kept after the chat and run
+    later as a session of their own, on their own model, which keeps what it
+    does: nothing in the loop engine or the trigger store reads a chat's mode. So
+    work that derives from such a session (`writes_refused`) makes none of them,
+    hands none its words and sets no loop going. Each is refused at the one place
+    every door to it reaches, before anything is written: a new loop
+    (`loop.store.create`), a start, a resume or a steer (`loop.manager.start`,
+    `nudge`; a merge or conflict answer resumes its loop, so it is refused before
+    the answer is written), a new or changed automation (`triggers.tools.create`,
+    `update`, and `hooks.ScriptHookStore` for a lifecycle trigger) and a callback
+    (`webhook_callbacks.register`). The doors are the native agent's
+    `project_run_*`, automation and `hook_register` tools, the same tools in the
+    tool server an agent CLI runs, the tool route (`POST /api/tools/invoke`) and
+    the loop and trigger routes. A tool says so before anyone is asked to allow
+    the call and a route answers `403 restricted_session`, each in a sentence
+    that says why and to do it from an ordinary chat, with an audit row.
+    Reading such work, pausing, stopping or deleting it, switching an automation
+    off or back on, and running one now (a run held as the chat's own work) are
+    unchanged, and a workflow run the chat starts keeps its mode and its model as
+    above, a General loop started through the loop door included.
 - **`chat_traces.py` / `dashboard/chat_forget.py` — what a chat keeps on disk,
   and forgetting it.** A chat leaves its transcript, its working folder
   (`sessions/<key>/`), its turn checkpoints and the files attached to it

@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from personalclaw import lasting_work
 from personalclaw.atomic_write import atomic_json_write
 from personalclaw.loop import files
 from personalclaw.loop.loop import (
@@ -279,7 +280,11 @@ def _loop_to_params(loop: Loop) -> dict[str, Any]:
 
 
 def create(loop: Loop) -> Loop:
-    """Insert a new loop (assigning an id + created_at if unset). Validates kind."""
+    """Insert a new loop (assigning an id + created_at if unset). Validates kind.
+
+    Refused, before anything is written, for the work of an Incognito or Temporary chat: a loop is
+    kept after the chat and works on by itself (:mod:`personalclaw.lasting_work`)."""
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.CREATE)
     if loop.kind not in KINDS:
         raise ValueError(f"unknown loop kind: {loop.kind!r}")
     if not loop.id:

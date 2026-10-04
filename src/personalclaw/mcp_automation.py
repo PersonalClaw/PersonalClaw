@@ -23,6 +23,7 @@ import json
 import logging
 from typing import Any
 
+from personalclaw import lasting_work
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.tool_providers.base import tool_failure
 
@@ -471,6 +472,17 @@ def _resolve_resume_target(args: dict[str, Any]) -> tuple[dict[str, Any] | None,
     return {"run_id": raw}, ""
 
 
+#: The tools that make an automation or change one, which the work of an Incognito or Temporary
+#: chat may not do (:mod:`personalclaw.lasting_work`): `triggers.tools` refuses it, and these say
+#: so before anyone is asked to allow the call (:func:`_preflight`).
+_LASTING_ACTS = {
+    "automation_create": lasting_work.CREATE,
+    "set_onetime_task": lasting_work.CREATE,
+    "set_recurring_task": lasting_work.CREATE,
+    "automation_update": lasting_work.CHANGE,
+}
+
+
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     from personalclaw.triggers import tools as T
 
@@ -585,10 +597,25 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
     """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
-    call, and arguments the tool's schema refuses (``mcp_shared.preflight_refusal``)."""
+    call, and arguments the tool's schema refuses (``mcp_shared.preflight_refusal``), then an
+    automation made or changed for the work of an Incognito or Temporary chat
+    (:data:`_LASTING_ACTS`)."""
     from personalclaw.mcp_shared import preflight_refusal
 
-    return preflight_refusal(name, raw_args, _validate_args)
+    refused = preflight_refusal(name, raw_args, _validate_args)
+    if refused is not None or name not in _LASTING_ACTS:
+        return refused
+    why = lasting_work.refusal(lasting_work.AUTOMATION, _LASTING_ACTS[name])
+    return tool_failure(why, code=lasting_work.CODE) if why else None
+
+
+def _answered(name: str, args: dict[str, Any]) -> str:
+    """A call, its refusal by `triggers.tools` included: an automation made or changed for the work
+    of an Incognito or Temporary chat is answered as the tool's error, in the refusal's words."""
+    try:
+        return _call_tool_inner(name, args)
+    except lasting_work.Refused as refused:
+        return tool_failure(str(refused), code=lasting_work.CODE)
 
 
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
@@ -598,7 +625,7 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
         name,
         raw_args,
         _validate_args,
-        _call_tool_inner,
+        _answered,
         session_key="mcp_automation",
         downstream_service="personalclaw-automation",
     )

@@ -37,7 +37,7 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import gateway_base
+from personalclaw import gateway_base, lasting_work
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.safety_flags import yes_or_no
@@ -1291,7 +1291,8 @@ def _read_attachment(args: dict[str, Any]) -> bytes | tuple[str, ToolFailure]:
 def _preflight(name: str, raw_args: dict[str, Any]) -> ToolFailure | None:
     """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
     call and arguments the tool's schema refuses (``mcp_shared.admitted_arguments``), then for a
-    message or a file for the owner what its send refuses, asked without sending anything."""
+    message or a file for the owner what its send refuses, asked without sending anything, and a
+    callback registered for the work of an Incognito or Temporary chat (``lasting_work``)."""
     from personalclaw.mcp_shared import admitted_arguments
 
     args = admitted_arguments(name, raw_args, _validate_args)
@@ -1302,6 +1303,9 @@ def _preflight(name: str, raw_args: dict[str, Any]) -> ToolFailure | None:
     if name == "notify_attachment":
         read = _read_attachment(args)
         return read[1] if isinstance(read, tuple) else None
+    if name == "hook_register":
+        why = lasting_work.refusal(lasting_work.CALLBACK, lasting_work.CREATE)
+        return tool_failure(why, code=lasting_work.CODE) if why else None
     return None
 
 
@@ -1473,8 +1477,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # triggers (`hook_id="hooks"`) or was dropped at the store's next save. Registered NOT
         # allowed to run: the turn a callback starts runs with the agent's tools from the context
         # saved here, so it waits for the owner's Allow on the Triggers page, like a trigger the
-        # chat makes (`triggers.grants`).
-        callback = webhook_callbacks.register(hook_id, context_summary)
+        # chat makes (`triggers.grants`). Refused for the work of an Incognito or Temporary chat,
+        # whose context would be kept and start a turn of its own (`lasting_work`).
+        try:
+            callback = webhook_callbacks.register(hook_id, context_summary)
+        except lasting_work.Refused as kept_nothing:
+            return tool_failure(str(kept_nothing), code=lasting_work.CODE)
         waiting = not webhook_callbacks.allowed(callback)
         # Resolve webhook URL. A refusal from the base owner is returned as the tool's
         # result: a hook URL naming the wrong port is worse than no hook URL, because the

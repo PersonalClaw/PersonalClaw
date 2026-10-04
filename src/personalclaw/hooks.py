@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
-from personalclaw import record_files
+from personalclaw import lasting_work, record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.audit_subject import log_title
 from personalclaw.safety_flags import strict_bool
@@ -1259,6 +1259,10 @@ class ScriptHookStore:
         return self._hooks.get(hook_id)
 
     def create(self, data: dict) -> ScriptHook:
+        """Save a new lifecycle trigger. Refused, before anything is written, for the work of an
+        Incognito or Temporary chat: it is kept after the chat and runs later as work of its own
+        (`lasting_work`)."""
+        lasting_work.refuse(lasting_work.AUTOMATION, lasting_work.CREATE)
         self._take_in()
         hook = ScriptHook.from_dict(data)
         if not hook.id:
@@ -1268,6 +1272,9 @@ class ScriptHookStore:
         return hook
 
     def update(self, hook_id: str, data: dict) -> ScriptHook | None:
+        """Change a lifecycle trigger. Refused, before anything is written, for the work of an
+        Incognito or Temporary chat, as :meth:`create` is."""
+        lasting_work.refuse(lasting_work.AUTOMATION, lasting_work.CHANGE)
         self._take_in()
         hook = self._hooks.get(hook_id)
         if not hook:

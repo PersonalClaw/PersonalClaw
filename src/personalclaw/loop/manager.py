@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 
+from personalclaw import lasting_work
 from personalclaw.config.loader import AppConfig
 from personalclaw.declined_calls import named, said, under
 from personalclaw.loop import files as loop_files
@@ -358,7 +359,11 @@ async def start(state, svc, loop_id: str) -> Loop:
     """Start (or resume) a loop: write the brief, arm the worker session, grant
     per-session trust, and arm the autonudge loop. Used for both ``start`` and
     ``resume`` — both transition to RUNNING + (re)arm on a fresh/idempotent worker.
+
+    Refused, before anything is written, for the work of an Incognito or Temporary chat: the
+    worker runs as a session of its own, on its own model (:mod:`personalclaw.lasting_work`).
     """
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.START)
     loop = store.get(loop_id)
     if loop is None:
         raise KeyError(loop_id)
@@ -719,7 +724,12 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
     the shared guidance.txt is also written so a sequential main worker picks it up
     — UNLESS that would leak a per-task steer into a re-armed main worker's channel
     in parallel mode (then only the per-task file gets it). Answering a project-
-    level NEEDS_INPUT question always writes the shared channel (the resume reads it)."""
+    level NEEDS_INPUT question always writes the shared channel (the resume reads it).
+
+    Refused, before anything is written, for the work of an Incognito or Temporary chat: the
+    words would go into work that is kept and runs on its own model
+    (:mod:`personalclaw.lasting_work`)."""
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.STEER)
     loop = store.get(loop_id)
     if loop is None:
         return None

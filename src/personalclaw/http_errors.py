@@ -214,6 +214,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "This call carries the gateway's internal credential and names no work it is for: no "
         "chat, scheduled job or app in X-Session-Key. Nothing it asked for was done."
     ),
+    # ── work done for an Incognito or Temporary chat (lasting_work.py, and the workflow routes'
+    # restricted_calls.py) — the message says why and where the change can be made instead ──
+    "restricted_session": (
+        "This change cannot be made for an Incognito or Temporary chat, or for one whose memory "
+        "setting cannot be read; the message says why and where it can be made."
+    ),
     # ── a lifetime asked of the token endpoint (dashboard/handlers/core.py) — the limit is
     # 90 days, and the message is the sentence that says so ──
     "token_ttl_invalid": "The requested lifetime is not a duration like 30m, 20h or 7d.",

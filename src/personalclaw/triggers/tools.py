@@ -36,6 +36,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw import lasting_work
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.security import redact_for_display, redact_values_for_display
 from personalclaw.triggers.standing import last_check, standing
@@ -890,12 +891,17 @@ def create(
     PersonalClaw was stopped or the computer slept waits on the Triggers page for the owner to run
     or dismiss; on, it runs once by itself when PersonalClaw is back, recorded as late. Only a
     schedule has times to miss, so it is refused for any other kind rather than kept and ignored.
+
+    Refused first, before anything is read into a schedule or saved, for the work of an Incognito
+    or Temporary chat: an automation is kept after the chat and runs later as work of its own
+    (:mod:`personalclaw.lasting_work`, raised as its ``Refused`` for each door to answer).
     """
     from personalclaw.triggers import grants
     from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.models import Trigger
     from personalclaw.triggers.nl_kind import route
 
+    lasting_work.refuse(lasting_work.AUTOMATION, lasting_work.CREATE)
     if not (name or "").strip():
         return AutomationToolResult(False, "Error: name is required.")
     words = (say or "").strip()
@@ -1345,7 +1351,12 @@ def update(
     can loosen is refused outright (`posture_refusal`). Measured on `main`: an agent re-pointing an
     owner's `notify` schedule at `bash` left it switched on, and an agent rewriting a granted `bash`
     command left it switched on and running the new command on the old grant.
+
+    Refused first, for the work of an Incognito or Temporary chat: what it would put into the
+    automation is kept after the chat and runs later as work of its own
+    (:mod:`personalclaw.lasting_work`).
     """
+    lasting_work.refuse(lasting_work.AUTOMATION, lasting_work.CHANGE)
     row = store.get(trigger_id)
     if row is None:
         return AutomationToolResult(False, f"Error: no automation with id {trigger_id!r}.")
