@@ -22,8 +22,7 @@ export function NoToolsPause({ question, why, onResume, busy = false, className 
 }) {
   return (
     <div role="status" data-type="body-s"
-      className={cx('flex flex-col items-start gap-xs rounded-lg px-m py-s', className)}
-      style={{ background: 'color-mix(in srgb, var(--color-warn) 12%, transparent)' }}>
+      className={cx('flex flex-col items-start gap-xs rounded-lg bg-warn/10 px-m py-s', className)}>
       <p className="inline-flex items-center gap-xs" style={withWeight({ color: 'var(--color-warn)' }, 550)}>
         <CirclePause size={14} /> Paused: its model can’t use tools
       </p>
