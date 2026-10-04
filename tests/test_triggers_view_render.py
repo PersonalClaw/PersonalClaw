@@ -57,7 +57,9 @@ def state():
             self._background_tasks: set[asyncio.Task] = set()
             self.fired: list[tuple[str, str]] = []
 
-        async def fire_trigger(self, trigger, payload, *, event="trigger.fired", context=""):
+        async def fire_trigger(
+            self, trigger, payload, *, event="trigger.fired", context="", source=""
+        ):
             self.fired.append((trigger.id, event))
 
     return _State()
@@ -189,7 +191,7 @@ def test_the_render_returns_WITHOUT_awaiting_the_dispatch(home, state):
 
     started = asyncio.Event()
 
-    async def _never_finishes(trigger, payload, *, event="trigger.fired", context=""):
+    async def _never_finishes(trigger, payload, *, event="trigger.fired", context="", source=""):
         started.set()
         await asyncio.Event().wait()  # blocks forever — an LLM turn the request must not await
 

@@ -61,10 +61,6 @@ _MAX_INDEX_PER_JOB = _MAX_RECORDS_PER_JOB
 #: A row that already says how it went is never rewritten.
 UNSETTLED_STATUSES: frozenset[str] = frozenset({"launched", "queued"})
 
-#: What a row's typed exit (`ScheduleRun.trigger`) is for a run by hand: a settle keeps it, so the
-#: hourly cap and the failure count go on passing over that run (`triggers.run_record`).
-_BY_HAND = "manual"
-
 #: Endings that arrived before the row they settle, by `(history dir, job id, work id)`. A fire's
 #: row is written after its action returns, while the agent it started goes on by itself, so an
 #: agent refused at once can end first; the append then writes the row as it ended. Bounded: an
@@ -91,10 +87,15 @@ class ScheduleRun:
     # and by this once the trigger has left the list: a one-shot retires after its run, and a
     # deleted trigger keeps its history.
     job_name: str = ""
-    # "manual" for a run by hand. A fire's row carries its typed exit (`autopause.ExitType`, what
-    # the failure count reads) or, for a fire that did not run its action, its outcome; a
-    # `launched` or `queued` row takes the exit its work ended with when it settles.
+    # The run's typed exit (`autopause.ExitType`, what the failure count reads) or, for a run that
+    # did not run its action, its outcome; a `launched` or `queued` row takes the exit its work
+    # ended with when it settles. A row written before exits were typed reads `scheduled`.
     trigger: str = "scheduled"
+    # What started the run (`triggers.run_source`): you, the automation's own clock, an event, a
+    # program's webhook, …, or an agent, an app, another automation or a program asking for it.
+    # The hourly cap and the failure count pass over a run that is yours, and only that one. A row
+    # written before rows said this reads "", which is not yours.
+    source: str = ""
     started_at: float = 0.0
     finished_at: float = 0.0
     duration_ms: int = 0
@@ -135,6 +136,7 @@ class ScheduleRun:
             "job_id": self.job_id,
             "job_name": self.job_name,
             "trigger": self.trigger,
+            "source": self.source,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "duration_ms": self.duration_ms,
@@ -154,6 +156,7 @@ class ScheduleRun:
             job_id=str(d.get("job_id", "")),
             job_name=str(d.get("job_name", "")),
             trigger=str(d.get("trigger", "scheduled")),
+            source=str(d.get("source", "") or ""),
             started_at=float(d.get("started_at", 0.0) or 0.0),
             finished_at=float(d.get("finished_at", 0.0) or 0.0),
             duration_ms=int(d.get("duration_ms", 0) or 0),
@@ -278,8 +281,9 @@ def _redact_stored(text: str | None) -> str:
 
 def _settle_row(row: dict[str, Any], ending: dict[str, Any], *, with_trace: bool) -> None:
     """Write an ending (`ScheduleRunStore.settle_sync`) onto a stored row, in place: its status,
-    what it said, when it finished, and the exit it ended with, which a run by hand's row does not
-    take (:func:`_exit_after`). The index's rows carry no trace, and are given none."""
+    what it said, when it finished, and the exit it ended with (:func:`_exit_after`). What started
+    the run stays as it was, so a run of yours stays yours whatever its work did. The index's rows
+    carry no trace, and are given none."""
     started = float(row.get("started_at") or 0.0)
     finished = max(started, float(ending["finished_at"]))
     row.update(
@@ -295,11 +299,8 @@ def _settle_row(row: dict[str, Any], ending: dict[str, Any], *, with_trace: bool
 
 
 def _exit_after(tag: str, ending: dict[str, Any]) -> str:
-    """A settled row's typed exit: the one its work ended with, and ``manual`` for a run by hand,
-    which stays a hand run whatever its work did."""
-    if tag == _BY_HAND or not ending["exit"]:
-        return tag
-    return str(ending["exit"])
+    """A settled row's typed exit: the one its work ended with, or *tag* when it ended with none."""
+    return str(ending["exit"] or tag)
 
 
 def _newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -463,10 +464,10 @@ class ScheduleRunStore:
         naming the work in `work_id`. When the work ends, this writes how on the same row — its
         `status`, what it said or why it failed, when it finished — in the per-job file and the
         cross-job index both, redacted as `append_sync` redacts. *exit_type* is the exit the work
-        ended with, which becomes the row's typed exit (`ScheduleRun.trigger`) unless the run was
-        one by hand: the fire's own exit said only that the work started, and the failure count
-        reads this one. Only a row that has not settled changes: an ending that arrives twice
-        changes nothing the second time.
+        ended with, which becomes the row's typed exit (`ScheduleRun.trigger`): the fire's own exit
+        said only that the work started, and the failure streak reads this one. What started the
+        run (`ScheduleRun.source`) stays as it was. Only a row that has not settled changes: an
+        ending that arrives twice changes nothing the second time.
 
         Returns whether the ending was taken: written now, or held until its row is written (the
         work ended before its fire recorded the run, see `_EARLY_ENDINGS`). False when there is
@@ -511,7 +512,7 @@ class ScheduleRunStore:
         """The row of *job_id* that has not settled about *work_id* yet, or None.
 
         What a run cut off before its work ended needs to know of that run: whose it was (its
-        ``trigger`` tag says whether it was a run by hand), when it started, and its id.
+        ``source`` says whether it was yours), when it started, and its id.
         """
         if not job_id or not work_id:
             return None
@@ -550,7 +551,8 @@ class ScheduleRunStore:
 
         return await asyncio.to_thread(self._list_for_job_sync, job_id, offset, limit)
 
-    def _count_since_sync(self, job_id: str, since: float, *, manual: bool) -> int:
+    def _count_since_sync(self, job_id: str, since: float) -> int:
+        from personalclaw.triggers import run_source
         from personalclaw.triggers.models import INERT_OUTCOMES
 
         rows = self._read_jsonl(self._job_path(job_id))
@@ -562,11 +564,12 @@ class ScheduleRunStore:
                 continue
             if started < since:
                 continue
-            # A MANUAL fire is excluded by default. §3.6 is explicit that "manual fires bypass the
-            # hourly cap" — the cap exists to stop the machine running away on its own, and a person
-            # clicking Run is not the machine running away. Counting their clicks toward the cap
-            # would let a user lock themselves out of their own automation.
-            if not manual and str(row.get("trigger") or "") == "manual":
+            # A run of YOURS is not counted (§3.6, "manual fires bypass the hourly cap"): the cap
+            # exists to stop the machine running away on its own, and you pressing Run is not the
+            # machine running away. Counting your runs would let you lock yourself out of your own
+            # automation. Only yours: a run an agent, an app or a program asked for is the
+            # automation firing for someone nobody answers, and it counts as its clock's fires do.
+            if run_source.yours(run_source.of_row(row)):
                 continue
             # 🔴 A SUPPRESSION IS NOT A FIRE. Since suppressed fires began persisting their
             # typed row here (§7 crit 8's "zero silent drops"), this window would otherwise count
@@ -586,8 +589,8 @@ class ScheduleRunStore:
             total += 1
         return total
 
-    async def count_since(self, job_id: str, since: float, *, manual: bool = False) -> int:
-        """How many runs this job recorded at or after `since` (a UTC epoch).
+    async def count_since(self, job_id: str, since: float) -> int:
+        """How many runs this job recorded at or after `since` (a UTC epoch), yours left out.
 
         🔴 THE WINDOWED QUERY three rate caps were waiting on (S152). `rate_cap`,
         `max_runs_per_hour` and `max_actions_per_hour` were all validated, carried, and enforced by
@@ -605,7 +608,7 @@ class ScheduleRunStore:
         """
         import asyncio
 
-        return await asyncio.to_thread(self._count_since_sync, job_id, since, manual=manual)
+        return await asyncio.to_thread(self._count_since_sync, job_id, since)
 
     def _list_all_sync(
         self, offset: int, limit: int, job_id: str | None

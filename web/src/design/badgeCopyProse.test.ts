@@ -58,8 +58,10 @@ function badgeTokens(): { file: string; token: string; uppercased: boolean }[] {
  *  proposal pill no longer renders the bare `kind` value at all. It renders "Refine", plus the
  *  stumble that produced the proposal ("Refine · you corrected it") — so there is no lowercase
  *  machine token on screen for the exemption to describe. This rail's own honesty check is what
- *  noticed; that is the check doing its job, so the entry was removed rather than the check. */
-const EXEMPT = new Set(['esc', 'manual', 'suppressed', 'multi-instance', 'span', 'div'])
+ *  noticed; that is the check doing its job, so the entry was removed rather than the check.
+ *  `manual` left the same way: a run's pill in the run history says what started it, in the words
+ *  of `runSourceMeta`, and no longer renders the backend's tag. */
+const EXEMPT = new Set(['esc', 'suppressed', 'multi-instance', 'span', 'div'])
 
 /** The three concepts whose prose spelling already ships. */
 const CONVERGED: [string, string][] = [

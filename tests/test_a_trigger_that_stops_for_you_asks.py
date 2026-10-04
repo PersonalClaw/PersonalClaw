@@ -430,7 +430,7 @@ def _fire(trigger: Trigger, result: ActionResult) -> None:
 
     from personalclaw.triggers.run_record import record_run
 
-    asyncio.run(record_run(trigger, started_at=time.time(), result=result))
+    asyncio.run(record_run(trigger, started_at=time.time(), result=result, source="schedule"))
 
 
 def _parked_result(home: Path, trigger: Trigger) -> ActionResult:

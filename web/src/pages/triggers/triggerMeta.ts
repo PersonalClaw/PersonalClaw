@@ -251,6 +251,9 @@ export interface Trigger {
    *  same thing the backend dispatch seams hold. */
   actionProvider?: ActionProviderName
   lastRunTs: number | null
+  /** What started its newest run, as that run's row says (`triggers.run_source`): you, what fires
+   *  it on its own, or who asked for it. Absent for a kind that keeps no run history. */
+  lastRunSource?: string | null
   /** 🔴 THE RUN-OUTCOME vocabulary ONLY — `Outcome` / the run store's `status` / a hook's
    *  `last_status`. NEVER a `TriggerHealth` value: this field and `health` speak two different
    *  languages and the one dot that renders them collapsed them into each other (issue 496).
@@ -348,6 +351,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     actionIcon: provider ? actionIcon(provider) : mm.icon,
     actionProvider: provider ? dispatchedProvider(provider) : undefined,
     lastRunTs: j.last_run_ts ?? null,
+    lastRunSource: j.last_run_source ?? null,
     // Honest last-run status (T7): the newest run record's status — it persists across restarts and
     // carries launched/failure/timeout. The wire's `last_status` is NOT a second source for this
     // field: it is `health_status` under an alias (`schedule_view.py`), a different vocabulary, and
@@ -440,6 +444,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     // `last_run_ts`. `run_count` alone cannot answer "has it run": it is the FIRE meter, which a Run
     // button deliberately does not spend, so a manual trigger read "never" beside its recorded runs.
     lastRunTs: t.last_run_ts ?? null, runStatus: t.last_run_status ?? null,
+    lastRunSource: t.last_run_source ?? null,
     health: t.health || null, state: t.state || null, lastError: t.last_error || null,
     hasRun: (t.run_count ?? 0) > 0 || t.last_run_ts != null,
     runCount: t.run_count ?? null, usedBy: [],

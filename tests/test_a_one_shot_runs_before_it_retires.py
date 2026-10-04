@@ -509,10 +509,17 @@ def test_every_one_shot_reaches_its_action_at_its_time(made, home, monkeypatch):
 # ── a restart between its time and its run ───────────────────────────────────────────────────
 
 
+@web.middleware
+async def _as_owner(request: web.Request, handler):
+    """You, signed in: the review answers only you."""
+    request["user"] = "owner"
+    return await handler(request)
+
+
 def _review_client() -> TestClient:
     import personalclaw.dashboard.handlers.triggers as handlers
 
-    app = web.Application()
+    app = web.Application(middlewares=[_as_owner])
     app["state"] = MagicMock()
     handlers.register_trigger_routes(app)
     return TestClient(TestServer(app))

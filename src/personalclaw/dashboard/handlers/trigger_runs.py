@@ -8,19 +8,20 @@ Every one of these makes a trigger's action happen NOW: the owner's Run button (
 caller, the answer to a question a run stopped on, a render surface refreshing its ``view``
 triggers, a lifecycle hook's rehearsal, and opening a schedule's last result as a chat.
 
-Two kinds of run, two paths:
+Two kinds of run, two paths, told apart by who asked (`triggers.run_source`):
 
-* **A fire**, the automation firing on its own: a webhook's request and a view's refresh. Nobody
-  asked for that run by name, and nobody answers what it runs. Each is admitted as the clock's and
-  an event's fires are (`service.admit_fire`) and runs through the dispatch every fire runs
-  through, the gateway's (`DashboardState.fire_trigger`), so it keeps every rule a fire keeps and
-  its history records it as a fire.
-* **A run by hand**, one someone asked for: Run now (the owner's, or an agent's tool or an app
-  asking for it), the answer to a question a run stopped on, and the restart review's Run now in
-  ``triggers``. These go through ONE dispatch, :func:`_dispatch_store_action`, which checks the
-  trigger's grant, holds a run nobody answers to the action denylist as a trigger's own fire is
-  held to it, and records the run through the recorder a fire uses
-  (:func:`personalclaw.triggers.run_record.record_run`, as a run by hand).
+* **A run of yours**, the one run by hand: your Run now (in PersonalClaw, or ``personalclaw cron
+  trigger`` typed at a terminal), your answer to a question a run stopped on, and the restart
+  review's Run now in ``triggers``. You are there and you answer what it runs. These go through
+  ONE dispatch, :func:`_dispatch_store_action`, which checks the trigger's grant and records the
+  run through the recorder a fire uses (:func:`personalclaw.triggers.run_record.record_run`), as
+  yours: the one run the hourly cap and the failure streak pass over.
+* **A fire**, every other: a webhook's request, a view's refresh, and a Run now someone other than
+  you asked for (an agent's tool or its shell, an app, another automation's own work, a program
+  on this machine). Nobody answers what it runs. Each is admitted as the clock's and an event's
+  fires are (`service.admit_fire`) and runs through the dispatch every fire runs through, the
+  gateway's (`DashboardState.fire_trigger`), so it keeps every rule a fire keeps, its history
+  records it as a fire with who asked for it, and it counts against the cap and the streak.
 
 Split out of :mod:`personalclaw.dashboard.handlers.triggers`, which keeps the list, create, edit,
 toggle and history routes and registers these beside them. The helpers they share (the store
@@ -47,12 +48,11 @@ logger = logging.getLogger(__name__)
 
 
 async def api_trigger_run(request: web.Request) -> web.Response:
-    """POST /api/triggers/{id}/run — fire now.
+    """POST /api/triggers/{id}/run — run it now.
 
-    Schedule triggers run via the schedule service (non-blocking). This is also
-    the path the ``automation_run`` tool and ``personalclaw cron trigger`` post to with the
-    internal secret, naming the session the call is made in; such a run is held as that session
-    holds its own work (``_dispatch_store_action``'s ``runs_for``).
+    Your Run now, and also the path the ``automation_run`` tool and ``personalclaw cron trigger``
+    post to with the internal secret, naming the work the call is made for: a run of yours runs by
+    hand, and one anyone else asks for fires (``_run_store``).
     Lifecycle triggers have no standalone "run" (they fire on agent events) — use
     the test endpoint instead.
 
@@ -420,26 +420,29 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
 
 
 async def _run_store(raw: str, request: web.Request) -> web.Response:
-    """Fire one store-backed trigger (file/web_watch/idle/…) by hand.
+    """Run one store-backed trigger (file/web_watch/idle/…) now, for whoever asked.
 
-    A `dry_run` reports S92's gate plan (which gates a manual fire enforces vs bypasses) without
-    executing — that reuses `tools.run`, so the API and the chat tool answer identically. A real
-    run dispatches the trigger's declared action through the SAME action-provider registry the
-    live file-watch path (`_fire_file_trigger`) uses, so a Run button and an autonomous fire
+    Who asked decides which run it is (`run_source.of_request`): a run of YOURS (Run now in
+    PersonalClaw, ``personalclaw cron trigger`` typed at a terminal) runs by hand
+    (:func:`_run_yours`), and a run anyone else asks for, an agent, an app, another automation's
+    own work or a program, is the automation firing (:func:`_run_asked`).
+
+    A `dry_run` reports the gate plan of the run the asker would start (S92's: which gates it
+    enforces and which it passes over) without executing — that reuses `tools.run`, so the API and
+    the chat tool answer identically. A real run dispatches the trigger's declared action through
+    the SAME action-provider registry every fire uses, so a Run button and an autonomous fire
     execute the same action the same way.
-
-    Manual runs bypass quiet-hours + duty limits but never the injection screen, capability
-    allowlist, or budget — the boundary `tools.MANUAL_NEVER_BYPASSES` pins. The capability
-    allowlist is enforced here and in `_dispatch_store_action`, which is what makes that true.
     """
 
     from personalclaw.dashboard.handlers.triggers import _redact, _trigger_store
+    from personalclaw.triggers import run_source
     from personalclaw.triggers import tools as T
 
     store = _trigger_store()
     row = store.get(raw)
     if row is None:
         return web.json_response({"error": "not found"}, status=404)
+    by = run_source.of_request(request)
 
     dry_run = request.query.get("dry_run", "") in ("1", "true", "yes")
     if not dry_run:
@@ -447,7 +450,7 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
 
     if dry_run:
         # Reuse tools.run for the gate plan — the API and the chat tool report identically.
-        result = T.run(store, trigger_id=raw, dry_run=True)
+        result = T.run(store, trigger_id=raw, dry_run=True, yours=run_source.yours(by))
         # 🔴 THE RESPONSE IS THE RESULT. A dry run executes nothing, records no run and moves no
         # `last_run_ts`, so this answer is the only place its outcome will ever exist. The Run
         # button used to treat it as a started run and wait for a history row that never came —
@@ -468,27 +471,25 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
             }
         )
 
-    # A real run: mirror tools.run's guards (broken row refused; a PAUSED trigger still runnable by
-    # hand — pausing means "stop firing on your own", and refusing a hand-driven run would remove
-    # the main way a user tests one before re-enabling), then dispatch async-native. tools.run's
-    # own runner seam is sync, so a coroutine runner would be stringified rather than awaited.
     if row.errors:
         return web.json_response(
             {"error": f"{raw} has a parse error and cannot run ({row.errors[0].message})"},
             status=400,
         )
-    # 🔴 The kill switch, on the API's manual path too. This handler dispatches directly rather than
-    # through `tools.run`, so enforcing it only there would leave the Run button in the UI firing
-    # during an incident — the exact surface an operator is most likely to hit. 200, not 4xx: a
-    # guardrail decision is not a malformed request (the rule the event-trigger `/test` follows).
+    # 🔴 The kill switch, on this path too, whoever asked. This handler dispatches directly rather
+    # than through `tools.run`, so enforcing it only there would leave the Run button in the UI
+    # firing during an incident — the exact surface an operator is most likely to hit. 200, not
+    # 4xx: a guardrail decision is not a malformed request (the rule the event-trigger `/test`
+    # follows).
     refusal = T.manual_refusal()
     if refusal:
         return web.json_response({"ok": False, "name": row.trigger.name, "refused": refusal})
-    # 🔴 THE GRANT, for every trigger (`triggers.grants`). This route is not only the owner's Run
-    # button: the chat's `automation_run` and `schedule_trigger` post here too. Measured on `main`:
-    # an enabled `bash` schedule with an empty capability block ran its command from here. The
-    # dispatch refuses the same row, so no caller can forget; asked here as well so the answer is
-    # the refusal, in words that say which grant and how the owner gives it.
+    # 🔴 THE GRANT, for every trigger (`triggers.grants`), whoever asked. This route is not only
+    # the owner's Run button: the chat's `automation_run` and `personalclaw cron trigger` post here
+    # too. Measured on `main`: an enabled `bash` schedule with an empty capability block ran its
+    # command from here. Both dispatches refuse the same row, so no caller can forget; asked here
+    # as well so the answer is the refusal, in words that say which grant and how the owner gives
+    # it.
     from personalclaw.triggers import grants
 
     missing = grants.missing(row.trigger)
@@ -500,32 +501,45 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
                 "refused": grants.refusal(row.trigger, missing),
             }
         )
+    if run_source.yours(by):
+        return await _run_yours(raw, row, request)
+    return await _run_asked(raw, request, by=by)
+
+
+async def _run_yours(raw: str, row: Any, request: web.Request) -> web.Response:
+    """Your Run now: a run by hand, which the hourly cap, spacing, the fire budget and the failure
+    streak pass over.
+
+    A PAUSED trigger still runs (pausing means "stop firing on your own", and refusing a
+    hand-driven run would remove the main way you test one before switching it back on), and so
+    do quiet hours and duty limits pass over it. It never passes over the injection screen, the
+    capability allowlist, the kill switch or a run still going — the boundary
+    `tools.MANUAL_NEVER_BYPASSES` pins. The capability allowlist is enforced in
+    `_run_store` and in `_dispatch_store_action`, which is what makes that true.
+    """
+    from personalclaw.dashboard.handlers.triggers import _last_run_status_for, _trigger_store
+
     # A run already in flight, whoever started it: the claim a tick fire holds, or the one a Run now
     # holds while it runs (`_dispatch_store_action`). This was asked for a clock trigger only, and
     # nothing held a claim for a Run now, so a second click ran the action again beside the first.
     # Read from the CLAIM store — cross-process, unlike the process-local dict it replaced.
     from personalclaw.triggers import claims as _claims
 
-    if _claims.is_running(raw, base_dir=store.base_dir):
+    if _claims.is_running(raw, base_dir=_trigger_store().base_dir):
         return web.json_response({"error": "already running", "running": True}, status=409)
     # 🔴 `ok` REPORTS WHETHER THE ACTION RAN (#395). This answered `ok: True` unconditionally, with
     # the failure carried as prose in `result` — so "no action provider configured" arrived as an
     # HTTP 200 success and every caller that checks a status code or an `ok` flag (the two Run
-    # buttons, `schedule_trigger`, the `automation_run` MCP runner) read a no-op as a completed run.
+    # buttons, the `automation_run` MCP runner) read a no-op as a completed run.
     # Still 200, not 4xx: the request was understood and answered honestly, and a trigger whose
     # action cannot be resolved is not a malformed request — the same rule the kill-switch refusal
-    # above and the event-trigger `/test` already follow.
-    # Whose run it is: yours from the Run button, or the work of the session an agent's tool names
-    # (`approval_answer.of_request`), which the dispatch holds as that session holds its own work.
+    # and the event-trigger `/test` already follow.
     ran, note = await _dispatch_store_action(
         row.trigger,
         {"trigger_id": raw, "manual": True},
         state=request.app["state"],
-        runs_for=approval_answer.of_request(request),
     )
     paused_note = "" if row.trigger.enabled else " (paused — this run does not re-enable it)"
-    from personalclaw.dashboard.handlers.triggers import _last_run_status_for
-
     return web.json_response(
         {
             "ok": ran,
@@ -539,6 +553,165 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
             "status": _last_run_status_for(raw) if ran else "",
         }
     )
+
+
+#: What a run nobody answers says when its automation is not firing now, by the automation's state.
+#: Its owner can still run it by hand from its page.
+_NOT_FIRING: dict[str, str] = {
+    "autopaused": (
+        "This automation paused itself after its runs kept failing, so this request fired "
+        "nothing. Its owner can see why on its page and switch it back on."
+    ),
+    "parked": (
+        "This automation is waiting until what it needs is back, so this request fired nothing. "
+        "It fires again on its own once it is."
+    ),
+    "quarantined": (
+        "This automation is held until its owner looks at the input it refused, so this request "
+        "fired nothing."
+    ),
+}
+_SWITCHED_OFF = (
+    "This automation is switched off, so this request fired nothing. Its owner can switch it on, "
+    "or run it from its page."
+)
+#: A ``manual`` automation, which runs only when its owner runs it.
+_OWNER_RUNS_IT = "This automation runs only when its owner runs it, so this request ran nothing."
+#: A row written on another machine, which runs there.
+_RUNS_ELSEWHERE = (
+    "This automation was written elsewhere and runs there, so this request ran nothing here."
+)
+#: A process that runs no automations.
+_NOT_RUNNING = "This PersonalClaw is not running its automations, so this request fired nothing."
+
+
+def _why_not_firing(trigger: Any) -> str:
+    """Why a run asked for by someone other than you does not fire *trigger* now, or ``""``.
+
+    A fire of an automation that is not firing on its own: switched off, paused by you or by its
+    own failures, parked, quarantined, or one that only you run. A run you ask for runs it anyway,
+    and nobody else's may, or an agent could go on running an automation its failures paused.
+    """
+    from personalclaw.triggers.ownership import is_owner_authored
+
+    if not is_owner_authored(trigger):
+        return _RUNS_ELSEWHERE
+    if trigger.kind == "manual":
+        return _OWNER_RUNS_IT
+    if trigger.fires_automatically:
+        return ""
+    return _NOT_FIRING.get(str(trigger.state or ""), _SWITCHED_OFF)
+
+
+async def _run_asked(raw: str, request: web.Request, *, by: str) -> web.Response:
+    """A Run now someone other than you asked for: the automation FIRING, held to every rule a fire
+    keeps. *by* is who asked (`triggers.run_source`): an agent, an app, another automation's own
+    work or a program.
+
+    Nobody answers what it runs, so it is not a run by hand. It was one: recorded ``manual``, which
+    the hourly cap and the failure streak both pass over, so an agent capped at two runs an hour
+    ran its automation on every call, and one that failed on every call never paused. It ran an
+    automation its failures had paused, and through the attended dispatch, so it read as somebody
+    watching to every check that asks.
+
+    Now it is admitted as the clock's, an event's and a webhook's fires are (`service.admit_fire`:
+    spacing, the hourly cap, quiet hours, duty, the budget, a run still going, what it works with),
+    resolved and admitted one request at a time (`service.request_admission`), and only while the
+    automation fires on its own (:func:`_why_not_firing`). A fire its rules hold answers ``429``
+    (its cap or its spacing) or ``409`` ``fire_held`` in the words every door a fire comes in by
+    answers (`triggers.held`), and its history keeps the typed row. A fire they let through runs
+    through the dispatch every fire runs through (`DashboardState.fire_trigger`), which records it
+    as a fire saying who asked, counts it against the cap and the streak, and judges what it runs
+    as nobody's to answer; the answer says how it went, from the row it wrote.
+    """
+    import time as _time
+
+    from personalclaw.dashboard.handlers.triggers import _redact, _runs_store, _trigger_store
+    from personalclaw.triggers import held
+    from personalclaw.triggers.claims import asked_holder
+    from personalclaw.triggers.service import (
+        admit_fire,
+        request_admission,
+        retire_if_spent,
+        run_admitted,
+    )
+
+    state: DashboardState = request.app["state"]
+    dispatch = state.fire_trigger
+    if dispatch is None:
+        return json_error("service_unavailable", message=_NOT_RUNNING, status=503)
+    store = _trigger_store()
+    async with request_admission():
+        # Read again under the lock, so the admission writes the automation as it is stored now.
+        row = store.get(raw)
+        if row is None:
+            return web.json_response({"error": "not found"}, status=404)
+        trigger = row.trigger
+        why = _why_not_firing(trigger)
+        if why:
+            return json_error("fire_held", message=why, status=409)
+        now = _time.time()
+        admission = await admit_fire(
+            store,
+            trigger,
+            now=now,
+            base_dir=store.base_dir,
+            holder=asked_holder(by, at=now),
+            source=by,
+        )
+        if not admission.allowed:
+            gate = str(getattr(admission.decision, "gate", "") or "")
+            if gate in ("incident", "capability"):
+                # Asked above, in words that say what to do; held here only by a change between.
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "name": trigger.name,
+                        "refused": admission.decision.reason or gate,
+                    }
+                )
+            status, sentence = held.held(gate)
+            return json_error("fire_held", message=sentence, status=status)
+        retire_if_spent(store, trigger)
+    run_id = await run_admitted(
+        dispatch,
+        trigger,
+        {"trigger_id": raw, "asked_by": by},
+        event=f"{by}.run",
+        base_dir=store.base_dir,
+        source=by,
+    )
+    ran, note, recorded = _how_it_went(await _runs_store().get_run(raw, run_id) if run_id else None)
+    return web.json_response(
+        {
+            "ok": ran,
+            "name": _redact(trigger.name),
+            "result": note,
+            "status": recorded if ran else "",
+        }
+    )
+
+
+#: The statuses of a run that did its work, or started it (`schedule_history.ScheduleRun.status`).
+_RAN = frozenset(
+    {"success", "ran_late", "degraded", "skipped_noop", "launched", "queued", "waiting"}
+)
+
+
+def _how_it_went(row: dict[str, Any] | None) -> tuple[bool, str, str]:
+    """What a fire's history *row* says of its run: whether it ran, the line the answer gives, and
+    its status — the words a run of yours answers with (:func:`_dispatch_store_action`)."""
+    if row is None:
+        return False, "the run left no record of how it went", ""
+    status = str(row.get("status") or "")
+    if status == "waiting":
+        return True, str(row.get("summary") or "Waiting for you."), status
+    if status in _RAN:
+        return True, "ran", status
+    why = str(row.get("error") or row.get("summary") or status)
+    if status in ("failure", "timeout"):
+        return False, f"failed: {why}", status
+    return False, why, status
 
 
 async def api_trigger_answer(request: web.Request) -> web.Response:
@@ -604,7 +777,6 @@ async def api_trigger_answer(request: web.Request) -> web.Response:
         event="manual.answer",
         answer=True,
         state=request.app["state"],
-        runs_for=approval_answer.of_request(request),
     )
     return web.json_response(
         {
@@ -627,9 +799,12 @@ async def _dispatch_store_action(
     late: str = "",
     answer: Any = None,
     state: Any = None,
-    runs_for: approval_answer.Principal | None = None,
 ) -> tuple[bool, str]:
-    """Run a store trigger's declared action through the action-provider registry.
+    """Run a store trigger's declared action through the action-provider registry, for YOU: a run
+    of yours by hand (`triggers.run_source.YOU`). Every caller has established that you asked —
+    `_run_store` (`run_source.of_request`), the answer route (`approval_answer`, which only you
+    pass) and the restart review (a route only your sign-in reaches); a run anyone else asks for
+    is a fire, and never comes here (`_run_asked`).
 
     The same path `gateway._fire_file_trigger` uses — a manual Run and an autonomous fire share one
     dispatch so their behaviour cannot drift. Returns `(ran, note)`: whether the action actually
@@ -665,21 +840,15 @@ async def _dispatch_store_action(
     chat channel told that channel nothing. An action that only started its work reports when that
     work ends, as it does for a fire (`delivery.says_nothing_now`).
 
-    🔴 NOTHING RUNS WITHOUT ITS GRANT. Every run by hand reaches its action here — Run now, an
+    🔴 NOTHING RUNS WITHOUT ITS GRANT. Every run of yours reaches its action here — Run now, an
     answer, the restart review's Run now — and none of them walks `service.admit_fire`, where the
     fence lives for a fire. So the grant is checked HERE, the one place they share, and a refusal
     is `(False, <what is missing and how to allow it>)`. Measured on `main` before it was checked
     here: an ungranted `bash` action ran from each of them.
 
-    🔴 A RUN NOBODY ANSWERS IS HELD TO THE ACTION DENYLIST. `runs_for` is whose run it is
-    (`approval_answer.Principal`): you, for a Run now you pressed, your answer to the question a
-    run stopped on, or the restart review's Run now; or the agent or the app whose Run now it is.
-    Every run but yours has nobody answering its action, so it is asked what a trigger's own fire
-    is asked (`guardrails.denylist.enforce_action`) under the identity of whoever it is for
-    (:func:`_judged_as`), and refused before anything runs when the rule says so: among its rules,
-    an action that would stop, restart, update or reinstall the PersonalClaw it runs in. A caller
-    that does not say whose run it is (`None`) is judged as the trigger's own fire, nobody's to
-    answer.
+    You answer what a run of yours runs, as you do your own commands, so it is not asked the action
+    denylist's rules for work nobody answers. A run nobody answers is a fire, which the fire's
+    dispatch asks them of.
     """
     import time
 
@@ -721,10 +890,10 @@ async def _dispatch_store_action(
     # `GET .../history` gained no row and the trigger's last-run stamp never moved, and the UI's
     # completion watcher (`ScheduleDetail`/`StoreTriggerDetail`) waited on a `last_run_ts` that
     # would never change — the "Running…" pill stuck forever. It is recorded by the one recorder a
-    # fire is recorded by (`run_record.record_run`), as a run by hand: tagged `manual`, its stamps
-    # moved, and neither the fire meters (`run_count`, the `max_fires` budget a Run button must not
-    # spend, or a user testing an automation could lock themselves out of it) nor its health. A
-    # run by hand is no event's, so it is handed no account of one (`ActionContext.fire_facts`).
+    # fire is recorded by (`run_record.record_run`), as yours: its stamps moved, and neither the
+    # fire meters (`run_count`, the `max_fires` budget a Run button must not spend, or a user
+    # testing an automation could lock themselves out of it) nor its health. A run of yours is no
+    # event's, so it is handed no account of one (`ActionContext.fire_facts`).
     from personalclaw.triggers import delivery
     from personalclaw.triggers.delivery import status_url
 
@@ -742,19 +911,6 @@ async def _dispatch_store_action(
         secret_references=trigger_secrets.handed(provider, config),
     )
     trigger_id = str(getattr(trigger, "id", "") or "")
-    # Asked on the config the provider is handed, its secrets filled, as the fire asks it, and
-    # quoting it as written, a secret by its reference. The denylist writes the audit row and the
-    # gateway log line; the run is recorded as refused and its owner told, as a run with nothing
-    # it can run is, in the words the trigger's own fire records for the same rule
-    # (`DenyDecision.refusal`).
-    if (judged_as := _judged_as(runs_for, trigger_id)) is not None:
-        from personalclaw.guardrails.denylist import enforce_action
-
-        decision = enforce_action(
-            provider_name, config, ctx, session_key=judged_as, written=written
-        )
-        if decision.blocked:
-            return await _refused(trigger, decision.refusal(), state=state)
     from personalclaw.triggers.firepath import action_timeout
 
     started = time.time()
@@ -814,44 +970,26 @@ async def _dispatch_store_action(
     return True, "ran"
 
 
-def _judged_as(runs_for: approval_answer.Principal | None, trigger_id: str) -> str | None:
-    """The identity the action denylist judges a run for *runs_for* under, or None for yours.
-
-    Yours is the one run here a person answers: you started it, so it is not asked a rule written
-    for work nobody answers (``manual_refusal`` and the grant still hold it). An agent's is its
-    session's, so a run an agent's tool starts is held as that session holds its own work: refused
-    what unattended work is refused in a session nobody is in (a schedule's, an Unattended loop's,
-    a subagent's turn), and not in a chat you are in (``guardrails.policy.is_unattended_session``).
-    Anyone else's has no session and nobody answering it: an app's is judged as an app's
-    dispatch, and a caller that did not say whose run it is as the trigger's own fire
-    (``unattended_dispatch_key``)."""
-    from personalclaw.guardrails.policy import unattended_dispatch_key
-
-    if runs_for == approval_answer.YOU:
-        return None
-    if runs_for is not None and runs_for.kind == approval_answer.AGENT and runs_for.name:
-        return runs_for.name
-    if runs_for is not None and runs_for.kind == approval_answer.APP:
-        return unattended_dispatch_key(f"app:{runs_for.name}")
-    return unattended_dispatch_key(f"trigger:{trigger_id}")
-
-
 async def _refused(trigger: Any, why: str, *, state: Any) -> tuple[bool, str]:
-    """A run by hand or from outside refused before its action ran, because it has nothing it can
-    run or the action denylist refused it, recorded and told as a fire's refusal is
-    (`triggers.cannot_run`), in the home the handlers read. The dispatch's answer for it: not run,
-    and *why*."""
+    """A run of yours refused before its action ran, because it has nothing it can run, recorded
+    and told as a fire's refusal is (`triggers.cannot_run`), in the home the handlers read. The
+    dispatch's answer for it: not run, and *why*."""
     from personalclaw.dashboard.handlers.triggers import _runs_store, _trigger_store
-    from personalclaw.triggers import cannot_run
+    from personalclaw.triggers import cannot_run, run_source
 
     await cannot_run.refuse(
-        trigger, why, state=state, by_hand=True, store=_trigger_store(), runs=_runs_store()
+        trigger,
+        why,
+        source=run_source.YOU,
+        state=state,
+        store=_trigger_store(),
+        runs=_runs_store(),
     )
     return False, why
 
 
 def _hold_claim(trigger_id: str, *, holder: str, now: float) -> Any:
-    """Take the trigger's claim for a hand run; the root it was written under, or None.
+    """Take the trigger's claim for a run of yours; the root it was written under, or None.
 
     None when a run already holds it — an answer's run beside a tick's run keeps the tick's claim
     rather than replacing it, so the tick's own release stays the one that frees it — or when it
@@ -894,23 +1032,24 @@ def _give_back_claim(trigger_id: str, *, holder: str, root: Any) -> None:
 
 
 def _record_stopped_run(trigger_id: str, *, started: float) -> None:
-    """Record a hand run a stop or a restart cut off (`reaper.record_stopped_run`). Never raises.
+    """Record a run of yours a stop or a restart cut off (`reaper.record_stopped_run`). Never
+    raises.
 
-    The row is the hand run's (`manual`), its stamps move as a hand run's do, and the trigger's
-    health is left alone, as a hand run's record leaves it (`run_record.record_run`); the card
+    The row says it was yours, its stamps move as a run of yours moves them, and the trigger's
+    health is left alone, as that run's own record leaves it (`run_record.record_run`); the card
     waits on the review like any interrupted run's, and the next start announces it.
     """
     try:
         from personalclaw import restart_request
         from personalclaw.dashboard.handlers.triggers import _trigger_store
-        from personalclaw.triggers import reaper
+        from personalclaw.triggers import reaper, run_source
 
         store = _trigger_store()
         reaper.record_stopped_run(
             trigger_id,
             started_at=started,
             restarting=restart_request.pending() is not None,
-            by_hand=True,
+            source=run_source.YOU,
             store=store,
             base_dir=store.base_dir,
         )
@@ -928,11 +1067,12 @@ async def _record_hand_run(
     late: str = "",
     state: Any = None,
 ) -> None:
-    """Record a run by hand through the one recorder, in the home the handlers read: their trigger
-    store and run history (`triggers._trigger_store`, `triggers._runs_store`). *error* is what the
-    row says of *exc*. Never raises, as the recorder does not: losing a run record is recoverable,
-    losing the response is not."""
+    """Record a run of yours through the one recorder, in the home the handlers read: their
+    trigger store and run history (`triggers._trigger_store`, `triggers._runs_store`). *error* is
+    what the row says of *exc*. Never raises, as the recorder does not: losing a run record is
+    recoverable, losing the response is not."""
     from personalclaw.dashboard.handlers.triggers import _runs_store, _trigger_store
+    from personalclaw.triggers import run_source
     from personalclaw.triggers.run_record import record_run
 
     try:
@@ -947,7 +1087,7 @@ async def _record_hand_run(
         exc=exc,
         error=error,
         late=late,
-        by_hand=True,
+        source=run_source.YOU,
         store=store,
         runs=runs,
         state=state,

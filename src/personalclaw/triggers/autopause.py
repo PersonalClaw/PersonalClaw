@@ -360,12 +360,19 @@ def consecutive_failures_from(runs: list[dict[str, Any]]) -> int:
     started an agent or a workflow run, and its row takes the exit that work ends with when it
     does. Its fire's own exit, a clean one, read as a success, so an automation whose agent failed
     on every fire never paused.
+
+    And so is a run of YOURS (`run_source.yours`): testing a broken automation by hand neither
+    pauses it nor clears a real failure streak. Only yours: a run an agent, an app or a program
+    asked for fails toward the pause as its clock's fires do.
     """
     from personalclaw.schedule_history import UNSETTLED_STATUSES
+    from personalclaw.triggers import run_source
     from personalclaw.triggers.models import Outcome
 
     count = 0
     for run in runs:
+        if run_source.yours(run_source.of_row(run)):
+            continue
         # `status == "failure"` check gets wrong: an outage is stored as a failure too, so
         # `status` is the run store's older vocabulary ("success"/"failure"/"timeout"/"launched").
         # The typed field wins when present, because it distinguishes a true failure from an outage.
@@ -416,7 +423,7 @@ def ending_decision(
     the run of failures it belongs to has grown. Otherwise a newer run has decided past it, and the
     next run that ends walks the history that holds it.
 
-    None for an ending that decides nothing: a run by hand, work that has not ended yet, and an
+    None for an ending that decides nothing: a run of yours, work that has not ended yet, and an
     ending that is neither a success nor a failure — a refusal, the owner's Deny or Stop, a
     restart's cut, a suppression.
     """
@@ -444,11 +451,14 @@ def ending_decision(
 
 def _deciding_exit(row: dict[str, Any]) -> str:
     """The typed exit a history row's run ended with, when it is one that decides its trigger's
-    lifecycle (:data:`EXIT_TYPES`); "" for work that has not ended, a run by hand, and a row whose
+    lifecycle (:data:`EXIT_TYPES`); "" for work that has not ended, a run of yours, and a row whose
     run ended as neither a success nor a failure (it carries that outcome instead)."""
     from personalclaw.schedule_history import UNSETTLED_STATUSES
+    from personalclaw.triggers import run_source
 
     if str(row.get("status") or "") in UNSETTLED_STATUSES:
+        return ""
+    if run_source.yours(run_source.of_row(row)):
         return ""
     exit_type = str(row.get("trigger") or "")
     return exit_type if exit_type in EXIT_TYPES else ""

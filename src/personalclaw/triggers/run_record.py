@@ -2,12 +2,13 @@
 
 Every run of a trigger's action is recorded by :func:`record_run`, whatever started it: the clock,
 an event, a watched file or page, a webhook's request, a view's render, the end of other work, a
-quiet session, or a run by hand (Run now, an answer, the restart review's Run now). One recorder,
-so the row and the trigger cannot tell two stories about one run:
+quiet session, an agent, an app or a program asking for it, or you (Run now, an answer, the restart
+review's Run now). One recorder, so the row and the trigger cannot tell two stories about one run:
 
-* **The row** (`ScheduleRun`): when the action started and when it returned, how long that took,
-  what the run recorded (`schedule_history.status_for_result`), the line a person reads, the
-  trace, and the error. A scheduled fire's row used to be written at record time as
+* **The row** (`ScheduleRun`): what started the run (`triggers.run_source`), when the action
+  started and when it returned, how long that took, what the run recorded
+  (`schedule_history.status_for_result`), the line a person reads, the trace, and the error. A
+  scheduled fire's row used to be written at record time as
   ``started_at = finished_at``, so every fire read 0 ms, a seven-minute digest included, and its
   start read as late as its end, while a Run now of the same trigger, which had a recorder of its
   own, recorded its real duration.
@@ -17,8 +18,8 @@ so the row and the trigger cannot tell two stories about one run:
   Run now ever set ``last_run_id``, so a trigger that ran on its own offered no last result to
   open.
 * **A fire's lifecycle** (`triggers.autopause`): its health, its state and its park cooldown. A run
-  by hand never drives these: testing a broken automation by hand must neither pause it nor clear
-  a real failure streak.
+  of yours never drives these: testing a broken automation by hand must neither pause it nor clear
+  a real failure streak. Every other run is a fire and does, whoever asked for it.
 
 A run whose action only started its work — an agent (Invoke Agent, Run prompt) or a workflow run —
 has not ended when its action returns: its row reads `launched` (or `queued`), and decides nothing
@@ -43,7 +44,7 @@ measures from), move where a fire is DECIDED, before its action runs (:func:`cou
 the chain and the quiet-session poll decide.
 Counting at the end instead would let fires in flight all pass a budget of one. A fire nothing
 counted used to leave its trigger at ``run_count: 0``, so its panel read "never run" beside the
-runs its history listed. A run by hand spends neither.
+runs its history listed. A run of yours spends neither.
 """
 
 from __future__ import annotations
@@ -144,6 +145,7 @@ def _row(
     *,
     run_id: str,
     tag: str,
+    source: str,
     began: float,
     finished: float,
     result: Any,
@@ -196,6 +198,7 @@ def _row(
         job_id=str(getattr(trigger, "id", "") or ""),
         job_name=str(getattr(trigger, "name", "") or ""),
         trigger=tag,
+        source=source,
         started_at=began,
         finished_at=finished,
         duration_ms=int((finished - began) * 1000),
@@ -220,7 +223,7 @@ async def record_run(
     exc: BaseException | None = None,
     error: str = "",
     late: str = "",
-    by_hand: bool = False,
+    source: str,
     store: Any = None,
     runs: Any = None,
     state: Any = None,
@@ -235,17 +238,17 @@ async def record_run(
     budget. *late* is why the run stands in for a slot that did not run on time (the tick's
     `missed.late_outcome`, or the review's Run now).
 
-    *by_hand* is a run someone asked for (`trigger_runs._dispatch_store_action`: Run now, an
-    answer, the restart review's Run now), never one the trigger fired, a webhook's request and a
-    view's render included. Its row is tagged ``manual``, which the hourly cap
-    (`ScheduleRunStore.count_since`) and the failure streak (`autopause.consecutive_failures_from`)
-    both pass over, and it leaves the trigger's health, state and switch alone. A fire's row is
-    tagged with its exit type, and the fire walks the autopause decision
-    (`autopause.ending_decision`): the streak is read from the history, row first, so it is DERIVED
-    from the runs it summarises rather than kept as a second count beside them. A fire that only
-    started its work (`launched`, `queued`) decides nothing yet: its work's ending does, when it
-    comes (:func:`record_ending`), unless that work ended before this row was written, which is
-    then written as the work ended, and decides here.
+    *source* is what started the run (`triggers.run_source`), kept on its row, which is tagged
+    with its exit type whatever started it. A run of yours (`run_source.YOU`: Run now, an answer,
+    the restart review's Run now, through `trigger_runs._dispatch_store_action`) is the one the
+    hourly cap (`ScheduleRunStore.count_since`) and the failure streak
+    (`autopause.consecutive_failures_from`) both pass over, and it leaves the trigger's health,
+    state and switch alone. Every other run is a fire, whoever asked for it, and walks the
+    autopause decision (`autopause.ending_decision`): the streak is read from the history, row
+    first, so it is DERIVED from the runs it summarises rather than kept as a second count beside
+    them. A fire that only started its work (`launched`, `queued`) decides nothing yet: its work's
+    ending does, when it comes (:func:`record_ending`), unless that work ended before this row was
+    written, which is then written as the work ended, and decides here.
 
     *store* and *runs* are the trigger store and the run history to write, by default the active
     home's, the trigger store routed so that a row an app serves keeps its stamps where it lives.
@@ -267,7 +270,7 @@ async def record_run(
             exc=exc,
             error=error,
             late=late,
-            by_hand=by_hand,
+            source=source,
             store=store,
             runs=runs,
             state=state,
@@ -286,7 +289,7 @@ async def _record(
     exc: BaseException | None,
     error: str,
     late: str,
-    by_hand: bool,
+    source: str,
     store: Any,
     runs: Any,
     state: Any,
@@ -294,7 +297,7 @@ async def _record(
 ) -> str:
     from personalclaw.config.loader import config_dir
     from personalclaw.schedule_history import ScheduleRunStore
-    from personalclaw.triggers import autopause, parks
+    from personalclaw.triggers import autopause, parks, run_source
     from personalclaw.triggers.routing import routed
     from personalclaw.triggers.service import retire_after_run
     from personalclaw.triggers.store import TriggerStore
@@ -303,9 +306,8 @@ async def _record(
     if not trigger_id:
         return ""
     finished = time.time()
-    if by_hand:
-        tag = "manual"
-    elif exc is not None:
+    yours = run_source.yours(source)
+    if exc is not None:
         # A RAISING provider is classified by exception type: auth, transport, config, failed.
         tag = autopause.classify_exception(exc)
     elif _failed(result, None):
@@ -315,11 +317,12 @@ async def _record(
     else:
         tag = autopause.ExitType.OK.value
 
-    run_id = f"{'manual' if by_hand else 'fire'}-{int(finished * 1000)}"
+    run_id = f"{'manual' if yours else 'fire'}-{int(finished * 1000)}"
     run = _row(
         trigger,
         run_id=run_id,
         tag=tag,
+        source=source,
         began=min(started_at or finished, finished),
         finished=finished,
         result=result,
@@ -344,7 +347,7 @@ async def _record(
     parks.settle(trigger, result, state=state)
 
     rows: list[dict[str, Any]] = []
-    if not by_hand:
+    if not yours:
         rows, _total = await runs.list_for_job(trigger_id, 0, STREAK_WINDOW)
     store = store if store is not None else routed(TriggerStore(base_dir=config_dir()))
     # Read just before it is written, with nothing awaited in between: the work this run started
@@ -353,7 +356,7 @@ async def _record(
     if loaded is None:
         return run_id
     live = loaded.trigger
-    decision = None if by_hand else autopause_decision(live, rows, run_id)
+    decision = None if yours else autopause_decision(live, rows, run_id)
     _take(
         store,
         live,
@@ -364,7 +367,7 @@ async def _record(
         at=finished,
         on_attention=on_attention,
     )
-    retire_after_run(store, live, status=status, from_review=by_hand and bool(late))
+    retire_after_run(store, live, status=status, from_review=yours and bool(late))
     return run_id
 
 
@@ -372,36 +375,38 @@ async def record_refusal(
     trigger: Any,
     *,
     why: str,
-    by_hand: bool = False,
+    source: str,
     store: Any = None,
     runs: Any = None,
-) -> bool:
+) -> tuple[str, bool]:
     """Record a run of *trigger* refused before its action ran, because something the action needs
     is gone (`triggers.cannot_run`): no app running here provides it, a secret it uses does not
-    resolve, or the trigger names no action; or, for a run by hand, because the action denylist
-    refused its action. *why* is the sentence that says which.
+    resolve, or the trigger names no action. *why* is the sentence that says which, and *source*
+    what started the run (`triggers.run_source`).
 
     The row reads ``refused``, saying *why*, and the trigger's stamps move as they do for a run
     that went wrong (:func:`stamp_run`), so its last run is this one, refused, with *why* as its
-    error: what the Triggers page shows. It takes no lifecycle decision, as no refusal does, and a
-    fire's row is tagged ``refused``, which the hourly cap passes over (it did no work), where a run
-    by hand's (*by_hand*) is tagged ``manual`` as every hand run's is. *store* and *runs* are as for
-    :func:`record_run`.
+    error: what the Triggers page shows. It takes no lifecycle decision, as no refusal does, and
+    its row is tagged ``refused``, which the hourly cap passes over (it did no work). *store* and
+    *runs* are as for :func:`record_run`.
 
-    Returns whether this is news for the trigger's owner: True unless its last run was already
-    refused for *why*, with nothing since, run or failure, so each fire is recorded and only the
-    first of a stretch is told. Decided and stamped with nothing awaited in between, so of two
-    fires refused at once only one is told. Never raises; a record that could not be kept answers
-    True, so a broken store can never keep the owner from hearing of it.
+    Returns the row's id (``""`` when none was written) and whether this is news for the trigger's
+    owner: True unless its last run was already refused for *why*, with nothing since, run or
+    failure, so each fire is recorded and only the first of a stretch is told. Decided and stamped
+    with nothing awaited in between, so of two fires refused at once only one is told. Never
+    raises; a record that could not be kept is news, so a broken store can never keep the owner
+    from hearing of it.
     """
     try:
-        return await _record_refusal(trigger, why=why, by_hand=by_hand, store=store, runs=runs)
+        return await _record_refusal(trigger, why=why, source=source, store=store, runs=runs)
     except Exception:  # noqa: BLE001 - see the docstring
         logger.warning("could not record the refused run of %s", trigger, exc_info=True)
-        return True
+        return "", True
 
 
-async def _record_refusal(trigger: Any, *, why: str, by_hand: bool, store: Any, runs: Any) -> bool:
+async def _record_refusal(
+    trigger: Any, *, why: str, source: str, store: Any, runs: Any
+) -> tuple[str, bool]:
     from personalclaw.config.loader import config_dir
     from personalclaw.schedule_history import ScheduleRun, ScheduleRunStore
     from personalclaw.triggers.routing import routed
@@ -409,13 +414,14 @@ async def _record_refusal(trigger: Any, *, why: str, by_hand: bool, store: Any, 
 
     trigger_id = str(getattr(trigger, "id", "") or "")
     if not trigger_id:
-        return True
+        return "", True
     now = time.time()
     run = ScheduleRun(
         run_id=f"refused-{int(now * 1000)}",
         job_id=trigger_id,
         job_name=str(getattr(trigger, "name", "") or ""),
-        trigger="manual" if by_hand else Outcome.REFUSED.value,
+        trigger=Outcome.REFUSED.value,
+        source=source,
         started_at=now,
         finished_at=now,
         # `Outcome.REFUSED`, spelled as the word it is so the status vocabulary rail can read it.
@@ -429,12 +435,12 @@ async def _record_refusal(trigger: Any, *, why: str, by_hand: bool, store: Any, 
     store = store if store is not None else routed(TriggerStore(base_dir=config_dir()))
     loaded = store.get(trigger_id)
     if loaded is None:
-        return True
+        return run.run_id, True
     live = loaded.trigger
     told = _refused_for(live, why)
     stamp_run(live, status=Outcome.REFUSED.value, why=why, run_id=run.run_id, at=now)
     store.upsert(live)
-    return not told
+    return run.run_id, not told
 
 
 def _refused_for(trigger: Any, why: str) -> bool:

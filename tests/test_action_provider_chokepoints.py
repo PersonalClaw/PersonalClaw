@@ -7,8 +7,9 @@ rather than to fix a defect:
     hooks._run_provider (lifecycle)                  incident_active   + enforce_action
     gateway._fire_store_trigger (clock/file/event)   incident_active   + enforce_action
     workflows.engine.dispatch_action (a run's step)  enforce_action
-    handlers/trigger_runs._dispatch_store_action     manual_refusal    + enforce_action
-        (by hand or from outside: yours is attended, every other run is not)
+    handlers/trigger_runs._dispatch_store_action     manual_refusal
+        (yours alone: every other run, a webhook's, a view's, an agent's or an app's Run now,
+        is a fire and runs through `gateway._fire_store_trigger`)
     handlers/hooks                                   -- reads metadata only, never executes
 
 (`event_triggers.execute_event_action` was a third unattended seam until a data-event trigger
@@ -49,10 +50,10 @@ import pytest
 EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "the lifecycle-hook fire path"),
     ("personalclaw.gateway", "the clock/file/event/webhook/view trigger fire path"),
-    # Run now, the restart review's Run now, your answer to a run's question, and a Run now an
-    # agent's tool or an app starts. Yours is attended and carries `manual_refusal`; every other
-    # run has nobody answering it, so the module is a denylist seam below as well
-    # (`test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist`).
+    # Your Run now, the restart review's Run now and your answer to a run's question: attended,
+    # carrying `manual_refusal`. Every other run this module starts (a webhook's, a view's, a Run
+    # now an agent, an app or a program asks for) is a fire, dispatched through the gateway seam
+    # (`test_only_your_run_reaches_the_hand_dispatch`).
     ("personalclaw.dashboard.handlers.trigger_runs", "the run-by-hand path"),
     # Approving an inbox proposal whose apply case is `action` dispatches a provider
     # directly (not through `triggers.tools.run`), so it is a real execution site. User-clicked,
@@ -118,19 +119,15 @@ DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
     ("personalclaw.dashboard.tile_refresh", "TTL dashboard tiles"),
     ("personalclaw.proactive.autoexec", "trivial-tier triage auto-execution"),
     ("personalclaw.workflows.engine", "workflow action steps"),
-    (
-        "personalclaw.dashboard.handlers.trigger_runs",
-        "a webhook's fire, a view's refresh, an agent's or an app's Run now",
-    ),
 )
 
-#: The run-by-hand-or-from-outside dispatch. It used to be exempt from the denylist as the Run
-#: button's path, attended because a human just pressed Run, while a webhook's outside caller, a
-#: view's refresh and an agent's `automation_run` reached the same dispatch with nobody answering:
-#: a webhook whose action said `personalclaw stop` stopped the gateway. Now only a run you start
-#: yourself is attended (`manual_refusal` gates it), and every other run is held to the denylist,
-#: so the module is a denylist seam above and not an exemption below. Asserted in
-#: `test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist`.
+#: The run-by-hand dispatch, yours alone. A webhook's outside caller, a view's refresh and an
+#: agent's `automation_run` used to reach it with nobody answering: a webhook whose action said
+#: `personalclaw stop` stopped the gateway, and an agent's runs were recorded as yours, which the
+#: hourly cap and the failure streak pass over. Each of them is a fire now, admitted and dispatched
+#: through the gateway seam above, which holds it to the denylist under the automation's own
+#: unattended identity; only a run you start yourself reaches this dispatch, attended and gated by
+#: `manual_refusal`. Asserted in `test_only_your_run_reaches_the_hand_dispatch`.
 MANUAL_SEAM = "personalclaw.dashboard.handlers.trigger_runs"
 
 #: The ONE site that resolves an action provider to UNDO an action rather than to run one
@@ -145,6 +142,10 @@ MANUAL_SEAM = "personalclaw.dashboard.handlers.trigger_runs"
 #: exemption cannot outlive its own gate. Adding a member here is an argument, not a shortcut.
 USER_CLICKED_SEAMS: tuple[str, ...] = (
     "personalclaw.proposals_contract",  # Approve on an inbox proposal
+    # Your Run now, your answer to a run's question and the restart review's Run now. Every run
+    # anyone else starts from this module is a fire, through the gateway seam
+    # (`test_only_your_run_reaches_the_hand_dispatch`).
+    MANUAL_SEAM,
     # "Run now" on a scheduled research report. Attended by definition — the
     # SCHEDULED fire of the same report goes through the trigger path, which carries the
     # denylist — and the per-member assertion below holds it to carrying `manual_refusal`.
@@ -242,17 +243,26 @@ def test_each_user_clicked_seam_is_a_documented_denylist_exemption(module_name):
     )
 
 
-def test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist():
-    """🔴 The run-by-hand dispatch was exempt as the Run button's path, while an agent's
-    `automation_run` (and, then, a webhook's outside caller and a view's refresh, which now run
-    through the dispatch every fire runs through) reached the same dispatch with nobody answering.
-    The properties that make it a denylist seam now:
+#: The functions that call the hand dispatch, each after it has established that you asked: `/run`
+#: once `run_source.of_request` says the run is yours, your answer once `approval_answer` let it
+#: through, and the restart review's decision once `approval_answer` let it through.
+HAND_DISPATCH_CALLERS: dict[str, str] = {
+    "_run_yours": "run_source.yours",
+    "api_trigger_answer": "forbidden",
+    "api_trigger_review": "forbidden",
+}
 
-    * `_dispatch_store_action` asks `enforce_action`, threading the identity it judges the run
-      under, before its provider runs;
-    * your own run is still gated as an attended one is (`manual_refusal`);
-    * every caller of the dispatch says whose run it is (`runs_for=`), so a new caller decides
-      rather than inherits. One that did not would be judged as the trigger's own fire.
+
+def test_only_your_run_reaches_the_hand_dispatch():
+    """🔴 The run-by-hand dispatch asks no denylist, because you answer what a run of yours runs.
+    So it must be yours alone, and these are the properties that keep it so:
+
+    * the dispatch is called from the three functions above and no other, each AFTER the check
+      that says the asker is you;
+    * `/run` reaches it only through `_run_yours`, chosen when `run_source.yours` says so, and a
+      run anyone else asks for (`_run_asked`) goes through the gateway's fire dispatch
+      (`run_admitted`), which asks `enforce_action`, and never through the hand dispatch;
+    * the dispatch itself takes no asker: nothing can hand it someone else's run to judge.
     """
     import ast
 
@@ -260,33 +270,52 @@ def test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist():
 
     src = _source(MANUAL_SEAM)
     assert "manual_refusal" in src, "your own Run now is no longer gated"
-    [dispatch] = [
-        node
-        for node in ast.walk(ast.parse(src))
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_dispatch_store_action"
-    ]
-    calls = [node for node in ast.walk(dispatch) if isinstance(node, ast.Call)]
-    asks = [c for c in calls if isinstance(c.func, ast.Name) and c.func.id == "enforce_action"]
-    runs = [c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr == "execute"]
-    assert asks, "the hand dispatch runs a provider without asking the denylist"
-    assert all(any(k.arg == "session_key" for k in c.keywords) for c in asks)
-    assert runs and min(c.lineno for c in asks) < min(
-        c.lineno for c in runs
-    ), "the hand dispatch asks the denylist after its provider runs"
+    tree = ast.parse(src)
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    dispatch = functions["_dispatch_store_action"]
+    taken = {a.arg for a in dispatch.args.args + dispatch.args.kwonlyargs}
+    assert "runs_for" not in taken and "source" not in taken, sorted(taken)
 
-    callers = 0
+    def _calls(node: ast.AST, name: str) -> list[ast.Call]:
+        found = []
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if called == name:
+                found.append(call)
+        return found
+
+    callers: dict[str, ast.AST] = {}
     for module in (trigger_runs, triggers):
         for node in ast.walk(ast.parse(inspect.getsource(module))):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-            if name != "_dispatch_store_action":
-                continue
-            callers += 1
-            assert "runs_for" in {k.arg for k in node.keywords}, ast.unparse(node)
-    # Run now, an answer, and the restart review's Run now.
-    assert callers >= 3, f"found only {callers} callers; the scan is not seeing them"
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _calls(
+                node, "_dispatch_store_action"
+            ):
+                if node.name != "_dispatch_store_action":
+                    callers[node.name] = node
+    assert set(callers) == set(HAND_DISPATCH_CALLERS), sorted(callers)
+    for name, check in HAND_DISPATCH_CALLERS.items():
+        if check == "run_source.yours":
+            continue
+        node = callers[name]
+        first_dispatch = min(c.lineno for c in _calls(node, "_dispatch_store_action"))
+        guards = [c.lineno for c in _calls(node, check)]
+        assert guards and min(guards) < first_dispatch, f"{name} dispatches before {check}"
+
+    run_store = functions["_run_store"]
+    assert _calls(run_store, "_run_yours") and _calls(run_store, "_run_asked")
+    assert _calls(run_store, "yours"), "/run no longer asks whose run it is"
+    asked = functions["_run_asked"]
+    assert not _calls(asked, "_dispatch_store_action"), "a run nobody answers took the hand path"
+    assert _calls(asked, "run_admitted") and _calls(asked, "admit_fire")
+    gateway = _enforce_action_calls("personalclaw.gateway")
+    assert gateway, "the fire dispatch a run nobody answers takes no longer asks the denylist"
 
 
 @pytest.mark.parametrize("module_name,label", EXECUTION_SITES)

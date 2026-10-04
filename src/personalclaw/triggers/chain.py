@@ -329,6 +329,7 @@ async def record_refusals(refused: list[dict[str, str]], *, base_dir: Any = None
     and the reason says which guard held it. Through `service.persist_suppression`, the one writer
     of a suppressed fire's row, so these read exactly as those do. Never raises.
     """
+    from personalclaw.triggers import run_source
     from personalclaw.triggers.models import Outcome
     from personalclaw.triggers.service import persist_suppression
 
@@ -338,4 +339,5 @@ async def record_refusals(refused: list[dict[str, str]], *, base_dir: Any = None
             now=time.time(),
             base_dir=base_dir,
             name=str(row.get("trigger_name") or ""),
+            source=run_source.CHAIN,
         )

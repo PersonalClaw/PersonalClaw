@@ -306,14 +306,6 @@ def test_the_hourly_cap_BACKSTOPS_a_catch_up():
     assert "cap of 5" in why
 
 
-def test_a_MANUAL_fire_bypasses_the_hourly_cap():
-    """The cap exists to stop the machine running away on its own; a person clicking Run is not the
-    machine running away."""
-    allowed, why = within_rate_window(fires_in_window=99, max_per_hour=5, manual=True)
-    assert allowed is True
-    assert "manual" in why
-
-
 def test_no_cap_configured_allows_the_fire():
     assert within_rate_window(fires_in_window=1000, max_per_hour=0)[0] is True
 

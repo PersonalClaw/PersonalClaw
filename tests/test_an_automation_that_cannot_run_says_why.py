@@ -385,14 +385,13 @@ def test_a_fire_whose_apps_never_start_is_refused_after_the_wait(home, monkeypat
     assert "No app running here provides" in rows[0]["error"]
 
 
-# ── the hand-run dispatch: Run now, and a webhook's or a view's fire ──
+# ── the hand-run dispatch: your Run now, your answer, the restart review's Run now ──
 
 
-@pytest.mark.parametrize("event", ["manual.run", "webhook.fire", "view.rendered"])
+@pytest.mark.parametrize("event", ["manual.run", "manual.answer", "review.run_now"])
 def test_the_hand_run_dispatch_refuses_in_the_same_words_and_records_it(home, event):
-    """A webhook's fire and a view's refresh go through this dispatch fire-and-forget, so what it
-    returned was all there was of the refusal, and nobody read it. The same sentence, the same row
-    (a run by hand's), the same one notice."""
+    """A run of yours is refused in the same sentence as a fire, with the same row (saying it was
+    yours) and the same one notice."""
     from personalclaw.dashboard.handlers.trigger_runs import _dispatch_store_action
 
     _save(home)
@@ -410,7 +409,7 @@ def test_the_hand_run_dispatch_refuses_in_the_same_words_and_records_it(home, ev
     assert ran is False
     rows = _rows(home)
     assert [r["status"] for r in rows] == ["refused"]
-    assert rows[0]["trigger"] == "manual"
+    assert (rows[0]["trigger"], rows[0]["source"]) == ("refused", "you")
     assert note == rows[0]["error"]
     assert "“acme-post”" in note
     assert len(_refusal_notes(state)) == 1
@@ -451,7 +450,9 @@ def test_run_now_refuses_a_secret_that_is_not_stored(home):
     assert ran is False
     assert action.calls == [], "the action must not run with the placeholder in it"
     rows = _rows(home)
-    assert [(r["status"], r["trigger"]) for r in rows] == [("refused", "manual")]
+    assert [(r["status"], r["trigger"], r["source"]) for r in rows] == [
+        ("refused", "refused", "you")
+    ]
     assert note == rows[0]["error"]
     assert "“MISSING_KEY”" in note
     assert len(_refusal_notes(state)) == 1

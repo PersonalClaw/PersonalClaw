@@ -316,7 +316,7 @@ def test_a_LIVE_fire_still_dispatches_rather_than_spooling(tmp_path, monkeypatch
     async def _with_gateway():
         fired: list[str] = []
 
-        async def dispatch_fire(trigger, payload, *, event, context):
+        async def dispatch_fire(trigger, payload, *, event, context, source):
             fired.append(payload["key"])
 
         router = EventRouter(dispatch=dispatch_fire, loop=asyncio.get_running_loop())

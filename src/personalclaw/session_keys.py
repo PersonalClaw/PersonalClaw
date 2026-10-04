@@ -97,6 +97,13 @@ OPTIMIZER = SessionKind("_optimizer:", unattended=False, who="The prompt optimiz
 #: reply (``dashboard.handlers.agent_marketplace``).
 AGENT_TEST = SessionKind("agent_marketplace_test:", unattended=False, who="An agent's test chat")
 
+#: Your own command, made at this computer: ``cli:<command>``, which ``personalclaw cron
+#: trigger`` names when you type it at a terminal (``schedule_trigger``) and ``personalclaw auth
+#: rotate-key`` names on its call (``auth.cli``). You are there, so its run is yours
+#: (``triggers.run_source``). The same command run by a script names a dispatch with no session
+#: instead (:data:`UNATTENDED`).
+CLI = SessionKind("cli:", unattended=False, who="Your own command")
+
 # ── work its loop's Mode decides ──────────────────────────────────────────────────────────────
 
 #: A loop's own sessions: its stage worker ``loop-<id>``, a worker per task ``loop-<id>-<task>``
@@ -172,6 +179,7 @@ KINDS: tuple[SessionKind, ...] = (
     WORKFLOW_STEP,
     OPTIMIZER,
     AGENT_TEST,
+    CLI,
     TRIGGER,
     SUBAGENT,
     CHANNEL,

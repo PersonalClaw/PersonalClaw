@@ -393,7 +393,7 @@ def test_a_manual_run_NEVER_bypasses_the_trust_boundary(store):
     assert "screen" in plan["enforced"]
     assert "capability" in plan["enforced"]
     assert "budget" in plan["enforced"]
-    assert set(plan["bypassed"]) == {"quiet", "duty"}
+    assert set(plan["bypassed"]) == {"spacing", "rate", "quiet", "duty"}
 
 
 def test_the_bypass_sets_are_disjoint_and_cover_only_real_gates():

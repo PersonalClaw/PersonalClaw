@@ -68,9 +68,16 @@ export function ActionFieldList({ fields }: { fields: ActionField[] }) {
   )
 }
 
-/** The two gates a hand-run skips (`triggers.tools.MANUAL_BYPASSES`), in words. Any other name is
+/** The gates a run of yours skips (`triggers.tools.MANUAL_BYPASSES`), in words. Any other name is
  *  shown as the backend spells it rather than guessed at. */
-const BYPASS_WORDS: Record<string, string> = { quiet: 'quiet hours', duty: 'duty limits' }
+const BYPASS_WORDS: Record<string, string> = {
+  spacing: 'its spacing', rate: 'its hourly cap', quiet: 'quiet hours', duty: 'duty limits',
+}
+
+/** `a`, `a and b`, `a, b and c`: a list as a sentence says it. */
+function inWords(items: string[]): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}` : items.join('')
+}
 
 function planOf(result: unknown): ManualGatePlan {
   const plan = (result as { plan?: unknown } | null | undefined)?.plan
@@ -128,7 +135,7 @@ export function DryRunResult({ result, providers = [], onDismiss }: {
       )}
       <p data-type="caption" className="text-on-surface-low">
         {skips.length > 0
-          ? `Run now skips ${skips.join(' and ')}; every other check a scheduled run makes still applies.`
+          ? `Run now skips ${inWords(skips)}, and its failures never count toward the streak that pauses it; the actions you allowed, incident mode and a run still going hold it as they hold a scheduled run.`
           : 'Run now makes every check a scheduled run makes.'}
       </p>
     </div>

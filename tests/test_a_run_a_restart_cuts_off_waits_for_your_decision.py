@@ -38,7 +38,7 @@ from personalclaw.dashboard.handlers import triggers as T
 from personalclaw.gateway import GatewayOrchestrator
 from personalclaw.schedule_history import ScheduleRunStore
 from personalclaw.subagent import SubagentInfo
-from personalclaw.triggers import claims, history, reaper, review
+from personalclaw.triggers import claims, history, reaper, review, run_source
 from personalclaw.triggers.models import TRUE_FAILURE_OUTCOMES, Outcome, Trigger, TriggerHealth
 from personalclaw.triggers.schedule_view import _last_run_ts
 from personalclaw.triggers.scheduling import PROCESS_IMAGE, Claim
@@ -252,7 +252,7 @@ def test_a_run_now_whose_agent_a_restart_cut_off_is_interrupted_not_failed(
 
     (row,) = _rows(home)
     assert row["status"] == reaper.RESTART_INTERRUPTED_STATUS
-    assert row["trigger"] == "manual", "a Run now is recorded as the hand run it was"
+    assert row["source"] == "you", "a Run now is recorded as the run of yours it was"
     assert row["error"].startswith(
         "Interrupted by a gateway restart: the gateway restarted while this was running."
     )
@@ -288,7 +288,9 @@ def test_a_scheduled_fire_whose_agent_a_restart_cut_off_reads_degraded(home, res
 
     trigger = _brief(home)
     launch = ActionResult(success=True, outcome="launched", work_id=f"subagent:{AGENT}")
-    asyncio.run(record_run(trigger, started_at=time.time(), result=launch))
+    asyncio.run(
+        record_run(trigger, started_at=time.time(), result=launch, source=run_source.SCHEDULE)
+    )
     orch, agents = _gateway()
     agents.agents.append(_the_agent_works())
 
@@ -296,7 +298,7 @@ def test_a_scheduled_fire_whose_agent_a_restart_cut_off_reads_degraded(home, res
 
     (row,) = _rows(home)
     assert row["status"] == reaper.RESTART_INTERRUPTED_STATUS
-    assert row["trigger"] != "manual"
+    assert row["source"] == "schedule"
     assert _live(home).health_status == TriggerHealth.DEGRADED.value
 
 
@@ -361,9 +363,13 @@ def test_a_run_cut_off_again_before_you_decided_is_still_one_decision(home):
     notice after it asks one decision of you. 🔴 Red before: "1 run was interrupted … Review
     them", counting the card's two interruptions as two things to review."""
     _brief(home)
-    reaper.record_stopped_run(TID, started_at=time.time() - 5, restarting=True, base_dir=home)
+    reaper.record_stopped_run(
+        TID, started_at=time.time() - 5, restarting=True, source="schedule", base_dir=home
+    )
     _next_start(home)
-    reaper.record_stopped_run(TID, started_at=time.time() - 5, restarting=False, base_dir=home)
+    reaper.record_stopped_run(
+        TID, started_at=time.time() - 5, restarting=False, source="schedule", base_dir=home
+    )
 
     ((_kind, _title, body),) = _next_start(home)
 
@@ -423,7 +429,7 @@ def test_a_long_action_a_stop_cuts_off_is_interrupted_announced_and_runs_once_fr
     asyncio.run(_cut_off())
 
     (row,) = _rows(home)
-    assert row["status"] == reaper.RESTART_INTERRUPTED_STATUS and row["trigger"] == "manual"
+    assert row["status"] == reaper.RESTART_INTERRUPTED_STATUS and row["source"] == "you"
     assert _live(home).last_run_id == row["run_id"]
     ((_kind, title, _body),) = _next_start(home)
     assert title == "Runs interrupted by a restart"
@@ -461,7 +467,8 @@ def test_the_deadline_reap_writes_the_row_it_promises(home):
         reaper.sweep_once(store=TriggerStore(base_dir=home), base_dir=home)
 
     (row,) = _rows(home)
-    assert row["status"] == reaper.DEADLINE_STATUS and row["trigger"] == "scheduled"
+    assert row["status"] == reaper.DEADLINE_STATUS and row["source"] == "schedule"
+    assert row["trigger"] == reaper.DEADLINE_STATUS, "an outcome, which no failure count reads"
     assert row["error"].startswith("Reaped after ")
     assert row["job_name"] == NAME
     live = _live(home)
@@ -484,7 +491,7 @@ def test_a_reaped_run_by_hand_is_recorded_as_one(home):
         reaper.sweep_once(store=TriggerStore(base_dir=home), base_dir=home)
 
     (row,) = _rows(home)
-    assert row["trigger"] == "manual"
+    assert row["source"] == "you"
     assert _live(home).health_status == TriggerHealth.OK.value
 
 
@@ -498,8 +505,8 @@ def test_the_boot_pass_closes_a_run_now_a_crash_left_as_the_hand_run_it_was(home
 
     (row,) = _rows(home)
     assert row["status"] == reaper.RESTART_INTERRUPTED_STATUS
-    assert row["trigger"] == "manual"
-    assert record["by_hand"] is True
+    assert row["source"] == "you"
+    assert record["source"] == "you"
     assert _live(home).health_status == TriggerHealth.OK.value
 
 

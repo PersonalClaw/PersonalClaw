@@ -337,7 +337,7 @@ def test_a_run_now_records_its_duration_and_spends_no_fire(home, slow, monkeypat
 
     assert ran is True, note
     (row,) = _rows(home, "clock:by-hand")
-    assert row["trigger"] == "manual"
+    assert (row["trigger"], row["source"]) == ("ok", "you")
     _assert_timed(row)
     trigger = _live(home, "clock:by-hand")
     assert trigger.last_run_id == row["run_id"]

@@ -529,25 +529,18 @@ def catch_up_plan(triggers: list[dict[str, Any]], *, now: float) -> list[tuple[s
     return plan
 
 
-def within_rate_window(
-    *, fires_in_window: int, max_per_hour: int, manual: bool = False
-) -> tuple[bool, str]:
+def within_rate_window(*, fires_in_window: int, max_per_hour: int) -> tuple[bool, str]:
     """Whether another fire is allowed by the sliding hourly window.
 
     The backstop under catch-up: even a correctly staggered,
     once-per-trigger catch-up must not push a
     trigger past the cap its author set.
 
-    A MANUAL fire bypasses it. That asymmetry is deliberate and stated in
-    the plan: the cap exists to
-    stop the machine from running away on its own, and a person clicking
-    Run is not the machine running
-    away. Floors that protect a remote service
-    (`max_requests_per_sec`-class) are NOT bypassed — those
-    protect someone else.
+    Only a fire is asked. Your own run (Run now) never is, and its rows are left out of
+    *fires_in_window* (`ScheduleRunStore.count_since`): the cap exists to stop the machine from
+    running away on its own, and you running it is not the machine running away. Every other run,
+    one an agent, an app or a program asked for included, is a fire and is asked.
     """
-    if manual:
-        return True, "manual fires bypass the hourly cap"
     if max_per_hour <= 0:
         return True, "no hourly cap configured"
     if fires_in_window >= max_per_hour:

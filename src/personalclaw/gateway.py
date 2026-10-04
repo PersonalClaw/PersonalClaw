@@ -1439,19 +1439,27 @@ class GatewayOrchestrator:
         *,
         event: str = "trigger.fired",
         context: str = "",
-    ) -> None:
+        source: str = "",
+    ) -> str:
         """Run one store-backed trigger's declared action through the action-provider registry.
 
         THE dispatch for every store-backed fire — clock, file, web_watch, webhook, view, chained,
-        event — so each executes the same action the same way; the dashboard reaches it for a
-        webhook's request and a view's render (`DashboardState.fire_trigger`). A failed action is
-        logged rather than raised:
-        the outcome belongs to the executor's typed classification, and a raise here would strand
-        the rest of the drain.
+        event, and a run an agent, an app or a program asked for — so each executes the same action
+        the same way; the dashboard reaches it for a webhook's request, a view's render and a run
+        someone other than you asked for (`DashboardState.fire_trigger`). A failed action is logged
+        rather than raised: the outcome belongs to the executor's typed classification, and a raise
+        here would strand the rest of the drain.
 
         `event` labels the source to the provider (`file.changed`, `memory.create`, …) and `context`
         is the free-form `$CONTEXT` line a template renders; only an event fire has one to give.
+        `source` is who asked for the fire (`triggers.run_source`), and every row it writes says
+        it; a fire nobody asked for by name is its kind's own (`run_source.fired`).
+
+        Returns the id of the history row the fire wrote, ``""`` when it wrote none.
         """
+        from personalclaw.triggers import run_source
+
+        source = source or run_source.fired(trigger)
         from personalclaw.action_providers import ActionContext
         from personalclaw.action_providers.registry import _ensure_default_providers_registered
         from personalclaw.filled_secrets import handed, masked, masked_answer
@@ -1468,13 +1476,13 @@ class GatewayOrchestrator:
         # healthy automation which never ran. Refused like the gates below it, with a sentence
         # naming what is missing, and its owner told once (`triggers.cannot_run`).
         if not provider_name:
-            await self._refuse_unrunnable(trigger, cannot_run.NO_ACTION)
-            return
+            return await self._refuse_unrunnable(trigger, cannot_run.NO_ACTION, source=source)
         _ensure_default_providers_registered()
         provider = await self._action_provider(provider_name)
         if provider is None:
-            await self._refuse_unrunnable(trigger, cannot_run.missing_action(provider_name))
-            return
+            return await self._refuse_unrunnable(
+                trigger, cannot_run.missing_action(provider_name), source=source
+            )
 
         # 🔴 THE GRANT, at the dispatch every unattended fire shares (`triggers.grants`). A clock or
         # event fire meets the frozen-capability fence in `service.admit_fire`; a file, web_watch or
@@ -1488,11 +1496,11 @@ class GatewayOrchestrator:
         if missing:
             refusal = grants.refusal(trigger, missing)
             logger.warning("trigger %s not run: %s", trigger.id, refusal)
-            await self._record_refused_fire(
-                trigger, status=Outcome.SKIPPED_GATE.value, error=refusal
+            run_id = await self._record_refused_fire(
+                trigger, status=Outcome.SKIPPED_GATE.value, error=refusal, source=source
             )
             self._push_trigger_refresh()
-            return
+            return run_id
 
         # 🔴 THE INJECTION SCREEN AND THE FENCE, on everything from outside this fire hands its
         # action: its payload's words, the `$CONTEXT` line an event's fire carries, and what the
@@ -1520,9 +1528,9 @@ class GatewayOrchestrator:
             # silent drop: the user sees an automation that stopped, with the reason in a file they
             # will not read. And `blocked_injection` NEVER auto-retries, so this row is the only
             # record that will ever exist for this fire.
-            await self._record_blocked_fire(trigger, groups)
+            run_id = await self._record_blocked_fire(trigger, groups, source=source)
             self._push_trigger_refresh()
-            return
+            return run_id
         payload, context, facts = fired.payload, fired.context, fired.facts
 
         # 🔴 RESOLVE `{{secret:KEY}}` HERE, at dispatch (§7 item 6 / decision 11). Workflows
@@ -1543,8 +1551,9 @@ class GatewayOrchestrator:
         try:
             config, filled = _trigger_secrets.resolve_for(provider, config)
         except _trigger_secrets.UnresolvedSecret as exc:
-            await self._refuse_unrunnable(trigger, cannot_run.missing_secret(exc))
-            return
+            return await self._refuse_unrunnable(
+                trigger, cannot_run.missing_secret(exc), source=source
+            )
 
         # The context the provider will receive, built HERE rather than at the `execute` call so
         # the denylist gate below judges the same `(config, ctx)` pair the provider is handed —
@@ -1614,11 +1623,14 @@ class GatewayOrchestrator:
             # words a workflow step refused by the same rule records (`DenyDecision.refusal`).
             from personalclaw.triggers.models import Outcome as _Outcome
 
-            await self._record_refused_fire(
-                trigger, status=_Outcome.SKIPPED_GATE.value, error=decision.refusal()
+            run_id = await self._record_refused_fire(
+                trigger,
+                status=_Outcome.SKIPPED_GATE.value,
+                error=decision.refusal(),
+                source=source,
             )
             self._push_trigger_refresh()
-            return
+            return run_id
 
         # 🔴 RUNG ROUTING, at the seam the retired one became. The plan
         # names `_run_action_job` as the third dispatch seam; that method retired with
@@ -1645,13 +1657,14 @@ class GatewayOrchestrator:
             )
             from personalclaw.triggers.models import Outcome as _Outcome
 
-            await self._record_refused_fire(
+            run_id = await self._record_refused_fire(
                 trigger,
                 status=_Outcome.SKIPPED_GATE.value,
                 error=f"held for your approval: {route.reason}",
+                source=source,
             )
             self._push_trigger_refresh()
-            return
+            return run_id
 
         # 🔴 THE DAY-BUDGET PAUSE, at the seam that never had one.
         # `_day_budget_exceeded` was WRITTEN to be this gate — its own docstring says it is "used as
@@ -1689,18 +1702,21 @@ class GatewayOrchestrator:
         # outcome row is written per fire, because a fire that was skipped produced an outcome and
         # suppressing it would drop the row that makes the pause legible in the runs feed.
         if self._day_budget_exceeded(context=f"trigger {getattr(trigger, 'id', '') or ''}"):
-            await self._record_refused_fire(
+            run_id = await self._record_refused_fire(
                 trigger,
                 status="needs_input",
                 error=(
                     "paused — the daily token budget is spent. Unattended runs resume "
                     "tomorrow, or raise the budget in Settings → Guardrails."
                 ),
+                source=source,
             )
             self._push_trigger_refresh()
-            return
+            return run_id
 
         fire_started = time.time()
+        # The row the run's record writes, which the fire answers with.
+        run_id = ""
         # Whether the action itself is under way, and whether a stop cancelled this fire at all:
         # only an action a stop interrupted is a run cut off, and no chain starts while it stops.
         running = cut_off = False
@@ -1798,11 +1814,12 @@ class GatewayOrchestrator:
             # knows whether it then ran, so that is where it becomes `ran_late`.
             from personalclaw.triggers import run_record
 
-            await run_record.record_run(
+            run_id = await run_record.record_run(
                 trigger,
                 started_at=fire_started,
                 result=result,
                 late=str(payload.get("late") or ""),
+                source=source,
                 state=getattr(self, "dashboard_state", None),
                 on_attention=self._surface_attention_card,
             )
@@ -1838,7 +1855,7 @@ class GatewayOrchestrator:
             # one that landed after the action returned interrupted only the bookkeeping.
             cut_off = True
             if running:
-                self._record_stopped_fire(trigger, started_at=fire_started)
+                self._record_stopped_fire(trigger, started_at=fire_started, source=source)
             raise
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
             # A provider that RAISES (rather than returning a failed result) is wrapped in the
@@ -1857,11 +1874,12 @@ class GatewayOrchestrator:
             rendered = masked(provider_failure(provider_name, exc).render(), filled)
             from personalclaw.triggers import run_record
 
-            await run_record.record_run(
+            run_id = await run_record.record_run(
                 trigger,
                 started_at=fire_started,
                 exc=exc,
                 error=rendered,
+                source=source,
                 state=getattr(self, "dashboard_state", None),
                 on_attention=self._surface_attention_card,
             )
@@ -1897,8 +1915,9 @@ class GatewayOrchestrator:
                 from personalclaw.triggers.chain import hold_chain
 
                 hold_chain(trigger.id, payload)
+        return run_id
 
-    def _record_stopped_fire(self, trigger: Any, *, started_at: float) -> None:
+    def _record_stopped_fire(self, trigger: Any, *, started_at: float, source: str) -> None:
         """Record a fire a stop or a restart cut off. Never raises.
 
         Recorded as the boot pass records a run whose owner died — the `interrupted` row, the
@@ -1918,6 +1937,7 @@ class GatewayOrchestrator:
                 str(getattr(trigger, "id", "") or ""),
                 started_at=started_at,
                 restarting=restart_request.pending() is not None,
+                source=source,
                 # Routed, as a run's record is (`run_record.record_run`): a trigger an app serves
                 # keeps its stamps where it lives.
                 store=routed(TriggerStore(base_dir=home)),
@@ -2184,7 +2204,7 @@ class GatewayOrchestrator:
                 logger.debug("could not retire trigger %s after its run", trigger_id, exc_info=True)
         return told
 
-    async def _record_blocked_fire(self, trigger: Any, groups: str) -> None:
+    async def _record_blocked_fire(self, trigger: Any, groups: str, *, source: str) -> str:
         """Write the `blocked_injection` ledger row for a screened payload (§7 crit 8 — S136).
 
         ASYNC because `ScheduleRunStore.append` is. mypy caught the sync version as an
@@ -2201,10 +2221,11 @@ class GatewayOrchestrator:
         matched GROUPS name the pattern class, which is what tells a real attack from a false
         positive.
         """
-        await self._record_refused_fire(
+        return await self._record_refused_fire(
             trigger,
             status="blocked_injection",
             error=f"payload blocked by the injection screen ({groups}); never retried",
+            source=source,
         )
 
     async def _action_provider(self, name: str) -> Any:
@@ -2231,16 +2252,23 @@ class GatewayOrchestrator:
             provider = get_action_provider(name)
         return provider
 
-    async def _refuse_unrunnable(self, trigger: Any, why: str) -> None:
+    async def _refuse_unrunnable(self, trigger: Any, why: str, *, source: str) -> str:
         """Refuse a fire with nothing it can run (`triggers.cannot_run`): its refused row, its last
-        run on the Triggers page and, the first time for *why*, one notice. Never raises."""
+        run on the Triggers page and, the first time for *why*, one notice. The row's id. Never
+        raises."""
         from personalclaw.triggers import cannot_run
 
-        await cannot_run.refuse(trigger, why, state=getattr(self, "dashboard_state", None))
+        run_id = await cannot_run.refuse(
+            trigger, why, source=source, state=getattr(self, "dashboard_state", None)
+        )
         self._push_trigger_refresh()
+        return run_id
 
-    async def _record_refused_fire(self, trigger: Any, *, status: str, error: str) -> None:
-        """Write ONE ledger row for a fire a gate refused before the provider was called.
+    async def _record_refused_fire(
+        self, trigger: Any, *, status: str, error: str, source: str
+    ) -> str:
+        """Write ONE ledger row for a fire a gate refused before the provider was called, saying
+        what started the fire (*source*). Returns the row's id, ``""`` when none was written.
 
         Shared by every pre-dispatch refusal on this path (the injection screen, the rung
         ladder), because a refusal only a log knows about is a silent drop — and two copies
@@ -2256,7 +2284,7 @@ class GatewayOrchestrator:
             logger.error(
                 "refusing to record fire status %r: not one of %s", status, _REFUSAL_STATUSES
             )
-            return
+            return ""
         try:
             import time as _time
 
@@ -2264,20 +2292,24 @@ class GatewayOrchestrator:
             from personalclaw.schedule_history import ScheduleRun
 
             now = _time.time()
+            run_id = f"{status}-{int(now * 1000)}"
             await ScheduleRunStore(config_dir()).append(
                 ScheduleRun(
-                    run_id=f"{status}-{int(now * 1000)}",
+                    run_id=run_id,
                     job_id=str(getattr(trigger, "id", "") or ""),
                     job_name=str(getattr(trigger, "name", "") or ""),
                     trigger=status,
+                    source=source,
                     started_at=now,
                     finished_at=now,
                     status=status,
                     error=error,
                 )
             )
+            return run_id
         except Exception:  # noqa: BLE001 - bookkeeping must never alter a security decision
             logger.debug("could not record the refused-fire row for %s", trigger, exc_info=True)
+            return ""
 
     async def _fire_chained_triggers(
         self,

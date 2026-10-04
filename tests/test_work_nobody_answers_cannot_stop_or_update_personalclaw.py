@@ -7,9 +7,10 @@ a hook, a workflow's action step, a tile's refresh and the triage digest asked i
 a command or an action with nobody answering too, and did not:
 
 * a webhook's fire from an outside caller, a view's refresh, and a Run now an agent starts
-  (`automation_run`) from a session nobody is in, then all through the hand-run dispatch
-  (`trigger_runs._dispatch_store_action`), ran the action as it was written (a webhook's fire and
-  a view's refresh now run through the dispatch every fire runs through, which asks it);
+  (`automation_run`), then all through the hand-run dispatch
+  (`trigger_runs._dispatch_store_action`), ran the action as it was written (each now runs through
+  the dispatch every fire runs through, which asks it: a Run now anyone but you asks for is the
+  automation firing);
 * a loop's check and a workflow's verify gate (`loop.gates.run_verify_command`), a workflow's setup
   or teardown step (`workflows.provisioning.run_step`), an effect's teardown
   (`workflows.effects.run_teardown`) and the agent's own bash tool in a session nobody is in asked
@@ -19,8 +20,9 @@ a command or an action with nobody answering too, and did not:
 What these tests hold every one of them to: neither command reaches its provider or a shell, and
 the path says why in the one sentence the rule composes (`DenyDecision.refusal`): the rule's code
 and why. The controls: an ordinary command on every path still runs; your own Run now of the same
-trigger still runs, since you are the one answering it; and an agent in a chat you are in runs it
-as that chat runs its own work.
+trigger still runs, since you are the one answering it; and the agent's own shell in a chat you are
+in runs it as that chat runs its own work, while its Run now is a fire there too, since nobody
+answers what an automation runs.
 
 No refused command goes near a real shell: a provider is a recorder, and the spawner refuses to
 start anything that names PersonalClaw, so a missing check is a recorded call instead of a stopped
@@ -209,11 +211,14 @@ def _newest_run(tid: str, runs=None) -> str:
 
 class _State:
     """The dashboard state the fire-and-forget handlers track their tasks on, carrying the gateway's
-    fire dispatch a webhook's fire and a view's refresh run through."""
+    fire dispatch a webhook's fire, a view's refresh and an agent's Run now run through."""
 
     def __init__(self) -> None:
         self._background_tasks: set[asyncio.Task] = set()
         fire_dispatch.attach(self)
+
+    def push_refresh(self, *_topics: str) -> None:
+        """Nobody is watching the dashboard here."""
 
 
 async def _a_webhooks_fire(command: str, rec: _Recorder, _sh: _Shell, _work: Path):
@@ -265,7 +270,7 @@ def _run_now(*, by_agent_in: str = "") -> web.Request:
     which posts with the gateway's internal credential naming its session (`mcp_core._post`)."""
     headers = {"X-Internal-Secret": "pcfixture", "X-Session-Key": by_agent_in}
     app = web.Application()
-    app["state"] = SimpleNamespace(push_refresh=lambda *k: None, _background_tasks=set())
+    app["state"] = _State()
     request = make_mocked_request(
         "POST",
         "/api/triggers/schedule:clock:nightly/run",
@@ -378,15 +383,17 @@ def test_your_own_run_now_is_not_held_to_it(recorder):
     assert reached, f"your Run now was refused: {said!r}"
 
 
-def test_an_agent_in_a_chat_you_are_in_runs_it_as_that_chat_runs_its_own_work(
-    recorder, shell, work
-):
-    """An agent's tool is not attended because an agent called it, nor refused because it did: its
-    run is held as its session holds its own work. In a chat you are in, that is not the
-    unattended rule, for its Run now as for its own shell."""
+def test_an_agents_run_now_is_held_to_it_in_a_chat_you_are_in_too(recorder):
+    """You answer what the agent of a chat you are in runs in its own shell, not what the
+    automation it asks for runs: that is the automation firing, with nobody answering it."""
     said, reached = asyncio.run(_run_now_by(YOURS, STOP, recorder))
-    assert reached, f"an agent's Run now in your chat was refused: {said!r}"
 
+    assert not reached and _says_why(said, STOP), said
+
+
+def test_the_agents_shell_in_a_chat_you_are_in_runs_it_as_that_chat_runs_its_own_work(shell, work):
+    """The agent's own shell is not refused because an agent called it: its command is held as its
+    session holds its own work, and a chat you are in is not held to the unattended rule."""
     from personalclaw.agents.native.builtin_tools import NativeBuiltinToolProvider
 
     tools = NativeBuiltinToolProvider(work, sandbox_mode="off", session_key=YOURS)

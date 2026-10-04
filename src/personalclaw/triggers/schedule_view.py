@@ -169,6 +169,7 @@ def to_schedule_row(
     now: float = 0.0,
     base_dir: Any = None,
     last_run_status: str = "",
+    last_run_source: str = "",
 ) -> dict[str, Any]:
     """A clock `Trigger` in the schedule wire shape the API already publishes.
 
@@ -221,6 +222,8 @@ def to_schedule_row(
         "created_ts": None,
         "last_status": str(getattr(trigger, "health_status", "") or ""),
         "last_run_status": last_run_status or None,
+        # What started its newest run (`triggers.run_source`), as that run's row says.
+        "last_run_source": last_run_source or None,
         # 🔴 THE LIFECYCLE STATE, which this projection alone omitted (issue 496). The store
         # projection sends it (`handlers/triggers.py::_serialize_store`, which a data-event row
         # takes too) and the frontend renders it through the shared `triggerHealthMeta`,

@@ -8,7 +8,20 @@ the home's internal credential (``X-Internal-Secret``), the one the MCP tools us
 
 from __future__ import annotations
 
+import sys
 from urllib.parse import quote
+
+#: The command, as the work it names.
+_COMMAND = "cron-trigger"
+
+
+def _at_a_terminal() -> bool:
+    """Whether a person typed this command: its standard input is a terminal. A process with none,
+    or one that cannot say, is a program (fail closed: a program's run is no run of yours)."""
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (OSError, ValueError):
+        return False
 
 
 def trigger_schedule_job(job_id: str) -> tuple[bool, str]:
@@ -27,23 +40,35 @@ def trigger_schedule_job(job_id: str) -> tuple[bool, str]:
     is sent anywhere.
 
     The call names the work it does, as every call made with the internal credential must (the
-    gateway refuses one that names none): the job's own, ``cron:<id>``, as a fire of the job is
-    named, unless it is made in a session's work (the command run in an agent's shell names that
-    agent's chat).
+    gateway refuses one that names none), and that work decides whose run it is
+    (`triggers.run_source.of_request`):
+
+    * made in a session's work, that session's: the command run in an agent's shell names that
+      agent's chat, and its run is the agent's, the automation firing as it fires on its own;
+    * typed at a terminal (standard input is one), your own command (``session_keys.CLI``): a run
+      of yours, by hand, which the hourly cap and the failure streak pass over as your Run now's;
+    * run by anything else, a script or another program, a dispatch with no session
+      (``guardrails.policy.unattended_dispatch_key``): the automation firing, held to every rule
+      its fires keep. A program is not you pressing Run, so it does not pass over the cap.
     """
     job_id = (job_id or "").strip()
     if not job_id:
         return False, "no job id given"
     from personalclaw import home_gateway, session_keys
+    from personalclaw.guardrails.policy import unattended_dispatch_key
     from personalclaw.mcp_core import _resolve_session_key
 
+    work = _resolve_session_key()
+    if not work:
+        command = session_keys.CLI.key(_COMMAND)
+        work = command if _at_a_terminal() else unattended_dispatch_key(command)
     try:
         gateway = home_gateway.reach()
         status, resp = gateway.post(
             f"/api/triggers/schedule:{quote(job_id, safe='')}/run",
             {},
             secret_header="X-Internal-Secret",
-            work=_resolve_session_key() or session_keys.TRIGGER.key(job_id),
+            work=work,
         )
     except home_gateway.GatewayError as exc:
         return False, str(exc)

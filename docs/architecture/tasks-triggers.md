@@ -125,11 +125,12 @@ relative to `PersonalClaw/src/personalclaw/`.
   action is read-only by what it declares (`ActionProvider.effect`), never
   by its name: `call-app-route` reads only when the app declares the route
   `readOnly`, and an action that declares nothing is a change. Both
-  dispatches check it — the one by hand (`_dispatch_store_action`: Run now,
-  an answer, the restart review's Run now, which also holds every run but one
-  you start yourself to the action denylist, as the other holds every fire)
-  and the unattended one (`gateway._fire_store_trigger`: clock, event, file,
-  web_watch, chained, webhook, view) — and a refusal names the missing action
+  dispatches check it — the one by hand (`_dispatch_store_action`: your Run
+  now, your answer, the restart review's Run now, and nothing else) and the
+  unattended one (`gateway._fire_store_trigger`: clock, event, file,
+  web_watch, chained, webhook, view, and a run an agent, an app, another
+  automation's work or a program asked for, which it holds to the action
+  denylist as it holds every fire) — and a refusal names the missing action
   and how the owner allows it; an unattended refusal is a `skipped_gate` row in the
   trigger's Runs history. Both also resolve what the trigger runs, the
   provider before the grant and its `{{secret:…}}` references after it
@@ -225,7 +226,17 @@ relative to `PersonalClaw/src/personalclaw/`.
   answers `fire_held` (`429` for its cap and spacing, `409` otherwise). Two
   requests arriving together are admitted one after the other, as two events
   are (`service.request_admission`). A `view` trigger's refresh is admitted and
-  dispatched the same way. The doors' shared rules are
+  dispatched the same way, and so is a Run now anyone but you asks for
+  (`trigger_runs._run_asked`): an agent's `automation_run` or the CLI in its
+  shell, an app, another automation's work, a program running `personalclaw
+  cron trigger`. It fires only an automation that fires on its own (not one
+  switched off, paused, parked, quarantined, or a `manual` one only you run),
+  its claim's holder names who asked (`claims.asked_holder`), and what a held
+  one says is the webhook's (`triggers/held.py`). Who asked is read from the
+  request (`run_source.of_request`): your sign-in, or the CLI typed at a
+  terminal, which names its work `cli:cron-trigger` (`session_keys.CLI`), is
+  you; the same command run by a script names a dispatch with no session. The
+  doors' shared rules are
   [security.md](security.md#webhooks).
 - **Callbacks the agent registers** (`webhook_callbacks.py`) — the chat's
   `hook_register` saves context for a later `POST /api/hooks/agent` (the
@@ -392,17 +403,23 @@ observe-mode capability, reported by the Doctor's would-execute simulator.
 **A run's history row says when it ran, for how long, and how it went, and its
 trigger keeps count.** Every run that reached its action is recorded by one
 recorder (`triggers/run_record.py`, `record_run`), a fire from the clock, an
-event, a watched file or page, a webhook's call, a view's refresh, a chain or a
-quiet session, and a run by hand (Run now, an answer, the review's Run now)
-alike. The row
+event, a watched file or page, a webhook's call, a view's refresh, a chain, a
+quiet session or someone asking for it, and a run of yours (Run now, an answer,
+the review's Run now) alike. The row
+says what started the run (`source`, `triggers/run_source.py`): `you`, what
+fires the automation on its own (`schedule`, `event`, `webhook`, `view`,
+`chain`, `file`, `page`, `idle`), or who asked for it (`agent`, `app`,
+`automation`, `program`); the run history and the Triggers page show it. It
 carries `started_at` (when the action started), `finished_at` (when it
 returned) and `duration_ms`; a scheduled fire's row used to be written at
 record time with both times the same and 0 ms. In the same write the trigger's
 `last_run_id` names that row (what **Open as chat** opens) and its outcome's
 stamp moves: `last_success_at`, `last_failure_at` with the reason in
-`last_error_summary`, or `last_waiting_at`. A fire also walks the autopause
-decision; a run by hand is tagged `manual` and leaves the trigger's health
-alone. A fire's `run_count` and `last_fired_at` move where the fire is decided,
+`last_error_summary`, or `last_waiting_at`. Every row's `trigger` is the run's
+typed exit. A fire also walks the autopause decision; a run of yours does not,
+leaves the trigger's health alone, and is the one run the hourly cap
+(`ScheduleRunStore.count_since`) and the failure streak
+(`autopause.consecutive_failures_from`) pass over, read from its `source`. A fire's `run_count` and `last_fired_at` move where the fire is decided,
 before its action runs (`run_record.count_fire`): at the admission for the
 clock, events, a webhook's call and a view's refresh; in the file poll, the
 web poll, the chain and the quiet-session poll for the kinds no admission
@@ -420,9 +437,9 @@ A run whose action never returned has nothing to hand the recorder, and
 `interrupted` for a run a stop, a restart or a crash cut off, and `timeout` for
 one the deadline sweep reaped, which used to write no row at all. Its row is
 the trigger's last run, `last_failure_at` dates it and `last_error_summary`
-says what stopped it; a fire's trigger reads degraded, and a run by hand (its
-claim's holder, `claims.held_by_hand`, or its row's `manual` tag) is recorded
-as one and leaves the health alone. `interrupted` is its own outcome in the
+says what stopped it, and its `source` says what started it (its claim's
+holder, `claims.source_of`, or the row's own); a fire's trigger reads degraded,
+and a run of yours leaves the health alone. `interrupted` is its own outcome in the
 runs feed (`Outcome.INTERRUPTED`, warning tone), not a failure, and it never
 counts toward autopause.
 

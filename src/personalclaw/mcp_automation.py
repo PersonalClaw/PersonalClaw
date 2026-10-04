@@ -264,9 +264,12 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "automation_run",
             "annotations": {"readOnlyHint": False},
-            "description": "Fire an automation now. A manual run bypasses quiet-hours and duty "
-            "limits but never the injection screen, capability allowlist, or budget; "
-            "automation_dry_run reports what it would run without executing.",
+            "description": "Fire an automation now. It fires as the automation fires on its own: "
+            "every rule its own fires keep applies (its hourly cap, spacing, quiet hours, budget, "
+            "a run still going), the run counts toward its hourly cap and the failure streak that "
+            "pauses it, and an automation that is switched off or paused does not fire. A refusal "
+            "says which rule held it. automation_dry_run reports what it would run without "
+            "executing.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"id": trigger_id},
@@ -276,9 +279,9 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "automation_dry_run",
             "annotations": {"readOnlyHint": True},
-            "description": "Walk an automation's gates and report what a manual run WOULD do, "
-            "executing nothing: the gates it would enforce and bypass, and whether a real run "
-            "would be refused.",
+            "description": "Walk an automation's gates and report what automation_run WOULD do, "
+            "executing nothing: the gates its fire would keep, and whether a real run would be "
+            "refused.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"id": trigger_id},
@@ -558,11 +561,14 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # A dry run is its own tool, never an argument of the run: a call either runs the
         # automation or executes nothing, so what it declares is what it does.
         dry = name == "automation_dry_run"
+        # An agent asks for this run, so it is the automation firing, not a run by hand: the route
+        # it posts to admits it as a fire, and the plan it reports says so.
         result = T.run(
             store,
             trigger_id=str(args.get("id") or ""),
             dry_run=dry,
             runner=None if dry else _http_runner,
+            yours=False,
         )
     elif name == "automation_history":
         result = T.history(store, trigger_id=str(args.get("id") or ""), n=int(args.get("n") or 10))

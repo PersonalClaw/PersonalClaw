@@ -2,10 +2,10 @@
 
 The owner set a digest to report to her direct messages on a chat channel and pressed Run now. The
 run wrote its digest and its history said so, and the channel heard nothing: only the scheduled
-fire consulted the route. Every hand-run and outside fire (Run now, the restart review's Run now,
-an answered park, a webhook, a view refresh) goes through one dispatch, and that dispatch now
-reports through the same reporter the scheduled fire uses. An action that only started its work
-still says nothing until that work ends, as for a fire.
+fire consulted the route. Every run of yours (Run now, the restart review's Run now, an answered
+park) goes through one dispatch, and that dispatch now reports through the same reporter the
+scheduled fire uses. An action that only started its work still says nothing until that work ends,
+as for a fire.
 """
 
 from __future__ import annotations
@@ -128,11 +128,13 @@ def _store_trigger(home_dir, *, failure_delivery: str = "") -> None:
 
 
 def _run_now(state: _State) -> web.Request:
+    """The owner's Run now, signed in."""
     app = web.Application()
     app["state"] = state
     req = make_mocked_request(
         "POST", f"/api/triggers/schedule:{TID}/run", match_info={"id": f"schedule:{TID}"}, app=app
     )
+    req["user"] = "owner"
 
     async def _json() -> dict:
         return {}
@@ -196,8 +198,9 @@ async def test_a_run_now_that_only_started_its_work_says_nothing_yet(home, monke
     assert handle.sent == [] and state.notes == []
 
 
-def test_every_hand_run_and_outside_fire_hands_the_dispatch_its_state():
-    """A caller that passes no state reports nowhere, which is the defect again one caller later."""
+def test_every_run_of_yours_hands_the_dispatch_its_state():
+    """A caller that passes no state reports nowhere, which is the defect again one caller later.
+    Three callers: your Run now, your answer to a parked run, and the restart review's Run now."""
     callers = 0
     for module in (trigger_runs, handlers):
         for node in ast.walk(ast.parse(inspect.getsource(module))):

@@ -450,7 +450,7 @@ Delete every automation YOU created (created_by=agent), in one call. Requires co
 
 ### `automation_dry_run`
 
-Walk an automation's gates and report what a manual run WOULD do, executing nothing: the gates it would enforce and bypass, and whether a real run would be refused.
+Walk an automation's gates and report what automation_run WOULD do, executing nothing: the gates its fire would keep, and whether a real run would be refused.
 
 **Response type:** `automation.run.result`
 
@@ -549,7 +549,7 @@ Resume a paused automation. Refuses (with the reason) if the row has a parse err
 
 ### `automation_run`
 
-Fire an automation now. A manual run bypasses quiet-hours and duty limits but never the injection screen, capability allowlist, or budget; automation_dry_run reports what it would run without executing.
+Fire an automation now. It fires as the automation fires on its own: every rule its own fires keep applies (its hourly cap, spacing, quiet hours, budget, a run still going), the run counts toward its hourly cap and the failure streak that pauses it, and an automation that is switched off or paused does not fire. A refusal says which rule held it. automation_dry_run reports what it would run without executing.
 
 **Response type:** `automation.run.result`
 

@@ -74,7 +74,7 @@ class _State:
         self._background_tasks = set()
         self.fired: list[dict] = []
 
-    async def fire_trigger(self, trigger, payload, *, event="trigger.fired", context=""):
+    async def fire_trigger(self, trigger, payload, *, event="trigger.fired", context="", source=""):
         self.fired.append({"trigger": trigger, "payload": payload, "event": event})
 
 
@@ -281,7 +281,7 @@ async def test_a_paused_webhook_trigger_answers_like_one_that_is_not_there(
     ghost = "store:webhook:ghost"
     dispatched: list = []
 
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
+    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None):
         dispatched.append(trigger.id)
         return True, "ran"
 

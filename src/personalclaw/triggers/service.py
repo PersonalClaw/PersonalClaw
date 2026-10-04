@@ -67,7 +67,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from personalclaw.triggers import provider
+from personalclaw.triggers import provider, run_source
 from personalclaw.triggers.models import (
     INERT_OUTCOMES,
     Outcome,
@@ -701,13 +701,16 @@ async def admit_fire(
     user_active: bool = False,
     persist: bool = True,
     slot_map: dict[str, str] | None = None,
+    source: str = "",
 ) -> Admission:
     """Walk ONE trigger through S86's fire path and record what it decided (§3).
 
     THE admission, shared by every caller that decides a fire: the clock tick for a due trigger,
-    the event router (`triggers.event_fire`) for a matched event, and the dashboard's two doors a
-    fire comes in by, a webhook's request and a view's render (`trigger_runs`). One function so
-    every fire is refused by the same gates for the same reasons — a second copy of this
+    the event router (`triggers.event_fire`) for a matched event, and the dashboard's doors a fire
+    comes in by (`trigger_runs`): a webhook's request, a view's render, and a run an agent, an app
+    or a program asked for by name, whose *source* (`triggers.run_source`) its rows say; any other
+    fire's is what fires its kind on its own. One function so every fire is refused by the same
+    gates for the same reasons — a second copy of this
     context is how a gate input gets supplied on one path and forgotten on the other, which is the
     exact shape of the four "defaulted and never supplied" defects the comments below record.
 
@@ -794,7 +797,13 @@ async def admit_fire(
         # Gated on `persist` so `automation doctor`'s dry run stays side-effect free, which is the
         # whole point of that flag.
         if persist:
-            await persist_suppression(row, now=now, base_dir=base_dir, name=trigger.name)
+            await persist_suppression(
+                row,
+                now=now,
+                base_dir=base_dir,
+                name=trigger.name,
+                source=source or run_source.fired(trigger),
+            )
         return Admission(decision=decision, row=row)
     # Persist the granted claim so the NEXT decision (and any other process — the MCP tools and the
     # API read the same store) can see this run in flight.
@@ -842,9 +851,10 @@ def _run_store(base_dir: Any) -> Any:
 
 
 async def persist_suppression(
-    row: dict[str, Any], *, now: float, base_dir: Any = None, name: str = ""
+    row: dict[str, Any], *, now: float, base_dir: Any = None, name: str = "", source: str
 ) -> None:
-    """Write a SUPPRESSED fire's typed row to the run store (§7 crit 8 — S171).
+    """Write a SUPPRESSED fire's typed row to the run store (§7 crit 8 — S171), saying what started
+    the fire it held (*source*, `triggers.run_source`).
 
     Called by `admit_fire` for every gate refusal, and by the event router for the one refusal it
     makes before admission (the cross-trigger storm guard) — so both rows land in the same ledger in
@@ -890,6 +900,7 @@ async def persist_suppression(
                 job_id=trigger_id,
                 job_name=name,
                 trigger=outcome,
+                source=source,
                 started_at=now,
                 finished_at=now,
                 status=outcome,
@@ -901,17 +912,25 @@ async def persist_suppression(
 
 
 async def record_dismissal(
-    trigger_id: str, outcome: str, reason: str, *, now: float = 0.0, base_dir: Any = None
+    trigger_id: str,
+    outcome: str,
+    reason: str,
+    *,
+    source: str,
+    now: float = 0.0,
+    base_dir: Any = None,
 ) -> None:
     """Persist a dismissed review card as the typed row `missed.resolve_missed` names (§3.4).
 
     `skipped_missed` is a suppression — nothing ran — so it takes the suppression row's shape and
-    store: a dismissed card that left no trace would be a silent drop with a UI on it.
+    store: a dismissed card that left no trace would be a silent drop with a UI on it. *source* is
+    what would have started the run the card stood for.
     """
     await persist_suppression(
         {"outcome": outcome, "trigger_id": trigger_id, "reason": reason},
         now=now or time.time(),
         base_dir=base_dir,
+        source=source,
     )
 
 
@@ -1124,19 +1143,25 @@ async def run_admitted(
     event: str,
     context: str = "",
     base_dir: Any = None,
-) -> None:
+    source: str = "",
+) -> str:
     """Run one fire `admit_fire` granted through *dispatch*, the gateway's store dispatch
     (`GatewayOrchestrator._fire_store_trigger`), then give back the claim the admission took.
+    *source* is who asked for it (`triggers.run_source`), or ``""`` for a fire of its kind's own.
 
-    Never raises: the dispatch records its own outcome. The claim is handed back once the run has
-    settled, or its trigger reads as running and refuses its next fire for the claim's lifetime.
+    Returns the id of the row its run wrote (``""`` when it wrote none). Never raises: the dispatch
+    records its own outcome. The claim is handed back once the run has settled, or its trigger
+    reads as running and refuses its next fire for the claim's lifetime.
     """
     from personalclaw.triggers.executor import release_claim_for
 
     try:
-        await dispatch(trigger, payload, event=event, context=context)
+        return str(
+            await dispatch(trigger, payload, event=event, context=context, source=source) or ""
+        )
     except Exception:  # noqa: BLE001 - the dispatch records its own outcome; never re-raise
         logger.warning("trigger %s: dispatch raised", trigger.id, exc_info=True)
+        return ""
     finally:
         release_claim_for(trigger.id, base_dir=base_dir)
 

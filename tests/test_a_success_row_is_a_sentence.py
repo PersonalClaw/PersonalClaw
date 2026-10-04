@@ -359,7 +359,7 @@ def _row(home: Path, result: ActionResult, trigger_id: str) -> dict[str, Any]:
         id=trigger_id, name=trigger_id, kind="clock", spec={"kind": "cron", "expr": "0 9 * * *"}
     )
     TriggerStore(base_dir=home).upsert(trigger)
-    asyncio.run(record_run(trigger, started_at=time.time(), result=result))
+    asyncio.run(record_run(trigger, started_at=time.time(), result=result, source="schedule"))
     runs = ScheduleRunStore(home)
     (row,), _total = asyncio.run(runs.list_for_job(trigger_id, 0, 5))
     full = asyncio.run(runs.get_run(trigger_id, row["run_id"]))

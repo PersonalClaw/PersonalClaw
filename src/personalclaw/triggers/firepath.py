@@ -211,9 +211,8 @@ def _rate_refusal(ctx: FireContext) -> str:
     """The hourly-cap refusal reason, or "" to allow. Never raises (S152).
 
     Delegates the DECISION to `missed.within_rate_window` rather than re-deriving it: that function
-    already owns the manual-bypass asymmetry and the "no cap configured" case, and a second copy
-    of a threshold comparison is how two surfaces start disagreeing about whether a trigger is
-    capped.
+    already owns the "no cap configured" case, and a second copy of a threshold comparison is how
+    two surfaces start disagreeing about whether a trigger is capped.
 
     The lowest configured cap wins. `rate_cap`, `max_runs_per_hour` and `max_actions_per_hour` are
     three spellings a person may use, and taking the strictest is the only reading that cannot

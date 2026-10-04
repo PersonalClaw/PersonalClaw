@@ -111,56 +111,19 @@ SUSPENDED = (
 #: A process that runs no automations: nothing here can run what the request would fire.
 NOT_RUNNING = "This PersonalClaw is not running its automations, so this request fired nothing."
 
-#: A fire its automation's own rules held, as they hold the automation's every fire
-#: (`triggers.firepath`), by the gates that held it. The automation's history says exactly why.
-_HELD: dict[str, tuple[int, str]] = {
-    **dict.fromkeys(
-        ("spacing", "rate"),
-        (
-            429,
-            "This automation has fired as often as its owner allows for now, so this request "
-            "fired nothing. Try again later.",
-        ),
-    ),
-    **dict.fromkeys(
-        ("quiet", "duty"),
-        (
-            409,
-            "This automation is set not to fire at this time, so this request fired nothing. Try "
-            "again later.",
-        ),
-    ),
-    "budget": (
-        409,
-        "This automation has fired as many times as its owner allows, so this request fired "
-        "nothing.",
-    ),
-    "claim": (
-        409,
-        "This automation is still running from an earlier request, so this one fired nothing. "
-        "Send it again once that run ends.",
-    ),
-    **dict.fromkeys(
-        ("slot", "active", "yield"),
-        (
-            409,
-            "What this automation works with is busy, so this request fired nothing. Try again "
-            "shortly.",
-        ),
-    ),
-}
-_HELD_OTHERWISE = (409, "This automation's own rules held this request, so it fired nothing.")
-
 
 def held(gate: str, *, headers: dict[str, str]) -> web.Response:
-    """The answer to a fire its automation's admission held at *gate*."""
+    """The answer to a fire its automation's admission held at *gate*: in the words every door a
+    fire comes in by answers it (`triggers.held`), but for the two the inbound surfaces word for an
+    outside program."""
     from personalclaw.http_errors import json_error
+    from personalclaw.triggers import held as fire_held
 
     if gate == "incident":
         return json_error("service_unavailable", message=SUSPENDED, status=503, headers=headers)
     if gate == "capability":
         return json_error("forbidden", message=NOT_ALLOWED, status=403, headers=headers)
-    status, sentence = _HELD.get(gate, _HELD_OTHERWISE)
+    status, sentence = fire_held.held(gate)
     return json_error("fire_held", message=sentence, status=status, headers=headers)
 
 

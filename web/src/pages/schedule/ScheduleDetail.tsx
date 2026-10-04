@@ -10,7 +10,7 @@ import { InvestigateButton } from '../../ui/InvestigateButton'
 import { Markdown } from '../../ui/Markdown'
 import { confirmDelete } from '../../ui/dialog'
 import { api, type ActionProvider, type ScheduleJob, type ScheduleRun, type TriggerRunResult } from '../../lib/api'
-import { kindMeta, modeMeta, deriveKind, deriveMode, scheduleWhenMet, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain, runFlashMeta } from './scheduleMeta'
+import { kindMeta, modeMeta, deriveKind, deriveMode, scheduleWhenMet, statusMeta, triggerStatusMeta, explainsCause, isInertOutcome, partitionRunsByFold, relFuture, relPast, absTime, mdToPlain, runFlashMeta, runSourceMeta } from './scheduleMeta'
 import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
@@ -581,6 +581,8 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
         {shown.map((r, i) => {
           const id = r.run_id ?? r.id ?? String(i)
           const sm = statusMeta(r.status)
+          // What started it, as its row says: you, what fires it on its own, or who asked for it.
+          const started = runSourceMeta(r.source)
           const expanded = openRun === id
           return (
             <div key={id} className="rounded-md bg-surface-container overflow-hidden">
@@ -589,7 +591,7 @@ export function RunHistory({ triggerId, reloadKey = 0 }: { triggerId: string; re
                 <ChevronRight size={14} className={`shrink-0 text-on-surface-low transition-transform ${expanded ? 'rotate-90' : ''}`} />
                 <sm.icon size={14} style={{ color: sm.tone }} className="shrink-0" />
                 <span className="flex-1 truncate text-on-surface text-[0.8125rem]">{mdToPlain(r.summary || r.error) || sm.label}</span>
-                {r.trigger === 'manual' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">manual</span>}
+                {started && <span title={started.title} className="shrink-0 rounded-pill bg-surface-high px-1.5 text-on-surface-low text-[0.75rem]">{started.label}</span>}
                 {r.trigger === 'replay' && <span className="shrink-0 rounded-pill bg-surface-high px-1.5 text-info text-[0.75rem]">dry run</span>}
                 <span className="shrink-0 text-on-surface-low text-[0.75rem]">{relPast(r.started_at ?? r.finished_at)}</span>
               </button>

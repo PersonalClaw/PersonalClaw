@@ -412,10 +412,11 @@ def _capability_fact(trigger: Any) -> dict[str, Any]:
 def _observe_mode_fact(store: Any, trigger: Any) -> dict[str, Any]:
     """Fact 5 — AUTOMATION-SUBSTRATE's dry fire, plus the T9 honesty verdict.
 
-    `tools.run(dry_run=True, runner=None)` is the local answer `automation_dry_run` gives
-    (`mcp_automation`: "`automation_dry_run` needs no turn and is answered locally"). It walks
-    the gate plan and returns BEFORE the runner is consulted, which is the property that makes
-    this safe to offer from a browser button.
+    `tools.run(dry_run=True, runner=None, yours=False)` is the local answer `automation_dry_run`
+    gives (`mcp_automation`: "`automation_dry_run` needs no turn and is answered locally"): the
+    plan of the automation's fire, every gate its own fires keep. It walks the gate plan and
+    returns BEFORE the runner is consulted, which is the property that makes this safe to offer
+    from a browser button.
 
     `supports_dry_run` is the T9 rule: only the spawn-based LLM providers have an observe mode,
     so for `bash`/`run-script`/`webhook` this is a PREVIEW of what would run and says so. A
@@ -438,7 +439,7 @@ def _observe_mode_fact(store: Any, trigger: Any) -> dict[str, Any]:
     provider = get_action_provider(provider_name) if provider_name else None
     supported = bool(getattr(provider, "supports_dry_run", False))
     result = automation_run(
-        store, trigger_id=str(getattr(trigger, "id", "")), dry_run=True, runner=None
+        store, trigger_id=str(getattr(trigger, "id", "")), dry_run=True, runner=None, yours=False
     )
     return {
         "provider": provider_name,

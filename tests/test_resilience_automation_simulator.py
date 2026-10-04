@@ -304,10 +304,12 @@ def test_observe_mode_reports_a_true_observe_run_for_run_prompt(home):
     assert fact["supported"] is True
     assert fact["mode"] == "observe"
     assert fact["executed"] is False
-    # The gate plan comes from the `manual_gate_plan`, not from here.
+    # The gate plan is the one `automation_dry_run` reports (the fire's), not one of its own: every
+    # gate the automation's own fires keep, its hourly cap and its quiet hours included.
     assert fact["gate_plan"]["executes"] is False
     assert fact["gate_plan"]["dry_run"] is True
-    assert "screen" in fact["gate_plan"]["enforced"]
+    assert {"screen", "spacing", "rate", "quiet", "duty"} <= set(fact["gate_plan"]["enforced"])
+    assert fact["gate_plan"]["bypassed"] == []
     assert "nothing was executed" in fact["detail"]
 
 

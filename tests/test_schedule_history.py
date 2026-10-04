@@ -35,7 +35,8 @@ async def test_append_and_roundtrip(tmp_path: Path) -> None:
     store = ScheduleRunStore(base_dir=tmp_path)
     run = ScheduleRun(
         job_id="abc123",
-        trigger="manual",
+        trigger="ok",
+        source="you",
         status="success",
         summary="hello",
         trace="full output here",
@@ -47,7 +48,7 @@ async def test_append_and_roundtrip(tmp_path: Path) -> None:
     rows, total = await store.list_for_job("abc123")
     assert total == 1
     assert rows[0]["run_id"] == run.run_id
-    assert rows[0]["trigger"] == "manual"
+    assert (rows[0]["trigger"], rows[0]["source"]) == ("ok", "you")
     assert "trace" not in rows[0]  # list rows drop trace
 
     # Cross-job index list.
@@ -145,16 +146,20 @@ async def test_count_since_counts_only_the_window(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_MANUAL_fire_is_excluded_by_default(tmp_path: Path) -> None:
+async def test_only_a_run_of_yours_is_left_out(tmp_path: Path) -> None:
     """§3.6: "manual fires bypass the hourly cap". The cap exists to stop the MACHINE running away,
-    and a person clicking Run is not the machine running away — counting their clicks would let a
-    user lock themselves out of their own automation."""
+    and you clicking Run is not the machine running away — counting your clicks would let you lock
+    yourself out of your own automation. Only yours: a run an agent asked for is the automation
+    firing, and so is a row that does not say who started it."""
     store = ScheduleRunStore(tmp_path)
     now = 1_700_000_000.0
-    await store.append(ScheduleRun(job_id="j", trigger="scheduled", started_at=now - 10))
-    await store.append(ScheduleRun(job_id="j", trigger="manual", started_at=now - 20))
-    assert await store.count_since("j", now - 3600.0) == 1
-    assert await store.count_since("j", now - 3600.0, manual=True) == 2
+    await store.append(
+        ScheduleRun(job_id="j", trigger="ok", source="schedule", started_at=now - 10)
+    )
+    await store.append(ScheduleRun(job_id="j", trigger="ok", source="you", started_at=now - 20))
+    await store.append(ScheduleRun(job_id="j", trigger="ok", source="agent", started_at=now - 30))
+    await store.append(ScheduleRun(job_id="j", trigger="ok", started_at=now - 40))
+    assert await store.count_since("j", now - 3600.0) == 3
 
 
 @pytest.mark.asyncio
@@ -221,17 +226,18 @@ async def test_a_REAL_fire_and_a_FAILED_one_both_still_count(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_the_MANUAL_exclusion_still_holds_alongside(tmp_path: Path):
-    """The rule is unchanged: §3.6 says manual fires bypass the hourly cap, because a person
-    clicking Run is not the machine running away. Both exclusions now apply and neither shadows the
-    other."""
+async def test_your_runs_are_left_out_alongside_the_suppressions(tmp_path: Path):
+    """The rule is unchanged: §3.6 says your runs bypass the hourly cap, because you clicking Run
+    is not the machine running away. Both exclusions apply and neither shadows the other."""
     store = ScheduleRunStore(tmp_path)
     now = 1_800_000_000.0
     await store.append(
         ScheduleRun(run_id="a", job_id="j", trigger="ok", started_at=now, status="success")
     )
     await store.append(
-        ScheduleRun(run_id="b", job_id="j", trigger="manual", started_at=now, status="success")
+        ScheduleRun(
+            run_id="b", job_id="j", trigger="ok", source="you", started_at=now, status="success"
+        )
     )
     await store.append(
         ScheduleRun(
@@ -239,7 +245,6 @@ async def test_the_MANUAL_exclusion_still_holds_alongside(tmp_path: Path):
         )
     )
     assert await store.count_since("j", now - 10) == 1
-    assert await store.count_since("j", now - 10, manual=True) == 2
 
 
 @pytest.mark.asyncio

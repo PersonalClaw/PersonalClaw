@@ -126,6 +126,8 @@ def _request(method: str, path: str, match_id: str, body: dict | None = None) ->
     app = web.Application()
     app["state"] = _State()
     req = make_mocked_request(method, path, match_info={"id": match_id}, app=app)
+    # You, signed in: a Run now from the automation's page.
+    req["user"] = "owner"
 
     async def _json() -> dict:
         return dict(body or {})

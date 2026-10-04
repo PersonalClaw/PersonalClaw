@@ -517,7 +517,7 @@ def test_a_manual_trigger_fires_once_from_run_now_and_records_the_run(home, stat
     assert result["ok"] is True, result
     assert [n["title"] for n in state.sent] == ["Tidied"]
     assert history["total"] == 1
-    assert history["runs"][0]["trigger"] == "manual"
+    assert history["runs"][0]["source"] == "you"
 
 
 def test_a_run_trigger_s_list_row_says_when_it_last_ran(home, state):

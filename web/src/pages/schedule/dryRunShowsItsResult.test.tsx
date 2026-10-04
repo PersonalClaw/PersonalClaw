@@ -63,7 +63,7 @@ function dryAnswer(enabled: boolean): TriggerRunResult {
     text: 'Dry run of clock:standup-nudge (Standup nudge).\n  nothing was executed.',
     would_run: { provider: 'notify', config: CONFIG },
     result: {
-      plan: { enforced: ['incident', 'screen', 'budget', 'claim', 'capability'], bypassed: ['quiet', 'duty'], dry_run: true, executes: false },
+      plan: { enforced: ['incident', 'screen', 'budget', 'claim', 'capability'], bypassed: ['spacing', 'rate', 'quiet', 'duty'], dry_run: true, executes: false },
       trigger: { id: 'clock:standup-nudge', enabled },
     },
   }
@@ -110,7 +110,7 @@ describe('Dry run renders its response and waits for nothing', () => {
     expect(result).toHaveTextContent('Fired by the Standup nudge trigger.')
     // `kind: 'info'` is the schema default — not something anyone chose, so not read back.
     expect(result).not.toHaveTextContent('Kind')
-    expect(result).toHaveTextContent('Run now skips quiet hours and duty limits')
+    expect(result).toHaveTextContent('Run now skips its spacing, its hourly cap, quiet hours and duty limits, and its failures never count toward the streak that pauses it')
   })
 
   it('promises no history row that nothing writes', async () => {

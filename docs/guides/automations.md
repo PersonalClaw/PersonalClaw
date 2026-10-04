@@ -92,13 +92,13 @@ name (never a value), and says what to do; the Triggers page shows it as the aut
 refused, with the same sentence. It is reported on the same failure route ("<name> did not run")
 the first time, and not again at every fire: the next report waits for a run that gets through, or
 a refusal for another reason. A refusal is not a failure, so it never pauses the automation, and it
-spends none of its hourly cap. **Run now**, a webhook's call and a view's refresh are refused the
-same way, in the same words. A fire that comes while PersonalClaw is still starting its apps waits
-for them rather than being refused.
+spends none of its hourly cap. **Run now**, a webhook's call, a view's refresh and a run an agent,
+an app or a program asks for are refused the same way, in the same words. A fire that comes while
+PersonalClaw is still starting its apps waits for them rather than being refused.
 
 - `src/personalclaw/triggers/cannot_run.py` — the sentences, and `refuse`, which both dispatches
-  call: `gateway._fire_store_trigger` for a fire (a webhook's call and a view's refresh included),
-  `trigger_runs._dispatch_store_action` for a run by hand.
+  call: `gateway._fire_store_trigger` for a fire (a webhook's call, a view's refresh and a run
+  anyone but you asks for included), `trigger_runs._dispatch_store_action` for a run of yours.
 - `src/personalclaw/triggers/run_record.py` — `record_refusal`: the `refused` row, the automation's
   last run, and whether its owner has heard of this refusal yet.
 - `src/personalclaw/action_providers/registry.py` — `action_origin`, the app that registered an
@@ -111,10 +111,11 @@ Triggers page "Stopped by the system after repeated failures". A run counts as f
 went wrong: the command it ran, or the agent (**Invoke Agent**, **Run Prompt**) or workflow run
 (**Run workflow**) it started, whose failure comes later than the fire that started it. Until that
 work ends its run reads `launched` and counts for nothing; when it ends, its row and the automation's
-last run say how it went. A run that succeeds starts the count over. A webhook's call and a view's
-refresh are the automation firing, so their failures count as any fire's do. A run you start by
-hand (**Run now**), a run a restart cut off, a run you stopped (it reads `stopped`, and sends no
-note), a refusal and a skip count for neither.
+last run say how it went. A run that succeeds starts the count over. A webhook's call, a view's
+refresh and a run an agent, an app, another automation or a program asks for by name are the
+automation firing, so their failures count as any fire's do. A run you start yourself (**Run now**,
+or `personalclaw cron trigger` typed at a terminal), a run a restart cut off, a run you stopped (it
+reads `stopped`, and sends no note), a refusal and a skip count for neither.
 
 Switching it back on resumes it: it fires on its own again. The failures that stopped it are still
 its last runs, so one more failure stops it again, and says so again; a run that succeeds starts the
@@ -192,8 +193,8 @@ whose process is gone.
 
 A run you start by hand with **Run now** holds the trigger's claim while it runs, as a scheduled
 fire does: a second **Run now** meanwhile is refused ("This automation is already running."), and
-a stop that cuts it off records it. Its row is the hand run's (`manual`), and the trigger's health
-is left alone, as it is for any hand run.
+a stop that cuts it off records it. Its row says you started it, and the trigger's health is left
+alone, as it is for every run of yours.
 
 An interrupted run is **not run again on its own**, because it may already have done part of its
 work. It waits for you instead, with the times PersonalClaw missed (see
@@ -388,6 +389,40 @@ same name again for the same `sessionKey`, within a week, answers `already_recei
 - `src/personalclaw/dashboard/handlers/trigger_runs.py` — `api_trigger_fire`, the fire.
 - `src/personalclaw/dashboard/handlers/hooks.py` — `api_hooks_agent`, the callback's address.
 
+## When something else asks for a run
+
+**In your words:** *"My agent can run an automation when I ask it to, but it must not get around the
+limits I set."*
+
+You run an automation yourself with **Run now** on its page, or with `personalclaw cron trigger
+<id>` typed at a terminal. Anything else can ask for a run by name too: an agent with its
+`automation_run` tool or the CLI in its shell, an app, another automation's own work, or a script on
+this machine running the CLI. Only your own run passes over the automation's hourly cap and its
+failure streak. A run anything else asks for is the automation firing, as a webhook's call is: it
+fires only while the automation is switched on and fires on its own (not one that runs only when you
+run it), its hourly cap, spacing, quiet hours, budget and a run of it still going hold it, its
+failures count toward the streak that pauses it, and what it runs is held as any fire's is. A run its
+rules hold runs nothing and answers `429` when the automation has fired as often as you allow for
+now and `409` otherwise, with the code `fire_held` and a sentence saying which, and its run history
+keeps a skipped row saying why.
+
+Each run's row in the run history says what started it: **you**, its **schedule**, an **event**, a
+**webhook**, a **view**, **after a run** it follows, a **file** or **web page** it watches, a **quiet
+chat**, or the **agent**, **app**, **automation** or **program** that asked for it (a row recorded
+before PersonalClaw kept this says nothing). The Triggers page shows the same word beside each
+automation's last run.
+
+| | |
+|---|---|
+| **Checked on** | the automation's run history and its line on the Triggers page |
+| **The setting** | none: the automation's own gates (`max_runs_per_hour`, `failure_policy.autopause_after`) |
+
+- `src/personalclaw/triggers/run_source.py` — the words, who asked for a request's run
+  (`of_request`), and the one rule: only `you` passes over the cap and the streak.
+- `src/personalclaw/dashboard/handlers/trigger_runs.py` — `_run_store`: your run (`_run_yours`), or
+  a fire admitted as every fire is (`_run_asked`).
+- `src/personalclaw/triggers/held.py` — what a held fire answers, at every door a fire comes in by.
+
 ---
 
 ## Falsify all three, in one automation
@@ -420,8 +455,8 @@ export PERSONALCLAW_HOME="$PWD/.dev-home"
      `automation.run.failed` event (`EVENT_FAILED` in `src/personalclaw/triggers/delivery.py`).
 
 3. **Now make it decline to fire, and check the colour — guarantee 2.** Edit the same automation and
-   set an all-day quiet-hours window on it (`gates.quiet_hours` = `00:00-23:59`). Press **Run now**
-   again.
+   set an all-day quiet-hours window on it (`gates.quiet_hours` = `00:00-23:59`), then wait for its
+   next fire (not **Run now**: a run of yours passes over quiet hours).
    - **Expected:** a new run row appears in neutral **grey with a pause icon**, labelled with the
      gate (`gate`), and its reason names the window. It is **not** a green check, and it is **not**
      red.

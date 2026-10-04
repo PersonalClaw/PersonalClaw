@@ -228,8 +228,10 @@ Every caller reads it from the same home, resolved at the call (the gateway decl
   `X-Session-Key`, read as any session is: an agent's tools name their chat (a warm-pool agent CLI
   is tied to the chat that claims it, `session_pid.tie_to_session`), a tool the gateway runs for a
   request names that request's work (an app's, a scheduled job's, yours), a scheduled script its
-  job (`cron:<id>`), `personalclaw cron trigger` the job it fires and `personalclaw auth
-  rotate-key` its own command. A call that names none was read as yours: it read and changed your
+  job (`cron:<id>`), `personalclaw cron trigger` the chat whose shell runs it, your own command
+  (`cli:`) when you type it at a terminal and a dispatch with no session when a script runs it,
+  and `personalclaw auth rotate-key` your own command. A call that names none was read as yours:
+  it read and changed your
   memory, and a run it started belonged to nobody and kept everything. It is refused before any
   handler runs (`dashboard/memory_write_gate.py`, `403 internal_call_names_no_work`), with an audit
   row, and the tool server an agent CLI runs makes no call it cannot name the chat of, its own part
@@ -424,14 +426,18 @@ Every dispatch that runs an action with nobody answering it asks `enforce_action
 action's provider runs: a stored trigger's fire through the gateway (clock, event, file, web
 watch, chained, a webhook's fire from an outside caller, a view's refresh), a lifecycle hook, a
 workflow run's action step (whoever started the run), a dashboard tile's refresh and the triage
-digest's auto-execution. The run-by-hand dispatch (`trigger_runs._dispatch_store_action`) asks it
-for every run but one you start yourself (Run now, your answer to the question a run stopped on,
-the restart review's Run now): a Run now an agent's tool starts (`automation_run`, or
-`personalclaw cron trigger` in its shell) is judged under the agent's session, so it is held as
-that session holds its own work, and one an app starts has no session and is judged as nobody's.
-`personalclaw cron trigger` run from a terminal of yours names the job's own work, as the job's
-fire does, and is judged as that fire is. An app's action provider is asked about at the same
-seams, so it inherits the check without knowing it exists.
+digest's auto-execution. A run anyone but you asks for by name is the automation firing, and
+runs through the gateway's dispatch as every fire does (`trigger_runs._run_asked`): a Run now an
+agent starts (`automation_run`, or `personalclaw cron trigger` in its shell) in any session, a
+chat you are in included, since you answer what the agent runs and not what the automation does;
+one an app or another automation's own work asks for; and `personalclaw cron trigger` run by a
+script. Only a run you start yourself (Run now, `personalclaw cron trigger` typed at a terminal,
+your answer to the question a run stopped on, the restart review's Run now) takes the run-by-hand
+dispatch (`trigger_runs._dispatch_store_action`), which you answer, so it does not ask. Which run
+is yours is decided once, from what the request proved (`triggers/run_source.py::of_request`),
+and every row the run writes keeps it: only yours passes over the automation's hourly cap and its
+failure streak. An app's action provider is asked about at the same seams, so it inherits the
+check without knowing it exists.
 
 Every path that runs a command with nobody answering it asks the same rules (`check_command`,
 `check_action` for a command) before it runs anything: a loop's check and a workflow's verify gate
@@ -462,15 +468,15 @@ the audit log naming the rule, its reason and the command; a command path's is a
 `command_refused` row naming the control (`action_denylist`) and the rule, or for the bash tool
 the call's own audit row; each with a warning in the gateway log. Each quotes the path or the
 command as it was written. A dispatch that fills each `{{secret:NAME}}` in before asking (a
-trigger's fire and its run by hand or from outside, a workflow step, the bash tool) is judged on
+trigger's fire, whoever asked for it, a workflow step, the bash tool) is judged on
 the value it filled in and quoted with the reference left a reference (`check_action`'s
 `written`), so a secret's value is in no refusal, record or log. A refusal the work makes itself as
 it runs (a bash action whose sandbox cannot start, a workflow check the shell denylist refuses)
 quotes the command as it would have run, each value its dispatch filled in masked, as every record
 that work writes is (`filled_secrets.handed`). Wherever the work is recorded,
 it says the same words, the rule's code and its sentence (`DenyDecision.refusal`): a trigger's
-history row (`skipped_gate` for its own fire, `refused` for a run by hand or from outside, whose
-owner is told once), a workflow step, which fails `permission` and is named in the run's ending,
+history row (`skipped_gate`, saying what started the fire), a workflow step, which fails
+`permission` and is named in the run's ending,
 a hook's run, a tile's refresh, a deferral of the triage digest, a loop, which pauses with it as
 its question, a workflow gate, which fails with it, and a setup or teardown step.
 `tests/test_action_provider_chokepoints.py` fails an execution site that reaches a provider,

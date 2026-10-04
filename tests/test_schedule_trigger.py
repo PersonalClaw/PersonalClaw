@@ -64,10 +64,14 @@ def test_success(gateway) -> None:
     assert ok is True
     assert "Nightly Report" in msg
     # Hits the unified trigger run route with the namespaced id (not a fresh service), with the
-    # internal credential, naming the job's own work.
+    # internal credential, naming its own command: run with no terminal here, a dispatch with no
+    # session, so its run is the automation firing (`test_a_run_anyone_but_you_asks_for_is_a_fire`).
     (posted,) = reached.posted
     assert posted["path"] == "/api/triggers/schedule:abc123/run"
-    assert (posted["header"], posted["work"]) == ("X-Internal-Secret", "cron:abc123")
+    assert (posted["header"], posted["work"]) == (
+        "X-Internal-Secret",
+        "unattended:cli:cron-trigger",
+    )
 
 
 @pytest.mark.parametrize(

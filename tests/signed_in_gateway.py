@@ -58,6 +58,15 @@ class Gateway:
             resp = await http.request(method, self.url(path), headers=headers, **kwargs)
             return resp.status, await resp.json(content_type=None)
 
+    async def as_work_of(self, work: str, method: str, path: str, **kwargs: Any) -> tuple[int, Any]:
+        """One request made the way PersonalClaw's own processes make it (an agent's tool, the
+        CLI): the internal credential, naming *work*, the session it is made for."""
+        headers = {"X-Internal-Secret": self.internal_secret, "X-Session-Key": work}
+        headers.update(kwargs.pop("headers", {}) or {})
+        async with aiohttp.ClientSession() as http:
+            resp = await http.request(method, self.url(path), headers=headers, **kwargs)
+            return resp.status, await resp.json(content_type=None)
+
 
 @contextlib.asynccontextmanager
 async def signed_in_gateway(

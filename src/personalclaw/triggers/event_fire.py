@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 STORM_WINDOW_SECS = 60.0
 STORM_MAX_FIRES = 30
 
-#: `dispatch(trigger, payload, *, event, context)` — the gateway's `_fire_store_trigger`.
+#: `dispatch(trigger, payload, *, event, context, source)` — the gateway's `_fire_store_trigger`.
 Dispatch = Callable[..., Awaitable[Any]]
 
 
@@ -193,6 +193,7 @@ class EventRouter:
         return len(self._fire_times) < STORM_MAX_FIRES
 
     async def _record_storm(self, trigger_id: str, *, now: float, base_dir: Any) -> None:
+        from personalclaw.triggers import run_source
         from personalclaw.triggers.models import Outcome
         from personalclaw.triggers.service import persist_suppression
 
@@ -205,4 +206,5 @@ class EventRouter:
             {"trigger_id": trigger_id, "outcome": Outcome.SKIPPED_GATE.value, "reason": reason},
             now=now,
             base_dir=base_dir,
+            source=run_source.EVENT,
         )

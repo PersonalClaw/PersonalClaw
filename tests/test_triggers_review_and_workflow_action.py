@@ -124,10 +124,17 @@ def home(tmp_path, monkeypatch):
     return tmp_path
 
 
+@web.middleware
+async def _as_owner(request: web.Request, handler):
+    """You, signed in: the review answers only you."""
+    request["user"] = "owner"
+    return await handler(request)
+
+
 def _client() -> TestClient:
     import personalclaw.dashboard.handlers.triggers as h
 
-    app = web.Application()
+    app = web.Application(middlewares=[_as_owner])
     app["state"] = MagicMock()
     h.register_trigger_routes(app)
     return TestClient(TestServer(app))
@@ -393,7 +400,7 @@ async def test_run_now_runs_the_action_once_and_records_it_as_late(home, echo):
     assert body["outcome"] == "ran_late"
     assert len(echo.ran) == 1, "one decision runs the automation once, however many slots it missed"
     (row,) = _history(home, "clock:hourly")
-    assert row["status"] == "ran_late" and row["trigger"] == "manual"
+    assert (row["status"], row["trigger"], row["source"]) == ("ran_late", "ok", "you")
     assert row["summary"].startswith("Ran from a missed-fire review card, after its scheduled slot")
     assert left["cards"] == []
 

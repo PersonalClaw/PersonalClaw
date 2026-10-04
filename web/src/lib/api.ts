@@ -1887,6 +1887,7 @@ export interface ScheduleJob {
   // lands it in `Trigger.health` and `triggerStatusMeta` owns when it may speak.
   last_status?: string | null
   last_run_status?: string | null          // newest run record status: success|failure|timeout|launched (T7, persistent)
+  last_run_source?: RunSource | null        // what started its newest run (`triggers.run_source`)
   // The LIFECYCLE state (`active | paused | autopaused | parked | quarantined | retired`). The clock
   // projection was the last of the three to omit it, so an autopaused and a quarantined schedule
   // both arrived as `state: null` and rendered the identical "failing" dot (issue 496).
@@ -1933,6 +1934,13 @@ export interface ScheduleJob {
   // it is refused rather than written over that change.
   revision?: string
 }
+/** What started a run of an automation, as its history row says (`triggers.run_source`): you
+ *  (Run now, `personalclaw cron trigger` typed at a terminal, your answer, the restart review's Run
+ *  now); what fires it on its own; or who else asked for it by name. */
+export type RunSource =
+  | 'you'
+  | 'schedule' | 'event' | 'webhook' | 'view' | 'chain' | 'file' | 'page' | 'idle'
+  | 'agent' | 'app' | 'automation' | 'program'
 // One run record from /history (no trace) or /history/{run_id} (with trace).
 export interface ScheduleRun {
   // 🔴 `id` is a FireRecord's OWN key and `did_ids`/`suppressed_ids` are lists of it. A
@@ -1940,7 +1948,11 @@ export interface ScheduleRun {
   // consumer matching the split on `run_id` silently matches nothing.
   id?: string
   run_id?: string; job_id?: string; job_name?: string
-  trigger?: string                          // "manual" | "scheduled"
+  trigger?: string                          // the run's typed exit (ok | failed | …) or its outcome
+  // What started the run (`triggers.run_source`): you, the automation's own clock or what it
+  // watches, or an agent, an app, another automation or a program asking for it. Only a run of
+  // yours passes over the hourly cap and the failure streak. "" on a row written before rows said.
+  source?: RunSource | ''
   // ISO-8601 on `/api/triggers/history`, epoch seconds on the schedule endpoints — the
   // union is the honest declaration, and every reader goes through `epochSeconds`.
   started_at?: number | string; finished_at?: number | string; duration_ms?: number
@@ -3232,9 +3244,11 @@ export interface Trigger {
   action: TriggerAction
   // store fields (kind=store) — the unified TriggerStore kinds with no legacy backend
   // (file/web_watch/idle/run_completed/view/webhook/event/manual). A store row also carries
-  // `last_run_ts` (declared with the schedule fields below) and `last_run_status`, its newest run
-  // record's status — a manual run is recorded there without touching `run_count`.
+  // `last_run_ts` (declared with the schedule fields below), `last_run_status`, its newest run
+  // record's status — a run of yours is recorded there without touching `run_count` — and
+  // `last_run_source`, what started that run.
   store_kind?: string; created_by?: string; spec?: Record<string, unknown>; last_run_status?: string | null
+  last_run_source?: RunSource | null
   // `state` is the LIFECYCLE (`active | paused | autopaused | parked | quarantined | retired`);
   // `health` is the rollup (`ok | degraded | parked | failing`). Two vocabularies, both needed:
   // an autopaused trigger is `health: failing`, and "failing" does not say it has STOPPED.

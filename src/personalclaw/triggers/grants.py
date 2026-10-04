@@ -9,9 +9,10 @@ grant the same way.
 action as it stood when they gave it; and nothing but that yes gives one.
 
 * **Both dispatches check.** The attended one
-  (`dashboard.handlers.trigger_runs._dispatch_store_action` — Run now, an answer, the restart
+  (`dashboard.handlers.trigger_runs._dispatch_store_action` — your Run now, an answer, the restart
   review's Run now) and the unattended one (`gateway._fire_store_trigger` — clock, event, file,
-  web_watch, chained, webhook, view). Clock, event, webhook and view fires also meet the fence in
+  web_watch, chained, webhook, view, and a run an agent, an app or a program asked for). Clock,
+  event, webhook and view fires, and a run asked for by name, also meet the fence in
   `service.admit_fire`; file, web_watch and chained fires reach the dispatch without it, and
   before this ran whatever they held. A lifecycle trigger's fire checks it too
   (`hooks.run_script_hook`). A refusal says which grant is missing and how the owner gives it

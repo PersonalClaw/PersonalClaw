@@ -25,6 +25,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The agent shell refuses commands that print live sign-in credentials, and agent apps can protect their documented sign-in stores (`kiro-cli-agent` uses it).**
 - **Retry on a turn that ended without its answer asks first when the turn finished steps that may have changed something, and names them: running it again may repeat them, so it runs only once you confirm.**
 - **Regenerate, Rewind to here and Edit & resend with your message unchanged ask first, as Retry does, when the turn they run again finished steps that may have changed something; and a chat moved to another agent while it answered is not sent to the new one on its own after such a step, but says so, with Retry.**
+- **Only your own run of an automation passes over its hourly cap and its failure streak. A run that an agent (with its `automation_run` tool, or `personalclaw cron trigger` in its shell), an app, another automation's work or a script asks for is the automation firing: it is held to every rule its fires keep, an automation that is switched off, paused or runs only when you run it does not fire, a run its rules hold answers `429` or `409` `fire_held` and leaves a row in its history, and its failures count toward the streak that pauses it. Each run's row in the run history, and the Triggers page, say what started it.**
 
 ### Added
 
@@ -140,6 +141,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Settings → Models → Background sets how long a background task may run (five minutes unless you change it), the most text it may write in one answer (4,096 tokens) and how long a reply waits for a busy local model before asking the next one (15 seconds); a change applies to the next call, and a task the time limit stopped says where to raise it (`AppConfig.background`, an SDK addition no app has to change for).**
 - **The gateway keeps answering while a recording's speakers are told apart: an app can run one call of an engine that holds Python's interpreter lock in a process of its own, `personalclaw.sdk.sidecar.run_once` (an SDK addition, used by `diarization-onnx`, whose diarization stopped every request for as long as it ran, and by `diarization-pyannote`, whose clustering stopped them for a second or more at a time on a long recording).**
 - **A client of the OpenAI-compatible endpoint can keep its conversation, one per `user` value: you choose it when you register the client (`persistent_sessions`) and change it on the client's row in Settings → External Access, where a client could only ever keep none; a change starts its conversations over.**
+- **`personalclaw.sdk.channel.to_schedule_row` takes `last_run_source`, what started the automation's newest run, and the row it returns says it (an SDK addition no app has to change for).**
 
 ### Changed
 

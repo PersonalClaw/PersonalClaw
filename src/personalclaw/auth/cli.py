@@ -19,6 +19,7 @@ import os
 import sys
 from typing import Any
 
+from personalclaw import session_keys
 from personalclaw.auth import credentials as creds
 
 
@@ -244,8 +245,8 @@ def _sessions_here() -> Any:
 
 
 #: The work ``personalclaw auth rotate-key`` names on its call to the gateway: your own command,
-#: made at this computer, which is no chat's, job's or app's.
-ROTATE_KEY_WORK = "cli:auth-rotate-key"
+#: made at this computer, which is no chat's, job's or app's (``session_keys.CLI``).
+ROTATE_KEY_WORK = session_keys.CLI.key("auth-rotate-key")
 
 
 def _rotate_key_cmd(args) -> int:

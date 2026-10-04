@@ -3,11 +3,12 @@
 A fire can reach its dispatch and find nothing it can run: no app running here provides its action,
 a ``{{secret:…}}`` its action uses does not resolve (`triggers.secrets`), or the trigger names no
 action at all. Both dispatches refuse it before anything runs — `gateway._fire_store_trigger` for a
-fire (clock, event, file, web watch, chained, a webhook's request, a view's render) and
-`dashboard.handlers.trigger_runs._dispatch_store_action` for a run by hand (Run now, an answer,
-the restart review's Run now) — and :func:`refuse` keeps the refusal where its owner looks, as the
-other refusals on those paths are kept. It used to be a warning in the log and a bare return: the
-automation looked healthy on the Triggers page and never ran.
+fire (clock, event, file, web watch, chained, a webhook's request, a view's render, a run an agent,
+an app or a program asked for) and `dashboard.handlers.trigger_runs._dispatch_store_action` for a
+run of yours (Run now, an answer, the restart review's Run now) — and :func:`refuse` keeps the
+refusal where its owner looks, as the other refusals on those paths are kept. It used to be a
+warning in the log and a bare return: the automation looked healthy on the Triggers page and never
+ran.
 
 * Its row in the run history reads ``refused``, saying why (`run_record.record_refusal`).
 * Its last run, which the Triggers page shows, is that refusal, with the same sentence.
@@ -107,27 +108,28 @@ async def refuse(
     trigger: Any,
     why: str,
     *,
+    source: str,
     state: Any = None,
-    by_hand: bool = False,
     store: Any = None,
     runs: Any = None,
-) -> None:
-    """Refuse a run of *trigger* that has nothing it can run, or a run by hand or from outside
-    whose action the action denylist refused (`trigger_runs._dispatch_store_action`), saying *why*.
+) -> str:
+    """Refuse a run of *trigger* that has nothing it can run, saying *why*. Returns the id of the
+    row that records it (``""`` when none could be written).
 
-    Records the refused run and its stamps (`run_record.record_refusal`; *by_hand* for a run a
-    person or an outside caller started, *store* and *runs* the home's stores to write) and, the
-    first time *trigger* is refused for *why*, tells its owner on its failure route through
-    *state*. Never raises: the run was refused whatever becomes of its record.
+    Records the refused run and its stamps (`run_record.record_refusal`; *source* what started the
+    run, `triggers.run_source`, and *store* and *runs* the home's stores to write) and, the first
+    time *trigger* is refused for *why*, tells its owner on its failure route through *state*.
+    Never raises: the run was refused whatever becomes of its record.
     """
     from personalclaw.triggers import delivery, run_record
 
     trigger_id = str(getattr(trigger, "id", "") or "")
     logger.warning("trigger %s not run: %s", trigger_id, why)
-    news = await run_record.record_refusal(
-        trigger, why=why, by_hand=by_hand, store=store, runs=runs
+    run_id, news = await run_record.record_refusal(
+        trigger, why=why, source=source, store=store, runs=runs
     )
     if not news:
-        return
+        return run_id
     name = str(getattr(trigger, "name", "") or "") or trigger_id or "An automation"
     delivery.report_run(state, trigger, ok=False, error=why, title=f"{name} did not run")
+    return run_id

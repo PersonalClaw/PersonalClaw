@@ -294,7 +294,7 @@ def test_an_event_trigger_runs_by_hand_and_the_run_does_not_spend_its_budget(sta
     assert calls and calls[0]["manual"] is True
     history_req = _req("GET", f"/api/triggers/{tid}/history", state, match_info={"id": tid})
     history = _body(_run(T.api_trigger_history(history_req)))
-    assert history["total"] == 1 and history["runs"][0]["trigger"] == "manual"
+    assert history["total"] == 1 and history["runs"][0]["source"] == "you"
     trigger = state._store.get("event:ev1").trigger
     assert trigger.run_count == 0 and trigger.enabled is True
 

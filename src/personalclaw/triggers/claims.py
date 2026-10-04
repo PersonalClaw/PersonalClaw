@@ -131,26 +131,43 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
     atomic_json_write(path, payload)
 
 
-#: What the claim of a run by hand is held as (:func:`hand_run_holder`): Run now, the review's Run
-#: now or an answer, all through the attended dispatch (`trigger_runs._dispatch_store_action`). A
-#: fire's claim is held by what admitted it: the tick, an event, a webhook's request, a view's
-#: render.
+#: What the claim of a run of yours is held as (:func:`hand_run_holder`): Run now, the review's Run
+#: now or an answer, all through the attended dispatch (`trigger_runs._dispatch_store_action`).
 _BY_HAND = "hand:"
+#: What the claim of a fire someone else asked for is held as (:func:`asked_holder`): an agent's,
+#: an app's, another automation's or a program's Run now. Any other fire's claim is held by what
+#: admitted it: the tick, an event, a webhook's request, a view's render.
+_ASKED = "asked:"
 
 
 def hand_run_holder(event: str, *, at: float) -> str:
-    """The holder of the claim a run by hand takes: what started it, and when."""
+    """The holder of the claim a run of yours takes: what started it, and when."""
     return f"{_BY_HAND}{event}:{int(at)}"
 
 
-def held_by_hand(holder: str) -> bool:
-    """Whether a claim is a run by hand's (:func:`hand_run_holder`).
+def asked_holder(source: str, *, at: float) -> str:
+    """The holder of the claim a fire that *source* asked for takes (`triggers.run_source`)."""
+    return f"{_ASKED}{source}:{int(at)}"
+
+
+def source_of(holder: str) -> str:
+    """Who asked for the run a claim's *holder* is for: `run_source.YOU` for a run of yours
+    (:func:`hand_run_holder`), the asker of a fire someone else asked for (:func:`asked_holder`),
+    and ``""`` for a fire of the automation's own, which its kind says.
 
     The passes that close a claim its run never gave back, the boot's and the deadline's
-    (`triggers.reaper`), record such a run as the hand run it was: tagged ``manual``, and leaving
-    its trigger's health alone, as a hand run's own record does (`run_record.record_run`).
+    (`triggers.reaper`), record the run as what it was: a run of yours leaves its trigger's health
+    alone, as its own record does (`run_record.record_run`).
     """
-    return holder.startswith(_BY_HAND)
+    from personalclaw.triggers import run_source
+
+    if holder.startswith(_BY_HAND):
+        return run_source.YOU
+    if holder.startswith(_ASKED):
+        # Never yours: a run of yours holds a hand run's claim, and nothing else stands for one.
+        asker = holder[len(_ASKED) :].split(":", 1)[0]
+        return asker if asker in run_source.ASKERS and not run_source.yours(asker) else ""
+    return ""
 
 
 def release_claim(trigger_id: str, *, base_dir: Path | str | None = None) -> bool:

@@ -10,7 +10,8 @@ through the dispatch a run by hand takes, which records a run as ``manual``:
   fires an hour ran on every request;
 * the failure streak passed over every one too (`autopause` reads no ``manual`` row), so a webhook
   automation that failed on every request was never paused, and nobody was told;
-* the run history labelled each one ``manual``, a Run now its owner never pressed;
+* the run history labelled each one ``manual``, a Run now its owner never pressed (each row now
+  says what started it: the webhook, the view);
 * a view's refresh ran during an incident, which suspends every fire.
 
 Now each is admitted as the clock's and an event's fires are (`service.admit_fire`: the incident,
@@ -140,9 +141,10 @@ async def test_a_webhook_fire_past_its_hourly_cap_does_not_run_and_its_history_s
         assert {run["event"] for run in probe.runs} == {"webhook.fire"}
         rows = await _history(gw)
         ran = [r for r in rows if r["status"] == "success"]
-        assert len(ran) == 2 and all(r["trigger"] != "manual" for r in ran), rows
+        assert len(ran) == 2 and {r["source"] for r in ran} == {"webhook"}, rows
         (suppressed,) = [r for r in rows if r["status"] == "skipped_gate"]
         assert "reaches the cap of 2" in suppressed["error"]
+        assert suppressed["source"] == "webhook", suppressed
         # Only the fires that ran spent the automation's count, as a clock fire's admission does.
         assert _stored(gw.home).run_count == 2
 
@@ -176,7 +178,7 @@ async def test_failed_webhook_fires_count_toward_the_streak_that_pauses_the_auto
         paused = _stored(gw.home)
         assert paused.enabled is False and paused.state == "autopaused", paused.to_dict()
         rows = await _history(gw)
-        assert [r["trigger"] for r in rows] == ["failed", "failed"], rows
+        assert [(r["trigger"], r["source"]) for r in rows] == [("failed", "webhook")] * 2, rows
         assert any(
             (t.get("meta") or {}).get("event") == "automation.needs_attention" for t in told
         ), told
@@ -184,9 +186,9 @@ async def test_failed_webhook_fires_count_toward_the_streak_that_pauses_the_auto
 
 @pytest.mark.asyncio
 async def test_run_now_is_still_its_owners_run_by_hand(tmp_path, monkeypatch, probe):
-    """Control, the same before and after: Run now is the owner's, so the hourly cap and the
-    failure streak pass over it, its row says ``manual``, and testing a broken automation by hand
-    neither pauses it nor spends its count."""
+    """Control: Run now is the owner's, so the hourly cap and the failure streak pass over it, its
+    row says it was yours, and testing a broken automation by hand neither pauses it nor spends its
+    count."""
     probe.fails = True
     async with signed_in_gateway(tmp_path, monkeypatch) as gw:
         _webhook(gw.home, gates={"max_runs_per_hour": 1}, failure_policy={"autopause_after": 2})
@@ -199,7 +201,7 @@ async def test_run_now_is_still_its_owners_run_by_hand(tmp_path, monkeypatch, pr
         assert len(probe.runs) == 3
         assert {run["event"] for run in probe.runs} == {"manual.run"}
         rows = await _history(gw)
-        assert [r["trigger"] for r in rows] == ["manual"] * 3, rows
+        assert [(r["trigger"], r["source"]) for r in rows] == [("failed", "you")] * 3, rows
         kept = _stored(gw.home)
         assert kept.enabled is True and kept.state == "active" and kept.run_count == 0
 
@@ -243,7 +245,7 @@ async def test_a_views_refresh_is_its_automations_fire(tmp_path, monkeypatch, pr
         assert answer["refreshed"] == ["view:builds"], answer
         assert [run["event"] for run in probe.runs] == ["view.rendered"]
         (row,) = await _history(gw, "store:view:builds")
-        assert row["status"] == "success" and row["trigger"] != "manual", row
+        assert (row["status"], row["source"]) == ("success", "view"), row
         assert _stored(gw.home, "view:builds").run_count == 1
 
 

@@ -17,8 +17,8 @@ refusal the way it records every refusal of a command it was about to run
 ``tests/test_every_command_path_asks_the_denylist.py`` fails a new one that skips it.
 
 A refusal quotes the path or the command it refused as it was written: a dispatch that fills each
-``{{secret:NAME}}`` in before the check (a trigger's fire and its run by hand or from outside, a
-workflow step, the agent's bash tool) passes the writing too (``written``), so a refusal, the
+``{{secret:NAME}}`` in before the check (a trigger's fire, whoever asked for it, a workflow step,
+the agent's bash tool) passes the writing too (``written``), so a refusal, the
 security log and the gateway log name a secret by its reference and never hold its value.
 
 This is defense-in-depth, not a sandbox: it composes with the always-on built-ins

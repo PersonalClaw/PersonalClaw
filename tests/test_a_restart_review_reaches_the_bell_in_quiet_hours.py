@@ -130,7 +130,11 @@ def test_the_notice_about_the_runs_a_stop_cut_off_is_kept_too(tmp_path):
 
     _quiet_hours(around_now=True)
     reaper.record_stopped_run(
-        "clock:backup", started_at=time.time() - 30, restarting=True, base_dir=tmp_path
+        "clock:backup",
+        started_at=time.time() - 30,
+        restarting=True,
+        source="schedule",
+        base_dir=tmp_path,
     )
     state = _state()
     _gateway(state)._record_boot_review({}, [], base_dir=tmp_path)

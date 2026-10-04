@@ -4219,7 +4219,8 @@
    {"annotation": "Any", "kind": "positional_or_keyword", "name": "trigger"},
    {"annotation": "float", "default": "0.0", "kind": "keyword_only", "name": "now"},
    {"annotation": "Any", "default": "None", "kind": "keyword_only", "name": "base_dir"},
-   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "last_run_status"}
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "last_run_status"},
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "last_run_source"}
   ],
   "returns": "dict[str, Any]"
  },

@@ -836,7 +836,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/triggers/{id}/fire` — fire a webhook automation for an outside program.
 - `GET /api/triggers/{id}/history` — run records; other kinds answer `supported: false`.
 - `GET /api/triggers/{id}/history/{run_id}` — one full run record.
-- `POST /api/triggers/{id}/run` — fire now.
+- `POST /api/triggers/{id}/run` — run it now.
 - `POST /api/triggers/{id}/test` — execute a lifecycle trigger's action once.
 - `POST /api/triggers/{id}/to-chat` — open a schedule trigger as a chat session.
 - `POST /api/triggers/{id}/toggle` — enable/disable.

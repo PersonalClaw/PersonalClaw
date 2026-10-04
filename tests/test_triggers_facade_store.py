@@ -312,8 +312,8 @@ def test_a_dry_run_reports_the_gate_plan_and_executes_nothing(home, state):
     data = _body(resp)
     assert data["ok"] is True
     assert data["result"]["plan"]["executes"] is False
-    # The manual bypass boundary is preserved.
-    assert set(data["result"]["plan"]["bypassed"]) == {"quiet", "duty"}
+    # What your own run passes over: its spacing, its hourly cap, its quiet hours and duty.
+    assert set(data["result"]["plan"]["bypassed"]) == {"spacing", "rate", "quiet", "duty"}
 
 
 @pytest.mark.parametrize(
@@ -651,7 +651,7 @@ def _result_spy(monkeypatch, *, result=None, raises=None):
     monkeypatch.setattr(get_action_provider("notify"), "execute", spy)
 
 
-def test_a_manual_run_APPENDS_a_history_row_tagged_manual_and_advances_last_run(
+def test_a_manual_run_APPENDS_a_history_row_saying_you_ran_it_and_advances_last_run(
     home, state, monkeypatch
 ):
     """🔴 THE #308 DEFECT. After #702 the manual path dispatched the action but recorded NOTHING:
@@ -660,7 +660,7 @@ def test_a_manual_run_APPENDS_a_history_row_tagged_manual_and_advances_last_run(
 
     The autonomous fire path records via `run_record.record_run` — a `ScheduleRun` in
     `ScheduleRunStore` plus a `last_success_at` stamp. This asserts a manual run now leaves the SAME
-    evidence, tagged `manual`, through that same recorder rather than a parallel one.
+    evidence, its row saying you started it, through that same recorder rather than a parallel one.
     """
     from personalclaw.action_providers import ActionResult
     from personalclaw.triggers.models import Trigger
@@ -691,10 +691,10 @@ def test_a_manual_run_APPENDS_a_history_row_tagged_manual_and_advances_last_run(
     )
     assert _body(resp)["ok"] is True
 
-    # A NEW row appeared, tagged `manual` and marked success.
+    # A NEW row appeared, saying you ran it, and marked success with its typed exit.
     runs, total = _run(T._runs_store().list_for_job("file:notes", 0, 10))
     assert total == 1, "the manual run must append exactly one history row"
-    assert runs[0]["trigger"] == "manual"
+    assert (runs[0]["source"], runs[0]["trigger"]) == ("you", "ok")
     assert runs[0]["status"] == "success"
 
     # The last-run stamp advanced — this is what the completion watcher reads to clear the pill.
@@ -778,7 +778,7 @@ def test_a_FAILED_manual_run_is_recorded_as_a_failure_not_swallowed(home, state,
 
     runs, total = _run(T._runs_store().list_for_job("file:notes", 0, 10))
     assert total == 1
-    assert runs[0]["trigger"] == "manual"
+    assert (runs[0]["source"], runs[0]["trigger"]) == ("you", "failed")
     assert runs[0]["status"] == "failure"
     live = _store(home).get("file:notes").trigger
     assert live.last_failure_at, "a failed manual run stamps last_failure_at"
@@ -1945,12 +1945,13 @@ def test_the_last_run_status_is_read_from_the_store(home, state):
     `ok`, where a trigger's own field would report a fire-and-forget run as a success."""
     _append_run(home, status="launched")
     del state.crons.last_run_status  # no legacy service involvement
-    assert T._last_run_status(state, "clock:nightly") == "launched"
+    assert T._last_run_status_for("clock:nightly") == "launched"
 
 
-def test_no_runs_yields_None_for_the_badge(home, state):
-    """None, not "" — the serializer treats it as "no badge" rather than an empty status."""
-    assert T._last_run_status(state, "never-ran") is None
+def test_no_runs_yields_no_last_run(home, state):
+    """Nothing, not a made-up row — the serializer then sends no badge and no source."""
+    assert T._last_run_for("never-ran") == {}
+    assert T._last_run_status_for("never-ran") == ""
 
 
 def test_a_broken_run_store_does_not_break_the_serializer(home, state, monkeypatch):
@@ -1960,7 +1961,7 @@ def test_a_broken_run_store_does_not_break_the_serializer(home, state, monkeypat
         raise OSError("disk gone")
 
     monkeypatch.setattr(T, "_runs_store", boom)
-    assert T._last_run_status(state, "clock:nightly") is None
+    assert T._last_run_for("clock:nightly") == {}
 
 
 def test_per_trigger_history_reads_the_store(home, state):
@@ -2124,6 +2125,7 @@ async def test_a_STORE_trigger_SERVES_its_run_history(home, monkeypatch):
             store.get("web_watch:feed").trigger,
             started_at=_time.time(),
             result=_types.SimpleNamespace(success=True, error=""),
+            source="page",
         )
 
     req = make_mocked_request("GET", "/api/triggers/store:web_watch:feed/history?limit=10")
@@ -2218,6 +2220,7 @@ async def test_a_STORE_trigger_RUN_can_be_OPENED(home, monkeypatch):
         store.get("web_watch:feed").trigger,
         started_at=_time.time(),
         result=_types.SimpleNamespace(success=True, error=""),
+        source="page",
     )
 
     # The id the LIST hands the UI — the exact round trip the expander performs.

@@ -282,6 +282,7 @@ async def test_an_agent_that_ended_before_its_row_was_written_still_counts(gatew
 @pytest.mark.asyncio
 async def test_a_run_by_hand_whose_agent_fails_never_pauses_it(home, monkeypatch):
     """Testing a broken automation by hand must neither pause it nor clear a real streak."""
+    from personalclaw.triggers import run_source
     from personalclaw.triggers.run_record import record_run
 
     _trigger(home)
@@ -290,13 +291,13 @@ async def test_a_run_by_hand_whose_agent_fails_never_pauses_it(home, monkeypatch
     for _ in range(BUDGET + 1):
         trigger = _live(home)
         result = await _StartsAnAgent().execute({}, cast(Any, None))
-        await record_run(trigger, started_at=0.0, result=result, by_hand=True)
+        await record_run(trigger, started_at=0.0, result=result, source=run_source.YOU)
         await asyncio.sleep(0.003)
         await on_done([_ending(_StartsAnAgent.started[-1], error=REASON)])
     live = _live(home)
     assert (live.state, live.enabled) == (TriggerState.ACTIVE.value, True)
     assert {row["status"] for row in _rows(home)} == {"failure"}
-    assert {row["trigger"] for row in _rows(home)} == {"manual"}
+    assert {row["source"] for row in _rows(home)} == {"you"}
 
 
 @pytest.mark.asyncio

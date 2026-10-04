@@ -329,14 +329,12 @@ def trigger_home(tmp_path, monkeypatch) -> Path:
     return tmp_path
 
 
-@pytest.mark.parametrize("by_you", [True, False], ids=["your-run-now", "a-run-nobody-answers"])
-def test_run_now_of_a_bash_trigger_the_denylist_refuses_runs_nothing(trigger_home, spawns, by_you):
-    """Run now, the restart review's Run now, a webhook fire and a view refresh all reach the
-    action through this one dispatch. A run nobody answers is held to the action denylist there,
-    whose last rule is this one; a run you start yourself is not, and the action itself asks."""
+def test_your_run_now_of_a_bash_trigger_the_denylist_refuses_runs_nothing(trigger_home, spawns):
+    """Your Run now, your answer and the restart review's Run now reach the action through the
+    dispatch a run of yours takes. You answer what it runs, so the action denylist does not judge
+    it there, and the action itself asks: this rule is the shell denylist's own."""
     from test_a_trigger_runs_only_what_it_was_granted import _row, _schedule
 
-    from personalclaw import approval_answer
     from personalclaw.dashboard.handlers import trigger_runs
 
     _add_pattern()
@@ -344,12 +342,44 @@ def test_run_now_of_a_bash_trigger_the_denylist_refuses_runs_nothing(trigger_hom
     _schedule(trigger_home, workflow=bash, capabilities={"providers": ["bash"]})
     ran, note = asyncio.run(
         trigger_runs._dispatch_store_action(
-            _row(trigger_home, "nightly"),
-            {"trigger_id": "nightly", "manual": True},
-            runs_for=approval_answer.YOU if by_you else approval_answer.trigger("nightly"),
+            _row(trigger_home, "nightly"), {"trigger_id": "nightly", "manual": True}
         )
     )
     assert ran is False and RULE in note
+    assert not _ran(spawns)
+
+
+@pytest.mark.parametrize("asker", ["agent", "app", "automation", "program"])
+def test_a_run_anyone_else_asks_for_the_denylist_refuses_runs_nothing(
+    trigger_home, spawns, monkeypatch, asker
+):
+    """A run anyone else asks for, a webhook's fire and a view's refresh are fires, through the
+    dispatch every fire takes, which holds what nobody answers to the action denylist before it
+    runs: this rule is its last one, and the row says who asked."""
+    from test_a_trigger_runs_only_what_it_was_granted import _row, _schedule
+
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: trigger_home)
+    _add_pattern()
+    bash = {"inline": {"provider": "bash", "config": {"command": DENIED}}}
+    _schedule(trigger_home, workflow=bash, capabilities={"providers": ["bash"]})
+    orchestrator = object.__new__(GatewayOrchestrator)
+    orchestrator.dashboard_state = None
+
+    run_id = asyncio.run(
+        orchestrator._fire_store_trigger(
+            _row(trigger_home, "nightly"),
+            {"trigger_id": "nightly", "asked_by": asker},
+            event=f"{asker}.run",
+            source=asker,
+        )
+    )
+
+    row = asyncio.run(ScheduleRunStore(trigger_home).get_run("nightly", run_id))
+    assert row is not None and row["status"] == "skipped_gate", row
+    assert RULE in row["error"] and row["source"] == asker
     assert not _ran(spawns)
 
 

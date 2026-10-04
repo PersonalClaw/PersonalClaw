@@ -17,8 +17,9 @@ body) keeps its fence. Text the screen refuses is kept as nothing, and the fire 
 (:attr:`FireFacts.refused`). It also names the files the run is about (:attr:`FireFacts.files`),
 which the agent's file tools may read for this run: the file that arrived is what the run is for.
 
-A fire nothing but its schedule or the owner started (``clock``, ``manual``, a Run now) has
-nothing to add: its instruction is the whole of it.
+A fire nothing but its schedule or a request for it by name started (``clock``, ``manual``, a Run
+now, yours or one an agent, an app or a program asked for) has nothing to add: its instruction is
+the whole of it.
 
 :func:`hand_on` is the one door a stored trigger's fire hands its action what started it by: its
 payload's words, the ``$CONTEXT`` line an event fire carries, and these facts, each through
@@ -203,7 +204,7 @@ async def describe(trigger: Any, payload: dict[str, Any] | None) -> FireFacts:
     event = dict(payload or {})
     kind = str(getattr(trigger, "kind", "") or "")
     trigger_id = str(getattr(trigger, "id", "") or "")
-    if event.get("manual"):
+    if event.get("manual") or event.get("asked_by"):
         return FireFacts()
     outside = _Outside(trigger_id)
     try:

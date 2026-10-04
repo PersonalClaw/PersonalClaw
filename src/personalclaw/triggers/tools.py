@@ -1748,11 +1748,13 @@ def delete_all(
     return AutomationToolResult(True, text, {"deleted": deleted, "created_by": created_by})
 
 
-#: Gates a MANUAL fire may skip,: "bypasses min-interval + max_runs_per_hour, never rate
-#: floors". `quiet` and `duty` are the per-trigger cadence limiters — the user asking for a run
-#: right now has overridden their own quiet hours by definition. Everything absent from this set is
-#: enforced on a manual fire exactly as on a scheduled one.
-MANUAL_BYPASSES: frozenset[str] = frozenset({"quiet", "duty"})
+#: Gates a run of YOURS passes over (`triggers.run_source.YOU`): "bypasses min-interval +
+#: max_runs_per_hour, never rate floors". `spacing` and `rate` are the automation's own cadence:
+#: the cap is there to stop the machine running away on its own, and your run is not that, so it is
+#: neither held to the cap nor counted toward it (`ScheduleRunStore.count_since`). `quiet` and
+#: `duty` are its own hours: you asking for a run right now has overridden them by definition. A
+#: run anyone else asks for passes over none of them (:func:`asked_gate_plan`).
+MANUAL_BYPASSES: frozenset[str] = frozenset({"spacing", "rate", "quiet", "duty"})
 
 #: 🔴 Gates a manual fire may NEVER skip, spelled out as data so the intent survives a refactor.
 #: `screen` is the prompt-injection boundary (criterion 6) and `capability` is the frozen action
@@ -1795,6 +1797,21 @@ def manual_gate_plan(dry_run: bool = False) -> dict[str, Any]:
     }
 
 
+def asked_gate_plan(dry_run: bool = False) -> dict[str, Any]:
+    """The gate plan of a run someone other than you asks for: an agent, an app, another
+    automation's own work or a program (`triggers.run_source`). Nobody answers what it runs, so it
+    is the automation firing, and passes over nothing a fire keeps: every gate applies, and it
+    counts toward the hourly cap and the failure streak (`trigger_runs._run_asked`)."""
+    from personalclaw.triggers.firepath import GATE_ORDER
+
+    return {
+        "bypassed": [],
+        "enforced": list(GATE_ORDER),
+        "dry_run": bool(dry_run),
+        "executes": not dry_run,
+    }
+
+
 def manual_refusal() -> str:
     """The reason a manual fire must be refused right now, or "" to proceed.
 
@@ -1825,14 +1842,19 @@ def run(
     trigger_id: str,
     dry_run: bool = False,
     runner: Any = None,
+    yours: bool = True,
 ) -> AutomationToolResult:
     """`automation_run` and `automation_dry_run` — §4's manual fire and observe-mode replay.
 
-    A DISABLED automation still runs manually: pausing means "stop firing on your own", and
+    *yours* says whose run it is (`triggers.run_source`): yours, a run by hand, or an agent's (the
+    chat tools, `mcp_automation`), which is the automation firing (:func:`asked_gate_plan`).
+
+    A DISABLED automation still runs by hand: pausing means "stop firing on your own", and
     refusing a hand-driven run of a paused automation would remove the main way a user tests one
-    before re-enabling it. Reported in the result so nobody mistakes it for a resume. What a run
-    never bypasses is the grant (`triggers.grants`): a trigger its action is not allowed to run is
-    refused, a row a legacy import brought over and the owner has not switched on included.
+    before re-enabling it. Reported in the result so nobody mistakes it for a resume. A run anyone
+    else asks for fires only an automation that fires on its own. What a run never bypasses is the
+    grant (`triggers.grants`): a trigger its action is not allowed to run is refused, a row a
+    legacy import brought over and the owner has not switched on included.
 
     `runner` is injected — this tool does NOT own the turn (S90 does). A `dry_run` never calls it
     at all, which is the property that makes observe-mode safe to offer. It answers as the
@@ -1848,19 +1870,33 @@ def run(
             f"Error: {trigger_id} has a parse error and cannot run " f"({row.errors[0].message}).",
             {"errors": [i.message for i in row.errors]},
         )
-    plan = manual_gate_plan(dry_run)
+    plan = manual_gate_plan(dry_run) if yours else asked_gate_plan(dry_run)
     trigger = row.trigger
-    lines = [
-        f"{'Dry run' if dry_run else 'Manual run'} of {trigger.id} "
-        f"({redact_for_display(trigger.name or '')}).",
-        f"  gates enforced: {', '.join(plan['enforced'])}",
-        f"  bypassed (manual): {', '.join(plan['bypassed']) or 'none'}",
-    ]
+    name = redact_for_display(trigger.name or "")
+    if yours:
+        lines = [
+            f"{'Dry run' if dry_run else 'Manual run'} of {trigger.id} ({name}).",
+            f"  gates enforced: {', '.join(plan['enforced'])}",
+            f"  bypassed (manual): {', '.join(plan['bypassed']) or 'none'}",
+        ]
+    else:
+        lines = [
+            f"{'Dry run' if dry_run else 'Run'} of {trigger.id} ({name}): a fire, it keeps every "
+            "rule the automation's own fires keep, and counts toward its hourly cap and its "
+            "failure streak.",
+            f"  gates enforced: {', '.join(plan['enforced'])}",
+        ]
     from personalclaw.triggers import grants
 
     missing = grants.missing(trigger)
-    if not trigger.enabled:
+    if not trigger.enabled and yours:
         lines.append("  note: this automation is paused — running it here does not re-enable it.")
+    if not yours and not trigger.fires_automatically:
+        lines.append(
+            "  note: it would not fire: this automation does not fire on its own now (it is "
+            "switched off, paused, or runs only when its owner runs it). Its owner can run it "
+            "from its page."
+        )
     if dry_run:
         if missing:
             lines.append(f"  note: a real run is refused: {grants.refusal(trigger, missing)}")
@@ -1909,11 +1945,16 @@ def _run_outcome(result: Any) -> tuple[bool, str]:
     """Whether a runner's answer says the automation ran, and the line that says what happened.
 
     The runner answers as the gateway's `/run` does: `ok` for whether the action ran, with its
-    `result`; `refused` for a gate that stopped it; `error` for a request it could not serve (and
-    for a gateway it could not reach). Only an answer that says it ran is a run.
+    `result`; `refused` for a gate that stopped it; ``fire_held`` for a fire its automation's own
+    rules held; `error` for a request it could not serve (and for a gateway it could not reach).
+    Only an answer that says it ran is a run.
     """
     if not isinstance(result, dict):
         return False, f"  failed: {result}"
+    detail = result.get("error_detail")
+    if isinstance(detail, dict) and detail.get("code") == "fire_held":
+        # The automation's own rules held the fire (`triggers.held`): nothing ran, nothing failed.
+        return False, f"  held: {result.get('error')}"
     if result.get("error"):
         return False, f"  failed: {result['error']}"
     if result.get("refused"):

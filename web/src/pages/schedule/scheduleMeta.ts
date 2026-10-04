@@ -1,7 +1,7 @@
 import { Repeat, CalendarClock, Calendar, Bot, FileCode2, TerminalSquare, Check, CheckCircle2, XCircle, Circle, CircleStop, Rocket, Clock, ShieldAlert, PauseCircle, PowerOff, Ban, TriangleAlert } from 'lucide-react'
 import { epochSeconds, localDateTimeSeconds } from '../../lib/epoch'
 import type { LucideIcon } from 'lucide-react'
-import type { ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
+import type { RunSource, ScheduleJob, ScheduleKind, ScheduleExecMode } from '../../lib/api'
 
 // ── schedule kind (every / cron / at) ──
 // `soon` flags the axes the HTTP create/update payload can't persist yet
@@ -202,6 +202,31 @@ export function runFlashMeta(status?: string | null): { label: string; tone: str
     return { label: meta.label.charAt(0).toUpperCase() + meta.label.slice(1), tone: meta.tone, icon: meta.icon }
   }
   return { label: 'Run finished', tone: 'var(--color-ok)', icon: Check }
+}
+
+/** What started a run, in words: `label` for the row's short tag, and `title`, the sentence the
+ *  tag carries. One table for the run history and the Triggers page, keyed by the word the run's row
+ *  keeps (`triggers.run_source`), so a run an agent asked for never reads as your Run now. */
+const RUN_SOURCES: Record<RunSource, { label: string; title: string }> = {
+  you: { label: 'you', title: 'You ran it: Run now, your own command, your answer, or the restart review' },
+  schedule: { label: 'schedule', title: 'Its schedule fired it' },
+  event: { label: 'event', title: 'An event it listens for fired it' },
+  webhook: { label: 'webhook', title: 'A program posted to its webhook' },
+  view: { label: 'view', title: 'A view it is bound to opened' },
+  chain: { label: 'after a run', title: 'A run it follows finished' },
+  file: { label: 'file', title: 'A file it watches changed' },
+  page: { label: 'web page', title: 'A page it watches changed' },
+  idle: { label: 'quiet chat', title: 'A chat it watches went quiet' },
+  agent: { label: 'agent', title: 'An agent asked for this run' },
+  app: { label: 'app', title: 'An app asked for this run' },
+  automation: { label: 'automation', title: "Another automation's work asked for this run" },
+  program: { label: 'program', title: 'A program on this computer asked for this run' },
+}
+
+/** What started a run, from the word its history row keeps; `null` for a row that does not say
+ *  (one written before rows did), which shows nothing rather than a guess. */
+export function runSourceMeta(source?: string | null): { label: string; title: string } | null {
+  return source ? RUN_SOURCES[source as RunSource] ?? null : null
 }
 
 /** Whether this outcome means "nothing was spent and nothing changed" (the `INERT_OUTCOMES`).

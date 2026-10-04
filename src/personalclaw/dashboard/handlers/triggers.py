@@ -190,20 +190,25 @@ def _runs_store() -> Any:
     return ScheduleRunStore(config_dir())
 
 
-def _last_run_status_for(trigger_id: str) -> str:
-    """The newest run's PERSISTENT status, or "" — sync, for the list serializer.
+def _last_run_for(trigger_id: str) -> dict[str, Any]:
+    """The newest run's PERSISTENT row, or ``{}`` — sync, for the list serializer.
 
     Same contract `ScheduleService.last_run_status` documented and for the same reason (T7): the
     honest status survives restarts and distinguishes `launched` from `ok`, where a trigger's own
-    field would report a fire-and-forget run as a success. Reads the store's own sync path, so the
-    list serializer stays cheap.
+    field would report a fire-and-forget run as a success. Reads the store's own sync path, once
+    per row, so the list serializer stays cheap.
     """
     try:
         rows, _total = _runs_store()._list_for_job_sync(trigger_id, 0, 1)
     except Exception:
-        logger.debug("last-run status unavailable for %s", trigger_id, exc_info=True)
-        return ""
-    return str(rows[0].get("status", "")) if rows else ""
+        logger.debug("last run unavailable for %s", trigger_id, exc_info=True)
+        return {}
+    return dict(rows[0]) if rows else {}
+
+
+def _last_run_status_for(trigger_id: str) -> str:
+    """The newest run's PERSISTENT status, or "" (:func:`_last_run_for`)."""
+    return str(_last_run_for(trigger_id).get("status", "") or "")
 
 
 def _week_triggers(state: DashboardState) -> list[Any]:
@@ -351,6 +356,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
     has to be told — which is how the write responses ended up reporting every row as clean.
     """
     from personalclaw.inbound import webhook
+    from personalclaw.triggers import run_source
     from personalclaw.triggers.schedule_view import _inline_action, _last_run_ts
 
     trigger = row.trigger
@@ -358,6 +364,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
     check = _last_check(trigger)
     if check is not None and not check["can_fire"]:
         warnings = [*warnings, check["said"]]
+    last_run = _last_run_for(trigger.id)
     return {
         "kind": _STORE,
         "store_kind": trigger.kind,
@@ -393,7 +400,10 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         # deliberately does not spend — and a manual trigger read "never" beside the runs its own
         # history listed.
         "last_run_ts": _last_run_ts(trigger),
-        "last_run_status": _last_run_status_for(trigger.id) or None,
+        "last_run_status": str(last_run.get("status") or "") or None,
+        # What started it (`triggers.run_source`), as its history row says: you, the automation's
+        # own clock or event, a webhook, or an agent, an app or a program asking for it.
+        "last_run_source": run_source.of_row(last_run) or None,
         "last_error": _redact(trigger.last_error_summary or ""),
         "broken": errors,
         "warnings": warnings,
@@ -431,18 +441,6 @@ def _last_check(trigger: Any) -> dict[str, Any] | None:
 # ── serializers ──
 
 
-def _last_run_status(state: DashboardState, job_id: str) -> str | None:
-    """The newest run record's status for the honest UI badge (T7), or None.
-
-    Reads the RUN STORE directly (S105). `ScheduleService.last_run_status` was itself a two-line
-    read of the same store's sync path, so going through the service was pure indirection — and it
-    meant a dashboard whose legacy service was a test double or absent showed no badge at all.
-    Still defensive (None on any failure) so the serializer stays robust + JSON-safe.
-    """
-    status = _last_run_status_for(job_id)
-    return status or None
-
-
 def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> dict[str, Any]:
     """ONE schedule row, projected and masked (S101; the masking is the projection's own).
 
@@ -457,16 +455,21 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
     """
     import time as _time
 
+    from personalclaw.triggers import run_source
     from personalclaw.triggers.schedule_view import to_schedule_row
 
     trigger = row.trigger
     errors, warnings = _issue_messages(row)
     store = _trigger_store()
+    # The newest run's row, read once: its status for the honest badge (T7), straight from the RUN
+    # STORE (S105), and what started it (`triggers.run_source`).
+    last_run = _last_run_for(trigger.id)
     projected = to_schedule_row(
         trigger,
         now=_time.time(),
         base_dir=store.base_dir,
-        last_run_status=_last_run_status(state, trigger.id) or "",
+        last_run_status=str(last_run.get("status") or ""),
+        last_run_source=run_source.of_row(last_run),
     )
     projected["broken"] = errors
     projected["warnings"] = warnings
@@ -2509,6 +2512,10 @@ async def api_trigger_review(request: web.Request) -> web.Response:
     trigger's action now through the same dispatch as its Run button and records the run as late;
     ``dismiss`` records ``skipped_missed``. Both go through `missed.resolve_missed`, which names the
     outcome and the reason, so the decision is a row in the trigger's history either way.
+
+    Only you decide (`approval_answer`): its Run now is a run of yours, which the hourly cap and the
+    failure streak pass over, so a decision anyone else sends is refused 403 ``approval_owner_only``
+    with an audit row, before anything is read or taken.
     """
     from personalclaw.triggers import review as _review
     from personalclaw.triggers import service as _service
@@ -2537,6 +2544,15 @@ async def api_trigger_review(request: web.Request) -> web.Response:
 
     body = await json_object_body(request)
     trigger_id = str(body.get("trigger_id") or "").strip()
+    from personalclaw import approval_answer
+
+    refused = approval_answer.forbidden(
+        request,
+        what=f"review:{trigger_id}",
+        asked_by=approval_answer.trigger(trigger_id).label,
+    )
+    if refused is not None:
+        return refused
     kind = str(body.get("kind") or "").strip()
     action = str(body.get("action") or "").strip()
     if not trigger_id or kind not in _review.KINDS or action not in ("run_now", "dismiss"):
@@ -2581,18 +2597,27 @@ async def api_trigger_review(request: web.Request) -> web.Response:
         )
     outcome, reason = resolve_missed(action, kind=kind)
     if action == "dismiss":
-        await _service.record_dismissal(trigger_id, outcome, reason, base_dir=store.base_dir)
+        from personalclaw.triggers import run_source
+
+        # The row stands for the run the card was: the automation's own, which did not happen.
+        await _service.record_dismissal(
+            trigger_id,
+            outcome,
+            reason,
+            source=run_source.fired(row.trigger),
+            base_dir=store.base_dir,
+        )
         state.push_refresh("crons")
         return web.json_response({"ok": True, "outcome": outcome, "reason": reason})
-    from personalclaw import approval_answer
-
+    # Your decision, made where only your sign-in reaches (`apps.permissions.ROUTE_AUTHZ` keeps
+    # every app off this route, and the internal credential opens no route but its own), so the
+    # run it starts is yours, by hand.
     ran, note = await trigger_runs._dispatch_store_action(
         row.trigger,
         {"trigger_id": trigger_id, "manual": True, "review": kind, "scheduled_for": taken.latest},
         event="review.run_now",
         late=reason,
         state=state,
-        runs_for=approval_answer.of_request(request),
     )
     state.push_refresh("crons")
     return web.json_response(

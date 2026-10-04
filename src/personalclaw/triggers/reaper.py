@@ -59,9 +59,9 @@ otherwise have read as failed with the agent's own word for the stop, "cancelled
 `interrupted` row, its trigger's stamps and the review card; the stop sends no notice, and the next
 start says once what it cut off (`review.take_unannounced`).
 
-Every pass records a run by hand as the hand run it was (`claims.held_by_hand`, or the row's own
-``manual`` tag): its row is ``manual``, and it leaves its trigger's health alone, as a hand run's
-record does (`run_record.record_run`).
+Every pass records what started the run it closes (`claims.source_of`, or the row's own
+``source``), and a run of yours leaves its trigger's health alone, as its own record does
+(`run_record.record_run`).
 """
 
 from __future__ import annotations
@@ -184,7 +184,7 @@ def reap_one(
         reason=f"Reaped after {int(elapsed)}s (exceeded {int(RUN_DEADLINE_SECS)}s deadline)",
         started_at=held.claimed_at if held is not None else now - elapsed,
         now=now,
-        by_hand=held is not None and claims.held_by_hand(held.holder),
+        source=_claimed_by(store, trigger_id, held),
         store=store,
         base_dir=base_dir,
     )
@@ -199,11 +199,12 @@ def _close(
     reason: str,
     started_at: float,
     now: float,
-    by_hand: bool,
+    source: str,
     store: Any,
     base_dir: Path | str | None,
 ) -> bool:
-    """Close a run the reaper ended: its row in the history, and its trigger's stamps.
+    """Close a run the reaper ended: its row in the history, saying what started the run
+    (*source*, `triggers.run_source`), and its trigger's stamps.
 
     Shared by every pass in this module — the deadline sweep, the boot orphan pass and the run a
     stop cut off — because "how a non-finishing run appears to the user" must be one answer. Two
@@ -211,6 +212,8 @@ def _close(
 
     Returns whether the trigger took its stamps (`_stamp`); the row is written either way.
     """
+    from personalclaw.triggers import run_source
+
     run_id = _write_row(
         trigger_id,
         status=status,
@@ -218,24 +221,45 @@ def _close(
         name=_name(store, trigger_id),
         started_at=started_at,
         now=now,
-        by_hand=by_hand,
+        source=source,
         base_dir=base_dir,
     )
     return _stamp(
-        store, trigger_id, status=status, reason=reason, run_id=run_id, now=now, by_hand=by_hand
+        store,
+        trigger_id,
+        status=status,
+        reason=reason,
+        run_id=run_id,
+        now=now,
+        yours=run_source.yours(source),
     )
+
+
+def _stored(store: Any, trigger_id: str) -> Any:
+    """The trigger as its store holds it, or None. Never raises."""
+    if store is None:
+        return None
+    try:
+        row = store.get(trigger_id)
+    except Exception:  # noqa: BLE001 - a row that cannot be read leaves its run named by its id
+        logger.debug("Reaper: could not read %s", trigger_id, exc_info=True)
+        return None
+    return row.trigger if row is not None else None
 
 
 def _name(store: Any, trigger_id: str) -> str:
     """The trigger's name, for its row; "" when the store has no row for it. Never raises."""
-    if store is None:
-        return ""
-    try:
-        row = store.get(trigger_id)
-    except Exception:  # noqa: BLE001 - the row is named by its trigger as it is called now anyway
-        logger.debug("Reaper: could not read the name of %s", trigger_id, exc_info=True)
-        return ""
-    return str(getattr(row.trigger, "name", "") or "") if row is not None else ""
+    trigger = _stored(store, trigger_id)
+    return str(getattr(trigger, "name", "") or "") if trigger is not None else ""
+
+
+def _claimed_by(store: Any, trigger_id: str, held: Any) -> str:
+    """What started the run a claim *held* stands for (`claims.source_of`): a run of yours, a fire
+    someone else asked for, or else what fires the trigger's kind on its own. Never raises."""
+    from personalclaw.triggers import claims, run_source
+
+    asked = claims.source_of(str(getattr(held, "holder", "") or "")) if held is not None else ""
+    return asked or run_source.fired(_stored(store, trigger_id))
 
 
 def _stamp(
@@ -246,7 +270,7 @@ def _stamp(
     reason: str,
     run_id: str,
     now: float,
-    by_hand: bool,
+    yours: bool,
 ) -> bool:
     """Move the TRIGGER's stamps for a run the reaper closed. True when the trigger was written.
 
@@ -258,7 +282,7 @@ def _stamp(
 
     A fire's trigger also reads DEGRADED, not FAILING: `migrate.py`'s `_HEALTH_FROM_STATUS` maps a
     legacy `timeout` status to DEGRADED, and that reading is the honest one — the trigger is not
-    broken, its last run did not finish. A run *by_hand* leaves the health alone.
+    broken, its last run did not finish. A run of *yours* leaves the health alone.
 
     The row is read again just before it is written, so an edit saved meanwhile is not written
     over. Never raises: one unreadable row must not stop the pass from freeing the others.
@@ -273,7 +297,7 @@ def _stamp(
             return False
         trigger = row.trigger
         stamp_run(trigger, status=status, why=reason, run_id=run_id, at=now)
-        if not by_hand:
+        if not yours:
             trigger.health_status = TriggerHealth.DEGRADED.value
         store.upsert(trigger)
         return True
@@ -353,8 +377,8 @@ def terminalize_orphans_sync(
        `ScheduleDetail`'s `Last run` block and `RunHistory` render.
     3. **The trigger's stamps and health**, through the same `_close` the deadline sweep uses.
 
-    A claim a run by hand held (`claims.held_by_hand`) is closed as that hand run: a Run now a
-    crash cut off was recorded as a scheduled fire, and marked its trigger degraded.
+    A claim a run of yours held (`claims.source_of`) is closed as that run: a Run now a crash cut
+    off was recorded as a scheduled fire, and marked its trigger degraded.
 
     The run is not retried here. The gateway puts each record on the review
     (`triggers/review.cards_from_orphans`), where the user runs it again or dismisses it.
@@ -373,7 +397,7 @@ def terminalize_orphans_sync(
     for trigger_id, owner_pid in claims.orphaned_ids(now=now, base_dir=base_dir):
         held = claims.read_claim(trigger_id, now=now, base_dir=base_dir)
         started = held.claimed_at if held is not None else now
-        by_hand = held is not None and claims.held_by_hand(held.holder)
+        source = _claimed_by(store, trigger_id, held)
         elapsed = max(0.0, now - started)
         released = claims.release_claim(trigger_id, base_dir=base_dir)
         logger.warning(
@@ -398,7 +422,7 @@ def terminalize_orphans_sync(
             "elapsed": int(elapsed),
             "released": bool(released),
             "reason": reason,
-            "by_hand": by_hand,
+            "source": source,
             "recorded": False,
         }
         record["recorded"] = _close(
@@ -407,7 +431,7 @@ def terminalize_orphans_sync(
             reason=reason,
             started_at=started,
             now=now,
-            by_hand=by_hand,
+            source=source,
             store=store,
             base_dir=base_dir,
         )
@@ -439,7 +463,7 @@ def record_stopped_run(
     *,
     started_at: float,
     restarting: bool,
-    by_hand: bool = False,
+    source: str,
     store: Any = None,
     now: float = 0.0,
     base_dir: Path | str | None = None,
@@ -455,10 +479,10 @@ def record_stopped_run(
 
     Closed here the way that pass closes a run whose owner died, with a reason naming what stopped
     it (`_close`): the `interrupted` row, the trigger's stamps and health, the audit, and the card
-    on the review (`triggers/review.py`), where the user runs it again or dismisses it. A run
-    started *by_hand* (Run now, the review's Run now) is recorded as the hand run it was — its row
-    is `manual`, and it leaves the trigger's health alone, as a hand run's record does
-    (`run_record.record_run`). The stop sends no notice: the next start says once what it cut off.
+    on the review (`triggers/review.py`), where the user runs it again or dismisses it. Its row says
+    what started it (*source*, `triggers.run_source`), and a run of yours (Run now, the review's
+    Run now) leaves the trigger's health alone, as its own record does (`run_record.record_run`).
+    The stop sends no notice: the next start says once what it cut off.
 
     Returns the record in the boot pass's shape. Synchronous, awaiting nothing: it runs inside the
     cancellation it records, where any await can be cancelled again.
@@ -485,7 +509,7 @@ def record_stopped_run(
         reason=reason,
         started_at=started_at or now,
         now=now,
-        by_hand=by_hand,
+        source=source,
         store=store,
         base_dir=base_dir,
     )
@@ -515,13 +539,15 @@ def record_stopped_work(
 
     So the gateway closes each such run before it cuts the agent off (`gateway._shutdown`): the
     `launched` row says it was interrupted, and why (`settle.settle_interrupted`); the trigger's
-    stamps move (`_stamp`), and a fire's trigger reads degraded while a run by hand (the row's own
-    ``manual`` tag) leaves the health alone; and the card waits on the review. The agent's own
+    stamps move (`_stamp`), and a fire's trigger reads degraded while a run of yours (the row's own
+    ``source``) leaves the health alone; and the card waits on the review. The agent's own
     ending then finds its row already closed.
 
     Returns the record in `record_stopped_run`'s shape, or None when no `launched` row of
     *trigger_id* waits on *work_id*. Synchronous, for the reason `record_stopped_run` is.
     """
+    from personalclaw.triggers import run_source
+
     try:
         from personalclaw.schedule_history import ScheduleRunStore
         from personalclaw.triggers import settle
@@ -557,7 +583,7 @@ def record_stopped_work(
         reason=reason,
         run_id=str(row.get("run_id") or ""),
         now=now,
-        by_hand=str(row.get("trigger") or "") == "manual",
+        yours=run_source.yours(run_source.of_row(row)),
     )
     _audit(trigger_id, tool_name="stop_interrupt", outcome="interrupted", elapsed=elapsed)
     _keep_for_review(record, now=now, base_dir=base_dir)
@@ -606,7 +632,7 @@ def _write_row(
     name: str,
     started_at: float,
     now: float,
-    by_hand: bool,
+    source: str,
     base_dir: Path | str | None = None,
 ) -> str:
     """The terminal run row for a run the reaper closed; its id, or "" when none was written.
@@ -628,9 +654,11 @@ def _write_row(
                 run_id=run_id,
                 job_id=trigger_id,
                 job_name=name,
-                # `manual` for a hand run, the tag its record gives one (`run_record.record_run`):
-                # the hourly cap and the failure streak both pass over it.
-                trigger="manual" if by_hand else "scheduled",
+                # Its outcome, which is no exit the failure streak counts: a run cut off did not
+                # finish, and nothing failed. What started it says whose it was, and the hourly
+                # cap passes over it only when that is you (`ScheduleRunStore.count_since`).
+                trigger=status,
+                source=source,
                 started_at=started_at,
                 finished_at=now,
                 duration_ms=int(max(0.0, now - started_at) * 1000),

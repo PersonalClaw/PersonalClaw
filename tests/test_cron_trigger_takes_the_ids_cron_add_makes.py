@@ -11,7 +11,8 @@ MCP door to the same route) sent it raw, so a job name with a space could not be
 
 The round trip runs against the gateway's real run and history routes on a real local port, so the
 encoding, the router's decoding and the id split are the ones production runs. Only the action
-provider is a recorder, so a run starts no agent.
+provider is a recorder, so a run starts no agent. ``cron trigger`` is typed at a terminal here, so
+its run is yours; ``automation_run`` is an agent's, so its run fires through the gateway's dispatch.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import types
 import urllib.request
 from urllib.parse import quote
 
+import fire_dispatch
 import pytest
 from aiohttp import web
 
@@ -94,8 +96,12 @@ def gateway(home, monkeypatch, unset_env):
         return await handler(request)
 
     app = web.Application(middlewares=[as_owner])
-    app["state"] = types.SimpleNamespace(
-        push_refresh=lambda *_a, **_k: None, _background_tasks=set()
+    app["state"] = fire_dispatch.attach(
+        types.SimpleNamespace(
+            push_refresh=lambda *_a, **_k: None,
+            notify=lambda *_a, **_k: None,
+            _background_tasks=set(),
+        )
     )
     app.router.add_get("/api/healthz", api_healthz)
     app.router.add_post("/api/triggers/{id}/run", trigger_runs.api_trigger_run)
@@ -130,6 +136,21 @@ def gateway(home, monkeypatch, unset_env):
         loop.call_soon_threadsafe(loop.stop)
         thread.join(10)
         loop.close()
+
+
+class _Terminal:
+    """Standard input as a person typing at a terminal has it."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+@pytest.fixture
+def typed(monkeypatch):
+    """`cron trigger` typed at a terminal: your own command, so its run is yours."""
+    from personalclaw import schedule_trigger
+
+    monkeypatch.setattr(schedule_trigger.sys, "stdin", _Terminal())
 
 
 def _cron(**fields) -> None:
@@ -168,7 +189,7 @@ def _seed(home, trigger_id: str) -> None:
     )
 
 
-def test_add_then_list_then_trigger_then_the_run_is_in_its_history(gateway, ran, capsys):
+def test_add_then_list_then_trigger_then_the_run_is_in_its_history(gateway, ran, typed, capsys):
     _cron(cron_action="add", name="Nightly report", message="summarise", every=3600, yes=True)
     assert "Created automation 'Nightly report' (clock:nightly-report)" in capsys.readouterr().out
 
@@ -185,7 +206,7 @@ def test_add_then_list_then_trigger_then_the_run_is_in_its_history(gateway, ran,
     assert [call["task_template"] for call in ran.calls] == ["summarise"]
     history = _history(gateway, job_id)
     assert history["total"] == 1, history
-    assert history["runs"][0]["trigger"] == "manual"
+    assert history["runs"][0]["source"] == "you"
 
 
 @pytest.mark.parametrize(
@@ -201,7 +222,7 @@ def test_add_then_list_then_trigger_then_the_run_is_in_its_history(gateway, ran,
         "abc123",  # the old hex shape, still a valid id when a row has it
     ],
 )
-def test_every_id_a_writer_mints_is_triggered(trigger_id, home, gateway, ran, capsys):
+def test_every_id_a_writer_mints_is_triggered(trigger_id, home, gateway, ran, typed, capsys):
     _seed(home, trigger_id)
 
     _cron(cron_action="trigger", job_id=trigger_id)
@@ -241,4 +262,5 @@ def test_automation_run_sends_a_job_name_with_a_space(home, gateway, ran):
 
     assert "\n  result: ran\n" in out and not out.startswith("Error"), out
     assert len(ran.calls) == 1
-    assert _history(gateway, "app:ops-helper:Nightly Sync")["total"] == 1
+    (row,) = _history(gateway, "app:ops-helper:Nightly Sync")["runs"]
+    assert row["source"] == "agent", row

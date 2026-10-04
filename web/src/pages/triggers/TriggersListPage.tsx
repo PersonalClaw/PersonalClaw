@@ -28,7 +28,7 @@ import { RestoreHoldNotice } from './RestoreHold'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, callbackToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
-import { triggerStatusMeta, explainsCause, relFuture } from '../schedule/scheduleMeta'
+import { triggerStatusMeta, explainsCause, relFuture, runSourceMeta } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
 
 // One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store · callback.
@@ -302,6 +302,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                   // run outcome, rendering a PARKED event trigger as "never run". The converters now
                   // put each fact in its own field and `triggerStatusMeta` owns the precedence.
                   const sd = triggerStatusMeta(t)
+                  const started = runSourceMeta(t.lastRunSource)
                   // The cause, shown only where it is still true — see `explainsCause`: the backend
                   // never clears `last_error_summary` on recovery, so a healthy row still carries the
                   // old reason and printing it would report a fixed fault.
@@ -449,6 +450,9 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                             discriminator: no timestamp AND no fires is "never"; no timestamp with
                             fires recorded says nothing rather than something false. */}
                         <span>{t.lastRunTs ? relPast(t.lastRunTs) : t.hasRun ? '' : 'never'}</span>
+                        {/* What started that run, as its row says: an agent's run never reads as
+                            yours. Nothing for a row that does not say. */}
+                        {started && <span title={started.title}>· {started.label}</span>}
                       </div>
                     </ListRow>
                     </ContextMenu>

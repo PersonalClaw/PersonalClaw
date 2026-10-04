@@ -224,8 +224,8 @@ class TestARunNow:
         assert resp.status == 409
 
     def test_a_stop_cuts_off_is_recorded_as_the_hand_run_it_was(self, home, monkeypatch):
-        """🔴 Red before: nothing recorded it. Its row is `manual` — the failure streak and the
-        hourly cap pass over it — and the trigger's health is left alone, as a hand run's is."""
+        """🔴 Red before: nothing recorded it. Its row says it was yours — the failure streak and
+        the hourly cap pass over it — and the trigger's health is left alone, as a hand run's is."""
         _restarting(monkeypatch, True)
         provider = _Blocks()
         trigger_runs = self._dispatch(monkeypatch, provider)
@@ -240,7 +240,7 @@ class TestARunNow:
 
         (row,) = _rows(home)
         assert row["status"] == reaper.RESTART_INTERRUPTED_STATUS
-        assert row["trigger"] == "manual"
+        assert row["source"] == "you"
         assert row["error"].startswith("Interrupted by a gateway restart: ")
         assert [c.kind for c in review.pending(base_dir=home)] == [review.INTERRUPTED]
         after = TriggerStore(base_dir=home).get(TID).trigger
