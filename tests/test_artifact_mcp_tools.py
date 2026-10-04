@@ -18,6 +18,15 @@ from personalclaw.artifacts.native import NativeArtifactProvider
 from personalclaw.mcp_artifacts import _call_tool
 
 
+def _base(reply: str) -> str:
+    """The base a read or a write of an artifact names, to write its next version over."""
+    import re
+
+    found = re.search(r"\bbase:? (v\d+-[0-9a-f]{16})", reply, re.IGNORECASE)
+    assert found, reply
+    return found.group(1)
+
+
 @pytest.fixture
 def provider(tmp_path):
     return NativeArtifactProvider(root=tmp_path / "artifacts")
@@ -44,7 +53,10 @@ class TestArtifactMcpTools:
     def test_get_returns_content(self, wired) -> None:
         _call_tool("artifact_save", {"name": "Doc", "content": "hello", "kind": "markdown"})
         out = _call_tool("artifact_get", {"slug": "doc"})
-        assert out == "hello"
+        # Its text, fenced as data, under a line naming its version and its base.
+        assert out.startswith("[Artifact 'Doc' (slug: doc, kind: markdown), version 1.")
+        assert "\nhello\n" in out
+        assert _base(out)
 
     def test_save_stamps_bound_project_id(self, wired) -> None:
         """artifact_save ties the artifact to the Project bound for this turn, so it
@@ -72,7 +84,8 @@ class TestArtifactMcpTools:
 
     def test_update_snapshots_and_iterates(self, wired) -> None:
         _call_tool("artifact_save", {"name": "C", "content": "v1", "kind": "text"})
-        out = _call_tool("artifact_update", {"slug": "c", "content": "v2"})
+        base = _base(_call_tool("artifact_get", {"slug": "c"}))
+        out = _call_tool("artifact_update", {"slug": "c", "content": "v2", "base": base})
         assert "version 2" in out
         art = wired.get("c")
         assert art.version == 2
@@ -96,7 +109,8 @@ class TestArtifactMcpTools:
 
     def test_versions(self, wired) -> None:
         _call_tool("artifact_save", {"name": "C", "content": "v1", "kind": "text"})
-        _call_tool("artifact_update", {"slug": "c", "content": "v2"})
+        base = _base(_call_tool("artifact_get", {"slug": "c"}))
+        _call_tool("artifact_update", {"slug": "c", "content": "v2", "base": base})
         out = json.loads(_call_tool("artifact_versions", {"slug": "c"}))
         assert out["versions"] == [1, 2]
 

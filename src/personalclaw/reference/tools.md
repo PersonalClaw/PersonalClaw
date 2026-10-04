@@ -27,11 +27,13 @@ Delete a saved artifact (and its version history) by slug. The source file/widge
 
 ### `artifact_get`
 
-Fetch a saved artifact's content by slug. Pass version=N for a historical snapshot; omit for the live version.
+Read a saved artifact by slug: its text, its version and its base. A Word document reads as the markdown document_create takes, a deck as the outline deck_create takes, a spreadsheet as the JSON sheets sheet_create takes, a PDF as its pages' text, and every other kind as its own text. The base names the version you read; pass it to the tool that writes the next version, which refuses a write over a version someone else made after your read. A long text comes in parts of 40,000 characters: the reply names the offset of the next. Pass version=N for an earlier version; omit it for the live one.
 
 **Response type:** `artifact.detail`
 
 **Parameters:**
+- `base` (string, optional) — With offset: the base the first part named, so a part of a version that changed meanwhile is refused
+- `offset` (integer, optional) — Where in the text to start, in characters (default 0): the reply of the previous part names it
 - `slug` (string, required)
 - `version` (integer, optional) — Snapshot number (omit for live)
 
@@ -39,6 +41,16 @@ Fetch a saved artifact's content by slug. Pass version=N for a historical snapsh
 
 ```json
 {
+  "slug": "launch-plan"
+}
+```
+
+**Example — Read the next part of a long artifact:**
+
+```json
+{
+  "base": "v3-3f2a9c0d1e7b5a64",
+  "offset": 40000,
   "slug": "launch-plan"
 }
 ```
@@ -65,13 +77,14 @@ List saved artifacts (name/slug/kind/version/tags). Filter by tag, kind, collect
 
 ### `artifact_save`
 
-Save content as a named, versioned artifact so it persists beyond chat scrollback and can be iterated on by name in a later session. Use for widgets/HTML tools/dashboards (kind='widget'/'html'), live React components (kind='react' — content is JSX defining a top-level `App` component authored against the window React/ReactDOM globals; renders in a sandboxed canvas), infographics (kind='infographic' — content is AntV declarative DSL, see the infographic-syntax skill), editorial long-form documents (kind='document' — the content must be semantic HTML, NOT markdown; see the editorial-document skill), or docs (kind='markdown' for markdown/prose — headings, lists, tables, code fences; or 'json'/'svg'/'text'). Rule of thumb: markdown body → kind='markdown', HTML body → kind='document'. Returns the slug — the stable handle to reference it later. Pass an explicit slug to re-save/overwrite a known artifact.
+Save content as a named, versioned artifact so it persists beyond chat scrollback and can be iterated on by name in a later session. Use for widgets/HTML tools/dashboards (kind='widget'/'html'), live React components (kind='react' — content is JSX defining a top-level `App` component authored against the window React/ReactDOM globals; renders in a sandboxed canvas), infographics (kind='infographic' — content is AntV declarative DSL, see the infographic-syntax skill), editorial long-form documents (kind='document' — the content must be semantic HTML, NOT markdown; see the editorial-document skill), or docs (kind='markdown' for markdown/prose — headings, lists, tables, code fences; or 'json'/'svg'/'text'). Rule of thumb: markdown body → kind='markdown', HTML body → kind='document'. Returns the slug — the stable handle to reference it later. Pass the slug of an existing artifact to save its next version: read it first with artifact_get and pass the base it names, since the save replaces its whole text and a version someone else made after your read is never overwritten.
 
 **Response type:** `artifact.detail`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
+- `base` (string, optional) — The base artifact_get named for the version you read (like 'v3-1a2b3c4d5e6f7a8b'), required to write over an existing artifact; a new one needs none
 - `collection` (string, optional) — Optional library collection label to group this artifact under.
 - `content` (string, optional) — Artifact body (inline)
 - `content_file` (string, optional) — Absolute path to read content from instead of inline content
@@ -79,7 +92,7 @@ Save content as a named, versioned artifact so it persists beyond chat scrollbac
 - `force` (boolean, optional) — Save a NEW artifact even if one with the same name exists (skip the dedup hint).
 - `kind` (string, optional) — Content kind (default widget). Use 'markdown' for prose/markdown bodies (# headings, **bold**, tables, lists); 'document' ONLY for semantic HTML editorial docs, never for markdown.
 - `name` (string, required) — Display name
-- `slug` (string, optional) — Explicit slug (else derived from name)
+- `slug` (string, optional) — Explicit slug (else derived from name); an existing one saves its next version
 - `tags` (array, optional)
 
 **Example — Save generated text as a named artifact:**
@@ -94,13 +107,14 @@ Save content as a named, versioned artifact so it persists beyond chat scrollbac
 
 ### `artifact_update`
 
-Update a saved artifact by slug, creating a new version snapshot (each agent update is a checkpoint, like a commit). Pass new content inline or via content_file; or update metadata only (description/tags). An image, video, PDF or office document is not text: only its metadata changes here, and its next version comes from the tool that made it (image_generate, document_create, sheet_create or deck_create with slug).
+Update a saved artifact by slug. New content (inline or via content_file) replaces its whole text as a new version, so it takes the base artifact_get named for the text you changed: a write with no base, or over a version someone else made after your read, is refused and nothing is written. Metadata alone (description/tags/collection) needs no base and cuts no version. An image, video, PDF or office document is not text: only its metadata changes here, and its next version comes from the tool that made it (image_generate, document_create, sheet_create or deck_create with slug).
 
 **Response type:** `artifact.detail`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
+- `base` (string, optional) — The base artifact_get named for the version you read (like 'v3-1a2b3c4d5e6f7a8b'), required to write over an existing artifact; a new one needs none
 - `collection` (string, optional) — Reassign the library collection label (metadata-only).
 - `content` (string, optional)
 - `content_file` (string, optional) — Absolute path to read new content from
@@ -108,10 +122,11 @@ Update a saved artifact by slug, creating a new version snapshot (each agent upd
 - `slug` (string, required)
 - `tags` (array, optional)
 
-**Example — Replace an artifact's content:**
+**Example — Write the next version of the text you read:**
 
 ```json
 {
+  "base": "v3-3f2a9c0d1e7b5a64",
   "content": "# Launch plan v2\n...",
   "slug": "launch-plan"
 }
@@ -136,13 +151,14 @@ List the numbered snapshot versions of an artifact by slug.
 
 ### `deck_create`
 
-Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save it as a versioned artifact. Each `##` heading starts a slide, the lines under it become bullets, and `<!-- notes: ... -->` becomes that slide's speaker notes. A leading `#` titles the deck. Write an outline, not prose — paragraphs on a slide are what makes generated decks unreadable. Re-running with the same `name` (or the same `slug`) updates that deck and bumps its version instead of creating a near-duplicate — to make a SEPARATE deck, give it a different name. Returns the slug and a download URL.
+Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save it as a versioned artifact. Each `##` heading starts a slide, the lines under it become bullets, and `<!-- notes: ... -->` becomes that slide's speaker notes. A leading `#` titles the deck. Write an outline, not prose — paragraphs on a slide are what makes generated decks unreadable. To make the next version of an existing deck, read it with artifact_get and call this with its slug and the base that read names: a call that names an existing deck (by slug, or by the same name) with no base, or with a base someone else's newer version has replaced, is refused and nothing is written. To make a SEPARATE deck, give it a different name. Returns the slug and a download URL.
 
 **Response type:** `artifact.detail`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
+- `base` (string, optional) — The base artifact_get named for the version you read (like 'v3-1a2b3c4d5e6f7a8b'), required to write over an existing artifact; a new one needs none
 - `description` (string, optional) — Optional short description
 - `format` (string, optional) — Output format (default 'pptx')
 - `markdown` (string, optional) — Outline: `##` per slide, bullets beneath (indent two spaces per sub-level), `<!-- notes: -->` for notes
@@ -163,13 +179,14 @@ Generate a real PowerPoint deck (.pptx) from a markdown OUTLINE and save it as a
 
 ### `document_create`
 
-Generate a real Word document (.docx) from MARKDOWN and save it as a versioned artifact the user can download. Write ordinary markdown — headings, paragraphs, bullet and numbered lists, tables, fenced code, `---` for a page break — and it is rendered into the document. Do NOT attempt to emit OOXML or base64. Use this when the user wants a file to send, print or hand to someone; use artifact_save with kind='markdown' or 'document' when they just want to read it in the app. Re-running with the same `name` (or the same `slug`) updates that document and bumps its version instead of creating a near-duplicate — to make a SEPARATE document, give it a different name. Returns the slug and a download URL.
+Generate a real Word document (.docx) from MARKDOWN and save it as a versioned artifact the user can download. Write ordinary markdown — headings, paragraphs, bullet and numbered lists, tables, fenced code, `---` for a page break — and it is rendered into the document. Do NOT attempt to emit OOXML or base64. Use this when the user wants a file to send, print or hand to someone; use artifact_save with kind='markdown' or 'document' when they just want to read it in the app. To make the next version of an existing document, read it with artifact_get and call this with its slug and the base that read names: a call that names an existing document (by slug, or by the same name) with no base, or with a base someone else's newer version has replaced, is refused and nothing is written. To make a SEPARATE document, give it a different name. Returns the slug and a download URL.
 
 **Response type:** `artifact.detail`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
+- `base` (string, optional) — The base artifact_get named for the version you read (like 'v3-1a2b3c4d5e6f7a8b'), required to write over an existing artifact; a new one needs none
 - `description` (string, optional) — Optional short description
 - `format` (string, optional) — Output format (default 'docx'). Call document_formats to see what is available.
 - `html` (string, optional) — Alternative to markdown: HTML (sanitized before use)
@@ -195,6 +212,17 @@ Generate a real Word document (.docx) from MARKDOWN and save it as a versioned a
 {
   "markdown": "# Q3 Review\n\nRevenue grew.\n\n- EMEA up 18%\n",
   "name": "Q3 Review"
+}
+```
+
+**Example — Write the next version of a document you read:**
+
+```json
+{
+  "base": "v2-3f2a9c0d1e7b5a64",
+  "markdown": "# Q3 Review\n\nRevenue grew 12%.\n",
+  "name": "Q3 Review",
+  "slug": "q3-review"
 }
 ```
 
@@ -258,13 +286,14 @@ Generate an image from a text prompt, using the model bound to the 'image_gen' u
 
 ### `sheet_create`
 
-Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` (JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. Re-running with the same `name` (or the same `slug`) updates that spreadsheet and bumps its version instead of creating a near-duplicate — to make a SEPARATE spreadsheet, give it a different name. Returns the slug and where to download the file.
+Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` (JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. To make the next version of an existing spreadsheet, read it with artifact_get and call this with its slug and the base that read names: a call that names an existing spreadsheet (by slug, or by the same name) with no base, or with a base someone else's newer version has replaced, is refused and nothing is written. To make a SEPARATE spreadsheet, give it a different name. Returns the slug and where to download the file.
 
 **Response type:** `artifact.detail`
 
 **Safety:** requires approval, risk: caution
 
 **Parameters:**
+- `base` (string, optional) — The base artifact_get named for the version you read (like 'v3-1a2b3c4d5e6f7a8b'), required to write over an existing artifact; a new one needs none
 - `csv` (string, optional) — Single-sheet CSV text
 - `description` (string, optional) — Optional short description
 - `format` (string, optional) — Output format: 'xlsx' (default) or 'csv' (one tab and no formulas: a cell whose text begins with =, +, -, @, a tab or a carriage return is saved behind a single quote and opens as text, while numbers stay numbers)

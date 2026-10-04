@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from personalclaw.artifacts import changes, source_files
+from personalclaw.artifacts.bases import BodyChange, newest_body_change
 from personalclaw.artifacts.deploy import ArtifactDeployStore
 from personalclaw.artifacts.models import (
     ALLOWED_EVENT_TYPES,
@@ -433,6 +434,77 @@ class NativeArtifactProvider(ArtifactProvider):
         if live is None:
             return False
         return live != (latest_snapshot or "")
+
+    def _body_author(self, art: Artifact, live: str | None) -> BodyChange | None:
+        """Who made *art*'s live body *live* (``bases.newest_body_change``).
+
+        A file-backed text artifact's body is its file, which any program can write: when the file
+        no longer matches what this store last wrote through to it, the body changed outside the
+        store and no event names who changed it.
+        """
+        if art.source_path and live is not None and not is_binary_kind(art.kind):
+            if live != (self._current_content(art.slug) or ""):
+                return BodyChange(kind="edited", version=art.version, outside=True)
+        return newest_body_change(art)
+
+    def newest_change(self, slug: str) -> BodyChange | None:
+        """Who made *slug*'s live body, or ``None`` when no such artifact (or no change) exists.
+
+        What a refusal of a stale write names as the writer of the version it would have replaced.
+        """
+        with self._lock:
+            art = self._read_meta(slug)
+            if art is None:
+                return None
+            return self._body_author(art, self._live_body(art))
+
+    def _keep_unversioned(
+        self, art: Artifact, live: str | None, content: str, actor: str | None
+    ) -> bool:
+        """Before a write replaces *live*, keep it as a version when another writer left it and
+        no version holds it. Returns whether a version was cut.
+
+        An edit the owner saved without a new version (a plain Save), an app's plain save or a
+        change to an artifact's file lives only in the live body, and whatever writes next erases
+        it. A write built from a copy of the body names that copy's base and is refused when it
+        is stale, but a current base proves only that the writer read the edit, not that what it
+        writes kept it, and a chat's Trust can approve the write with nobody looking. A
+        workflow's write is built from no copy at all: its step writes what its run made, over
+        whatever the artifact holds. So the edit is cut as its own version first, credited to
+        whoever made it, and the write lands on top: nothing anyone wrote is lost, Revert brings
+        it back, and the timeline says whose each version is. A body this writer left itself (a
+        dashboard's last refresh) is replaced as it is, so a refresh every few minutes does not
+        bury the history in versions. The owner's own save from her editor is the caller's to
+        leave out: it names the revision the editor showed her, and a plain Save keeps the
+        version number.
+        """
+        if live is None or content == live:
+            return False  # nothing is replaced
+        nums = self._list_version_numbers(art.slug)
+        latest = self._version_content(art.slug, nums[-1]) if nums else None
+        if latest is not None and live == latest:
+            return False  # a version holds it already
+        author = self._body_author(art, live)
+        if author is not None and not author.outside and author.by == (actor or ""):
+            return False  # this writer's own text
+        art.version += 1
+        self._snapshot_version(art.slug, art.version, live)
+        # Whose text it keeps, and the run that wrote it when a workflow's step did.
+        kept = {"kept_before": actor or ""}
+        if author is not None and author.run_id:
+            kept["run_id"] = author.run_id
+        self._append_event(
+            art,
+            ArtifactEvent(
+                ts=_now(),
+                type="edited",
+                by=author.by if author is not None else "",
+                session_id=author.session_id if author is not None else "",
+                version=art.version,
+                metadata=clean_event_metadata(kept),
+            ),
+        )
+        return True
 
     # ── ABC methods ──
 
@@ -900,11 +972,13 @@ class NativeArtifactProvider(ArtifactProvider):
             if pointer and content is not None:
                 self._try_write_source_path(pointer, content)
             self._write_meta(art)
-            # Echo what _write_text actually persisted (sliced to MAX_CONTENT_BYTES), not
-            # the raw input: create() returns art in-hand rather than re-reading via get()
-            # the way update() does, so an over-cap body would otherwise report success at
-            # full size in the create response while only the first MiB reached disk.
-            art.content = body[:MAX_CONTENT_BYTES]
+            # Echo the body as a read of it shows it, not the raw input: what reached disk is
+            # sliced to MAX_CONTENT_BYTES, so an over-cap body would otherwise report success at
+            # full size while only the first MiB was kept, and a read takes its line breaks as
+            # written (a CSV's CRLF reads as LF), so the base this answer hands the agent
+            # (`artifacts.bases`) would name a body no read of it shows.
+            shown = self._live_body(art)
+            art.content = shown if shown is not None else body[:MAX_CONTENT_BYTES]
         # Mirroring observes the write from OUTSIDE the
         # lock: a listener reads the artifact back, and holding the store lock across an
         # index would serialize every concurrent save behind someone else's indexing.
@@ -979,6 +1053,14 @@ class NativeArtifactProvider(ArtifactProvider):
                 description = keep_masked_spans(description, art.description)
             if collection is not None:
                 collection = keep_masked_spans(collection, art.collection or "")
+            # Every write keeps what it would erase (see the helper) but the owner's own save,
+            # which names the revision her editor showed her: a plain Save keeps the version number.
+            kept_unversioned = (
+                content is not None
+                and not binary
+                and not (actor == "user" and expect_revision is not None)
+                and self._keep_unversioned(art, live, content, actor)
+            )
 
             # Metadata-only updates never bump a version or snapshot.
             meta_changed = False
@@ -1070,7 +1152,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 )
                 self._append_event(art, ev)
 
-            changed = cut_version or content_changed or meta_changed
+            changed = kept_unversioned or cut_version or content_changed or meta_changed
             if changed:
                 art.updated_at = _now()
                 self._write_meta(art)

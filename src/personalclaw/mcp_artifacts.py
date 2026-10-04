@@ -14,7 +14,14 @@ from typing import Any, NamedTuple
 
 from personalclaw.artifacts import dedupe as artifact_dedupe
 from personalclaw.artifacts import retakes
-from personalclaw.artifacts.models import ArtifactKindMismatch, is_valid_slug
+from personalclaw.artifacts.bases import base_for, parse_base
+from personalclaw.artifacts.models import (
+    ArtifactKindMismatch,
+    ArtifactStaleWrite,
+    ArtifactVersionConflict,
+    is_binary_kind,
+    is_valid_slug,
+)
 from personalclaw.mcp_core import _resolve_session_key
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.base import BUILDS_META_KEY, ToolFailure, tool_failure
@@ -89,6 +96,18 @@ def _session_bound_project_id() -> str:
         return ""
 
 
+#: How much of an artifact's text one ``artifact_get`` hands over. Below the tool-output cap
+#: (``tool_providers.projection.DEFAULT_TOOL_OUTPUT_CAP``) with room for the reply's own lines, so a
+#: part is never cut short on its way to the model; the reply names where the next part starts.
+_READ_PAGE_CHARS = 40_000
+
+#: The ``base`` argument's words, the same on every tool that writes an existing artifact's body.
+_BASE_DESCRIPTION = (
+    "The base artifact_get named for the version you read (like 'v3-1a2b3c4d5e6f7a8b'), "
+    "required to write over an existing artifact; a new one needs none"
+)
+
+
 def _list_tools() -> list[dict[str, Any]]:
     return [
         {
@@ -109,7 +128,9 @@ def _list_tools() -> list[dict[str, Any]]:
                 "code fences; or 'json'/'svg'/'text'). Rule of thumb: markdown body → "
                 "kind='markdown', HTML body → kind='document'. Returns the slug — the "
                 "stable handle to reference it later. "
-                "Pass an explicit slug to re-save/overwrite a known artifact."
+                "Pass the slug of an existing artifact to save its next version: read it first "
+                "with artifact_get and pass the base it names, since the save replaces its whole "
+                "text and a version someone else made after your read is never overwritten."
             ),
             "inputSchema": {
                 "type": "object",
@@ -137,8 +158,9 @@ def _list_tools() -> list[dict[str, Any]]:
                     },
                     "slug": {
                         "type": "string",
-                        "description": "Explicit slug (else derived from name)",
+                        "description": "Explicit slug (else derived from name); an existing one saves its next version",  # noqa: E501
                     },
+                    "base": {"type": "string", "description": _BASE_DESCRIPTION},
                     "description": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "collection": {
@@ -157,8 +179,14 @@ def _list_tools() -> list[dict[str, Any]]:
             "name": "artifact_get",
             "annotations": {"readOnlyHint": True},
             "description": (
-                "Fetch a saved artifact's content by slug. Pass version=N for a "
-                "historical snapshot; omit for the live version."
+                "Read a saved artifact by slug: its text, its version and its base. A Word "
+                "document reads as the markdown document_create takes, a deck as the outline "
+                "deck_create takes, a spreadsheet as the JSON sheets sheet_create takes, a PDF "
+                "as its pages' text, and every other kind as its own text. The base names the "
+                "version you read; pass it to the tool that writes the next version, which "
+                "refuses a write over a version someone else made after your read. A long text "
+                f"comes in parts of {_READ_PAGE_CHARS:,} characters: the reply names the offset "
+                "of the next. Pass version=N for an earlier version; omit it for the live one."
             ),
             "inputSchema": {
                 "type": "object",
@@ -167,6 +195,15 @@ def _list_tools() -> list[dict[str, Any]]:
                     "version": {
                         "type": "integer",
                         "description": "Snapshot number (omit for live)",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Where in the text to start, in characters (default 0): the reply of the previous part names it",  # noqa: E501
+                    },
+                    "base": {
+                        "type": "string",
+                        "description": "With offset: the base the first part named, so a part of a version that changed meanwhile is refused",  # noqa: E501
                     },
                 },
                 "required": ["slug"],
@@ -177,9 +214,11 @@ def _list_tools() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": False},
             "_meta": {BUILDS_META_KEY: True},
             "description": (
-                "Update a saved artifact by slug, creating a new version snapshot "
-                "(each agent update is a checkpoint, like a commit). Pass new content "
-                "inline or via content_file; or update metadata only (description/tags). "
+                "Update a saved artifact by slug. New content (inline or via content_file) "
+                "replaces its whole text as a new version, so it takes the base artifact_get "
+                "named for the text you changed: a write with no base, or over a version someone "
+                "else made after your read, is refused and nothing is written. Metadata alone "
+                "(description/tags/collection) needs no base and cuts no version. "
                 "An image, video, PDF or office document is not text: only its metadata "
                 "changes here, and its next version comes from the tool that made it "
                 "(image_generate, document_create, sheet_create or deck_create with slug)."
@@ -193,6 +232,7 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Absolute path to read new content from",
                     },
+                    "base": {"type": "string", "description": _BASE_DESCRIPTION},
                     "description": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "collection": {
@@ -340,10 +380,13 @@ def _list_tools() -> list[dict[str, Any]]:
                 "`---` for a page break — and it is rendered into the document. Do NOT "
                 "attempt to emit OOXML or base64. Use this when the user wants a file to "
                 "send, print or hand to someone; use artifact_save with kind='markdown' "
-                "or 'document' when they just want to read it in the app. Re-running with "
-                "the same `name` (or the same `slug`) updates that document and bumps its "
-                "version instead of creating a near-duplicate — to make a SEPARATE "
-                "document, give it a different name. Returns the slug and a download URL."
+                "or 'document' when they just want to read it in the app. To make the next "
+                "version of an existing document, read it with artifact_get and call this with "
+                "its slug and the base that read names: a call that names an existing document "
+                "(by slug, or by the same name) with no base, or with a base someone else's "
+                "newer version has replaced, is refused and nothing is written. To make a "
+                "SEPARATE document, give it a different name. Returns the slug and a download "
+                "URL."
             ),
             "inputSchema": {
                 "type": "object",
@@ -373,6 +416,7 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
                     },
+                    "base": {"type": "string", "description": _BASE_DESCRIPTION},
                     "description": {"type": "string", "description": "Optional short description"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                 },
@@ -390,10 +434,12 @@ def _list_tools() -> list[dict[str, Any]]:
                 "treated as the header. KEEP NUMBERS "
                 "AS NUMBERS (not strings) so the result can be summed and charted — that "
                 "is the main reason to produce a spreadsheet rather than a table. "
-                "Re-running with the same `name` (or the same `slug`) updates that "
-                "spreadsheet and bumps its version instead of creating a near-duplicate — "
-                "to make a SEPARATE spreadsheet, give it a different name. Returns "
-                "the slug and where to download the file."
+                "To make the next version of an existing spreadsheet, read it with "
+                "artifact_get and call this with its slug and the base that read names: a call "
+                "that names an existing spreadsheet (by slug, or by the same name) with no base, "
+                "or with a base someone else's newer version has replaced, is refused and "
+                "nothing is written. To make a SEPARATE spreadsheet, give it a different name. "
+                "Returns the slug and where to download the file."
             ),
             "inputSchema": {
                 "type": "object",
@@ -418,6 +464,7 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
                     },
+                    "base": {"type": "string", "description": _BASE_DESCRIPTION},
                     "description": {"type": "string", "description": "Optional short description"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                 },
@@ -434,9 +481,11 @@ def _list_tools() -> list[dict[str, Any]]:
                 "under it become bullets, and `<!-- notes: ... -->` becomes that slide's "
                 "speaker notes. A leading `#` titles the deck. Write an outline, not "
                 "prose — paragraphs on a slide are what makes generated decks unreadable. "
-                "Re-running with the same `name` (or the same `slug`) updates that deck and "
-                "bumps its version instead of creating a near-duplicate — to make a "
-                "SEPARATE deck, give it a different name. "
+                "To make the next version of an existing deck, read it with artifact_get and "
+                "call this with its slug and the base that read names: a call that names an "
+                "existing deck (by slug, or by the same name) with no base, or with a base "
+                "someone else's newer version has replaced, is refused and nothing is written. "
+                "To make a SEPARATE deck, give it a different name. "
                 "Returns the slug and a download URL."
             ),
             "inputSchema": {
@@ -477,6 +526,7 @@ def _list_tools() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
                     },
+                    "base": {"type": "string", "description": _BASE_DESCRIPTION},
                     "description": {"type": "string", "description": "Optional short description"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                 },
@@ -743,10 +793,10 @@ def _materialize_image(result: Any) -> tuple[bytes, str] | None:
 #: makes it (:func:`_image_next_version`). `video` has no entry: no tool makes a video's next
 #: version (`video_generate` always saves a new video).
 _BINARY_NEXT_VERSION: dict[str, str] = {
-    "docx": "call document_create with slug='{slug}' and the new markdown",
-    "pdf": "call document_create with slug='{slug}', format='pdf' and the new markdown",
-    "xlsx": "call sheet_create with slug='{slug}' and the new rows",
-    "pptx": "call deck_create with slug='{slug}' and the new outline",
+    "docx": "call document_create with slug='{slug}', {base} and the new markdown",
+    "pdf": "call document_create with slug='{slug}', format='pdf', {base} and the new markdown",
+    "xlsx": "call sheet_create with slug='{slug}', {base} and the new rows",
+    "pptx": "call deck_create with slug='{slug}', {base} and the new outline",
 }
 
 #: An image's next version: the image itself, changed by a model that edits images, or a new image
@@ -786,23 +836,28 @@ def image_model_edits() -> bool | None:
     return _run_async(active_model_edits())
 
 
-def next_version_instruction(kind: str, slug: str, image_edits: bool | None) -> str:
+def next_version_instruction(
+    kind: str, slug: str, image_edits: bool | None, *, base: str = ""
+) -> str:
     """What the agent does to land a change as the next version of artifact *slug* of *kind*, or
     ``""`` when no tool makes one (a video). *image_edits* is whether the bound image model edits
-    images (:func:`image_model_edits`); only an image's instruction depends on it.
+    images (:func:`image_model_edits`); only an image's instruction depends on it. *base* is the
+    base of the version the agent was just shown (``artifacts.bases``), named in the instruction;
+    without one it names the read that gives it. An image's next version is made from a prompt
+    and takes none.
 
     One phrase per kind, shared by the refusal ``artifact_update`` gives a binary artifact, each
-    image ``image_generate`` saves and the Iterate panel's opening prompt, so none of them can
-    name another tool, or a way the bound image model cannot take.
+    image ``image_generate`` saves, every read ``artifact_get`` gives and the Iterate panel's
+    opening prompt, so none of them can name another tool, or a way the bound image model cannot
+    take.
     """
-    from personalclaw.artifacts.models import is_binary_kind
-
+    named = f"base='{base}'" if base else "the base artifact_get names for it"
     if not is_binary_kind(kind):
-        return f"call artifact_update with slug='{slug}' and the new content"
+        return f"call artifact_update with slug='{slug}', {named} and the new content"
     if kind == "image":
         return _image_next_version(slug, image_edits)
     how = _BINARY_NEXT_VERSION.get(kind)
-    return how.format(slug=slug) if how else ""
+    return how.format(slug=slug, base=named) if how else ""
 
 
 def _a(word: str) -> str:
@@ -826,11 +881,12 @@ def _kind_refusal(slug: str, kind: str) -> str:
     )
 
 
-def iterate_instruction(kind: str, slug: str, image_edits: bool | None) -> str:
+def iterate_instruction(kind: str, slug: str, image_edits: bool | None, *, base: str = "") -> str:
     """The Iterate panel's opening prompt for artifact *slug* of *kind*: the slug and the tool
-    that makes its next version, so the change lands on it rather than as a near-duplicate. For
-    an image, the way the bound model takes (*image_edits*, :func:`next_version_instruction`)."""
-    how = next_version_instruction(kind, slug, image_edits)
+    that makes its next version, so the change lands on it rather than as a near-duplicate, with
+    the *base* of the version its snapshot holds. For an image, the way the bound model takes
+    (*image_edits*, :func:`next_version_instruction`)."""
+    how = next_version_instruction(kind, slug, image_edits, base=base)
     if not how:
         return (
             f"Iterate on artifact `{slug}`. Note that {_NO_NEXT_VERSION}. "
@@ -922,6 +978,408 @@ def _live_view_refusal(art: Any, *, change: bool) -> Any:
     return held_from_reads(art.source_path)
 
 
+# ── Reading an artifact, and the base a write over it names ──────────────────────────────────
+#
+# The agent reads an artifact before it writes its next version, and the read names its base
+# (`artifacts.bases`). Every write over an existing artifact's body takes that base, and the store
+# compares it under its lock, so a version someone else made after the read (the owner in the
+# Artifacts editor, an app, the agent in another chat) is never replaced by a copy that predates
+# it. One reading serves `artifact_get`, the Iterate panel's snapshot and a chat's reference to an
+# artifact, so all three show the agent the same text and the same base.
+
+
+class ArtifactTextUnreadable(Exception):
+    """An artifact whose text could not be read; its text says why."""
+
+
+class ArtifactReading(NamedTuple):
+    """An artifact as the agent reads it: its text (unmasked; every reply masks it), what that
+    text is, what it leaves out, and its base."""
+
+    text: str
+    form: str
+    leaves_out: tuple[str, ...]
+    base: str
+
+
+def read_artifact(prov: Any, art: Any) -> ArtifactReading:
+    """*art* (an artifact a ``get`` returned, live or a version) as the agent reads it.
+
+    A text kind is its body. A docx, pptx, xlsx or PDF is the text of the version *art* is, in the
+    markup its tool writes it from (``documents.to_markup``). An image or a video holds no text: its
+    reading is the address its file is served at. Raises :class:`ArtifactTextUnreadable`.
+    """
+    from personalclaw.documents.to_markup import READ_KINDS, document_text
+
+    base = base_for(art)
+    if not is_binary_kind(art.kind):
+        return ArtifactReading(str(art.content or ""), f"its {art.kind} text", (), base)
+    if art.kind not in READ_KINDS:
+        return ArtifactReading(
+            str(art.content or ""), f"the address its {art.kind} is served at, not text", (), base
+        )
+    raw = prov.raw_bytes(art.slug, version=art.version)
+    if raw is None:
+        raise ArtifactTextUnreadable(f"its {art.kind} file is missing from the store")
+    try:
+        read = document_text(art.kind, raw[0])
+    except Exception as exc:  # noqa: BLE001 — a file its parser refuses is said, in its words
+        raise ArtifactTextUnreadable(f"its {art.kind} file could not be read ({exc})") from exc
+    return ArtifactReading(read.text, read.form, read.leaves_out, base)
+
+
+def part_end(text: str, start: int) -> int:
+    """Where the part of *text* that begins at *start* ends: at most :data:`_READ_PAGE_CHARS` on,
+    at the last line break in its second half when there is one, so a part ends on a whole line."""
+    end = min(len(text), start + _READ_PAGE_CHARS)
+    if end < len(text):
+        cut = text.rfind("\n", start + _READ_PAGE_CHARS // 2, end)
+        if cut > start:
+            end = cut + 1
+    return end
+
+
+def _version_words(art: Any) -> str:
+    """'version 3', and when its text changed after that version was cut, that it did."""
+    if getattr(art, "live_dirty", False):
+        return f"version {art.version}, with changes saved since that version"
+    return f"version {art.version}"
+
+
+def read_reply(
+    prov: Any, art: Any, *, offset: int = 0, live: Any = None, writes: bool = True
+) -> str:
+    """The text a read of *art* hands the agent, from character *offset* on: a line naming the
+    artifact, its version and its base; the part of its text, fenced as data; where the next part
+    starts; what the reading leaves out; and, unless the reader *writes* nothing (a chat that keeps
+    nothing), the call that writes its next version. *live* is the live artifact when *art* is an
+    earlier version of it. Raises :class:`ArtifactTextUnreadable`, and ``ValueError`` for an
+    *offset* past the end."""
+    from personalclaw.artifacts.models import redacted
+    from personalclaw.security import fence_untrusted
+
+    read = read_artifact(prov, art)
+    shown = redacted(read.text)
+    if offset > len(shown) or (offset and offset == len(shown)):
+        raise ValueError(
+            f"offset {offset} is past the end of the text of '{art.slug}', which is "
+            f"{len(shown):,} characters long"
+        )
+    end = part_end(shown, offset)
+    part = shown[offset:end]
+    lines = [
+        f"[Artifact '{redacted(art.name)}' (slug: {art.slug}, kind: {art.kind}), "
+        f"{_version_words(art)}. Below: {read.form}. Base: {read.base}]",
+        (
+            fence_untrusted(
+                part,
+                source="artifact",
+                source_type=art.kind,
+                source_id=art.slug,
+                transformation_path="read",
+            )
+            if part.strip()
+            else "(It holds no text.)"
+        ),
+    ]
+    if end < len(shown):
+        lines.append(
+            f"[Characters {offset + 1:,}-{end:,} of {len(shown):,}. For the next part, call "
+            f"artifact_get with slug='{art.slug}', offset={end} and base='{read.base}'.]"
+        )
+    elif offset:
+        lines.append(f"[Characters {offset + 1:,}-{end:,} of {len(shown):,}: the end of the text.]")
+    lines += [f"[{note}]" for note in read.leaves_out]
+    if live is not None and live.version != art.version:
+        lines.append(
+            f"[This is version {art.version}; the live one is version {live.version}. To write the "
+            "next version, read the live one: a write based on this one is refused.]"
+        )
+    elif writes and art.kind != "image":
+        how = next_version_instruction(art.kind, art.slug, None, base=read.base)
+        if how:
+            lines.append(f"[To write its next version, {how}.]")
+    return "\n".join(lines)
+
+
+def _writer(change: Any, sk: str | None) -> str:
+    """Who made a version (:class:`~personalclaw.artifacts.bases.BodyChange`), as a refusal names
+    them to the agent."""
+    if change is None or not change.by:
+        return "a writer that left no name"
+    if change.by == "user":
+        if change.kind == "reverted" and change.from_version:
+            return f"the owner, who restored version {change.from_version}"
+        return "the owner"
+    if change.by.startswith("app:"):
+        return f"the app {change.by[4:]}"
+    if change.by == "agent":
+        if change.session_id and sk and change.session_id == sk:
+            return "an earlier call in this chat"
+        if change.session_id:
+            return "the agent in another chat"
+        return "the agent outside any chat (a loop or an automation)"
+    if change.by == "workflow":
+        return f"a workflow (run {change.run_id})" if change.run_id else "a workflow"
+    return change.by
+
+
+def _kept_note(art: Any, floor: int, sk: str | None) -> str:
+    """What the reply to the agent's write adds when the store first kept, as a version of its own,
+    text another writer left that no version held (``bases.kept_change``), so the agent can tell
+    the owner where her edit is: which version, and whose text it keeps. "" when it kept none."""
+    from personalclaw.artifacts.bases import kept_change
+
+    kept = kept_change(art, floor, "agent")
+    if kept is None:
+        return ""
+    if not kept.by:
+        return f" Version {kept.version} keeps the text it held before this write."
+    return (
+        f" Version {kept.version} keeps what {_writer(kept, sk)} saved without a new version, "
+        "as it was before this write."
+    )
+
+
+def _stale_sentence(prov: Any, art: Any, read_version: int, sk: str | None) -> str:
+    """Why a write built from version *read_version* of *art* (the artifact as it is now) is
+    refused: both versions, and who made the newer one."""
+    from personalclaw.artifacts.models import redacted
+
+    change = prov.newest_change(art.slug)
+    if change is not None and change.outside:
+        now = f"the file it shows ({art.source_path}) was changed directly since"
+    elif art.version > read_version:
+        now = f"it is now version {art.version}, made by {_writer(change, sk)}"
+    else:
+        now = (
+            f"{_writer(change, sk)} changed it since, saved without a new version (it is still "
+            f"version {art.version})"
+        )
+    return (
+        f"'{redacted(art.name)}' changed after you read it, so nothing was written: you read "
+        f"version {read_version}, and {now}. Read it again with artifact_get, make your change to "
+        "what it holds now, and pass the base that read names."
+    )
+
+
+def _base_check(
+    prov: Any, art: Any, raw_base: Any, sk: str | None, *, tool: str
+) -> tuple[str, Any]:
+    """``(refusal, expectation)`` for a write by *tool* over *art* (the artifact as it is now)
+    that names *raw_base*: the sentence it is refused with, ``""`` when it may go ahead, and what
+    the store compares under its lock: the body's revision for a text kind, the version for a
+    binary one, whose every write cuts a version."""
+    from personalclaw.artifacts.models import redacted
+
+    name = redacted(art.name)
+    if raw_base is None or (isinstance(raw_base, str) and not raw_base.strip()):
+        return (
+            f"'{name}' (slug: {art.slug}) already exists, and this writes over its whole text, so "
+            f"it takes the base of the version you read: call artifact_get with slug='{art.slug}', "
+            f"make your change to what it returns, and call {tool} again with the base that read "
+            "names. Nothing was written."
+        ), None
+    parsed = parse_base(raw_base)
+    current = parse_base(base_for(art))
+    if parsed is None or current is None:
+        return (
+            f"{str(raw_base)[:80]!r} is not a base artifact_get names (one looks like "
+            f"'v{art.version}-1a2b3c4d5e6f7a8b'): call artifact_get with slug='{art.slug}' and "
+            "pass the base it names. Nothing was written."
+        ), None
+    version, revision = parsed
+    if is_binary_kind(art.kind):
+        if version == art.version:
+            return "", version
+    elif revision == current[1]:
+        return "", revision
+    if version > art.version:
+        return (
+            f"base {raw_base!r} names version {version}, which '{name}' has never had: it is at "
+            f"version {art.version}. Call artifact_get with slug='{art.slug}' and pass the base it "
+            "names. Nothing was written."
+        ), None
+    return _stale_sentence(prov, art, version, sk), None
+
+
+def _no_target_for_base(slug: str, kind: str) -> str:
+    """Why a create that names a base is refused: a base names a version the agent read, and there
+    is no such artifact to have read."""
+    return (
+        f"No artifact '{slug}' exists, so a base names no version of it: it may have been deleted "
+        f"after you read it. Nothing was written. To make a new {kind} under that slug, call again "
+        "without base."
+    )
+
+
+def _stale_now(prov: Any, slug: str, raw_base: Any, sk: str | None) -> str:
+    """The refusal of a write the store found stale under its lock, after the early check passed:
+    another write landed in between. Worded from the artifact as it is now."""
+    parsed = parse_base(raw_base)
+    now = prov.get(slug)
+    if parsed is None or now is None:
+        return (
+            f"'{slug}' changed while this was being written, so nothing was written. Read it again."
+        )
+    return _stale_sentence(prov, now, parsed[0], sk)
+
+
+def _artifact_get(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any) -> str:
+    """``artifact_get``: an artifact's text, part by part, its version and its base
+    (:func:`read_reply`). A part read from an offset names the base the first part did, and a
+    version that changed in between is refused, since its parts would not fit together."""
+    from personalclaw.artifacts.models import redacted
+
+    slug = args["slug"]
+    version = args.get("version")
+    got = prov.get(slug, version=version)
+    if got is None:
+        _audit("not_found", slug)
+        if version is not None and prov.get(slug) is not None:
+            return tool_failure(
+                f"'{slug}' has no version {version}: artifact_versions lists those it keeps."
+            )
+        return tool_failure(f"Artifact not found: {slug}")
+    if (held := _live_view_refusal(got, change=False)) is not None:
+        _audit("denied", got.slug, held.control)
+        return tool_failure(f"Artifact {got.slug!r} shows a file: {held} {held.hint}")
+    offset = int(args.get("offset") or 0)
+    raw_base = args.get("base")
+    if raw_base:
+        parsed, shown = parse_base(raw_base), parse_base(base_for(got))
+        same = (
+            parsed is not None
+            and shown is not None
+            and (parsed[0] == shown[0] if is_binary_kind(got.kind) else parsed[1] == shown[1])
+        )
+        if not same:
+            _audit("denied", slug, "a part of another version")
+            return tool_failure(
+                f"'{redacted(got.name)}' changed after the part you read first, so the rest of "
+                f"this version would not fit it: you read {raw_base!r}, and it is now "
+                f"{_version_words(got)} (base {base_for(got)}), made by "
+                f"{_writer(prov.newest_change(slug), sk)}. Read it again from the start, with "
+                "no offset."
+            )
+    live = prov.get(slug) if version is not None else None
+    try:
+        reply = read_reply(prov, got, offset=offset, live=live)
+    except ArtifactTextUnreadable as exc:
+        _audit("error", slug, str(exc))
+        return (
+            f"[Artifact '{redacted(got.name)}' (slug: {got.slug}, kind: {got.kind}), "
+            f"{_version_words(got)}. Base: {base_for(got)}]\nIts text could not be read: {exc}."
+        )
+    _audit("success", got.slug)
+    return reply
+
+
+def _resave_kind_refusal(existing: Any, args: dict[str, Any]) -> str:
+    """Why ``artifact_save`` cannot save text as the next version of *existing*: it is a binary
+    artifact, or the call names another kind. ``""`` when it can."""
+    from personalclaw.artifacts.models import normalize_kind
+
+    if is_binary_kind(existing.kind):
+        return _kind_refusal(existing.slug, existing.kind)
+    asked = str(args.get("kind") or "").strip()
+    if asked and normalize_kind(asked) != existing.kind:
+        return (
+            f"'{existing.slug}' is {_a(existing.kind)} artifact, so {_a(asked)} cannot be its next "
+            f"version. Leave out slug to save a new {asked}, or save this text as kind "
+            f"'{existing.kind}'."
+        )
+    return ""
+
+
+def _write_refusal(prov: Any, name: str, args: dict[str, Any], sk: str | None) -> str:
+    """What a write over an existing artifact's body is refused for before anyone is asked to
+    approve it (:func:`_preflight`): a body not of its kind, or a base that is missing, malformed
+    or stale. The call checks the same as it runs, and the store once more under its lock, so the
+    three answers cannot drift; ``""`` for a call these do not refuse."""
+    if name == "artifact_update":
+        if args.get("content") is None and not args.get("content_file"):
+            return ""
+        target = prov.get(str(args.get("slug") or ""))
+        if target is None:
+            return ""
+        if is_binary_kind(target.kind):
+            return _kind_refusal(target.slug, target.kind)
+        return _base_check(prov, target, args.get("base"), sk, tool=name)[0]
+    if name == "artifact_save":
+        slug = str(args.get("slug") or "").strip()
+        existing = prov.get(slug) if slug else None
+        if existing is None:
+            if slug and args.get("base"):
+                return _no_target_for_base(slug, str(args.get("kind") or "widget"))
+            return ""
+        return (
+            _resave_kind_refusal(existing, args)
+            or _base_check(prov, existing, args.get("base"), sk, tool=name)[0]
+        )
+    if name in _DOCUMENT_TOOLS:
+        return _document_target(prov, name, args, _document_format(name, args), sk)[1]
+    return ""
+
+
+#: The tools that render a file into an artifact (:func:`_document_create`).
+_DOCUMENT_TOOLS = ("document_create", "sheet_create", "deck_create")
+
+
+def _document_format(name: str, args: dict[str, Any]) -> str:
+    """The format a document tool's call renders: the one it names, else the tool's own."""
+    default = {"sheet_create": "xlsx", "deck_create": "pptx"}.get(name, "docx")
+    return str(args.get("format") or default).lower()
+
+
+def _save_next_version(
+    prov: Any, existing: Any, args: dict[str, Any], content: str, sk: str | None, _audit: Any
+) -> str:
+    """``artifact_save`` on the slug of an existing artifact: its next version, written over the
+    version whose base the call names. The name stays the artifact's own (the owner may have
+    renamed it); a description, tags or collection the call names are set with it."""
+    from personalclaw.artifacts.models import redacted
+
+    refusal = _resave_kind_refusal(existing, args)
+    if refusal:
+        _audit("denied", existing.slug, f"{existing.slug} is kind {existing.kind}")
+        return tool_failure(refusal)
+    refusal, expected = _base_check(prov, existing, args.get("base"), sk, tool="artifact_save")
+    if refusal:
+        _audit("denied", existing.slug, "base")
+        return tool_failure(refusal)
+    refused = _text_refusal(
+        existing.kind, description=args.get("description") or "", content=content
+    )
+    if refused is not None:
+        _audit("denied", existing.slug, refused.code)
+        return tool_failure(refused.not_changed)
+    try:
+        upd = prov.update(
+            existing.slug,
+            content=content,
+            snapshot=True,
+            event_type="iterated",
+            description=args.get("description"),
+            tags=args.get("tags"),
+            collection=args.get("collection"),
+            actor="agent",
+            session_id=sk,
+            expect_revision=expected,
+        )
+    except ArtifactStaleWrite:
+        _audit("denied", existing.slug, "stale base")
+        return tool_failure(_stale_now(prov, existing.slug, args.get("base"), sk))
+    if upd is None:
+        _audit("not_found", existing.slug)
+        return tool_failure(f"Artifact not found: {existing.slug}")
+    _audit("success", upd.slug)
+    return (
+        f"Saved artifact '{redacted(upd.name)}' as its next version (slug: {upd.slug}, version "
+        f"{upd.version}, base {base_for(upd)})." + _kept_note(upd, existing.version, sk)
+    )
+
+
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     """Dispatch artifact_* tools directly against the native provider entity.
 
@@ -967,6 +1425,14 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             if content is None:
                 _audit("denied", error="no content")
                 return tool_failure("provide content or content_file")
+            slug = str(args.get("slug") or "").strip()
+            existing = prov.get(slug) if slug else None
+            if existing is not None:
+                # A slug that names an artifact saves its next version, over the version read.
+                return _save_next_version(prov, existing, args, content, sk, _audit)
+            if slug and args.get("base"):
+                _audit("denied", slug, "a base for an artifact that does not exist")
+                return tool_failure(_no_target_for_base(slug, str(args.get("kind") or "widget")))
             # Same-deliverable dedup (#290): a save tagged `loop:<id>` whose bytes are
             # already in the library under that same tag IS that artifact, whatever the
             # model chose to call it. The framework's completion-time graduation of a
@@ -974,40 +1440,52 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             # produce two byte-identical rows for one document — and `find_similar` below
             # cannot see it, because it matches on the NAME's slug and the two names
             # differ. Updated in place rather than refused with a hint: the worker is
-            # ending its turn, so a hint has no next turn to land in.
-            if not args.get("slug") and yes_or_no(args.get("force")) is not True:
+            # ending its turn, so a hint has no next turn to land in. The text it holds is
+            # this very text, so nothing of anyone's is replaced; the revision it was matched
+            # on is named all the same, so a write landing between the match and this one is
+            # not undone, and the save carries on as a new one instead.
+            if not slug and yes_or_no(args.get("force")) is not True:
                 same = artifact_dedupe.find_same_deliverable(
                     prov, tags=args.get("tags"), content=content or ""
                 )
                 if same is not None:
-                    upd = prov.update(
-                        same.slug,
-                        content=content,
-                        snapshot=True,
-                        event_type="iterated",
-                        actor="agent",
-                        session_id=sk,
-                        tags=sorted(set(same.tags) | set(args.get("tags") or [])),
-                    )
+                    from personalclaw.stale_write import revision_of
+
+                    try:
+                        upd = prov.update(
+                            same.slug,
+                            content=content,
+                            snapshot=True,
+                            event_type="iterated",
+                            actor="agent",
+                            session_id=sk,
+                            tags=sorted(set(same.tags) | set(args.get("tags") or [])),
+                            expect_revision=revision_of(redacted(same.content)),
+                        )
+                    except ArtifactStaleWrite:
+                        same = None  # it changed after the match, so it is not this text now
+                if same is not None:
                     _audit("deduped", same.slug)
                     version = upd.version if upd is not None else same.version
+                    kept = _kept_note(upd, same.version, sk) if upd is not None else ""
                     return (
                         f"That content is already saved as '{redacted(same.name)}' "
                         f"(slug: {same.slug}) under the same tag — updated it in place "
-                        f"(version {version}) instead of saving a duplicate."
+                        f"(version {version}) instead of saving a duplicate.{kept}"
                     )
             # List-before-save dedup (ARTIFACTS S1): a fresh save (no explicit slug,
             # not forced) whose name matches an existing artifact refuses with a hint
             # so the agent updates the existing one instead of minting a "-2" twin.
-            if not args.get("slug") and yes_or_no(args.get("force")) is not True:
+            if not slug and yes_or_no(args.get("force")) is not True:
                 similar = prov.find_similar(args["name"], kind=args.get("kind", "widget"))
                 if similar is not None:
                     _audit("deduped", similar.slug)
                     return (
                         f"An artifact named '{redacted(similar.name)}' already exists "
-                        f"(slug: {similar.slug}). To revise it, call artifact_update with "
-                        f"slug='{similar.slug}'. To save a NEW separate artifact anyway, "
-                        f"call artifact_save again with force=true."
+                        f"(slug: {similar.slug}). To revise it, read it with artifact_get and "
+                        f"call artifact_update with slug='{similar.slug}' and the base that read "
+                        "names. To save a NEW separate artifact anyway, call artifact_save "
+                        "again with force=true."
                     )
             # The same deliverable above holds this very text already, so it is new only here.
             refused = _text_refusal(
@@ -1024,7 +1502,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 content=content or "",
                 kind=args.get("kind", "widget"),
                 source="chat",
-                slug=args.get("slug"),
+                slug=slug or None,
                 description=args.get("description", ""),
                 tags=args.get("tags"),
                 collection=args.get("collection", ""),
@@ -1037,19 +1515,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             )
             _audit("success", art.slug)
             return (
-                f"Saved artifact '{redacted(art.name)}' (slug: {art.slug}, version {art.version})."
+                f"Saved artifact '{redacted(art.name)}' (slug: {art.slug}, version {art.version}, "
+                f"base {base_for(art)})."
             )
 
         if name == "artifact_get":
-            got = prov.get(args["slug"], version=args.get("version"))
-            if got is None:
-                _audit("not_found", args["slug"])
-                return tool_failure(f"Artifact not found: {args['slug']}")
-            if (held := _live_view_refusal(got, change=False)) is not None:
-                _audit("denied", got.slug, held.control)
-                return tool_failure(f"Artifact {got.slug!r} shows a file: {held} {held.hint}")
-            _audit("success", got.slug)
-            return redacted(got.content)
+            return _artifact_get(prov, args, sk, _audit)
 
         if name == "artifact_update":
             content, err = _read_artifact_content(args)
@@ -1058,12 +1529,22 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 return tool_failure(f"{err}")
             # Read as the kind it is stored as; one that does not exist is answered below.
             target = prov.get(args["slug"])
+            expected = None
             if target is not None and content is not None:
                 if (held := _live_view_refusal(target, change=True)) is not None:
                     _audit("denied", target.slug, held.control)
                     return tool_failure(
                         f"Artifact {target.slug!r} shows a file: {held} {held.hint}"
                     )
+                if is_binary_kind(target.kind):
+                    _audit("denied", target.slug, f"{target.slug} is kind {target.kind}")
+                    return tool_failure(_kind_refusal(target.slug, target.kind))
+                refusal, expected = _base_check(
+                    prov, target, args.get("base"), sk, tool="artifact_update"
+                )
+                if refusal:
+                    _audit("denied", target.slug, "base")
+                    return tool_failure(refusal)
             if target is not None:
                 refused = _text_refusal(
                     target.kind, description=args.get("description") or "", content=content
@@ -1075,21 +1556,31 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 upd = prov.update(
                     args["slug"],
                     content=content,
-                    snapshot=True,  # every agent update is a checkpoint
+                    # New text is a checkpoint, like a commit. Metadata alone cuts no version: a
+                    # snapshot taken then would file a body someone else saved as the agent's.
+                    snapshot=content is not None,
                     description=args.get("description"),
                     tags=args.get("tags"),
                     collection=args.get("collection"),
                     actor="agent",
                     session_id=sk,
+                    expect_revision=expected,
                 )
             except ArtifactKindMismatch as mismatch:
                 _audit("denied", mismatch.slug, str(mismatch))
                 return tool_failure(_kind_refusal(mismatch.slug, mismatch.kind))
+            except ArtifactStaleWrite as stale:
+                _audit("denied", stale.slug, "stale base")
+                return tool_failure(_stale_now(prov, stale.slug, args.get("base"), sk))
             if upd is None:
                 _audit("not_found", args["slug"])
                 return tool_failure(f"Artifact not found: {args['slug']}")
             _audit("success", upd.slug)
-            return f"Updated artifact '{redacted(upd.name)}' → version {upd.version}."
+            floor = target.version if target is not None else 0
+            return (
+                f"Updated artifact '{redacted(upd.name)}' → version {upd.version} "
+                f"(base {base_for(upd)})." + _kept_note(upd, floor, sk)
+            )
 
         if name == "artifact_list":
             arts = prov.list(
@@ -1134,7 +1625,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         if name == "video_generate":
             return _video_generate(prov, args, sk, _audit)
 
-        if name in ("document_create", "sheet_create", "deck_create"):
+        if name in _DOCUMENT_TOOLS:
             return _document_create(prov, name, args, sk, _audit)
 
         if name == "document_formats":
@@ -1588,7 +2079,13 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
 
 
 def regenerate_image_at_slug(
-    prov: Any, slug: str, prompt: str, *, size: str = "", session_id: str | None = None
+    prov: Any,
+    slug: str,
+    prompt: str,
+    *,
+    size: str = "",
+    session_id: str | None = None,
+    actor: str = "user",
 ) -> tuple[bool, str]:
     """Re-run image generation for an EXISTING slug, in the background (no chat turn).
 
@@ -1645,7 +2142,7 @@ def regenerate_image_at_slug(
     existing = prov.get(slug)
     if existing is not None and existing.kind == "image":
         # Artifact still present — append a fresh version (keeps history).
-        art = prov.update_binary(slug, data=data, mime=mime, actor="user", session_id=session_id)
+        art = prov.update_binary(slug, data=data, mime=mime, actor=actor, session_id=session_id)
     else:
         # Deleted (the common case for a broken transcript image): recreate at the
         # SAME slug → version 1, so a transcript ref pinned to ?version=1 resolves.
@@ -1656,7 +2153,7 @@ def regenerate_image_at_slug(
             kind="image",
             source="chat",
             slug=slug,
-            actor="user",
+            actor=actor,
             session_id=session_id,
         )
         if art is not None and art.slug != slug:
@@ -1727,8 +2224,10 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
     """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
     call, arguments the tool's schema refuses (``mcp_shared.admitted_arguments``), a change to the
-    library that the work the call is made for may not make (:func:`_private_chat_refusal`), and
-    an image ``image_generate`` will refuse to make (:func:`_image_request_refusal`).
+    library that the work the call is made for may not make (:func:`_private_chat_refusal`), a
+    write over an existing artifact whose base is missing or stale (:func:`_write_refusal`), and
+    an image ``image_generate`` will refuse to make (:func:`_image_request_refusal`). Asking the
+    owner to approve a write that cannot land asked her about nothing.
 
     A call with no image model bound is left to the call, which says so itself."""
     from personalclaw.artifacts import registry
@@ -1740,6 +2239,15 @@ def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
         return args
     if (held := _private_chat_refusal(name, args, _resolve_session_key())) is not None:
         return held
+    if name in ("artifact_update", "artifact_save", *_DOCUMENT_TOOLS):
+        store = registry.get_provider("native")
+        if store is None:
+            return None
+        try:
+            refused = _write_refusal(store, name, args, _resolve_session_key())
+        except (ValueError, PermissionError):
+            return None  # an unusable slug or root: the call answers it in its own words
+        return tool_failure(refused) if refused else None
     if name != "image_generate":
         return None
     prov = registry.get_provider("native")
@@ -1789,6 +2297,107 @@ def _bullet(entry: Any) -> Any:
     return Bullet(text=str(entry))
 
 
+def _document_target(
+    prov: Any, name: str, args: dict[str, Any], fmt: str, sk: str | None
+) -> tuple[Any, str, Any]:
+    """``(target, refusal, expectation)``: the existing artifact a document tool's call writes the
+    next version of (``None`` for a new one), the sentence the call is refused with (``""`` when
+    it may go ahead) and what the store compares under its lock (:func:`_base_check`).
+
+    An explicit slug names the target. Without one, an artifact of this format with the same name
+    in this turn's project does, through the very ``prov.find_similar`` call ``artifact_save``
+    makes, so there is one dedup rather than two that can disagree: scoped to the format's kind,
+    so a pptx never lands on a same-named markdown, and to this turn's PROJECT, so it never lands
+    on another project's (#3309). A repeat call makes the next version of the document rather
+    than a "-2" twin, and like every write over an existing document it names the base of the
+    version it was made from: the owner may have changed that document since the agent made it.
+    """
+    from personalclaw.artifacts.models import redacted
+
+    display_name = str(args.get("name") or "").strip() or f"Untitled {fmt}"
+    slug = str(args.get("slug") or "").strip()
+    raw_base = args.get("base")
+    if slug:
+        named = prov.get(slug)
+        if named is None:
+            return None, (_no_target_for_base(slug, fmt) if raw_base else ""), None
+        # A slug names the artifact this file becomes the next version OF, and a version is of
+        # its artifact's kind: a docx cannot be an image's next version, nor a csv a markdown
+        # note's. Said before anything is rendered into the store, with the way to do each.
+        if named.kind != fmt:
+            return (
+                None,
+                f"'{slug}' is {_a(named.kind)} artifact, so {_a(fmt)} cannot be its next "
+                f"version. Leave out slug to make a new {fmt}. "
+                f"{_change_it(named.kind, slug, f'{slug!r} itself')}",
+                None,
+            )
+        refusal, expected = _base_check(prov, named, raw_base, sk, tool=name)
+        return named, refusal, expected
+    similar = prov.find_similar(display_name, kind=fmt, project_id=_current_project_id())
+    named = prov.get(similar.slug) if similar is not None else None
+    if named is None:
+        if raw_base:
+            return (
+                None,
+                f"base {str(raw_base)[:80]!r} names a version of a {fmt} you read, but this call "
+                f"names no slug and no {fmt} is named '{display_name}'. Pass the slug of the {fmt} "
+                f"you read, or leave out base to make a new {fmt}. Nothing was written.",
+                None,
+            )
+        return None, "", None
+    if raw_base is None or not str(raw_base).strip():
+        return (
+            named,
+            f"{_a(fmt).capitalize()} named '{redacted(named.name)}' already exists (slug: "
+            f"{named.slug}, version {named.version}). To make its next version, read it with "
+            f"artifact_get and call {name} again with slug='{named.slug}' and the base that read "
+            f"names; to make a separate {fmt}, give it a different name. Nothing was written.",
+            None,
+        )
+    refusal, expected = _base_check(prov, named, raw_base, sk, tool=name)
+    return named, refusal, expected
+
+
+def _with_masks_kept(prov: Any, target: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """*args*, with each redaction marker in the text a document tool writes from put back from
+    *target*'s reading.
+
+    The agent is handed a document's text masked, as every read is, so the next version it writes
+    from that reading carries a marker where each hidden value stood; rendered into the file, the
+    marker would replace the value. The call names the version it was read from (its base, checked
+    before this), so each marker is restored from that version's reading, as a text artifact's save
+    restores its own (``security.keep_masked_spans``). A marker it cannot place raises
+    ``MaskConflict``, and nothing is written.
+    """
+    import json as _json
+
+    from personalclaw.security import MaskConflict, keep_masked_spans, mask_markers
+
+    texts = {
+        key: value
+        for key in ("markdown", "html", "sheets", "rows", "csv")
+        if isinstance(value := args.get(key), str) and mask_markers(value)
+    }
+    slides = args.get("slides")
+    slides_text = _json.dumps(slides, ensure_ascii=False) if isinstance(slides, list) else ""
+    if not texts and not mask_markers(slides_text):
+        return args
+    try:
+        reading = read_artifact(prov, target).text
+    except ArtifactTextUnreadable as exc:
+        raise MaskConflict() from exc
+    kept = dict(args)
+    for key, value in texts.items():
+        kept[key] = keep_masked_spans(value, reading)
+    if mask_markers(slides_text):
+        try:
+            kept["slides"] = _json.loads(keep_masked_spans(slides_text, reading))
+        except ValueError as exc:  # a value that put back no longer reads as the slides' JSON
+            raise MaskConflict() from exc
+    return kept
+
+
 def _document_create(
     prov: Any, name: str, args: dict[str, Any], sk: str | None, _audit: Any
 ) -> str:
@@ -1798,23 +2407,23 @@ def _document_create(
     the rendering. It never emits OOXML, and no vendor format string appears outside
     ``documents/writers/``.
 
-    The reply carries slug + version + the raw URL (for a csv, a text kind the raw route does not
-    serve, where it opens in Artifacts) — NEVER the bytes and never base64.
+    The reply carries slug + version + base + the raw URL (for a csv, a text kind the raw route
+    does not serve, where it opens in Artifacts) — NEVER the bytes and never base64.
     Generated document bytes must not enter a prompt (CONTEXT-ECONOMY); when the agent
-    needs the content back it goes through the existing read path.
+    needs the content back it reads it with ``artifact_get``, which hands it the text.
+
+    A call that names an existing document (by slug, or by its name) writes its next version, and
+    names the base of the version it was made from (:func:`_document_target`): the store refuses a
+    stale one under its lock, so a version the owner saved after the agent's read is never
+    replaced by a file made from an older one.
     """
-    from personalclaw.artifacts.models import (
-        MAX_BINARY_CONTENT_BYTES,
-        MAX_CONTENT_BYTES,
-        is_binary_kind,
-    )
+    from personalclaw.artifacts.models import MAX_BINARY_CONTENT_BYTES, MAX_CONTENT_BYTES
     from personalclaw.documents import available_formats, get_writer
     from personalclaw.documents.from_markup import document_from_html, document_from_markdown
     from personalclaw.documents.model import SheetModel
     from personalclaw.web.extract import SanitizerUnavailable
 
-    _default_fmt = {"sheet_create": "xlsx", "deck_create": "pptx"}.get(name, "docx")
-    fmt = str(args.get("format") or _default_fmt).lower()
+    fmt = _document_format(name, args)
     writer = get_writer(fmt)
     if writer is None:
         _audit("denied", error=f"unsupported format {fmt}")
@@ -1822,6 +2431,17 @@ def _document_create(
             f"no writer for format {fmt!r}. Available: "
             f"{', '.join(available_formats()) or 'none'}."
         )
+    display_name = str(args.get("name") or "").strip() or f"Untitled {fmt}"
+    slug = str(args.get("slug") or "").strip()
+    # The artifact this call writes the next version of, and the base it is written over. Said
+    # before anything is rendered: a call refused here costs no rendering.
+    named, refusal, expected = _document_target(prov, name, args, fmt, sk)
+    if refusal:
+        _audit("denied", named.slug if named is not None else slug, "target")
+        return tool_failure(refusal)
+    target = named.slug if named is not None else ""
+    if named is not None and is_binary_kind(fmt):
+        args = _with_masks_kept(prov, named, args)
 
     # Build the model from whichever input the caller supplied.
     if name == "deck_create":
@@ -1936,39 +2556,6 @@ def _document_create(
             "Reduce the content or split it across documents."
         )
 
-    display_name = str(args.get("name") or "").strip() or f"Untitled {fmt}"
-    slug = str(args.get("slug") or "").strip()
-    # Re-generating the same document UPDATES in place and bumps a version rather than
-    # minting a "-2" twin — the same dedup posture artifact_save takes. An explicit slug
-    # names the target directly; WITHOUT one the collision is resolved by NAME, through the
-    # very `prov.find_similar` call `artifact_save` makes above, so there is one dedup
-    # implementation rather than two that can disagree. Scoped to this format's kind so a
-    # regenerated pptx never swallows a same-named markdown, and to this turn's PROJECT so
-    # it never swallows another Project's (#3309) — `_current_project_id()` returns a str,
-    # so an unscoped session passes "" and dedups against unscoped artifacts only.
-    #
-    # Updated in place rather than refused with a hint — `artifact_save`'s answer — because
-    # the hint has nowhere to land: a document tool's whole job this turn is to produce the
-    # file, and a caller who really wants a second document of the same name says so by
-    # passing a new `slug`.
-    target = ""
-    if slug:
-        named = prov.get(slug)
-        # A slug names the artifact this file becomes the next version OF, and a version is of
-        # its artifact's kind: a docx cannot be an image's next version, nor a csv a markdown
-        # note's. Said before anything is rendered into the store, with the way to do each.
-        if named is not None and named.kind != fmt:
-            _audit("denied", slug, f"{slug} is kind {named.kind}, not {fmt}")
-            return tool_failure(
-                f"'{slug}' is {_a(named.kind)} artifact, so {_a(fmt)} cannot be its next "
-                f"version. Leave out slug to make a new {fmt}. "
-                f"{_change_it(named.kind, slug, f'{slug!r} itself')}"
-            )
-        target = slug if named is not None else ""
-    if not slug:
-        similar = prov.find_similar(display_name, kind=fmt, project_id=_current_project_id())
-        if similar is not None:
-            target = similar.slug
     if not binary:
         # A text format (a csv) is text Knowledge's search keeps, read before it is written as
         # artifact_save's is. A new version takes only the body; a new document its name too.
@@ -1982,27 +2569,36 @@ def _document_create(
             _audit("denied", target, refused.code)
             return tool_failure(refused.not_changed if target else refused.nothing_made)
     if target:
-        if binary:
-            # No `snapshot=` argument: update_binary ALWAYS bumps the version and writes a
-            # snapshot (there is no non-snapshotting binary update, because a binary body
-            # has no diffable draft state to hold back).
-            art = prov.update_binary(
-                target,
-                data=data,
-                mime=_DOC_MIME.get(fmt, "application/octet-stream"),
-                event_type="iterated",
-                actor="agent",
-                session_id=sk,
-            )
-        else:
-            art = prov.update(
-                target,
-                content=text_content,
-                snapshot=True,
-                event_type="iterated",
-                actor="agent",
-                session_id=sk,
-            )
+        try:
+            if binary:
+                # No `snapshot=` argument: update_binary ALWAYS bumps the version and writes a
+                # snapshot (there is no non-snapshotting binary update, because a binary body
+                # has no diffable draft state to hold back).
+                art = prov.update_binary(
+                    target,
+                    data=data,
+                    mime=_DOC_MIME.get(fmt, "application/octet-stream"),
+                    event_type="iterated",
+                    actor="agent",
+                    session_id=sk,
+                    expect_version=expected,
+                )
+            else:
+                art = prov.update(
+                    target,
+                    content=text_content,
+                    snapshot=True,
+                    event_type="iterated",
+                    actor="agent",
+                    session_id=sk,
+                    expect_revision=expected,
+                )
+        except (ArtifactStaleWrite, ArtifactVersionConflict):
+            _audit("denied", target, "stale base")
+            return tool_failure(_stale_now(prov, target, args.get("base"), sk))
+        if art is None:
+            _audit("not_found", target)
+            return tool_failure(f"Artifact not found: {target}")
     else:
         if binary:
             art = prov.create_binary(
@@ -2036,7 +2632,10 @@ def _document_create(
     # repeat call, and an agent told it "Created" a v2 has been told the one thing that is
     # not true about what just happened — it would go looking for a second file.
     verb = "Updated" if target else "Created"
-    made = f"{verb} {fmt}: {art.slug} (v{art.version}, {len(data) / 1024:.0f}KB). "
+    made = (
+        f"{verb} {fmt}: {art.slug} (v{art.version}, {len(data) / 1024:.0f}KB, "
+        f"base {base_for(art)}). "
+    )
     if binary:
         return made + f"Download at /api/artifacts/{art.slug}/raw"
     # A csv is a text kind: its file is the text the store keeps, which the raw route (the bytes

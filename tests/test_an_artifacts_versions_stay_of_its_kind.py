@@ -302,9 +302,10 @@ class TestTheIteratePanelNamesTheToolForTheKind:
             ctx = asyncio.run(_resolve_artifact(doc.slug, MagicMock()))
         assert ctx is not None
         assert f"document_create with slug='{doc.slug}'" in ctx.opening_prompt
-        # A binary body is a raw reference, never content to read: every binary kind says so.
-        assert "Binary artifact; body served at:" in ctx.snapshot
-        assert "Current content" not in ctx.snapshot
+        # A document is read as its text, never handed over as the address of its file; this one's
+        # bytes are no document, and the snapshot says its text could not be read.
+        assert "Binary artifact" not in ctx.snapshot
+        assert "Its text could not be read: its docx file could not be read" in ctx.snapshot
 
 
 def test_the_refusal_is_the_store_s_own_value_error() -> None:

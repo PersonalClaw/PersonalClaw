@@ -22,6 +22,17 @@ history asks for it.
 **The slug is validated, not trusted.** It reaches here from a template's config, which a model
 may have authored, and it becomes a directory name in the artifact store. The store's own writer
 guards traversal too, but failing here gives the author the error at the node that named it.
+
+**It names no base: the store reads the live version itself, in the write's own transaction.** The
+agent's tools name the base of the version they read, because what they write is an edit of that
+copy. This step writes what its run made, from no copy of the artifact, so a base in its config
+would be either a number fixed in the template (stale from the second run on) or one an earlier
+node read moments before, which guards nothing the store's own read under its lock does not.
+What the base protects, the owner's edit, the store keeps here instead: inside the write, a body
+someone else left that no version holds (the owner's plain Save in the Artifacts editor, an app's
+write, another chat's agent) is cut as its own version, credited to whoever made it, before this
+step's text replaces it (``NativeArtifactProvider.update``). Nothing anyone wrote is lost, the
+timeline says whose each version is, and the result names the version kept (``kept_version``).
 """
 
 from __future__ import annotations
@@ -162,6 +173,10 @@ class ArtifactUpdateActionProvider(ActionProvider):
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
+        # The run whose step wrote it, on the version's event, so a refusal of a stale write and
+        # the timeline can say which run made the version.
+        run_id = str(ctx.payload.get("run_id", "") or "")
+        written_by = {"run_id": run_id} if run_id else None
         try:
             if existing is None:
                 art = store.create(
@@ -174,6 +189,7 @@ class ArtifactUpdateActionProvider(ActionProvider):
                     tags=tags,
                     actor="workflow",
                     collection=collection,
+                    event_metadata=written_by,
                 )
                 created = True
             else:
@@ -191,6 +207,7 @@ class ArtifactUpdateActionProvider(ActionProvider):
                     # artifact in the UI should keep their name, and a template that reasserted
                     # its own on every refresh would silently revert them.
                     collection=collection or None,
+                    event_metadata=written_by,
                 )
                 created = False
         except Exception as exc:
@@ -207,12 +224,24 @@ class ArtifactUpdateActionProvider(ActionProvider):
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        version = getattr(art, "version", 0)
+        import json
+
+        written: dict[str, Any] = {
+            "slug": slug,
+            "version": getattr(art, "version", 0),
+            "created": created,
+        }
+        from personalclaw.artifacts.bases import kept_change
+
+        floor = int(getattr(existing, "version", 0) or 0) if existing is not None else 0
+        kept = kept_change(art, floor, "workflow") if existing is not None else None
+        if kept is not None:
+            written["kept_version"] = kept.version
         return ActionResult(
             success=True,
             # The slug and version go to STDOUT because a downstream node binds to them — a
             # dashboard's "last updated v7" line reads this rather than re-fetching.
-            stdout=f'{{"slug": "{slug}", "version": {version}, "created": {str(created).lower()}}}',
+            stdout=json.dumps(written),
             duration_ms=int((time.monotonic() - started) * 1000),
         )
 

@@ -622,6 +622,32 @@ Data leaving the running system:
   than 131,072 characters) is refused with its reason, and nothing is written. A CSV artifact saved
   before this rule keeps its text until it is next written. A file the agent writes with its file
   tools is a file in your folders, not a CSV PersonalClaw makes, and is kept as written.
+- **The agent writes an artifact's next version only over the version it read**
+  (`artifacts/bases.py`, `mcp_artifacts.py`, `artifacts/native.py`). A write that replaces an
+  artifact's whole text is made from a copy of it, and an edit you saved after the agent read
+  that copy, in the Artifacts editor or the document editor, an app's write, or the agent's in
+  another chat, would otherwise be undone without a word. So `artifact_get` hands the agent the
+  text of every kind (a Word document as the markdown `document_create` takes, a deck as the
+  outline `deck_create` takes, a workbook as the JSON `sheet_create` takes, a PDF as its pages'
+  text), masked and fenced as data, in parts of 40,000 characters, with its version and its base
+  (`v3-1a2b3c4d5e6f7a8b`: the version and the revision of the text it showed). `artifact_update`,
+  `artifact_save` on an existing slug, and the document, sheet and deck tools naming an existing
+  artifact by slug or by name take that base, and the store compares it under its lock, the
+  revision for text (a plain Save changes the text and keeps the version number) and the version
+  for a document's file (every write of one cuts a version). A base older than the live version is
+  refused with both versions and who made the newer one, a write with no base is refused with the
+  read to make first, and nothing is written; the refusal comes before anyone is asked to approve
+  the call. A new artifact needs no base. A marker the agent writes back for a value its reading
+  masked is put back from the version it read, as a text artifact's save puts it back. A
+  workflow's step writes what its run made from no copy of the artifact, so it names no base:
+  instead the store reads the live version inside the write. And a current base proves only that
+  the agent read your edit, not that what it wrote kept it, while a chat's Trust can approve the
+  write with nobody looking: so whoever writes over text another writer left that no version
+  holds (your plain Save, an app's), the agent, an app or a workflow's step, the store first keeps
+  it as its own version, credited to whoever made it, and the agent's reply names that version.
+  Revert brings it back. Your own editor's saves name the revision or the version they opened,
+  so a save over a version the agent wrote meanwhile is refused and your draft stays on the page,
+  and a plain Save of yours replaces what the editor showed you and keeps the version number.
 - **Memory privacy** (`session_restrictions.py`, `memory_writes.py`):
   temporary/incognito sessions gate memory reads/writes; the memory, knowledge
   and vocabulary stores refuse every write made for one, by any path; the

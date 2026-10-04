@@ -530,6 +530,10 @@ from personalclaw.artifacts.models import ALLOWED_KINDS as _ALLOWED_KINDS  # noq
 
 _ARTIFACT_KINDS = frozenset(_ALLOWED_KINDS)
 
+#: Room for a base (``v<version>-<16 hex>``) with the quotes or spaces a model may add around it;
+#: a longer value is no base, and the tool says so in its own words.
+MAX_ARTIFACT_BASE = 80
+
 ARTIFACT_SAVE_SCHEMA = ToolSchema(
     tool_name="artifact_save",
     fields=[
@@ -545,6 +549,8 @@ ARTIFACT_SAVE_SCHEMA = ToolSchema(
         # ``name`` above: the schema refuses what the store would silently truncate.
         FieldSpec("collection", str, max_len=200),
         FieldSpec("force", bool),
+        # The base of the version read (`artifacts.bases`): `v<version>-<16 hex>`, so short.
+        FieldSpec("base", str, max_len=MAX_ARTIFACT_BASE),
     ],
 )
 
@@ -553,6 +559,8 @@ ARTIFACT_GET_SCHEMA = ToolSchema(
     fields=[
         FieldSpec("slug", str, required=True, max_len=80),
         FieldSpec("version", int, min_val=1),
+        FieldSpec("offset", int, min_val=0),
+        FieldSpec("base", str, max_len=MAX_ARTIFACT_BASE),
     ],
 )
 
@@ -565,6 +573,7 @@ ARTIFACT_UPDATE_SCHEMA = ToolSchema(
         FieldSpec("tags", list, item_type=str, item_max_len=64, max_items=16),
         FieldSpec("content_file", str, max_len=MAX_SHORT_STRING),
         FieldSpec("collection", str, max_len=200),
+        FieldSpec("base", str, max_len=MAX_ARTIFACT_BASE),
     ],
 )
 

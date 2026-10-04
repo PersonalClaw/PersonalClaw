@@ -1126,7 +1126,12 @@ async def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
     images, else a new image from a prompt describing the whole picture, which is why the
     snapshot carries the prompt the current version was made from.
 
-    The body rides the snapshot RAW and is fenced once at injection, matching every
+    Any other kind carries the reading ``artifact_get`` gives (``mcp_artifacts.read_artifact``):
+    its text, a document as the markup its tool writes it from, its first part when it is long,
+    and its base, which the opening prompt names too, so the next version is written over the
+    version the snapshot shows and is refused if the owner saved a newer one meanwhile.
+
+    The body rides the snapshot unfenced and is fenced once at injection, matching every
     other resolver — an artifact body is agent-authored content, so fencing it twice
     would corrupt it and fencing it not at all would trust it.
     """
@@ -1140,8 +1145,14 @@ async def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         art = None
     if art is None:
         return None
-    from personalclaw.artifacts.models import is_binary_kind
-    from personalclaw.mcp_artifacts import iterate_instruction
+    from personalclaw.artifacts.models import is_binary_kind, redacted
+    from personalclaw.documents.to_markup import READ_KINDS
+    from personalclaw.mcp_artifacts import (
+        ArtifactTextUnreadable,
+        iterate_instruction,
+        part_end,
+        read_artifact,
+    )
 
     lines = [
         f"Artifact `{art.slug}`: {art.name}",
@@ -1179,12 +1190,33 @@ async def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         made_from = await asyncio.to_thread(_image_prompt_line, art)
         if made_from:
             lines.append(made_from)
-    if is_binary_kind(art.kind):
-        # A binary body is a raw URL reference, never bytes — putting a data URL in
-        # the snapshot would blow the turn budget for no benefit.
+    base = ""
+    if is_binary_kind(art.kind) and art.kind not in READ_KINDS:
+        # An image's or a video's body is a raw URL reference, never bytes — putting a data URL
+        # in the snapshot would blow the turn budget for no benefit.
         lines.append(f"\nBinary artifact; body served at: {body}")
     else:
-        lines.append(f"\nCurrent content (v{art.version}):\n{body}")
+        # The same reading `artifact_get` gives, so the base below is the one the next version is
+        # written over: the owner can edit the artifact in the split view beside this chat, and a
+        # write over a version she saved after this snapshot is refused rather than undoing it.
+        try:
+            read = await asyncio.to_thread(read_artifact, prov, art)
+        except ArtifactTextUnreadable as exc:
+            lines.append(f"\nIts text could not be read: {exc}.")
+        else:
+            base = read.base
+            # Masked as every read of an artifact is, so its offsets are artifact_get's own.
+            shown = redacted(read.text)
+            end = part_end(shown, 0)
+            lines.append(f"Base: {base} (the version below; pass it with the next version)")
+            lines.append(f"\nCurrent content (v{art.version}), {read.form}:\n{shown[:end]}")
+            if end < len(shown):
+                lines.append(
+                    f"[The text goes on past character {end:,} of {len(shown):,}: call "
+                    f"artifact_get with slug='{art.slug}', offset={end} and base='{base}' for the "
+                    "rest.]"
+                )
+            lines += [f"[{note}]" for note in read.leaves_out]
 
     return InvestigateContext(
         kind="artifact",
@@ -1200,7 +1232,7 @@ async def _resolve_artifact(entity_id: str, state) -> InvestigateContext | None:
         # retried turn file text as the picture's next version. For an image, the way the
         # bound model takes: naming an edit for a model that edits none had the agent save a
         # second image instead.
-        opening_prompt=iterate_instruction(art.kind, art.slug, image_edits),
+        opening_prompt=iterate_instruction(art.kind, art.slug, image_edits, base=base),
     )
 
 

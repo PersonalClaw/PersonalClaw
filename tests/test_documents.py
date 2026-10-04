@@ -23,6 +23,16 @@ from personalclaw.documents.model import Block, DeckModel, DocumentModel, SheetM
 from personalclaw.knowledge.readers import FileReader
 
 
+def _base(reply: str) -> str:
+    """The base a document tool's reply names for the version it wrote: what its next version is
+    written over (``artifacts.bases``)."""
+    import re
+
+    found = re.search(r"\bbase (v\d+-[0-9a-f]{16})", reply)
+    assert found, reply
+    return found.group(1)
+
+
 def _write(tmp_path, fmt: str, model, name="out"):
     data = get_writer(fmt)(model)
     path = tmp_path / f"{name}.{fmt}"
@@ -678,6 +688,7 @@ class TestCsvDocumentTool:
                 "format": "csv",
                 "rows": [["Region", "Q1"], ["APAC", 99.5]],
                 "slug": art.slug,
+                "base": _base(first),
             },
             "session-2",
             _audit,
@@ -754,7 +765,7 @@ class TestDocumentRegenerate:
         second = _document_create(
             prov,
             "document_create",
-            {"name": "Report", "markdown": "# Two", "slug": slug},
+            {"name": "Report", "markdown": "# Two", "slug": slug, "base": _base(first)},
             "s1",
             _audit,
         )
@@ -768,7 +779,7 @@ class TestDocumentRegenerate:
         from personalclaw.mcp_artifacts import _document_create
 
         prov = self._prov(tmp_path, monkeypatch)
-        _document_create(
+        first = _document_create(
             prov,
             "document_create",
             {"name": "R", "markdown": "# Alpha"},
@@ -779,7 +790,7 @@ class TestDocumentRegenerate:
         _document_create(
             prov,
             "document_create",
-            {"name": "R", "markdown": "# Bravo", "slug": slug},
+            {"name": "R", "markdown": "# Bravo", "slug": slug, "base": _base(first)},
             None,
             lambda outcome, slug="", error="": None,
         )
@@ -796,7 +807,7 @@ class TestDocumentRegenerate:
         from personalclaw.mcp_artifacts import _document_create
 
         prov = self._prov(tmp_path, monkeypatch)
-        _document_create(
+        first = _document_create(
             prov,
             "document_create",
             {"name": "R", "markdown": "# A"},
@@ -807,7 +818,7 @@ class TestDocumentRegenerate:
         _document_create(
             prov,
             "document_create",
-            {"name": "R", "markdown": "# B", "slug": slug},
+            {"name": "R", "markdown": "# B", "slug": slug, "base": _base(first)},
             None,
             lambda outcome, slug="", error="": None,
         )
@@ -865,14 +876,22 @@ class TestDocumentNameDedup:
         return "\n".join(p.text for p in Document(io.BytesIO(data)).paragraphs)
 
     def test_two_identical_no_slug_calls_update_in_place(self, tmp_path, monkeypatch):
-        """THE regression: same name, no slug, twice ⇒ one artifact at v2, no `-2`."""
+        """THE regression: same name, no slug, twice ⇒ one artifact at v2, no `-2`. The repeat
+        names the base of the version it is made from; without one it writes nothing, and still
+        mints no twin."""
         from personalclaw.mcp_artifacts import _document_create
 
         prov = self._prov(tmp_path, monkeypatch)
         args = {"name": "Q3 review", "markdown": "# Q3\n\n- one\n- two\n"}
 
         first = _document_create(prov, "deck_create", dict(args), "s1", self._quiet)
-        second = _document_create(prov, "deck_create", dict(args), "s2", self._quiet)
+        blind = _document_create(prov, "deck_create", dict(args), "s2", self._quiet)
+        assert blind.startswith("Error: A pptx named 'Q3 review' already exists"), blind
+        assert [a.slug for a in prov.list()] == ["q3-review"]
+        assert prov.get("q3-review").version == 1
+        second = _document_create(
+            prov, "deck_create", {**args, "base": _base(first)}, "s2", self._quiet
+        )
 
         assert "Error" not in first, first
         assert "Error" not in second, second
@@ -895,7 +914,7 @@ class TestDocumentNameDedup:
         from personalclaw.mcp_artifacts import _document_create
 
         prov = self._prov(tmp_path, monkeypatch)
-        _document_create(
+        first = _document_create(
             prov,
             "deck_create",
             {"name": "Deck", "markdown": "## Alpha\n\n- a\n"},
@@ -905,7 +924,7 @@ class TestDocumentNameDedup:
         _document_create(
             prov,
             "deck_create",
-            {"name": "Deck", "markdown": "## Bravo\n\n- b\n"},
+            {"name": "Deck", "markdown": "## Bravo\n\n- b\n", "base": _base(first)},
             None,
             self._quiet,
         )
@@ -925,13 +944,13 @@ class TestDocumentNameDedup:
         from personalclaw.mcp_artifacts import _document_create
 
         prov = self._prov(tmp_path, monkeypatch)
-        _document_create(
+        first = _document_create(
             prov, "document_create", {"name": "Report", "markdown": "# One"}, None, self._quiet
         )
         reply = _document_create(
             prov,
             "document_create",
-            {"name": "Report", "markdown": "# Two", "slug": "report"},
+            {"name": "Report", "markdown": "# Two", "slug": "report", "base": _base(first)},
             None,
             self._quiet,
         )
@@ -1016,6 +1035,7 @@ class TestDocumentNameDedup:
                 "name": "Sales",
                 "format": "csv",
                 "rows": [["x" * (MAX_CONTENT_BYTES + MAX_CONTENT_BYTES // 2)]],
+                "base": _base(first),
             },
             None,
             _audit,
@@ -1080,7 +1100,7 @@ class TestDocumentNameDedup:
 
         prov = self._prov(tmp_path, monkeypatch)
         with self._project("project-a"):
-            _document_create(
+            first = _document_create(
                 prov,
                 "document_create",
                 {"name": "Weekly Note", "markdown": "# One\n"},
@@ -1090,7 +1110,7 @@ class TestDocumentNameDedup:
             reply = _document_create(
                 prov,
                 "document_create",
-                {"name": "Weekly Note", "markdown": "# Two\n"},
+                {"name": "Weekly Note", "markdown": "# Two\n", "base": _base(first)},
                 "s2",
                 self._quiet,
             )
@@ -1110,11 +1130,15 @@ class TestDocumentNameDedup:
 
         prov = self._prov(tmp_path, monkeypatch)
         # Two unscoped calls still dedup to one row at v2.
-        _document_create(
+        first = _document_create(
             prov, "document_create", {"name": "Loose", "markdown": "# One\n"}, None, self._quiet
         )
         reply = _document_create(
-            prov, "document_create", {"name": "Loose", "markdown": "# Two\n"}, None, self._quiet
+            prov,
+            "document_create",
+            {"name": "Loose", "markdown": "# Two\n", "base": _base(first)},
+            None,
+            self._quiet,
         )
         assert [a.slug for a in prov.list()] == ["loose"]
         assert reply.startswith("Updated docx: loose (v2"), reply

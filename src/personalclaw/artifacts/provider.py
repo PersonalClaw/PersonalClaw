@@ -15,6 +15,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from personalclaw.artifacts.bases import BodyChange, newest_body_change
 from personalclaw.artifacts.models import Artifact
 
 
@@ -97,6 +98,13 @@ class ArtifactProvider(ABC):
         """
         ...
 
+    def newest_change(self, slug: str) -> BodyChange | None:
+        """Who made *slug*'s live body: the newest event that changed it, or None when no such
+        artifact (or no recorded change) exists. A backend that can tell a body changed outside
+        it (the native store's file-backed artifacts) says so too."""
+        art = self.get(slug)
+        return newest_body_change(art) if art is not None else None
+
     @abstractmethod
     def create(
         self,
@@ -149,10 +157,13 @@ class ArtifactProvider(ABC):
         #: snapshot. `None` leaves it untouched; `""` detaches.
         source_path: str | None = None,
         #: The revision of the body the caller's `content` was built from — the precondition of
-        #: a page's whole-body save (`personalclaw/stale_write.py`). Compared UNDER THE SAME LOCK
-        #: as the write, against the body as a read presents it (`models.redacted`), and a
-        #: mismatch raises `ArtifactStaleWrite` before anything is written. `None` is
-        #: last-write-wins, which is what every agent-side edit path does.
+        #: a page's whole-body save (`personalclaw/stale_write.py`) and of the agent's writes
+        #: (`artifacts/bases.py`). Compared UNDER THE SAME LOCK as the write, against the body as
+        #: a read presents it (`models.redacted`), and a mismatch raises `ArtifactStaleWrite`
+        #: before anything is written. `None` names no copy: the write is built from no read of
+        #: the body (a workflow's step writes what its run made). Either way, a body another
+        #: writer left that no version holds is kept as its own version before the write replaces
+        #: it, unless the write is the owner's own save, which names what her editor showed her.
         expect_revision: str | None = None,
         #: Tag names to add to / remove from the tags stored at the moment of the write. One name
         #: in or out cannot undo another writer's tag, so these need no revision; `tags` replaces
@@ -223,8 +234,9 @@ class ArtifactProvider(ABC):
         belongs on the PROVIDER rather than in a handler because the comparison has to
         happen under the same lock as the write — checking the version first and
         writing second leaves exactly the race a whole-document save exists to detect
-        (DOCUMENT-FIDELITY-EDITOR §C3). ``None`` means last-write-wins, which is what
-        every agent-side edit path already does.
+        (DOCUMENT-FIDELITY-EDITOR §C3). The editor's saves and the agent's document tools
+        pass it. ``None`` means last-write-wins; every binary write cuts a version, so the
+        body it replaces stays in the history either way.
 
         A body not of the artifact's kind raises
         :class:`~personalclaw.artifacts.models.ArtifactKindMismatch` before anything is written:

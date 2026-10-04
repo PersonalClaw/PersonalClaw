@@ -19,9 +19,15 @@ current version, change it, and save a new checkpoint.
 
 - **slug** — the stable handle (e.g. `sales-dashboard`). Derived from the name,
   or you pass an explicit one. Everything references an artifact by slug.
-- **version** — every `artifact_update` snapshots a new numbered version (like a
-  commit). The live version is what `/artifacts/<slug>` shows; old snapshots are
-  kept up to `MAX_VERSIONS = 50` (FIFO-pruned beyond that).
+- **version** — every `artifact_update` with new content snapshots a new numbered
+  version (like a commit). The live version is what `/artifacts/<slug>` shows; old
+  snapshots are kept up to `MAX_VERSIONS = 50` (FIFO-pruned beyond that).
+- **base** — every read names one (`v3-1a2b3c4d5e6f7a8b`): the version you read. A
+  write over an existing artifact's text passes the base of the version it was made
+  from. The user can edit an artifact too, so a write over a version someone made
+  after your read is refused (it names who), and so is a write with no base: read it
+  again with `artifact_get` and redo the change on what it holds now. A write's reply
+  names the new base, so a second change needs no second read.
 - **kind** — `widget` (default), `html`, `markdown`, `svg`, `json`, `text`,
   `infographic` (AntV declarative DSL → SVG — see the `infographic-syntax` skill),
   `document` (editorial long-form HTML — see the `editorial-document` skill).
@@ -32,8 +38,8 @@ current version, change it, and save a new checkpoint.
 |---|---|
 | `artifact_list` | List saved artifacts (name/slug/kind/version/tags). Filter by `tag`, `kind`, or text `q`. |
 | `artifact_save` | Save new content. Returns the **slug** — the handle for later. |
-| `artifact_get` | Fetch content by `slug` (pass `version=N` for a historical snapshot; omit for live). |
-| `artifact_update` | Update by `slug` → new version snapshot. New content, or metadata only. |
+| `artifact_get` | Read by `slug`: its text, version and **base** (`version=N` for an earlier one; `offset` for the next part of a long one). A Word document, deck or spreadsheet reads as the markup its tool takes. |
+| `artifact_update` | Update by `slug` + the `base` you read → new version snapshot. New content, or metadata only (no base). |
 | `artifact_versions` | List the numbered snapshots of a slug. |
 | `artifact_delete` | Delete an artifact + its history by slug (does not touch any source file). |
 
@@ -54,7 +60,7 @@ file via `content_file=` (absolute path — a Workspace/cwd file).
 3. **Iterate-without-a-slug decision tree.** The user says "iterate on that" but
    you don't have a slug:
    - It was saved earlier this session → you have the slug; `artifact_get` →
-     change → `artifact_update`.
+     change → `artifact_update` with the base that read named.
    - It was rendered but never saved → **save it yourself now** (`artifact_save`),
      then iterate. Never tell the user "it wasn't saved, so I can't iterate" —
      saving is your job, do it silently.
@@ -62,7 +68,7 @@ file via `content_file=` (absolute path — a Workspace/cwd file).
      pick by name, or ask only if genuinely ambiguous.
 
 4. **Metadata-only updates don't bump content.** Changing just `description`/`tags`
-   via `artifact_update` is fine and still snapshots — but don't re-send identical
+   via `artifact_update` needs no base and cuts no version — so don't re-send identical
    content just to touch metadata.
 
 ## Don't
@@ -84,7 +90,9 @@ file via `content_file=` (absolute path — a Workspace/cwd file).
 
 > **User (next day):** "Add a burndown chart to the team dashboard."
 
-1. `artifact_get(slug="team-dashboard")` → current HTML.
+1. `artifact_get(slug="team-dashboard")` → current HTML and its base, e.g. `v3-1a2b3c4d5e6f7a8b`.
 2. Add the chart, drawn in inline SVG (see the `visual-output` skill for CSP/theme).
-3. `artifact_update(slug="team-dashboard", content="<new HTML>")` → new version.
+3. `artifact_update(slug="team-dashboard", base="v3-1a2b3c4d5e6f7a8b", content="<new HTML>")`
+   → new version. If the user changed it since your read, the call says so and writes
+   nothing: read it again and apply the chart to what it holds now.
 4. Re-render in chat with `<widget title="Team Dashboard" slug="team-dashboard">…`.

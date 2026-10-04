@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -351,8 +352,12 @@ def test_the_agents_edit_to_a_csv_it_made_is_kept_by_the_rule(store):
     rows = json.dumps([["Item", "Amount"], ["Refund", -20]])
     made = _tool("sheet_create", {"name": "Ledger", "format": "csv", "rows": rows})
     assert made.startswith("Created csv: ledger"), made
+    base = re.search(r"\bbase (v\d+-[0-9a-f]{16})", made).group(1)
 
-    said = _tool("artifact_update", {"slug": "ledger", "content": "Item,Amount\n=1+1,-20\n"})
+    said = _tool(
+        "artifact_update",
+        {"slug": "ledger", "content": "Item,Amount\n=1+1,-20\n", "base": base},
+    )
 
     assert "version 2" in said, said
     assert _kept_cells(store, "ledger") == [["Item", "Amount"], ["'=1+1", "-20"]]

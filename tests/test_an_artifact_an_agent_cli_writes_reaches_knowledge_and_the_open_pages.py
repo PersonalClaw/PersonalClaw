@@ -283,6 +283,13 @@ def _slug(said: str) -> str:
     return found.group(1)
 
 
+def _base(said: str) -> str:
+    """The base a save names for the version it wrote, which its next version is written over."""
+    found = re.search(r"\bbase (v\d+-[0-9a-f]{16})", said)
+    assert found, said
+    return found.group(1)
+
+
 # ── an agent CLI's writes ──────────────────────────────────────────────────────────────────────
 
 
@@ -316,6 +323,7 @@ async def test_what_the_agent_cli_saves_and_edits_is_found_in_knowledge_and_show
             {
                 "slug": slug,
                 "content": "# Harbour survey\n\nThe colony is back on the south breakwater.",
+                "base": _base(said),
             },
         )
         assert ok, said

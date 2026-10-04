@@ -147,10 +147,10 @@ data on demand instead of freezing a snapshot at creation. Give it a refresh but
 
 When the widget has been **saved as an artifact** (it has a stable slug), the dashboard
 appends `(refresh artifact "<slug>" in place)` to the `[UI] refresh` message it sends you.
-On that turn: re-fetch the current data (call the tools/searches that produced it), then
-`artifact_update("<slug>", ...)` with the freshly-rendered HTML — the SAME artifact
-updates in place (versioned), so the open view re-renders with live data rather than
-spawning a new artifact. This is how you build a "my open items" / "current status"
+On that turn: re-fetch the current data (call the tools/searches that produced it), read
+the artifact with `artifact_get("<slug>")`, then `artifact_update("<slug>", ...)` with the
+freshly-rendered HTML and the base that read named — the SAME artifact updates in place
+(versioned), so the open view re-renders with live data rather than spawning a new artifact. This is how you build a "my open items" / "current status"
 dashboard that stays current. (If the widget isn't a saved artifact yet, save it first so
 it has a slug to refresh.)
 
@@ -228,7 +228,8 @@ below, and change nothing else
 
 Treat it literally: apply every listed change, change nothing else, and if the
 widget is a saved artifact (the message ends with `refresh artifact "<slug>" in
-place`) write the result back to THAT slug with `artifact_update`. Giving elements
+place`) write the result back to THAT slug with `artifact_update`, over the base
+`artifact_get` names for it. Giving elements
 a `data-testid` makes these anchors stable and unambiguous — worth doing on the
 handful of elements a user is likely to want changed.
 

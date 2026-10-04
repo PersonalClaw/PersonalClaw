@@ -112,6 +112,19 @@ def _session_key(request: web.Request) -> str | None:
     return sk.split(":", 1)[-1] if ":" in sk else sk
 
 
+def _actor() -> str:
+    """Who a write through these routes is recorded as made by: ``app:<name>`` for a request an
+    app made with its token, else ``user``, the owner.
+
+    The timeline and every refusal of a stale write name a version's writer from this, so an app's
+    write recorded as the owner's would tell the agent "the owner edited it" when she did not.
+    """
+    from personalclaw.apps.permissions import request_app
+
+    app = request_app()
+    return f"app:{app}" if app else "user"
+
+
 def _project_for_source_path(source_path: str) -> str:
     """The project a file-backed save belongs to when the caller names none: the one active
     project whose workspace or context directory holds the file, else ``""``.
@@ -307,7 +320,7 @@ def _save_file_copy(
             return unchanged, 200
         try:
             updated = prov.update_binary(
-                existing.slug, data=data, mime=mime, actor="user", session_id=session_id
+                existing.slug, data=data, mime=mime, actor=_actor(), session_id=session_id
             )
         except ArtifactKindMismatch as mismatch:
             return json_error(
@@ -340,7 +353,7 @@ def _save_file_copy(
         source=str(body.get("source", "manual")),
         description=str(body.get("description", "")),
         tags=body.get("tags"),
-        actor="user",
+        actor=_actor(),
         session_id=session_id,
         project_id=project_id,
         source_path=canonical,
@@ -572,7 +585,7 @@ async def _save_text(
                         existing.slug,
                         content=content,
                         snapshot=False,
-                        actor="user",
+                        actor=_actor(),
                         session_id=session_id,
                     )
                 except MaskConflict as exc:
@@ -628,7 +641,7 @@ async def _save_text(
             source_path=source_path,
             description=str(body.get("description", "")),
             tags=body.get("tags"),
-            actor="user",
+            actor=_actor(),
             session_id=session_id,
             project_id=project_id,
             collection=str(body.get("collection", "")).strip(),
@@ -705,7 +718,7 @@ async def api_artifact_update(request: web.Request) -> web.Response:
         if from_version <= 0:
             return web.json_response({"error": "from_version is required to revert"}, status=400)
         try:
-            art = prov.revert(slug, from_version, actor="user", session_id=_session_key(request))
+            art = prov.revert(slug, from_version, actor=_actor(), session_id=_session_key(request))
         except (ValueError, PermissionError, NotImplementedError) as e:
             return web.json_response({"error": str(e)}, status=400)
         if art is None:
@@ -737,7 +750,7 @@ async def api_artifact_update(request: web.Request) -> web.Response:
             content=content,
             snapshot=bool_field(body, "snapshot", default=False),
             event_type=body.get("event_type"),
-            actor="user",
+            actor=_actor(),
             session_id=_session_key(request),
             name=body.get("name"),
             description=body.get("description"),
@@ -1015,7 +1028,7 @@ def _store_binary(
             art.slug,
             data=data,
             mime=mime,
-            actor="user",
+            actor=_actor(),
             session_id=_session_key(request),
             expect_version=expect_version,
         )
@@ -1454,6 +1467,7 @@ async def api_artifact_regenerate(request: web.Request) -> web.Response:
         prompt,
         size=size,
         session_id=session_key or None,
+        actor=_actor(),
     )
     if not ok:
         _audit(request, "artifact.regenerate", "error", f"slug={slug}: {msg}")

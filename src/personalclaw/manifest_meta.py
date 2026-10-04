@@ -351,15 +351,25 @@ TOOL_META: dict[str, dict[str, Any]] = {
     "artifact_get": {
         "response_type": "artifact.detail",
         "error_codes": [],
-        "examples": [{"summary": "Read an artifact by slug", "args": {"slug": "launch-plan"}}],
+        "examples": [
+            {"summary": "Read an artifact by slug", "args": {"slug": "launch-plan"}},
+            {
+                "summary": "Read the next part of a long artifact",
+                "args": {"slug": "launch-plan", "offset": 40000, "base": "v3-3f2a9c0d1e7b5a64"},
+            },
+        ],
     },
     "artifact_update": {
         "response_type": "artifact.detail",
         "error_codes": [],
         "examples": [
             {
-                "summary": "Replace an artifact's content",
-                "args": {"slug": "launch-plan", "content": "# Launch plan v2\n..."},
+                "summary": "Write the next version of the text you read",
+                "args": {
+                    "slug": "launch-plan",
+                    "content": "# Launch plan v2\n...",
+                    "base": "v3-3f2a9c0d1e7b5a64",
+                },
             }
         ],
     },
@@ -424,6 +434,15 @@ TOOL_META: dict[str, dict[str, Any]] = {
                 "args": {
                     "name": "Q3 Review",
                     "markdown": "# Q3 Review\n\nRevenue grew.\n\n- EMEA up 18%\n",
+                },
+            },
+            {
+                "summary": "Write the next version of a document you read",
+                "args": {
+                    "name": "Q3 Review",
+                    "slug": "q3-review",
+                    "base": "v2-3f2a9c0d1e7b5a64",
+                    "markdown": "# Q3 Review\n\nRevenue grew 12%.\n",
                 },
             },
         ],

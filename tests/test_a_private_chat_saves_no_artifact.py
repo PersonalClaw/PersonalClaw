@@ -178,6 +178,15 @@ def test_an_unreadable_chats_tools_change_nothing(library):
     assert [a.slug for a in library.list()] == [own]
 
 
+def _base(read: str) -> str:
+    """The base ``artifact_get`` names for the version it read, which a write over it names."""
+    import re
+
+    found = re.search(r"Base: (v\d+-[0-9a-f]{16})", read)
+    assert found, read
+    return found.group(1)
+
+
 def test_an_ordinary_chats_artifact_tools_save_and_change_as_before(library):
     theirs = _made_by(library, ELSEWHERE, "Pantry list")
 
@@ -185,8 +194,10 @@ def test_an_ordinary_chats_artifact_tools_save_and_change_as_before(library):
         saved = mcp_artifacts._call_tool(
             "artifact_save", {"name": "Orchard plan", "content": "- pears\n", "kind": "markdown"}
         )
+        read = mcp_artifacts._call_tool("artifact_get", {"slug": theirs})
         updated = mcp_artifacts._call_tool(
-            "artifact_update", {"slug": theirs, "content": "- flour\n"}
+            "artifact_update",
+            {"slug": theirs, "content": "- flour\n", "base": _base(read)},
         )
 
     assert "Saved artifact 'Orchard plan'" in saved

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re as _re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -296,9 +297,14 @@ class TestAnArtifactsBody:
         artifacts.create(name="Doc", content="v1", kind="markdown")
         async with TestClient(TestServer(_app())) as c:
             body, base = await _read_artifact(c, "doc")
-            # The agent's `artifact_update`, through the MCP tool path a turn uses.
+            # The agent's `artifact_update`, through the MCP tool path a turn uses, over the
+            # version its own read named.
             with patch("personalclaw.mcp_artifacts._resolve_session_key", return_value="d:c-1"):
-                out = _call_tool("artifact_update", {"slug": "doc", "content": "agent v2"})
+                read = _call_tool("artifact_get", {"slug": "doc"})
+                agent_base = _re.search(r"Base: (v\d+-[0-9a-f]{16})", read).group(1)
+                out = _call_tool(
+                    "artifact_update", {"slug": "doc", "content": "agent v2", "base": agent_base}
+                )
             assert "version 2" in out, out
             resp = await _save_body(c, "doc", body + " mine", base)
             assert resp.status == 409

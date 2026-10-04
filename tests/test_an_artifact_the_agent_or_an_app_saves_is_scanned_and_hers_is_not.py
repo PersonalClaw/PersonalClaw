@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -172,10 +173,13 @@ def test_an_artifact_the_agent_saves_is_scanned_before_it_is_kept(
 
 
 def test_an_edit_the_agent_makes_is_scanned_before_it_is_kept(places, artifacts, library, mirror):
-    _tool("artifact_save", {"name": "Errands", "content": CLEAN_LIST, "kind": "markdown"})
+    saved = _tool("artifact_save", {"name": "Errands", "content": CLEAN_LIST, "kind": "markdown"})
+    # The base of the version the edit is made from, which every write over it names.
+    base = re.search(r"\bbase (v\d+-[0-9a-f]{16})", saved).group(1)
 
     said = _tool(
-        "artifact_update", {"slug": "errands", "content_file": _file(places, OVERRIDE_LIST)}
+        "artifact_update",
+        {"slug": "errands", "content_file": _file(places, OVERRIDE_LIST), "base": base},
     )
 
     assert said == f"Error: {NOT_CHANGED}"
@@ -183,7 +187,9 @@ def test_an_edit_the_agent_makes_is_scanned_before_it_is_kept(places, artifacts,
     assert artifacts.get("errands").version == 1
     assert _mirrored(library, "errands")["content"] == CLEAN_LIST
 
-    edited = _tool("artifact_update", {"slug": "errands", "content": CLEAN_LIST + " And seeds."})
+    edited = _tool(
+        "artifact_update", {"slug": "errands", "content": CLEAN_LIST + " And seeds.", "base": base}
+    )
     assert "version 2" in edited
     assert _mirrored(library, "errands")["content"].endswith("And seeds.")
 

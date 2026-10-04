@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -211,8 +212,17 @@ def test_the_agent_iterating_on_an_artifact_keeps_the_hidden_key(artifacts, monk
     art = artifacts.create(name="Notes", content=f"key: {SECRET}\nline two\n", kind="markdown")
     shown = mcp_artifacts._call_tool_inner("artifact_get", {"slug": art.slug})
     assert MASK in shown and SECRET not in shown
+    # The text the read hands the agent sits in its fence; the read names its base.
+    text = re.search(r"<untrusted_content[^>]*>\n(.*)\n</untrusted_content>", shown, re.S)
+    base = re.search(r"Base: (v\d+-[0-9a-f]{16})", shown)
+    assert text and base, shown
     out = mcp_artifacts._call_tool_inner(
-        "artifact_update", {"slug": art.slug, "content": shown.replace("line two", "line 2")}
+        "artifact_update",
+        {
+            "slug": art.slug,
+            "content": text.group(1).replace("line two", "line 2"),
+            "base": base.group(1),
+        },
     )
     assert "Error" not in out, out
     assert artifacts.get(art.slug).content == f"key: {SECRET}\nline 2\n"
