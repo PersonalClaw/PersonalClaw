@@ -136,9 +136,11 @@ def _as_one_writer(write: Callable[[], _T]) -> _T:
     description it serializes two threads of one process as well as two processes. The name starts
     with a dot, so the ``*.json`` scan never reads it as a task.
     """
+    from personalclaw.durability.home_paths import open_lock
+
     d = _tasks_dir()
     d.mkdir(parents=True, exist_ok=True)
-    with (d / ".write.lock").open("w") as handle:
+    with open_lock(d / ".write.lock") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             return write()

@@ -424,13 +424,15 @@ def _locked() -> Iterator[None]:
     Re-entrant within a process, because :func:`install_everything` and :func:`collect` are
     called both on their own and from inside another locked step.
     """
+    from personalclaw.durability.home_paths import open_lock
+
     global _lock_depth, _lock_file
     with _thread_lock:
         if _lock_depth == 0:
             here = root()
             ensure_home_for(here)
             here.mkdir(parents=True, exist_ok=True)
-            handle = open(here / _LOCK_FILENAME, "w")  # noqa: SIM115 — held across the yield
+            handle = open_lock(here / _LOCK_FILENAME)  # held across the yield
             fcntl.flock(handle, fcntl.LOCK_EX)
             _lock_file = handle
         _lock_depth += 1

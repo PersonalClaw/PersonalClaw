@@ -1392,6 +1392,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # hourly cap, its spacing, its quiet hours, its budget, a run still going); 429 when it fired
     # as often as its owner allows. Nothing ran; the message says which, and its history why.
     "fire_held": "The automation's own rules held this fire, so it did not run.",
+    # ── a link in the home (durability/home_paths.py) ──
+    # 409: the home holds a symbolic link, or a file with another name, where the request was to
+    # write, read or take a lock (a store's lock, most often), and nothing goes through one. The
+    # message names the link by its path in the home; removing it lets the request through.
+    "link_in_the_way": (
+        "The home holds a link where this was to write, read or lock, and nothing goes through one."
+    ),
 }
 
 

@@ -78,12 +78,13 @@ from personalclaw.durability import inventory as inv
 from personalclaw.durability import writeback
 from personalclaw.durability.ancestors import Deletion
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD
-from personalclaw.durability.home_paths import LinkInTheWay, home_path, landing
+from personalclaw.durability.home_paths import LinkInTheWay, export_path, home_path, landing
 from personalclaw.durability.merge import MergeResult, _is_tombstone, forward, merge_rows
 from personalclaw.durability.shards import (
     Read,
     Unread,
     _jsonl_rows_by_year,
+    jsonl_files,
     read_entity_dir,
     read_json_file,
     row_file,
@@ -148,12 +149,12 @@ def read_local(entry: inv.StateEntry, src: Path) -> Read:
     if entry.kind == inv.KIND_JSON_FILE:
         return read_json_file(entry, src)
     if entry.kind == inv.KIND_JSONL_APPEND:
-        files = [src] if src.is_file() else (sorted(src.rglob("*.jsonl")) if src.is_dir() else [])
+        left_out: dict[str, str] = {}
         rows: list[dict] = []
-        for path in files:
+        for path in jsonl_files(entry, src, left_out):
             for _year, bucket in _jsonl_rows_by_year(path).items():
                 rows.extend(bucket)
-        return Read(rows=rows)
+        return Read(rows=rows, left_out=left_out)
     return Read()  # non-row kind — never reached (caller checks handles_kind first)
 
 
@@ -729,9 +730,13 @@ def held_shas(home: Path, entry: inv.StateEntry) -> tuple[dict[str, str], Unread
     """``entity id → sha`` of what two homes compare of every record this home holds of *entry*
     (:func:`conflicts.compared`) — what it publishes, which the sync records before each export
     (:meth:`ancestors.Ancestors.publish`) — with what of the store it could not read
-    (``shards.unread``). ``None`` when the store is not there, or could not be read at all: nothing
-    is known of it then, so none of its records reads as deleted."""
-    dest = Path(home) / entry.path
+    (``shards.unread``). ``None`` when the store is not there, or could not be read at all, as
+    when the home holds a link on the way to it (``durability.home_paths``: nothing an export sends
+    is read through one): nothing is known of it then, so none of its records reads as deleted."""
+    try:
+        dest = export_path(home, entry.path)
+    except LinkInTheWay:
+        return None
     if not (dest.is_file() if entry.kind == inv.KIND_JSON_FILE else dest.is_dir()):
         return None
     read = read_local(entry, dest)

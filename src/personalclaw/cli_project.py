@@ -120,8 +120,14 @@ def _export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _refused_by_a_link(link: Exception) -> int:
+    print(f"❌ {link}, so no project can be imported here until the link is gone.", file=sys.stderr)
+    return 1
+
+
 def _import(args: argparse.Namespace) -> int:
     from personalclaw.config.loader import config_dir
+    from personalclaw.durability.home_paths import LinkInTheWay
     from personalclaw.tasks.hierarchy import HierarchyStore
     from personalclaw.workflows.project_export import import_summary
 
@@ -130,6 +136,11 @@ def _import(args: argparse.Namespace) -> int:
         print(f"❌ No such archive: {archive}", file=sys.stderr)
         return 1
 
+    try:
+        # Asked before the store is read: reading its projects makes the ones it starts with.
+        pa.projects_folder(config_dir())
+    except LinkInTheWay as link:
+        return _refused_by_a_link(link)
     store = HierarchyStore()
     existing = [p.name for p in store.list_projects()]
     try:
@@ -158,10 +169,13 @@ def _import(args: argparse.Namespace) -> int:
         print("❌ Nothing importable in this archive.", file=sys.stderr)
         return 1
 
-    created, written = pa.import_project(
-        plan, extracted, store=store, projects_root=config_dir() / "projects"
-    )
+    try:
+        created, written, left = pa.import_project(plan, extracted, store=store, home=config_dir())
+    except LinkInTheWay as link:
+        return _refused_by_a_link(link)
     print(f"✅ Imported as {created.name} ({created.id}) — {len(written)} entities written")
+    if left:
+        print(f"   ⚠️  Left unchanged: {'; '.join(left)}")
     if plan.secrets_expected:
         print(
             f"   🔑 Re-enter {len(plan.secrets_expected)} credential(s): "

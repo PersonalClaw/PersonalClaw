@@ -81,9 +81,13 @@ def lock_path(path: Path) -> Path:
 @contextlib.contextmanager
 def locked(path: Path) -> Iterator[None]:
     """Hold *path*'s lock, blocking until it is free. Advisory, across processes and threads;
-    not re-entrant, so nothing called while it is held may take it again."""
+    not re-entrant, so nothing called while it is held may take it again. Opened by the one
+    opener of a lock (``durability.home_paths.open_lock``), which refuses a link at the lock's
+    name, so nothing is written while one is there."""
+    from personalclaw.durability.home_paths import open_lock  # lazy: it imports this module
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path(path).open("w") as handle:
+    with open_lock(lock_path(path)) as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield

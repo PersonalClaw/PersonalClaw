@@ -498,12 +498,17 @@ def _pc_dir() -> Path:
 
 def _home_id(pc: Path) -> str:
     """The id of the home at *pc* (`durability.shards.machine_id`), or ``""`` for a home that is
-    not there: what a snapshot's manifest names, and what a restore compares it with."""
+    not there, or whose id is behind a link it holds (which is never read): what a snapshot's
+    manifest names, and what a restore compares it with. A snapshot that names no home is read as
+    another home's."""
     if not pc.is_dir():
         return ""
     from personalclaw.durability.shards import machine_id
 
-    return machine_id(pc)
+    try:
+        return machine_id(pc)
+    except home_paths.LinkInTheWay:
+        return ""
 
 
 def _snapshot_home(snap: Path) -> str:

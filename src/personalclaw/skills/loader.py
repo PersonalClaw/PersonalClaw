@@ -275,8 +275,9 @@ def hold_library() -> Iterator[None]:
     that edits the file itself takes no lock.
     """
     from personalclaw.concurrency import lock_path
+    from personalclaw.durability.home_paths import open_lock
 
-    with lock_path(_LIBRARY_LOCK).open("w") as handle:
+    with open_lock(lock_path(_LIBRARY_LOCK)) as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield

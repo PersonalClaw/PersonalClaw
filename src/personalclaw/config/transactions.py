@@ -37,9 +37,9 @@ import asyncio
 import copy
 import errno
 import fcntl
+import io
 import json
 import os
-import stat
 import threading
 import time
 from collections.abc import Callable
@@ -112,7 +112,7 @@ class _ConfigLock:
         self._lock_file = lock_path_for(path)
         self._key = os.path.realpath(self._lock_file)
         self._timeout = max(0.0, float(timeout))
-        self._fd = -1
+        self._fd: io.FileIO | None = None
         with _thread_locks_guard:
             self._thread_lock = _thread_locks.setdefault(self._key, threading.Lock())
         self._thread_lock_held = False
@@ -153,29 +153,21 @@ class _ConfigLock:
         _held_here().discard(self._key)
         self._release()
 
-    def _open(self) -> int:
+    def _open(self) -> io.FileIO:
         from personalclaw.atomic_write import ensure_private_dir, is_in_home
+        from personalclaw.durability.home_paths import LinkInTheWay, open_lock
 
         parent = self._lock_file.parent
         if is_in_home(parent):
             ensure_private_dir(parent)
         else:
             parent.mkdir(parents=True, exist_ok=True)
-        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
         try:
-            fd = os.open(self._lock_file, flags, 0o600)
-        except OSError as exc:
+            return open_lock(self._lock_file)
+        except (OSError, LinkInTheWay) as exc:
             raise ConfigWriteError(
                 f"could not open the config lock {self._lock_file}: {exc}; nothing was written"
             ) from exc
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            os.close(fd)
-            raise ConfigWriteError(
-                f"{self._lock_file} is not a regular file, so it cannot be the config lock; "
-                f"nothing was written"
-            )
-        os.fchmod(fd, 0o600)
-        return fd
 
     def _timed_out(self) -> ConfigLockTimeout:
         return ConfigLockTimeout(
@@ -184,12 +176,12 @@ class _ConfigLock:
         )
 
     def _release(self) -> None:
-        if self._fd >= 0:
+        if self._fd is not None:
             try:
                 fcntl.flock(self._fd, fcntl.LOCK_UN)
             finally:
-                os.close(self._fd)
-                self._fd = -1
+                self._fd.close()
+                self._fd = None
         if self._thread_lock_held:
             self._thread_lock_held = False
             self._thread_lock.release()

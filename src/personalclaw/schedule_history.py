@@ -11,8 +11,8 @@ interface.
 Persistence is JSONL-per-job (a first-class PersonalClaw idiom — cf. ``sel.py``,
 ``learn.py``, ``history.py``): ``<dir>/cron-history/{job_id}.jsonl`` holds full
 records (with trace); ``_index.jsonl`` holds lightweight rows (no trace) for the
-cross-job Executions view. Writes take an fcntl advisory lock (mirroring
-``ScheduleService._file_lock``); reads are lock-free — a partial final line from
+cross-job Executions view. Writes take an fcntl advisory lock (opened by
+``durability.home_paths.open_lock``); reads are lock-free — a partial final line from
 a concurrent append is silently skipped by the ``JSONDecodeError`` handler.
 """
 
@@ -335,16 +335,15 @@ class ScheduleRunStore:
 
     @contextmanager
     def _lock(self) -> Iterator[None]:
-        """Cross-process advisory lock (mirrors ScheduleService._file_lock)."""
+        """Cross-process advisory lock, opened by the one opener of a lock
+        (``home_paths.open_lock``): never emptied, and refused where the home holds a link at it."""
         self._dir.mkdir(parents=True, exist_ok=True)
-        lock = self._dir / _LOCK_NAME
-        fd = lock.open("w")
-        try:
+        with home_paths.open_lock(self._dir / _LOCK_NAME) as fd:
             fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            fd.close()
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
 
     @staticmethod
     def _read_jsonl(path: Path) -> list[dict[str, Any]]:

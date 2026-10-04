@@ -48,6 +48,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any
@@ -539,7 +540,13 @@ def plan_import(
     return plan
 
 
-def import_summary(plan: ImportPlan, *, preview: bool = False) -> str:
+def import_summary(
+    plan: ImportPlan,
+    *,
+    preview: bool = False,
+    written: int | None = None,
+    left: Sequence[str] = (),
+) -> str:
     """One line a user can act on.
 
     Names the counts AND the expected secrets, because "imported 12 files" without "3
@@ -548,10 +555,15 @@ def import_summary(plan: ImportPlan, *, preview: bool = False) -> str:
 
     ``preview`` is the plan shown BEFORE anything is written — the dashboard's import dialog
     shows this sentence as it is, so for a preview it says what WOULD be imported. It said
-    "imported" for an archive nothing had touched yet (F-62).
+    "imported" for an archive nothing had touched yet (F-62). After the import, ``written`` is
+    how many entities it wrote, and ``left`` the links in the home that kept any out
+    (``project_archive.commit_import``), each named.
     """
     verb = "would be imported" if preview else "imported"
-    parts = [f"{len(plan.accepted)} entit{'y' if len(plan.accepted) == 1 else 'ies'} {verb}"]
+    count = len(plan.accepted) if written is None else written
+    parts = [f"{count} entit{'y' if count == 1 else 'ies'} {verb}"]
+    if left:
+        parts.append(f"left unchanged: {'; '.join(left)}")
     if plan.refused:
         parts.append(f"{len(plan.refused)} refused")
     if plan.secrets_expected:

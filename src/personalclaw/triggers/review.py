@@ -112,15 +112,16 @@ def _path(base_dir: Path | str | None) -> Path:
 @contextmanager
 def _locked(base_dir: Path | str | None) -> Iterator[None]:
     """Cross-process lock on a sidecar file, so a boot and a click cannot lose each other's card."""
+    from personalclaw.durability.home_paths import open_lock
+
     root = _root(base_dir)
     root.mkdir(parents=True, exist_ok=True)
-    handle = (root / f"{REVIEW_FILENAME}.lock").open("w")
-    try:
+    with open_lock(root / f"{REVIEW_FILENAME}.lock") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
-        yield
-    finally:
-        fcntl.flock(handle, fcntl.LOCK_UN)
-        handle.close()
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _read(base_dir: Path | str | None) -> list[ReviewCard]:

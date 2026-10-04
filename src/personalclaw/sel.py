@@ -626,8 +626,10 @@ class SecurityEventLog:
         established primitive — see `personalclaw.concurrency`)."""
         import fcntl
 
+        from personalclaw.durability.home_paths import open_lock
+
         self._archive_dir.mkdir(parents=True, exist_ok=True)
-        with open(self._archive_dir / _ROTATE_LOCK, "a") as handle:
+        with open_lock(self._archive_dir / _ROTATE_LOCK) as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
                 yield

@@ -8,8 +8,8 @@ inspection called such a pack clean. A prompt id of ``../../../escaped`` wrote `
 outside the home, and a pack named ``../../../staged-escape`` staged its triggers out of it.
 
 The import now refuses such a pack whole, as it refuses a member name that climbs out
-(``_extract_quarantine``), and every path the pack layout builds is checked again, the symlinks on
-the way followed (``_inside``).
+(``_extract_quarantine``), and every path the pack layout builds is checked again, with no link the
+home holds on the way to it (``_inside``).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from personalclaw.durability.home_paths import LinkInTheWay
 from personalclaw.packs import import_ as pack_import
 from personalclaw.packs.build import build_pack
 from personalclaw.packs.import_ import PackImportRefused, import_pack, inspect_pack
@@ -147,13 +148,15 @@ def test_the_build_and_the_import_share_one_id_rule(tmp_path):
             pack_import.component_path("prompt", bad, home, "")
 
 
-def test_the_layout_refuses_a_path_that_leaves_through_a_symlink(tmp_path):
+def test_the_layout_refuses_a_path_with_a_link_on_the_way(tmp_path):
     home = tmp_path / "home"
     (home / "prompts").mkdir(parents=True)
     (tmp_path / "elsewhere").mkdir()
     (home / "prompts" / "shared").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
-    with pytest.raises(PackImportRefused, match="outside prompts/"):
+    with pytest.raises(PackImportRefused) as refused:
         pack_import.component_path("prompt", "shared/card", home, "")
+    assert refused.value.reason == "link"
+    assert "prompts/shared (a symbolic link in this home" in str(refused.value)
 
 
 def test_uninstall_keeps_a_component_whose_folder_leads_out(tmp_path):
@@ -168,4 +171,7 @@ def test_uninstall_keeps_a_component_whose_folder_leads_out(tmp_path):
     (elsewhere / "agent.json").write_text("{}", encoding="utf-8")
     (home / "agents" / "cfo").symlink_to(elsewhere, target_is_directory=True)
     lock = {"path": "agents/cfo/agent.json"}
-    assert uninstall._removable_path("agent:cfo", lock, home, "probe") is None
+    with pytest.raises(LinkInTheWay) as caught:
+        uninstall._removable_path("agent:cfo", lock, home, "probe")
+    assert caught.value.rel == "agents/cfo"
+    assert (elsewhere / "agent.json").is_file()

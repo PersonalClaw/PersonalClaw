@@ -367,6 +367,11 @@ def apply_update(
 
         decisions = _decide(plan, installed, home)
         write_refs = {d.ref for d in decisions if d.writes}
+        try:
+            pack_import.refuse_links(home, parsed, plan.name or pack_name, refs=write_refs)
+        except pack_import.PackImportRefused as exc:
+            logger.warning("pack update %s refused: %s", pack_name, exc)
+            raise PackUpdateError(str(exc)) from exc
 
         update_id = uuid.uuid4().hex[:16]
         journal = pack_import._Journal(home, update_id)

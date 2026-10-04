@@ -96,20 +96,21 @@ def single_flight(job_key: str) -> Iterator[bool]:
                 return
             ...  # the guarded work
     """
+    from personalclaw.durability.home_paths import open_lock
+
     path = lock_path(job_key)
     acquired = False
-    fd = path.open("w")
-    try:
+    with open_lock(path) as fd:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            acquired = True
-        except OSError:
-            acquired = False  # already held by another process
-        yield acquired
-    finally:
-        if acquired:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        fd.close()
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except OSError:
+                acquired = False  # already held by another process
+            yield acquired
+        finally:
+            if acquired:
+                fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 class BootSweepRow(Protocol):

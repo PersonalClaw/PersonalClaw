@@ -1135,25 +1135,29 @@ What this does not hold:
 **What this means for you:** answer your runs' questions yourself, and check the Mode of a loop
 someone else asked for before it runs.
 
-## 21. A restore looks for links, then writes
+## 21. A restore, an import or an export looks for links, then writes or reads
 
-A restore, an import and a sync never write through a link the home holds
-(`durability/home_paths.py`): each looks at every folder on the way to the path it is about to write,
-and at what is there, and leaves the item as it is when it finds a link. It looks, and then it
-writes. A process writing in the home at that moment, such as an app's backend in its `data/`
-folder or a command of the agent's in the workspace, could make a folder a link between the two,
-and the write would follow it.
+A restore, an import (of an export archive, a project archive or a pack) and a sync never write
+through a link the home holds, and a sync's export and the backup export never read through one
+(`durability/home_paths.py`): each looks at every folder on the way to the path it is about to
+write or read, and at what is there, and leaves the item as it is when it finds a link. It looks,
+and then it writes or reads. A process writing in the home at that moment, such as an app's backend
+in its `data/` folder or a command of the agent's in the workspace, could make a folder a link
+between the two, and the write or the read would follow it.
 
-- **What holds:** a link that is there when the restore, the import or the sync reaches the item,
-  however it got there and wherever it leads. A whole file an archive brings is written as a new
-  file and renamed into place, so a link made at its own name in between is replaced, never
-  written through.
-- **What does not:** a folder made a link in between, and a database or a log merged in place,
-  which is opened by its path.
+- **What holds:** a link that is there when the door reaches the item, however it got there and
+  wherever it leads. A whole file an archive or a project archive brings is written as a new file
+  and renamed into place, so a link made at its own name in between is replaced, never written
+  through. A lock is opened in one call that refuses a link at its name, so a lock is never
+  opened through one, raced in or not.
+- **What does not:** a folder made a link in between; a database or a log merged in place, a file
+  an export reads, and a pack's skill files, each opened by its path once it was looked at. A
+  lock's folder is its store's, where the store writes its files: a store its owner keeps behind a
+  link is locked there, as it is written there.
 
 **What this means for you:** a link put in the home ahead of time is refused; one raced in while the
-restore runs is not. Stop the gateway, and with it the apps' backends and the agent's commands,
-before a replace restore, as the restore asks you to.
+restore, the import or the export runs is not. Stop the gateway, and with it the apps' backends and
+the agent's commands, before a replace restore, as the restore asks you to.
 
 ## Why these are listed, not fixed
 
@@ -1180,8 +1184,9 @@ program and an agent CLI's own tools, for #18; a fence, enforced by the OS, arou
 long-term memory a private chat's commands could reach, an agent CLI's process kept to one private
 chat and to one person's turns, and a vault that reads back no edit made by such a chat's commands, for #19;
 the same record on every door that hands words to lasting work, and a Mode only you may loosen on
-work someone else asked for, for #20; writing each file a restore, an import or a sync brings
-through folders opened without following a link, from the home down, for #21). This page will
+work someone else asked for, for #20; writing each file a restore, an import or a sync brings,
+and reading each file an export sends, through folders opened without following a link, from the
+home down, for #21). This page will
 shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

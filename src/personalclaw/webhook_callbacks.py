@@ -87,9 +87,11 @@ def _path() -> Path:
 def _locked() -> Iterator[None]:
     """One writer at a time across processes: ``hook_register`` runs in the MCP server's process,
     and the owner's delete in the gateway's."""
+    from personalclaw.durability.home_paths import open_lock
+
     path = _path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path.parent / f"{CALLBACKS_FILE}.lock", "a") as handle:
+    with open_lock(path.parent / f"{CALLBACKS_FILE}.lock") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield

@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.durability.home_paths import LinkInTheWay
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from personalclaw.packs.installed import InstalledPack
 
@@ -125,7 +127,9 @@ def _removable_path(ref: str, lock: dict[str, str], home: Path, stage: str) -> P
     """The component's path when it is exactly where THIS component installs, else ``None``.
 
     Compared lexically (``normpath``), never through ``resolve``: resolving would follow a symlink
-    to wherever it points and then agree with itself.
+    to wherever it points and then agree with itself. Raises
+    :class:`~personalclaw.durability.home_paths.LinkInTheWay` where the home holds a link on the
+    way to it, or at it (``import_.component_path``): nothing is removed through one.
     """
     from personalclaw.packs.import_ import PackImportRefused, component_path, could_have_landed_as
 
@@ -142,11 +146,11 @@ def _removable_path(ref: str, lock: dict[str, str], home: Path, stage: str) -> P
         return None
     try:
         expected = component_path(kind, cid, home, stage)
-    except PackImportRefused:
-        return None  # a folder on its way leads out of the store: never followed, so kept
+    except PackImportRefused as refused:
+        if refused.link is not None:
+            raise refused.link from None
+        return None  # a name that is no path of the store names nothing it installed
     if expected is None or Path(os.path.normpath(expected)) != recorded:
-        return None
-    if recorded.is_symlink():
         return None
     return recorded
 
@@ -167,7 +171,12 @@ def _classify(pack: InstalledPack, home: Path) -> tuple[UninstallPlan, dict[str,
                 )
             )
             continue
-        path = _removable_path(ref, lock, home, pack.name)
+        try:
+            path = _removable_path(ref, lock, home, pack.name)
+        except LinkInTheWay as link:
+            reason = f"{link.rel} is a link in this home, which nothing is removed through"
+            plan.kept.append(KeptComponent(ref, f"{reason}, so it stays"))
+            continue
         if path is None:
             plan.kept.append(
                 KeptComponent(
@@ -287,13 +296,18 @@ def apply_uninstall(name: str) -> UninstallPlan:
             # its only file; the directory that holds every definition stays.
             _prune_empty(path.parent, path.parent.parent)
 
-    staged = pack_import._staged_dir(home, pack.name)
-    for filename in _STAGING_FILES:
-        staged_file = staged / filename
-        if staged_file.is_file() and not staged_file.is_symlink():
-            staged_file.unlink()
-    for directory in (staged / "triggers", staged):
-        _prune_empty(directory, staged.parent)
+    try:
+        staged = pack_import._staged_dir(home, pack.name)
+    except pack_import.PackImportRefused as refused:
+        # Its staging area is behind a link the home holds: nothing is removed through one.
+        logger.warning("pack uninstall %s: staging area left as it is: %s", name, refused)
+    else:
+        for filename in _STAGING_FILES:
+            staged_file = staged / filename
+            if staged_file.is_file() and not staged_file.is_symlink():
+                staged_file.unlink()
+        for directory in (staged / "triggers", staged):
+            _prune_empty(directory, staged.parent)
 
     if failed:
         pack_import._audit(

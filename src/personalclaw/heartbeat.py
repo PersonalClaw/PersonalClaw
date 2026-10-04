@@ -120,8 +120,9 @@ def hold_queue() -> Iterator[None]:
     the holder dies. Not re-entrant: nothing done while it is held may take it again.
     """
     from personalclaw.concurrency import lock_path
+    from personalclaw.durability.home_paths import open_lock
 
-    with lock_path(_LOCK_KEY).open("w") as handle:
+    with open_lock(lock_path(_LOCK_KEY)) as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield

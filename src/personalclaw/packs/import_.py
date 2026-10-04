@@ -47,10 +47,11 @@ from typing import Any
 
 from personalclaw.atomic_write import atomic_json_write
 from personalclaw.config import loader as config_loader
+from personalclaw.durability.home_paths import LinkInTheWay, home_path
 from personalclaw.packs import lint as pack_lint
 from personalclaw.packs import roster as pack_roster
 from personalclaw.packs.build import SCHEMA_VERSION, safe_component_id
-from personalclaw.record_ids import is_path_in_store, is_safe_record_id
+from personalclaw.record_ids import is_safe_record_id, is_safe_relative_path
 from personalclaw.skills.marketplace import SkillDetail, SkillEntry, SkillsMarketplace
 
 
@@ -193,13 +194,23 @@ class PackImportRefused(Exception):
     ``reason`` is a stable code the UI branches on: ``"integrity"`` (recomputed hash
     mismatch), ``"lint"`` (unresolved reference / unparseable component), ``"dangerous"``
     (a component the scanner flagged — never overridable), ``"needs_consent"`` (a WARNING
-    component and consent not given), or ``"fault"`` (a mid-commit fault, fully rolled back).
-    ``plan`` carries the inspect result so the caller can show exactly why.
+    component and consent not given), ``"link"`` (the home holds a link where the pack would
+    write, ``link`` naming it: nothing of a pack is written through one), or ``"fault"`` (a
+    mid-commit fault, fully rolled back). ``plan`` carries the inspect result so the caller can
+    show exactly why.
     """
 
-    def __init__(self, reason: str, message: str, plan: "ImportPlan | None" = None) -> None:
+    def __init__(
+        self,
+        reason: str,
+        message: str,
+        plan: "ImportPlan | None" = None,
+        *,
+        link: LinkInTheWay | None = None,
+    ) -> None:
         self.reason = reason
         self.plan = plan
+        self.link = link
         super().__init__(message)
 
 
@@ -477,8 +488,29 @@ def _rewrite_ref_strings(obj: Any, remap: dict[tuple[str, str], str]) -> None:
 # ── local-existence probes (fresh-id collision + lint local resolution) ───────
 
 
-def _agents_base(home: Path) -> Path:
-    return home / "agents"
+#: The home's folder of the packs it installed: the installs' journals (``.installing``), their
+#: staged proposals (``staged``) and the ledger of what is installed (``packs.installed``).
+PACKS_DIR = "packs"
+_STAGED = f"{PACKS_DIR}/staged"
+_JOURNALS = f"{PACKS_DIR}/.installing"
+
+
+def _layout(kind: str, cid: str, stage: str) -> tuple[str, str] | None:
+    """Where a component ``kind:cid`` lands: its store's folder in the home, and its path inside
+    that store. ``None`` for a kind packs do not install."""
+    from personalclaw.skills.loader import SKILLS_DIR_NAME
+
+    if kind == "skill":
+        return SKILLS_DIR_NAME, cid
+    if kind == "template":
+        return "workflows/defs", f"{cid}/workflow.json"
+    if kind == "prompt":
+        return "prompts", f"{cid}.yaml"
+    if kind == "agent":
+        return "agents", f"{cid}/agent.json"
+    if kind == "trigger":
+        return f"{_STAGED}/{stage}", f"triggers/{cid}.json"
+    return None
 
 
 def component_path(kind: str, cid: str, home: Path, stage: str) -> Path | None:
@@ -488,37 +520,47 @@ def component_path(kind: str, cid: str, home: Path, stage: str) -> Path | None:
     staging area (``stage`` is the pack's name), never the live store. ``None`` for a kind packs
     do not install. The commit writes here, the fresh-id probe looks here, and uninstall
     (:mod:`packs.uninstall`) deletes only a path that equals this, so the three cannot disagree
-    about where a pack's files are. Each is inside its store (:func:`_inside`): the id comes from
-    the archive.
+    about where a pack's files are. Each is inside its store, and no link the home holds is on
+    the way to it (:func:`_inside`): the id comes from the archive.
     """
-    from personalclaw.skills.loader import SKILLS_DIR_NAME
-
-    if kind == "skill":
-        return _inside(home / SKILLS_DIR_NAME, cid)
-    if kind == "template":
-        return _inside(home / "workflows" / "defs", f"{cid}/workflow.json")
-    if kind == "prompt":
-        return _inside(home / "prompts", f"{cid}.yaml")
-    if kind == "agent":
-        return _inside(_agents_base(home), f"{cid}/agent.json")
-    if kind == "trigger":
-        return _inside(_staged_dir(home, stage), f"triggers/{cid}.json")
-    return None
+    where = _layout(kind, cid, stage)
+    if where is None:
+        return None
+    store, rel = where
+    return _inside(home, store, rel)
 
 
-def _inside(base: Path, rel: str) -> Path:
-    """``base / rel``, a path of the pack layout, when it is inside *base* once every folder on the
-    way is followed (``record_ids.is_path_in_store``); else :class:`PackImportRefused`.
+def _inside(home: Path, store: str, rel: str) -> Path:
+    """``home / store / rel``, a path of the pack layout, when *rel* names a path inside the store
+    (``record_ids.is_safe_relative_path``) and nothing on the way to it is a link the home holds
+    (``durability.home_paths.home_path``); else :class:`PackImportRefused`.
 
     An id from the archive builds it, and a prompt's ``../../../name`` wrote its file outside the
     home. :func:`_build_plan` refuses such a pack before any of it is parsed, so this is the floor
-    under every writer, the fresh-id probe and uninstall alike. The last segment is taken as it is
-    named: a commit replaces the file there, which replaces a link rather than writing through it,
-    the fresh-id probe reads a linked component as one this home has, and uninstall never removes
-    one (``uninstall._removable_path``)."""
-    if not is_path_in_store(base, rel, follow_last=False):
-        raise PackImportRefused("integrity", f"{rel!r} names a path outside {base.name}/")
-    return base.joinpath(*rel.split("/"))
+    under every writer, the fresh-id probe and uninstall alike (``"integrity"``). A store's folder
+    that is a link, or a link at any folder on the way, at the component or beside it, would carry
+    the write out of the home, and a store whose folder was a link took a pack's files wherever it
+    led: that is refused too (``"link"``, the link named). A commit writes nothing through one, the
+    fresh-id probe reads a link at a component's own path as a component this home has
+    (:func:`_local_exists`), and uninstall removes nothing through one
+    (``uninstall._removable_path``)."""
+    if not is_safe_relative_path(rel):
+        raise PackImportRefused("integrity", f"{rel!r} names a path outside {store}/")
+    return _landing(home, f"{store}/{rel}")
+
+
+def _landing(home: Path, rel: str) -> Path:
+    """``home / rel``, a path a pack's install writes at, once no link the home holds is on the
+    way to it (``durability.home_paths.home_path``); else :class:`PackImportRefused` (``"link"``),
+    which names the link."""
+    try:
+        return home_path(home, rel)
+    except ValueError as exc:
+        raise PackImportRefused("integrity", f"{rel!r} names a path outside the home") from exc
+    except LinkInTheWay as link:
+        raise PackImportRefused(
+            "link", f"refused — nothing of this pack was written: {link}", link=link
+        ) from None
 
 
 def _local_exists(home: Path, kind: str, cid: str) -> bool:
@@ -526,17 +568,61 @@ def _local_exists(home: Path, kind: str, cid: str) -> bool:
 
     Drives both fresh-id collision detection and the lint's local-reference resolution: a
     dependent may reference a component the pack doesn't carry but the home already has. A
-    staged trigger is not an installed component, so it never collides.
+    staged trigger is not an installed component, so it never collides. A link at the
+    component's own path, or at its own folder, holds that id, so a fresh one lands beside it;
+    a link further up names nothing installed here, and the import refuses it
+    (:func:`refuse_links`).
     """
     if kind == "trigger":
         return False
     try:
         path = component_path(kind, cid, home, stage="")
-    except PackImportRefused:
-        return False  # a reference that names no path of the home names nothing installed in it
+    except PackImportRefused as refused:
+        # A reference that names no path of the home names nothing installed in it.
+        return refused.link is not None and refused.link.rel in _own_paths(kind, cid)
     if path is None:
         return False
     return (path / "SKILL.md").is_file() if kind == "skill" else path.is_file()
+
+
+def _own_paths(kind: str, cid: str) -> set[str]:
+    """A component's own path in the home, and its own folder: the paths a link at holds its id."""
+    where = _layout(kind, cid, "")
+    if where is None:
+        return set()
+    store, rel = where
+    return {f"{store}/{rel}", f"{store}/{cid}"}
+
+
+def refuse_links(
+    home: Path, parsed: list[_Comp], stage: str, *, refs: set[str] | None = None
+) -> None:
+    """Refuse the pack, before anything of it is written, where the home holds a link on the way
+    to a path its install writes (``durability.home_paths``): the journal, its staged proposals,
+    the ledger of installed packs, and each component's path, a skill's every file with it.
+    *refs* narrows the components to those an update writes. Raises :class:`PackImportRefused`
+    (``"link"``) naming the first link: a pack lands whole or not at all, so none of it is written
+    beside one."""
+    from personalclaw.packs.installed import LEDGER_FILE
+    from personalclaw.packs.roster import ROSTER_FILE
+
+    for rel in (
+        _JOURNALS,
+        f"{PACKS_DIR}/{LEDGER_FILE}",
+        f"{_STAGED}/{stage}/config_subset.json",
+        f"{_STAGED}/{stage}/{ROSTER_FILE}",
+    ):
+        _landing(home, rel)
+    for comp in parsed:
+        if refs is not None and f"{comp.kind}:{comp.id}" not in refs:
+            continue
+        component_path(comp.kind, comp.target_id, home, stage)
+        if comp.kind == "skill":
+            from personalclaw.skills.loader import SKILLS_DIR_NAME
+
+            for entry in comp.skill_files or []:
+                name = PurePosixPath(str(entry.get("path", ""))).as_posix()
+                _inside(home, SKILLS_DIR_NAME, f"{comp.target_id}/{name}")
 
 
 def _fresh_id(home: Path, kind: str, orig_id: str, taken: set[tuple[str, str]]) -> str:
@@ -930,15 +1016,16 @@ class _Journal:
     """
 
     def __init__(self, home: Path, import_id: str) -> None:
-        self._dir = home / "packs" / ".installing"
-        self._path = self._dir / f"{import_id}.json"
+        journals = _landing(home, _JOURNALS)
+        self._dir = journals
+        self._path = _landing(home, f"{_JOURNALS}/{import_id}.json")
+        self._packs = _landing(home, PACKS_DIR)
         self._entries: list[dict[str, str]] = []
         # Track dirs THIS import created so rollback removes only those (never a pre-existing
         # one) and success can prune the empty journal scaffold cleanly.
-        self._created_installing = not self._dir.exists()
-        self._created_packs = not (home / "packs").exists()
-        self._dir.mkdir(parents=True, exist_ok=True)
-        self._home = home
+        self._created_installing = not journals.exists()
+        self._created_packs = not self._packs.exists()
+        journals.mkdir(parents=True, exist_ok=True)
 
     def _flush(self) -> None:
         # Through the one JSON writer: a crash mid-flush otherwise truncates the very ledger that
@@ -984,9 +1071,8 @@ class _Journal:
                 self._path.unlink()
             if self._created_installing and self._dir.is_dir() and not any(self._dir.iterdir()):
                 self._dir.rmdir()
-            packs_dir = self._home / "packs"
-            if self._created_packs and packs_dir.is_dir() and not any(packs_dir.iterdir()):
-                packs_dir.rmdir()
+            if self._created_packs and self._packs.is_dir() and not any(self._packs.iterdir()):
+                self._packs.rmdir()
         except OSError:
             logger.debug("pack import: could not prune journal scaffold", exc_info=True)
 
@@ -1019,9 +1105,9 @@ def _write_component_file(path: Path, text: str) -> None:
 def _staged_dir(home: Path, stage: str) -> Path:
     """The pack-scoped staging area for proposals a pack may NOT apply on install —
     disabled triggers + validated config_subset entries. Human-enabled from their own
-    surfaces later (§3.1 propose-don't-write). Named for the pack, so inside its folder
-    (:func:`_inside`)."""
-    return _inside(home / "packs" / "staged", stage)
+    surfaces later (§3.1 propose-don't-write). Named for the pack, so inside its folder,
+    with no link the home holds on the way (:func:`_inside`)."""
+    return _inside(home, _STAGED, stage)
 
 
 def _commit_file_component(comp: _Comp, home: Path, journal: _Journal, stage: str) -> Path:
@@ -1073,10 +1159,10 @@ def _commit_skill(comp: _Comp, home: Path, marketplace_name: str, journal: _Jour
     ``skills/`` if absent, which rollback must also unwind or a faulted import would leave an
     empty ``skills/`` behind (not byte-identical). ``record_skill`` handles the skill dir; the
     journaled ``mkdir`` handles the parent."""
-    from personalclaw.skills.loader import skills_dir
+    from personalclaw.skills.loader import SKILLS_DIR_NAME
     from personalclaw.skills.marketplace import get_default_skills_registry
 
-    target = skills_dir()
+    target = _landing(home, SKILLS_DIR_NAME)
     _mkdir_journaled(journal, target)
     get_default_skills_registry().install_guarded(
         marketplace_name, comp.target_id, target, force=True
@@ -1102,7 +1188,7 @@ def _stage_roster(plan: ImportPlan, home: Path, journal: _Journal, stage: str) -
         )
         for r in plan.runbooks
     ]
-    path = pack_roster.roster_path(home, stage)
+    path = _inside(home, _STAGED, f"{stage}/{pack_roster.ROSTER_FILE}")
     _mkdir_journaled(journal, path.parent)
     journal.record_file(path)
     _write_component_file(path, pack_roster.serialize_roster(entries, books))
@@ -1118,7 +1204,7 @@ def _stage_config_subset(
     raw = members.get("config_subset.json")
     proposed = json.loads(raw.decode("utf-8")) if raw else {}
     staged = {k: proposed[k] for k in keys}
-    path = _staged_dir(home, stage) / "config_subset.json"
+    path = _inside(home, _STAGED, f"{stage}/config_subset.json")
     _mkdir_journaled(journal, path.parent)
     journal.record_file(path)
     _write_component_file(path, json.dumps(staged, indent=2, ensure_ascii=False))
@@ -1225,6 +1311,13 @@ def import_pack(
 
         # ── commit, leaves-first, journaled ──
         stage = plan.name or "pack"
+        try:
+            refuse_links(home, parsed, stage)
+        except PackImportRefused as exc:
+            exc.plan = plan
+            logger.warning("pack import %s refused: %s", plan.name, exc)
+            _audit("pack_import", "refused", resources=plan.name, error=str(exc))
+            raise
         import_id = uuid.uuid4().hex[:16]
         journal = _Journal(home, import_id)
         registry = get_default_skills_registry()

@@ -277,9 +277,15 @@ def create(run: WorkflowRun) -> WorkflowRun:
 
         run.owner_username = current_username()
     if not run.origin_harness:
+        from personalclaw.durability.home_paths import LinkInTheWay
         from personalclaw.durability.shards import machine_id
 
-        run.origin_harness = machine_id(config_dir())
+        try:
+            run.origin_harness = machine_id(config_dir())
+        except LinkInTheWay:
+            # Origin attribution decorates the run and never stops it: an id the home holds behind
+            # a link is unread, so the run is this harness's ("").
+            run.origin_harness = ""
     # Who asked for it, when someone other than the owner did (`memory_writes.asker`): its work
     # keeps that for as long as it lasts, after the turn that started it has ended and after a
     # restart (`lasting_work`). A caller that recorded it already keeps its own: a sub-run or a

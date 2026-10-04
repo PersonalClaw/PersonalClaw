@@ -191,10 +191,11 @@ def _servers(record: str) -> dict[str, Any]:
 @contextmanager
 def _locked(record: str) -> Iterator[None]:
     from personalclaw.atomic_write import ensure_private_dir
+    from personalclaw.durability.home_paths import open_lock
 
     path = _path(record)
     ensure_private_dir(path.parent)
-    with open(path.parent / f".{record}.lock", "a") as handle:
+    with open_lock(path.parent / f".{record}.lock") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield

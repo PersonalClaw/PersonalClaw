@@ -93,10 +93,11 @@ class _McpFileLock:
     async def __aenter__(self) -> None:
         import fcntl
 
+        from personalclaw.durability.home_paths import open_lock
+
         lock_path = _canonical_mcp_json().with_suffix(".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path.touch(exist_ok=True)
-        self._fd = open(lock_path, "r")
+        self._fd = open_lock(lock_path)
         # Run blocking flock in a thread to avoid blocking the event loop
         await asyncio.get_running_loop().run_in_executor(
             None,

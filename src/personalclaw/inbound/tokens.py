@@ -225,10 +225,11 @@ def _transaction() -> Iterator[dict[str, Any]]:
     with _lock:
         try:
             from personalclaw.atomic_write import ensure_private_dir
+            from personalclaw.durability.home_paths import LinkInTheWay, open_lock
 
             ensure_private_dir(path.parent)
-            handle = open(path.parent / f".{_FILE}.lock", "a")  # closed by the `with` below
-        except OSError as exc:
+            handle = open_lock(path.parent / f".{_FILE}.lock")  # closed by the `with` below
+        except (OSError, LinkInTheWay) as exc:
             raise RegistryUnavailable(f"{path} cannot be locked: {exc}") from exc
         with handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)

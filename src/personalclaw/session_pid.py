@@ -50,9 +50,11 @@ def _session_pid_file_path() -> Path:
 @contextmanager
 def _session_pid_file_lock():  # type: ignore[no-untyped-def]
     """Exclusive file lock for session PID file operations."""
+    from personalclaw.durability.home_paths import open_lock
+
     lock_path = _session_pid_file_path().with_suffix(".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "w") as lock_fd:
+    with open_lock(lock_path) as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
             yield
@@ -95,9 +97,11 @@ def agent_processes_of_this_gateway() -> set[int]:
 @contextmanager
 def _pid_file_lock():  # type: ignore[no-untyped-def]
     """Exclusive file lock for all PID file read-modify-write operations."""
+    from personalclaw.durability.home_paths import open_lock
+
     lock_path = _pid_file_path().with_suffix(".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "w") as lock_fd:
+    with open_lock(lock_path) as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
             yield
@@ -305,14 +309,16 @@ def _periodic_pid_sweep(my_gw_pid: int, active_pids: set[int]) -> tuple[set[str]
     regardless of gateway restart (the LaunchAgent daemon may run for days
     without a restart, so startup cleanup never fires).
     """
+    from personalclaw.durability.home_paths import LinkInTheWay, open_lock
+
     path = _session_pid_file_path()
     if not path.exists():
         return set(), []
     lock_path = path.with_suffix(".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        lock_fd = open(lock_path, "w")
-    except OSError:
+        lock_fd = open_lock(lock_path)
+    except (OSError, LinkInTheWay):
         return set(), []
     try:
         try:

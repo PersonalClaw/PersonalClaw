@@ -59,6 +59,12 @@ from typing import Any, Mapping
 from personalclaw.atomic_write import atomic_write, make_private_dirs, write_private_file
 from personalclaw.durability import inventory as inv
 from personalclaw.durability.ancestors import Deletion
+from personalclaw.durability.home_paths import (
+    A_SYMBOLIC_LINK_READ,
+    LinkInTheWay,
+    export_path,
+    not_read,
+)
 from personalclaw.record_ids import is_path_in_store, is_safe_relative_path
 from personalclaw.sqlite_compat import sqlite3
 
@@ -105,8 +111,13 @@ def machine_id(home: Path) -> str:
     Deliberately NOT ``telemetry_salt``: that is marked ``secret=True`` and must
     never leave the machine, while this id is written into every manifest so a sync
     can tell "which machine produced this export".
+
+    It goes to the other machines in every copy, so it is read by the export's rule
+    (``durability.home_paths.export_path``): where the home holds a link at it, it is neither
+    read nor replaced, and this raises
+    :class:`~personalclaw.durability.home_paths.LinkInTheWay` naming it.
     """
-    path = home / _MACHINE_ID_FILE
+    path = export_path(home, _MACHINE_ID_FILE)
     try:
         existing = path.read_text(encoding="utf-8").strip()
         if existing:
@@ -314,9 +325,10 @@ def unread(entry: inv.StateEntry, read: Read) -> Unread:
         if path == entry.path or not path.startswith(prefix):
             return Unread(everything=True)
         rel = path[len(prefix) :]
-        if why == NOT_LISTED:
+        # A symbolic link the read did not follow may stand for a file or a folder of the store.
+        if why in (NOT_LISTED, A_SYMBOLIC_LINK_READ):
             folders.append(rel)
-        else:
+        if why != NOT_LISTED:
             files.add(rel[: -len(".json")] if rel.endswith(".json") else rel)
     return Unread(files=frozenset(files), folders=tuple(sorted(folders)))
 
@@ -329,13 +341,21 @@ def read_entity_dir(entry: inv.StateEntry, root: Path) -> Read:
     assets Markdown, a voice profile's reference clip and consent recording audio. A file it cannot
     carry — JSON that does not parse, one too large for a row, or one named as another's row would
     be — is in ``left_out``, with why, and so is a folder it could not list (:data:`NOT_LISTED`;
-    the store's own path when that is *root*). Symlinks are not followed, and a folder that is not
-    the store's is not walked.
+    the store's own path when that is *root*). A folder that is not the store's is not walked.
+
+    Nothing is read through a link (``durability.home_paths``): *root* is a path the home's rule
+    gave (``export_path``, or ``home_path`` for a sync's pull), and a file of the store that is a
+    symbolic link or has a second name, or a folder of it that is a symbolic link, is not read and
+    is in ``left_out`` with why, so none of its records reads as deleted (:func:`unread`).
     """
     out = Read()
     if not root.is_dir():
         return out
     found: list[tuple[str, Path]] = []
+
+    def linked(rel: str, why: str) -> None:
+        logger.warning("shards: %s/%s is not read: %s", entry.path, rel, why)
+        out.left_out[f"{entry.path}/{rel}"] = why
 
     def not_listed(exc: OSError) -> None:
         try:
@@ -348,11 +368,25 @@ def read_entity_dir(entry: inv.StateEntry, root: Path) -> Read:
 
     for directory, dirs, files in os.walk(root, followlinks=False, onerror=not_listed):
         here = Path(directory).relative_to(root)
-        dirs[:] = sorted(d for d in dirs if not _outside_the_store(entry, (here / d).as_posix()))
+        walked: list[str] = []
+        for d in sorted(dirs):
+            rel = (here / d).as_posix()
+            if _outside_the_store(entry, rel):
+                continue
+            why = not_read(Path(directory) / d)
+            if why:
+                linked(rel, why)
+            else:
+                walked.append(d)
+        dirs[:] = walked
         for name in files:
             path = Path(directory) / name
-            if not path.is_symlink():
-                found.append(((here / name).as_posix(), path))
+            rel = (here / name).as_posix()
+            why = not_read(path)
+            if not why:
+                found.append((rel, path))
+            elif store_file(entry, rel):
+                linked(rel, why)
     rows: dict[str, dict] = {}
     for rel, path in sorted(found):
         if not store_file(entry, rel):
@@ -378,6 +412,40 @@ def read_entity_dir(entry: inv.StateEntry, root: Path) -> Read:
     return out
 
 
+def jsonl_files(entry: inv.StateEntry, src: Path, left_out: dict[str, str]) -> list[Path]:
+    """The files an append-only store at *src* holds: *src* itself when it is one file, else every
+    ``*.jsonl`` file under it, sorted. *src* is a path the home's rule gave (``export_path``, or
+    ``home_path`` for a sync's pull), and nothing is read through a link under it
+    (``durability.home_paths``): a file there that is a symbolic link or has a second name, or a
+    folder that is a symbolic link, is not among them, and goes in *left_out* with why."""
+    if src.is_file():
+        return [src]
+    if not src.is_dir():
+        return []
+    files: list[Path] = []
+    for directory, dirs, names in os.walk(src, followlinks=False):
+        here = Path(directory)
+        walked: list[str] = []
+        for d in sorted(dirs):
+            why = not_read(here / d)
+            if why:
+                left_out[f"{entry.path}/{(here / d).relative_to(src).as_posix()}"] = why
+            else:
+                walked.append(d)
+        dirs[:] = walked
+        for name in names:
+            if not name.endswith(".jsonl"):
+                continue
+            why = not_read(here / name)
+            if why:
+                left_out[f"{entry.path}/{(here / name).relative_to(src).as_posix()}"] = why
+            else:
+                files.append(here / name)
+    for rel, why in left_out.items():
+        logger.warning("shards: %s is not read: %s", rel, why)
+    return sorted(files)
+
+
 def read_json_file(entry: inv.StateEntry, path: Path) -> Read:
     """The one row of a ``json_file`` store at *path*: its JSON ``data``.
 
@@ -385,10 +453,16 @@ def read_json_file(entry: inv.StateEntry, path: Path) -> Read:
     whatever it holds, as its ``text`` or ``base64`` when that is not JSON: the workspace pointer
     is a bare path, and a backup did not hold it. Any other store's file that does not parse is
     left out and named (``left_out``): taken in by a sync, it would be written over the other
-    machine's store as an edit.
+    machine's store as an edit. Nothing is read through a link (``durability.home_paths``): a file
+    that is a symbolic link or has a second name is left out, and named.
     """
     out = Read()
-    if not path.is_file() or path.is_symlink():
+    why = not_read(path)
+    if why:
+        logger.warning("shards: %s is not read: %s", entry.path, why)
+        out.left_out[entry.path] = why
+        return out
+    if not path.is_file():
         return out
     raw, why = _file_bytes(path)
     data = _NOT_JSON if raw is None else _json_of(raw)
@@ -632,8 +706,16 @@ def export_shards(
     this home held, so the other machines delete it too and weigh their own copy against what the
     delete saw (``conflicts.weigh_deletions``). A store that is not there still carries its
     deletes.
+
+    Nothing is read through a link the home holds (``durability.home_paths.export_path``): a store
+    behind one is left out and named in ``left_out``, as is a file or folder of a store that is
+    one, and none of its records reads as deleted. The machine's id (:func:`machine_id`), which
+    names every copy, is read first: a link at it refuses the export whole, before anything is
+    written (``LinkInTheWay``).
     """
     deletions = deletions or {}
+    # First, before anything is written: a link the home holds at it refuses the export whole.
+    machine = machine_id(home)
     result = ExportResult()
     make_private_dirs(out_dir)
     wanted = set(entries) if entries else None
@@ -646,7 +728,18 @@ def export_shards(
                 continue
             if for_sync and (entry.machine_local or inv.append_only_folder(entry)):
                 continue
-            src = home / entry.path
+            try:
+                src = export_path(home, entry.path)
+            except LinkInTheWay as link:
+                # Nothing is read through a link the home holds, so nothing of the store leaves:
+                # it is named among what the export could not carry, and what an earlier export
+                # holds of it goes, as a store that is gone does.
+                logger.warning("shards: %s is not read: %s", entry.path, link)
+                result.left_out[link.rel] = link.why
+                result.left_out_entries.add(entry.id)
+                if wanted is not None:
+                    _drop_shards_of(out_dir, entry.id)
+                continue
             gone = deletions.get(entry.id, {}) if for_sync else {}
             if not src.exists() and not gone:
                 if wanted is not None:
@@ -693,7 +786,9 @@ def export_shards(
                     _write_shard(out_dir, f"{entry.id}/value.jsonl", read.rows + gone_rows)
                 )
             elif entry.kind == inv.KIND_JSONL_APPEND:
-                files = [src] if src.is_file() else sorted(src.rglob("*.jsonl"))
+                left_out: dict[str, str] = {}
+                files = jsonl_files(entry, src, left_out)
+                _note_left_out(result, entry, Read(left_out=left_out))
                 # A running Temporary chat's transcript is never copied out: the chat is forgotten
                 # when its session ends, and a shard would outlive it.
                 if temporary is None:
@@ -726,7 +821,7 @@ def export_shards(
             path=_AGREEMENTS, bytes=len(body), rows=0, sha256=_sha256(body)
         )
     _drop_earlier_folder_copies(out_dir)
-    _write_manifest(home, out_dir, result)
+    _write_manifest(machine, out_dir, result)
     return result
 
 
@@ -830,11 +925,11 @@ def _merged_shard_records(
     return sorted(merged.values(), key=lambda s: s.path)
 
 
-def _write_manifest(home: Path, out_dir: Path, result: ExportResult) -> None:
+def _write_manifest(machine: str, out_dir: Path, result: ExportResult) -> None:
     manifest = {
         "schema_version": SHARD_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "machine_id": machine_id(home),
+        "machine_id": machine,
         "entries": result.entries,
         "skipped": result.skipped,
         "shards": [
@@ -1213,7 +1308,13 @@ def dirty_entries(home: Path, state_path: Path) -> Changes:
     current: dict[str, str] = {}
     dirty: list[str] = []
     for entry in inv.shard_entries():
-        src = home / entry.path
+        try:
+            src = export_path(home, entry.path)
+        except LinkInTheWay:
+            # Not measured through a link the home holds (folding a database's log writes it):
+            # changed until the link is gone, so each export names it (`export_shards`).
+            dirty.append(entry.id)
+            continue
         if not src.exists():
             continue
         fingerprint = _fingerprint(src)
@@ -1377,6 +1478,11 @@ def backup_cmd(args) -> int:
             if not acquired:
                 print("⏭  Another shard export is already running — skipping.")
                 return 0
+            try:
+                machine_id(home)  # before the earlier export is cleared: a link at it refuses
+            except LinkInTheWay as link:
+                print(f"❌ Nothing was exported: {link}. Remove the link.", file=sys.stderr)
+                return 1
             entries = None
             changes: Changes | None = None
             state_path = home / ".shard-state.json"

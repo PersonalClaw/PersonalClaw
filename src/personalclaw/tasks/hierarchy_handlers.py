@@ -9,6 +9,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.durability.home_paths import LinkInTheWay
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
 from personalclaw.record_ids import UnsafeRecordId
@@ -1201,6 +1202,12 @@ async def api_projects_import(request: web.Request) -> web.Response:
 
     preview = request.query.get("preview", "") in ("1", "true", "yes")
     passphrase = request.query.get("passphrase", "")
+    try:
+        # Asked before the store is read: reading its projects makes the ones it starts with.
+        pa.projects_folder(config_dir())
+    except LinkInTheWay as link:
+        upload.unlink(missing_ok=True)
+        return _link_refusal(link)
     store = _store()
     existing = [p.name for p in store.list_projects()]
 
@@ -1228,17 +1235,42 @@ async def api_projects_import(request: web.Request) -> web.Response:
             {**payload, "error": "the archive contributed nothing importable"}, status=400
         )
 
-    created, written = await asyncio.to_thread(
-        pa.import_project, plan, archive, store=store, projects_root=config_dir() / "projects"
+    try:
+        created, written, left = await asyncio.to_thread(
+            pa.import_project, plan, archive, store=store, home=config_dir()
+        )
+    except LinkInTheWay as link:
+        return _link_refusal(link)
+    if left:
+        logger.warning("project import %s: left unchanged: %s", created.id, "; ".join(left))
+    payload.update(
+        {
+            "preview": False,
+            "project_id": created.id,
+            "written": written,
+            "left_unchanged": left,
+            "summary": _import_summary(plan, preview=False, written=len(written), left=left),
+        }
     )
-    payload.update({"preview": False, "project_id": created.id, "written": written})
     return web.json_response(payload, status=201)
 
 
-def _import_summary(plan, *, preview: bool) -> str:
+def _link_refusal(link: LinkInTheWay) -> web.Response:
+    """The import's answer where the home holds a link at its projects folder: nothing written."""
+    logger.warning("project import: nothing written, a link in the way: %s", link)
+    return json_error(
+        "link_in_the_way",
+        message=f"{link}, so no project can be imported into this home until the link is gone",
+        status=409,
+    )
+
+
+def _import_summary(
+    plan, *, preview: bool, written: int | None = None, left: list[str] | None = None
+) -> str:
     from personalclaw.workflows.project_export import import_summary
 
-    return import_summary(plan, preview=preview)
+    return import_summary(plan, preview=preview, written=written, left=left or ())
 
 
 async def _read_project_upload(request: web.Request):

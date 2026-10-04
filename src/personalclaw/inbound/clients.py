@@ -68,9 +68,11 @@ def _locked() -> Iterator[None]:
     gateway writes it (a client made or revoked in Settings, a request's last-seen time) and so does
     ``personalclaw inbound webhook``, in a process of its own. Without it, a write made between
     another writer's read and its write is lost."""
+    from personalclaw.durability.home_paths import open_lock
+
     path = clients_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path.parent / f"{_FILE}.lock", "a") as handle:
+    with open_lock(path.parent / f"{_FILE}.lock") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             yield

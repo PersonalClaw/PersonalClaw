@@ -39,6 +39,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from personalclaw.atomic_write import write_private_file
+from personalclaw.durability.home_paths import home_path, landing
 from personalclaw.http_download import safe_download_stem
 from personalclaw.workflows.project_export import (
     MANIFEST_SCHEMA,
@@ -484,31 +485,55 @@ PROJECT_RECORD = "project.json"
 _RECORD_FIELDS = ("brief", "agent_instructions_template")
 
 
+#: The home's folder of projects, which the store keeps each project's folder in.
+PROJECTS_DIR = "projects"
+
+
+def projects_folder(home: Path) -> Path:
+    """The home's projects folder, which an import makes its project in, by the home's rule
+    (``durability.home_paths.home_path``). Raises
+    :class:`~personalclaw.durability.home_paths.LinkInTheWay` where the home holds a link there:
+    the store would make the new project, and the projects it starts with, through it. An import
+    asks first, before it reads the store's projects (which makes the starting ones)."""
+    return home_path(home, PROJECTS_DIR)
+
+
 def import_project(
     plan: ImportPlan,
     archive: ExtractedArchive,
     *,
     store: Any,
-    projects_root: Path,
-) -> tuple[Any, list[str]]:
-    """Create the imported project and write what it carries. Returns ``(project, written)``.
+    home: Path,
+) -> tuple[Any, list[str], list[str]]:
+    """Create the imported project and write what it carries. Returns ``(project, written,
+    left)``: the paths written, and the sentence of each link in the home that kept one out.
 
     The ONE import path — the route and `personalclaw project import` both call it — so a new
     project is created exactly one way: by the store, under the plan's name, with only the
     portable fields of the archive's record.
+
+    Nothing an archive brings is written through a link the home holds (``durability.home_paths``).
+    Where the home's projects folder is one (:func:`projects_folder`), the store would write the
+    new project's record through it and every file after it, so nothing is written at all: this
+    raises :class:`~personalclaw.durability.home_paths.LinkInTheWay` naming it, before the project
+    is made.
     """
+    projects_folder(home)
     record = _archived_record(plan, archive)
     project = store.create_project(
         plan.project_name,
         agent_instructions_template=str(record.get("agent_instructions_template") or ""),
         brief=str(record.get("brief") or ""),
     )
-    written = commit_import(plan, archive, project_root=projects_root / project.id)
+    left: list[str] = []
+    written = commit_import(
+        plan, archive, home=home, folder=f"{PROJECTS_DIR}/{project.id}", left=left
+    )
     if PROJECT_RECORD in plan.accepted:
         # Applied, even when it had nothing portable to give: the count the summary states
         # ("N entities imported") is the accepted list, and `written` must agree with it.
         written.insert(0, PROJECT_RECORD)
-    return project, written
+    return project, written, left
 
 
 def _archived_record(plan: ImportPlan, archive: ExtractedArchive) -> dict[str, Any]:
@@ -528,20 +553,25 @@ def commit_import(
     plan: ImportPlan,
     archive: ExtractedArchive,
     *,
-    project_root: Path,
+    home: Path,
+    folder: str,
+    left: list[str],
 ) -> list[str]:
-    """Write the ACCEPTED entities under `project_root`. Returns the paths written.
+    """Write the ACCEPTED entities into *folder*, the project's folder by its path in *home*.
+    Returns the paths written.
 
     Only accepted entities are written — a refusal costs that entity, which is what makes a partial
     import the normal outcome for an archive that travelled. `safe_member` runs a THIRD time here
     rather than trusting the plan, because this function is separately callable and a caller that
     hand-built a plan must not be able to talk it into writing outside the project.
 
+    Each file's path is the home's rule's (``durability.home_paths.landing``): where the home holds
+    a link on the way to it, the file is not written, and the link's sentence goes on *left*.
+
     Never :data:`PROJECT_RECORD`: that file is the store's record of the destination project,
     and :func:`import_project` is what applies the archive's copy of it.
     """
     written: list[str] = []
-    root = project_root.resolve()
     for rel in plan.accepted:
         if rel == PROJECT_RECORD:
             continue
@@ -551,11 +581,11 @@ def commit_import(
         data = archive.contents.get(rel)
         if data is None:
             continue
-        dest = (project_root / rel).resolve()
-        if dest != root and root not in dest.parents:
+        dest = landing(home, f"{folder}/{PurePosixPath(rel).as_posix()}", left)
+        if dest is None:
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        write_private_file(dest, data)
         written.append(rel)
     return written
 

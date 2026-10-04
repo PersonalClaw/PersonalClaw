@@ -579,19 +579,31 @@ Data leaving the running system:
   its export's manifest declares, the file each of its rows stands for, and its machine id, which
   names its folder of the remote. One outside the export it came in or the store it names is
   refused, nothing of that change is taken in, and the sync report names the path
-  (`durability/pull_engine.py`). **Nothing a restore, an import or a sync brings is written
-  through a link the home holds** (`durability/home_paths.py`): where the home has a symbolic link
-  at the path an item would be written to, at a folder on the way to it, or beside a database where
-  SQLite keeps its log, or a file there with another name (a hard link), the item is left as it
-  is. It is not written, nothing is read through the link, a replace does not move it aside, and
-  the result names the link: a restore's last line and the parts it left unchanged, an import's
-  summary, the conflict review's refusal, and the sync report, whose pull is held until the link is
-  gone. Every write those doors make takes its path from `home_paths.home_path`, and
-  `tests/test_home_path_census.py` fails one that takes it from anywhere else. A replace restore
-  used to move a store aside, leave a link where it found one, and copy the snapshot's file to its
-  path, wherever the link led. A transport whose remote is a folder on this machine (Folder
-  Sync's shared folder, Git Sync's clone) holds its keys to the same rule, since whoever else
-  writes that folder can put a link to any file of this machine's in it: a key outside the folder,
+  (`durability/pull_engine.py`). **Nothing a restore, an import, a pack's install or a sync
+  brings is written through a link the home holds, nothing an export sends is read through one,
+  and no lock is opened through one** (`durability/home_paths.py`): where the home has a symbolic
+  link at the path an item would be written to or read from, at a folder on the way to it, or
+  beside a database where SQLite keeps its log, or a file there with another name (a hard link),
+  the item is left as it is. It is not written, nothing is read through the link, a replace does
+  not move it aside, and the result names the link: a restore's last line and the parts it left
+  unchanged, an import's summary, a project archive's or a pack's refused import (a pack lands
+  whole or not at all, and its uninstall removes nothing through one), the conflict review's
+  refusal, and the sync report, whose pull is held until the link is gone. Every write those doors
+  make takes its path from `home_paths.home_path`. A sync's export and the backup export read the
+  home by `home_paths.export_path`: a store behind a link, and a file or a folder of a store that
+  is one, stay out of the copy and are named among the files it could not carry, and none of
+  their records reads as deleted; the machine id every copy names is read the same way, and a link
+  at it refuses the export whole. Every lock in the home is opened by `home_paths.open_lock`,
+  which never empties its file and refuses a link at its name; a request stopped by one is
+  answered `409 link_in_the_way`, naming it. `tests/test_home_path_census.py` fails a write, an
+  export's read or a lock that takes its path from anywhere else. A replace restore used to move a
+  store aside, leave a link where it found one, and copy the snapshot's file to its path, wherever
+  the link led; a project import and a pack's install wrote through a folder that was a link; an
+  export sent what a linked store, or a linked machine id, led to the other machines; and a store's
+  lock emptied the file a link at its name led to. A transport whose remote is a folder on this
+  machine (Folder Sync's shared folder, Git Sync's clone) holds its keys to the same rule, since
+  whoever else writes that folder can put a link to any file of this machine's in it: a key outside
+  the folder,
   or one that leads out of it through a link, is neither read, written nor removed, and the
   transport says which (`sync_transports.base.KeysRefused`). A sync removes only this machine's
   own copies that a newer one replaced (`durability/published.py`), and Folder Sync removes each
@@ -600,7 +612,8 @@ Data leaving the running system:
   whole, fails a cycle whose registry, salt or push is refused, and names the keys in its report
   either way. A pack whose name or component id would build a path outside
   its store is refused before any of it is parsed or written, and every path the pack layout
-  builds is checked again (`packs/import_.py::component_path`). A snapshot's tar refuses `..`,
+  builds is checked again, with no link the home holds on the way
+  (`packs/import_.py::component_path`). A snapshot's tar refuses `..`,
   absolute names and links as it is extracted (`snapshot._data_filter`), and an import's zip
   extracts no member that climbs out (`portability.apply_import_zip`). A pulled key used to be
   joined onto the pull's scratch folder as it came, so `../` in one wrote anywhere this machine's

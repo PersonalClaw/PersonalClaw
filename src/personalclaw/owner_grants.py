@@ -73,9 +73,10 @@ class GrantBook:
     @contextmanager
     def _locked(self) -> Iterator[None]:
         from personalclaw.atomic_write import ensure_private_dir
+        from personalclaw.durability.home_paths import open_lock
 
         ensure_private_dir(self.path.parent)
-        with open(self.path.parent / f".{self._name}.lock", "a") as handle:
+        with open_lock(self.path.parent / f".{self._name}.lock") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
                 yield

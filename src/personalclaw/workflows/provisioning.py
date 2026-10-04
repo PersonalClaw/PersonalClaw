@@ -153,11 +153,12 @@ def acquire_workspace_lock(run_id: str, *, name: str = "") -> WorkspaceLock:
     it now.
     """
     from personalclaw.concurrency import lock_path
+    from personalclaw.durability.home_paths import LinkInTheWay, open_lock
 
     path = lock_path(lock_key(run_id, name))
     try:
-        fd = path.open("a+")
-    except OSError as exc:
+        fd = open_lock(path)
+    except (OSError, LinkInTheWay) as exc:
         # A lock we cannot even open is reported as NOT acquired rather than ignored: proceeding
         # unlocked would be the one outcome the lock exists to prevent.
         return WorkspaceLock(False, path=str(path), reason=f"could not open the lock file: {exc}")
@@ -186,8 +187,7 @@ def acquire_workspace_lock(run_id: str, *, name: str = "") -> WorkspaceLock:
     try:
         fd.seek(0)
         fd.truncate()
-        fd.write(f"{os.getpid()}\n")
-        fd.flush()
+        fd.write(f"{os.getpid()}\n".encode("ascii"))
     except OSError:
         logger.debug("could not record the pid in %s", path, exc_info=True)
     return WorkspaceLock(True, path=str(path), held_by=os.getpid(), _fd=fd)
@@ -197,7 +197,7 @@ def _recorded_pid(fd: Any) -> int:
     """The PID a previous holder wrote, or 0. Never raises — a garbled lock file is not fatal."""
     try:
         fd.seek(0)
-        first = (fd.read(64) or "").strip().splitlines()
+        first = (fd.read(64) or b"").decode("ascii").strip().splitlines()
         return int(first[0]) if first else 0
     except (OSError, ValueError, IndexError):
         return 0

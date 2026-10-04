@@ -67,16 +67,16 @@ def _ledger_path() -> Path:
 @contextmanager
 def _locked() -> Iterator[None]:
     """Cross-process advisory lock around a read-modify-write of the ledger."""
+    from personalclaw.durability.home_paths import open_lock
+
     ensure_home_for(apps_dir())
     apps_dir().mkdir(parents=True, exist_ok=True)
-    lock = apps_dir() / _LOCK_FILENAME
-    fd = lock.open("w")
-    try:
+    with open_lock(apps_dir() / _LOCK_FILENAME) as fd:
         fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        fd.close()
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 def _read() -> dict[str, list[str]]:

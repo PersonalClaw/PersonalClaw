@@ -114,8 +114,9 @@ def hold_documents() -> Iterator[None]:
     no lock.
     """
     from personalclaw.concurrency import lock_path
+    from personalclaw.durability.home_paths import open_lock
 
-    with lock_path(_DOCUMENTS_LOCK).open("w") as handle:
+    with open_lock(lock_path(_DOCUMENTS_LOCK)) as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield

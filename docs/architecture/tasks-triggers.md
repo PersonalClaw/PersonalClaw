@@ -765,6 +765,19 @@ taken in. A folder store kept behind a link used to take another machine's rows
 wherever the link led. The conflict review writes the same way, and refuses
 (`write_failed`, naming the link) a store this home holds behind one.
 
+**Nor is anything sent from one** (`durability.home_paths.export_path`). The
+export a sync sends the other machines, and the backup export, read each store
+by the same rule: a store behind a link, at its folder, at a folder on the way to
+it or beside a database, is left out of the copy, and so is a file of a store
+that is a symbolic link or has a second name, or a folder of one that is a link.
+Each is named among the files the export could not carry (the sync report's
+`could not be synced`, the backup export's failure), and none of their records
+reads as deleted, so no copy carries a delete of one. The machine id that names
+every copy is read the same way, and a link at it refuses the export whole. An
+export used to read a store through a link and send what it led to, and a file of
+a store that was a link was left out in silence, read as deleted, and its delete
+sent to the other machines.
+
 **A merge restore and an import take a folder in by the sync's rule.** A merge
 restore or an archive import brings a folder store's files in the way a sync
 brings another machine's (`durability.reconcile.bring_in_folder`): each file

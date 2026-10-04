@@ -162,9 +162,10 @@ def test_ROUND_TRIP_on_a_clean_home_keeps_every_entity_sha256_verified(
 
     from personalclaw.tasks.hierarchy import HierarchyStore
 
-    project_b, written = pa.import_project(
-        import_plan, extracted, store=HierarchyStore(), projects_root=home_b / "projects"
+    project_b, written, left = pa.import_project(
+        import_plan, extracted, store=HierarchyStore(), home=home_b
     )
+    assert left == []
     dest = home_b / "projects" / project_b.id
 
     # The RECORD is the new project's, not the source's: the archive's copy used to be
@@ -256,7 +257,7 @@ def test_the_real_home_is_UNTOUCHED_by_a_round_trip(
     archive = tmp_path / "a.zip"
     archive.write_bytes(raw)
     plan, extracted = pa.read_archive_plan(archive)
-    pa.commit_import(plan, extracted, project_root=home_b / "projects" / "x")
+    pa.commit_import(plan, extracted, home=home_b, folder="projects/x", left=[])
     assert (home_b / "projects" / "x" / "context" / "overview.md").is_file()
 
 
@@ -359,7 +360,7 @@ def test_a_TAMPERED_entity_is_refused_and_NAMED(tmp_path: Path, project: Path):
     assert "project.json" in plan.accepted, "one bad entity cost the whole project"
 
     dest = tmp_path / "dest"
-    written = pa.commit_import(plan, extracted, project_root=dest)
+    written = pa.commit_import(plan, extracted, home=tmp_path, folder="dest", left=[])
     assert "context/overview.md" not in written
     assert not (dest / "context" / "overview.md").exists()
 
@@ -406,7 +407,7 @@ def test_an_ENCRYPTED_archive_round_trips(tmp_path: Path, project: Path):
     plan, extracted = pa.read_archive_plan(archive, passphrase="correct horse")
     assert plan.ok
     dest = tmp_path / "dest"
-    written = pa.commit_import(plan, extracted, project_root=dest)
+    written = pa.commit_import(plan, extracted, home=tmp_path, folder="dest", left=[])
     assert "context/overview.md" in written
     assert (dest / "context" / "overview.md").read_text(encoding="utf-8") == OVERVIEW
 

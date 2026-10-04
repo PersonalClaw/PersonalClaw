@@ -65,7 +65,7 @@ DEFS_PATHS: dict[tuple[str, str], str] = {
     ("workflows/native_defs.py", "defs_root"): (
         "the store's own folder: its writes are its `save_def`, which only the one writer calls"
     ),
-    ("packs/import_.py", "component_path"): (
+    ("packs/import_.py", "_layout"): (
         "a pack's template, which arrives without a step key only her yes puts there "
         "(`_commit_file_component`)"
     ),

@@ -39,6 +39,12 @@ forgets. Ordering is load-bearing — the deliberate refusal is caught first, be
 routing it through the fault branch would discard the field name that is the entire
 value of having validated.
 
+**A link in the home.** :class:`~personalclaw.durability.home_paths.LinkInTheWay` is the home's
+own refusal of a symbolic link, or a file with another name, where a request was to write, read or
+take a lock: a store's lock, which every write of the store takes, is the common case. It is a
+formed answer too, served as ``409 link_in_the_way`` with the sentence that names the link, so a
+route need not catch it for the owner to read what is in the way.
+
 **What it deliberately does NOT catch.** ``web.HTTPException`` is re-raised untouched:
 a handler that answers 404/400/redirect on purpose, and the router's 404/405 that
 ``spa_fallback`` normalizes, are already-formed responses, not faults to reinterpret.
@@ -64,6 +70,7 @@ from typing import Any, Awaitable, Callable
 
 from aiohttp import web
 
+from personalclaw.durability.home_paths import LinkInTheWay
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import RequestValidationError
 
@@ -104,6 +111,16 @@ def request_boundary_middleware() -> Any:
             # /api surface. And answered here rather than by the handler for the reason the
             # docstring gives — a per-handler answer is how a systemic gap stays open.
             return exc.response
+        except LinkInTheWay as exc:
+            # The home's refusal of a link where the request was to write, read or lock
+            # (`durability.home_paths`): a store's lock, most often, which every write of the
+            # store takes. A formed answer like the one above, so not path-scoped either.
+            logger.warning("%s %s stopped at a link: %s", request.method, request.path, exc)
+            return json_error(
+                "link_in_the_way",
+                message=f"Stopped at {exc}. Remove the link and try again.",
+                status=409,
+            )
         except (ValueError, TypeError, AttributeError) as exc:
             # Scoped to /api/* for the same reason spa_fallback scopes its 404/405
             # normalization: the wire envelope is what a JSON client reads, and turning a
