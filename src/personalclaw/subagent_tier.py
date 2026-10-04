@@ -64,6 +64,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from personalclaw.agents.tool_list import REFUSED_BY as AGENT_TOOLS
 from personalclaw.approval_grants import YOU, ToolDecision
 from personalclaw.declined_calls import declined_step
 from personalclaw.guardrails.policy import (
@@ -249,6 +250,9 @@ class CallTally:
             why, limit = "nobody could approve it", True
         elif refused_by == "tool_grants":
             why, limit = grant_said or "this run's tools do not include it", True
+        elif refused_by == AGENT_TOOLS:
+            # Its agent's own limit, as its tier is: a run held to it may not have done all of it.
+            why, limit = "its agent's tool list does not include it", True
         elif refused_by and refused_by != "dry_run":
             why = _REFUSED_BY_WHY.get(refused_by, "it was refused")
         else:

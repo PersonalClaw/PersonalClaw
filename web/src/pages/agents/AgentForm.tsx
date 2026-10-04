@@ -103,10 +103,13 @@ export function draftToPayload(d: AgentDraft): Record<string, unknown> {
  *
  *  NB: workflows are NOT bound from here — a workflow scopes itself to an agent
  *  at the workflow's own creation, so the agent side has no workflow picker. */
-export function AgentForm({ draft, onChange, nameLocked, compact, unavailable }: {
+export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, runsOn }: {
   draft: AgentDraft; onChange: (d: AgentDraft) => void; nameLocked?: boolean; compact?: boolean
   /** The saved pin that cannot run, and why — so the editor names it instead of showing "Auto". */
   unavailable?: { model: string; reason: ModelUnavailable }
+  /** The agent CLI this agent runs on, when it runs on one: such a CLI runs its own tools, where
+   *  no tool list can hold it, so the Tools list says it does not apply rather than promise it. */
+  runsOn?: string
 }) {
   const set = <K extends keyof AgentDraft>(k: K, v: AgentDraft[K]) => onChange({ ...draft, [k]: v })
   // Constrain to ACTIVE chat models so an agent can't pin a model that isn't
@@ -116,10 +119,13 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable }:
   // capability catalogs
   const [skills, setSkills] = useState<CheckOption[]>([])
   const [tools, setTools] = useState<CheckOption[]>([])
+  // Whether the tool catalog has loaded: until it has, an entry it would offer cannot be told from
+  // one that names nothing here.
+  const [toolsLoaded, setToolsLoaded] = useState(false)
   const [lifecycleTriggers, setLifecycleTriggers] = useState<CheckOption[]>([])
   useEffect(() => {
     api.skills().then((s) => setSkills(s.map((x) => ({ value: x.key ?? x.name, label: x.name, hint: x.description })))).catch(() => {})
-    api.tools().then((t) => setTools(t.map((x) => ({ value: x.name, label: x.name, hint: x.provider, risk: x.risk_level })))).catch(() => {})
+    api.tools().then((t) => { setTools(t.map((x) => ({ value: x.name, label: x.name, hint: x.provider, risk: x.risk_level }))); setToolsLoaded(true) }).catch(() => {})
     api.hooks().then((h) => setLifecycleTriggers(h.map((x) => ({ value: x.id, label: x.name, hint: x.event })))).catch(() => {})
   }, [])
 
@@ -178,7 +184,10 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable }:
       </Field>
 
       <CheckList label="Skills" hint="Skills surfaced to this agent." options={skills} value={draft.skills} onChange={(v) => set('skills', v)} />
-      <CheckList label="Tools" hint="Tools this agent may call. None selected = all available tools." options={tools} value={draft.tools} onChange={(v) => set('tools', v)} />
+      <CheckList label="Tools" hint={runsOn
+        ? `Not applied: ${runsOn} runs its own tools, and a tool list holds only on PersonalClaw's own agent.`
+        : 'Tools this agent may call. None selected = all available tools.'} options={tools} value={draft.tools} onChange={(v) => set('tools', v)}
+        unlisted={(entry) => (/[*?[]/.test(entry) ? 'Pattern: every tool whose name fits it' : toolsLoaded ? 'No tool of this name is here now' : '')} />
       <CheckList label="Triggers" hint="Lifecycle triggers that fire for this agent (the agent-scoped allow-list)." options={lifecycleTriggers} value={draft.triggers} onChange={(v) => set('triggers', v)} />
 
       <Field label="Specialty" hint="One line: what this agent is the specialist for. With the routing hints below, it lets a default-agent chat suggest 'route to this agent?'. Leave both empty to never suggest it.">
@@ -201,11 +210,19 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable }:
  *  all/clear. */
 interface CheckOption { value: string; label: string; hint?: string; risk?: 'safe' | 'caution' | 'destructive' }
 
-function CheckList({ label, hint, options, value, onChange }: {
+function CheckList({ label, hint, options: offered, value, onChange, unlisted }: {
   label: string; hint?: string; options: CheckOption[]; value: string[]; onChange: (v: string[]) => void
+  /** What an entry the catalog does not offer is (a pattern, a tool not installed here). When
+   *  given, such an entry is shown as a ticked row that can be removed: it still holds the agent,
+   *  so the list must not hide it. */
+  unlisted?: (entry: string) => string
 }) {
   const [q, setQ] = useState('')
   const selected = new Set(value)
+  const known = new Set(offered.map((o) => o.value))
+  const options: CheckOption[] = unlisted
+    ? [...offered, ...value.filter((v) => !known.has(v)).map((v) => ({ value: v, label: v, hint: unlisted(v) }))]
+    : offered
   const n = q.trim().toLowerCase()
   const filtered = n ? options.filter((o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(n)) : options
 

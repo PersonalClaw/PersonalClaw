@@ -117,7 +117,8 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
       <div className="flex flex-col gap-l">
         <HeldChange guard={guard}>
           <AgentForm draft={draft} onChange={setDraft} nameLocked compact
-            unavailable={agent.model_unavailable && agent.model ? { model: agent.model, reason: agent.model_unavailable } : undefined} />
+            unavailable={agent.model_unavailable && agent.model ? { model: agent.model, reason: agent.model_unavailable } : undefined}
+            runsOn={(agent.provider || '').startsWith('acp') ? providerMeta(agent.provider, providerLabel).label : undefined} />
         </HeldChange>
         <StaleWriteNotice guard={guard} what={`The agent “${agent.name}”`} />
         <FormFooter error={err}>

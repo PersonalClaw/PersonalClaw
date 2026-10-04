@@ -682,19 +682,25 @@ def _build_native_runtime(
     )
     from personalclaw.agents.native.runtime import NativeAgentRuntime
     from personalclaw.agents.provider import AgentRuntimeDefinition
+    from personalclaw.agents.tool_list import agent_tools
 
     name = agent or "PersonalClaw"
     # The agent's profile, read ONCE: its pin decides which provider is resolved below, and its
-    # tools, skills and triggers ride the definition. Its PROMPT is not read here: the system
+    # skills and triggers ride the definition. Its PROMPT is not read here: the system
     # prompt reaches the model through the turn's assembled context
     # (``ContextBuilder.build_message``), the one place it is resolved.
     prof = None
+    cfg = None
     try:
         from personalclaw.config.loader import AppConfig
 
-        prof = (AppConfig.load().agents or {}).get(agent) if agent else None
+        cfg = AppConfig.load()
+        prof = (cfg.agents or {}).get(agent) if agent else None
     except Exception:  # noqa: BLE001 — an unreadable config leaves the agent unpinned
         logger.debug("agent profile unreadable for %r", agent, exc_info=True)
+    # The tools it may use, from the same read: its tool list, read for the agent the turn runs as
+    # (the default agent for a chat that names none), and held by the runtime on every turn.
+    tools = agent_tools(agent, cfg)
 
     # The model this runtime was ASKED for, in precedence order: the chat's own pick, then the
     # agent's pin. The first that can serve is the one it runs on, provider included: a pin naming
@@ -793,7 +799,6 @@ def _build_native_runtime(
     # "Bedrock:…" ref here is an invalid AWS model identifier), the provider above being the one
     # that ref names.
     model = _strip_provider_prefix(chosen) if chosen else ""
-    tools: list[str] = list(getattr(prof, "tools", []) or []) if prof is not None else []
     skills: list[str] = list(getattr(prof, "skills", []) or []) if prof is not None else []
     hook_ids: list[str] = list(getattr(prof, "triggers", []) or []) if prof is not None else []
 

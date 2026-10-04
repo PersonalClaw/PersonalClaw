@@ -66,9 +66,7 @@ class _Files(ToolProvider):
 def _manager() -> SessionManager:
     def factory(session_key: Any = None, **_: Any) -> NativeAgentRuntime:
         return NativeAgentRuntime(
-            definition=AgentRuntimeDefinition(
-                name="a", provider="native", model="m", tools=[], skills=[]
-            ),
+            definition=AgentRuntimeDefinition(name="a", provider="native", model="m", skills=[]),
             model_provider=_Model(),
             tool_providers=[_Files()],
             unattended=True,

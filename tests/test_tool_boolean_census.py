@@ -147,9 +147,7 @@ async def _runtime(tmp_path: Path):
             yield  # an async generator: this runtime is never asked to answer
 
     runtime = NativeAgentRuntime(
-        definition=AgentRuntimeDefinition(
-            name="census", provider="native", model="m", tools=[], skills=[]
-        ),
+        definition=AgentRuntimeDefinition(name="census", provider="native", model="m", skills=[]),
         model_provider=_Model(),  # type: ignore[arg-type]
         tool_providers=[_Group("personalclaw-filesystem"), _Group("personalclaw-schedule")],
         tool_groups=["schedule"],

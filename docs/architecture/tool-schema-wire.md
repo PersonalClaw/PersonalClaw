@@ -99,8 +99,8 @@ untyped value, a multi-type union — is not repairable, so the tool is left out
 ## A call is checked against what its tool declares
 
 A call to a tool that asks before it runs is checked before anyone is asked, in one place every
-approval passes (`NativeAgentRuntime._preflight`, from `_guard_and_invoke`, past the deny-list,
-task mode, tool grants and hooks), so no surface (the web chat, a chat channel, the phone, a
+approval passes (`NativeAgentRuntime._preflight`, from `_guard_and_invoke`, past the agent's tool
+list, the deny-list, task mode, tool grants and hooks), so no surface (the web chat, a chat channel, the phone, a
 subagent's parent) is asked about a call that cannot run. Two checks:
 
 - **The arguments its input schema requires** (`tool_providers/arguments.missing_arguments`). A

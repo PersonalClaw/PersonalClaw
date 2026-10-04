@@ -50,7 +50,12 @@ fields are held at their most restrictive value until the file is repaired or re
 |---|---|---|
 | `agent.unattended_requires_verified_adapter` | `true` | `false` |
 
-Every other field falls back to its default; `agent.approval_mode`'s default already asks. Two consequences worth knowing:
+Every other field falls back to its default; `agent.approval_mode`'s default already asks. Three consequences worth knowing:
+
+- **PersonalClaw's own agent uses no tools.** The tool lists set on your agents are in the file,
+  so none of them is known, and a list is a limit: whichever agent a turn runs as may use only
+  `tool_result_get`, and each refused call says the configuration file could not be read (see
+  [An agent's tool list](#an-agents-tool-list-agentstools)).
 
 - **Your file is not overwritten.** The substitution is in memory only, and every config write
   refuses outright rather than clobbering a document whose contents it cannot preserve — so the
@@ -376,9 +381,55 @@ agent name. Every field is optional — empty inherits the global default.
 | `agents.*.model` | string | `""` | Default model for this agent. Overridable per-chat. |
 | `agents.*.approval_mode` | string | `""` | `auto`, `interactive`, or empty (inherit global). |
 | `agents.*.skills` | list | `[]` | Skill names loaded for this agent. |
-| `agents.*.tools` | list | `[]` | Allowed tool name patterns for this agent. |
+| `agents.*.tools` | list | `[]` | The tools this agent may use: tool names, or patterns over them. Empty is every tool. Held on PersonalClaw's own agent, not on an agent CLI — see [An agent's tool list](#an-agents-tool-list-agentstools). |
 | `agents.*.triggers` | list | `[]` | Referenced lifecycle-trigger IDs. A lifecycle trigger fires ONLY for agents that list it. |
 | `agents.*.source` | string | `personalclaw` | Agent origin: `personalclaw`, `marketplace`, or `builtin`. |
+
+### An agent's tool list (`agents.*.tools`)
+
+The Tools list on the Agents page. Empty, the default and the default agent's, lets the agent use
+every tool PersonalClaw offers it. A list is the whole of what the agent may use:
+
+- **An entry is a tool's name or a pattern over it.** The name as the Tools page lists it
+  (`read_file`, `memory_recall`, `mcp/<server>/<tool>`), or a pattern in which `*` stands for any
+  run of characters, `?` for one and `[…]` for one of a set. A pattern is matched against the
+  whole name and case-sensitively, the way the operator ceiling's tool allowlist is: `mcp/files/*`
+  is every tool of the MCP server `files`, and `READ_FILE` is no tool. There are no group names;
+  list a group's tools, or a pattern that covers them.
+- **PersonalClaw's own agent (`native`) holds it on every turn it runs**: a chat, a subagent, a
+  loop's worker, an automation, a workflow step, a heartbeat task and the OpenAI-compatible
+  endpoint alike. Its model is shown nothing else, and a call to any other tool is refused before
+  anyone is asked about it, whatever would otherwise have approved it, so a model that names a
+  tool it was not shown cannot reach it. The refusal names the tool and the agent; the audit log
+  records the call `denied`, decided by `agent_tools`; the gateway log has a WARNING line for each
+  refused call, an INFO line (`agent.log_level` `INFO`, or `personalclaw -v gateway`) saying what
+  each narrowed catalog keeps of what is on offer, and a WARNING instead when an entry matches no
+  tool on offer (a tool not installed here, or a typo). A chat that names no agent runs as the
+  default agent, held to the default agent's list, and an edit of the list holds an open chat from
+  its next turn.
+- **Two kinds of tool are not the list's to remove.** `tool_result_get` is kept on every list: it
+  reads back the rest of a long answer one of the agent's own calls gave, which every cut answer
+  names. The runtime's own tools for finding the agent's tools (`tool_search`, `tool_schema`,
+  `reset_tools`) search only what the list allows.
+- **A list that cannot be read** (a hand-edited value that is not a list of names) lets the agent
+  use nothing but `tool_result_get` until it is fixed, and its refusals say so. While `config.json`
+  itself cannot be read, no list in it can, so the same holds for every agent until the file is
+  repaired (see [If `config.json` cannot be read](#if-configjson-cannot-be-read)).
+- **A built-in agent's list is PersonalClaw's own.** The Agents page shows it and does not edit
+  it, and a refusal says PersonalClaw gives the agent its tools. The template refiner, which the
+  `refine-template` and `optimize-harness` workflows run, has the one such list: it may use
+  `refiner_evidence`, which reads a template's failure evidence already screened, and
+  `propose_template_diff`, which files a change for a person to review, and nothing else.
+- **A list only narrows.** A tool switched off on the Tools page stays off for every agent, and a
+  run held to fewer tools (a read-only subagent, an app's agent tier, the operator ceiling's
+  `tools` scope) is held to both.
+- **Work an agent starts runs as the agent it names.** A tool that starts other work
+  (`subagent_run`, a workflow, a loop) starts it held to the list of the agent the work runs as: a
+  spawn that names no agent runs as the agent of the chat that started it. Leave those tools off
+  the list to keep an agent to its own tools.
+- **An agent CLI (`acp:<cli>`) is not held to it.** The CLI runs its own tools in its own process,
+  where no list of PersonalClaw's tool names can hold them, so the Agents page says the list is not
+  applied to an agent that runs on one.
 
 ---
 

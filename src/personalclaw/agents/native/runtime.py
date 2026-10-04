@@ -453,6 +453,11 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         disabled_keys = tool_prefs.load_disabled()
         disabled_provs = tool_prefs.load_disabled_providers()
+        # The agent's tool list (`agents.tool_list`), as hard a gate as a switched-off tool: a tool
+        # it does not allow is left out of the schema, the catalog and the dispatch index alike,
+        # so the model is never shown it, and `_guard_and_invoke` refuses a call to it by name.
+        held = self._definition.tools
+        withheld: list[str] = []
         defs: list[Any] = []
         index: dict[str, ToolProvider] = {}
         declared: dict[str, Any] = {}
@@ -479,6 +484,9 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 pkey = getattr(t, "provider", "") or prov_name
                 if tool_prefs.is_disabled(pkey, t.name, disabled_keys, disabled_provs):
                     dropped.append(t.name)
+                    continue
+                if not held.allows(t.name):
+                    withheld.append(t.name)
                     continue
                 enabled.append(t)
                 declared[t.name] = t.parameters
@@ -516,6 +524,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             defs = [t for t in defs if t.name not in unroutable]
             index = {n: p for n, p in index.items() if n not in unroutable}
             provider_of = {n: p for n, p in provider_of.items() if n not in unroutable}
+        if held.listed:
+            held.say_narrowed(kept=[t.name for t in defs], withheld=withheld)
         self._tool_sanitized_index = sanitized
         self._tool_defs = defs
         self._tool_index = index
@@ -1938,6 +1948,12 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         ``meta`` is the caller's sink for the result's typed metadata — see
         :meth:`_prefetch` on why it is threaded rather than parked on the instance."""
         from personalclaw import security
+
+        # The agent's tool list, FIRST: a tool it may not use is refused whatever else would
+        # answer the call (its approval policy, a dry run's "would have run", a hook), because
+        # its model was never shown the tool, and a name it has from elsewhere must not reach it.
+        if tool_name not in self.META_TOOLS and not self._definition.tools.allows(tool_name):
+            return self._definition.tools.refuse(tool_name, meta)
 
         # Dry-run observe-mode (T9): a tool that does not declare it only reads is NOT
         # executed — return a synthetic observation so the replay previews what

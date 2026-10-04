@@ -135,9 +135,7 @@ class _Catalog(ToolProvider):
 
 async def _new_agent() -> NativeAgentRuntime:
     runtime = NativeAgentRuntime(
-        definition=AgentRuntimeDefinition(
-            name="a", provider="native", model="m", tools=[], skills=[]
-        ),
+        definition=AgentRuntimeDefinition(name="a", provider="native", model="m", skills=[]),
         model_provider=_Model(),
         tool_providers=[_Catalog()],
     )

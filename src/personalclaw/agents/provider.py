@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from personalclaw.agents.tool_list import AgentTools
+
 if TYPE_CHECKING:
     # Annotation-only (PEP 563 strings) — importing at runtime would create a
     # cycle: agents.provider → llm.events → llm/__init__ (eager) → acp_agent →
@@ -38,7 +40,9 @@ class AgentRuntimeDefinition:
     name: str
     provider: str = "native"  # "native" | "acp:<cli>"
     model: str = ""  # native: binds a ModelProvider; acp: hint only
-    tools: list[str] = field(default_factory=list)
+    #: The tools the agent may use (its tool list, ``agents.tool_list``): every tool by default.
+    #: The native runtime shows its model only these and refuses a call to any other.
+    tools: AgentTools = field(default_factory=AgentTools)
     skills: list[str] = field(default_factory=list)
     memory_store: str = ""
     workspace_dir: str = ""

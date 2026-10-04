@@ -284,7 +284,7 @@ async def test_the_turn_after_a_switch_runs_on_a_runtime_built_for_the_agent_nam
     assert runtime is not researchers, "the writer's turn ran on the researcher's runtime"
     assert [r.agent_name for r in w.built] == [RESEARCHER, WRITER]
     assert runtime.agent_name == WRITER
-    assert runtime._definition.tools == ["write_file"]
+    assert runtime._definition.tools.patterns == ("write_file",)
     assert runtime._definition.model == "write-1"
     assert _answer(second) == "answered on write-1"
     # Under the writer's instructions, and not the researcher's.

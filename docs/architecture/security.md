@@ -659,6 +659,30 @@ from nothing else except a shell command's own text:
   under every record; `tests/test_a_call_the_log_names_is_written_masked.py` fails a log line that
   hands an event's title or input over as it came.
 
+### An agent's tool list (`agents/tool_list.py`)
+
+An agent's `tools` setting is the least-privilege list its turns are held to on PersonalClaw's own
+runtime. It is read once, where the runtime is built (`provider_bridge._build_native_runtime`), for
+the agent the turn runs as (the default agent for a chat that names none), and held by the runtime
+itself, so every path that builds a native turn is held to it: a chat, a subagent, a loop's
+worker, an automation, a workflow step, a heartbeat task and the OpenAI-compatible endpoint. A tool
+the list does not allow is left out of the tool block, the deferred catalog, `tool_search`,
+`tool_schema` and the dispatch index at every catalog build, and a call that names one anyway is
+refused first, ahead of the dry run, the deny list, the task mode, the grants, the hooks and any
+approval, with the refusal a policy block is answered with (`refused_by: agent_tools`, audited
+`denied`). An empty list is every tool, `tool_result_get` is kept on every list, and a list that
+cannot be read allows nothing else, as none can while `config.json` itself cannot be read (the
+loader's discard, `config_discard`): its defaults know nothing of the lists set in it. The list only
+narrows: a tool switched off on the Tools page, a subagent's tier and the operator ceiling's `tools`
+scope still hold beside it. A built-in agent's list is PersonalClaw's own, and its refusals say so
+rather than point at the Agents page. The template refiner's
+(`agents.defaults.TEMPLATE_REFINER_TOOLS`: its evidence tool and its proposal tool) is one of the
+two holds its propose-only design rests on, beside the research class of the workflow stages that
+run it. An agent CLI runs its own tools where no list of PersonalClaw's can hold them, so the list
+does not apply to one, and the Agents page says so on such an agent. The rules an entry follows are in
+[configuration](../reference/configuration.md#an-agents-tool-list-agentstools);
+`tests/test_every_turn_path_holds_an_agent_to_its_tool_list.py` drives each path.
+
 ## Governance ceiling (`guardrails/ceiling.py`)
 
 Two levels, one rule — **tightest wins**. Level 1 is the operator's `Ceiling`,
@@ -1085,8 +1109,8 @@ internal-secret grant is one tallied `internal_auth` family (it used to write tw
 one idle Home tab grew the log ~5 MB an hour, 94% of it `dashboard.token_auth ok`.
 
 **A tool call is one row, written when it is decided.** The card of a call arrives before any gate
-has run (the native loop yields it and only then checks its deny-list, task mode, tool grants
-and approval), so no runtime audits there. An asked call is audited where the answer lands:
+has run (the native loop yields it and only then checks the agent's tool list, its deny-list, task
+mode, tool grants and approval), so no runtime audits there. An asked call is audited where the answer lands:
 `approved` or `rejected` by `you`, `expired` or `cancelled` by `nobody`, or `auto_approved` by the
 grant that answered. A call nobody was asked about is audited at its result, from what the
 runtime stamped on it (`llm.events.unasked_outcome`): `denied` by the gate that refused it,
