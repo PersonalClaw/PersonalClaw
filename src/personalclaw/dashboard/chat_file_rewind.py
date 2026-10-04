@@ -14,14 +14,21 @@ Two routes, because a destructive action needs a readable preview before anythin
 
 * ``GET  /api/chat/sessions/{session}/rewind?turn=N`` — read-only preview: exactly which
   files would be restored, deleted, or (honestly) *not* restored because they were never
-  captured, with a unified diff per file and current-vs-restored hashes.
+  captured, with a unified diff per file and current-vs-restored hashes; and every file that
+  changed after turn N with no backup (a shell command's change, an agent CLI's edit made
+  without asking), which the rewind leaves as it is.
 * ``POST /api/chat/sessions/{session}/rewind {turn, confirm: true}`` — apply. Without
   ``confirm: true`` this returns ``409 confirmation_required`` **and the preview**, so a
   client that forgets the flag gets the preview rather than a surprise write.
+
+Naming the files with no backup walks the chat's folder, so the preview is read in a worker
+thread. The restore itself is not: it reads only the backups, and it runs on the event loop as
+one step, where no turn can start part way through and write a file it is replacing.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiohttp import web
@@ -79,6 +86,22 @@ def _turn_arg(raw: object) -> tuple[int, web.Response | None]:
     return turn, None
 
 
+def _resumed_preview(session_key: str, turn: int) -> tuple[dict, turn_checkpoints.RewindPreview]:
+    """Finish any rewind that died between staging and commit, then read the preview: one that
+    ran first would diff against a half-committed tree. A worker thread's work (it walks)."""
+    resumed = turn_checkpoints.resume_incomplete_rewind(session_key)
+    return resumed, turn_checkpoints.preview_rewind(session_key, turn)
+
+
+def _left_as_they_are(pv: turn_checkpoints.RewindPreview) -> int:
+    """How many files the preview names as changed with no backup, which a rewind leaves."""
+    return sum(
+        1
+        for f in pv.files
+        if f.action == "not_captured" and f.reason in turn_checkpoints.UNBACKED_REASONS
+    )
+
+
 async def api_chat_session_rewind_preview(request: web.Request) -> web.Response:
     """GET /api/chat/sessions/{session}/rewind?turn=N — what a rewind would do. Read-only."""
     session, err = _resolve_session(request, "chat.session_rewind_preview")
@@ -87,10 +110,7 @@ async def api_chat_session_rewind_preview(request: web.Request) -> web.Response:
     turn, terr = _turn_arg(request.query.get("turn"))
     if terr is not None:
         return terr
-    # Finish any rewind that died between staging and commit before reporting current
-    # state — otherwise the preview would diff against a half-committed tree.
-    resumed = turn_checkpoints.resume_incomplete_rewind(session.key)
-    pv = turn_checkpoints.preview_rewind(session.key, turn)
+    resumed, pv = await asyncio.to_thread(_resumed_preview, session.key, turn)
     payload = pv.to_dict()
     payload["resumed"] = resumed["resumed"]
     payload["notice"] = (
@@ -130,8 +150,7 @@ async def api_chat_session_rewind(request: web.Request) -> web.Response:
             "turn_running", message="cannot rewind while a turn is running", status=409
         )
 
-    turn_checkpoints.resume_incomplete_rewind(session.key)
-    pv = turn_checkpoints.preview_rewind(session.key, turn)
+    _resumed, pv = await asyncio.to_thread(_resumed_preview, session.key, turn)
     if not confirm_granted(body):
         return json_error(
             "confirmation_required",
@@ -139,8 +158,15 @@ async def api_chat_session_rewind(request: web.Request) -> web.Response:
             status=409,
             preview=pv.to_dict(),
         )
+    # Asked again: a turn could have started while the preview was read.
+    if getattr(session, "running", False):
+        return json_error(
+            "turn_running", message="cannot rewind while a turn is running", status=409
+        )
 
-    res = turn_checkpoints.apply_rewind(session.key, turn, preview=pv)
+    # From here to the response on the event loop, so no turn starts part way through. The
+    # restore reads its backups as it runs, never the preview read above.
+    res = turn_checkpoints.apply_rewind(session.key, turn)
     sel().log_api_access(
         caller=request_app or "dashboard",
         operation="chat.session_rewind",
@@ -155,10 +181,30 @@ async def api_chat_session_rewind(request: web.Request) -> web.Response:
     payload = res.to_dict()
     payload["turn"] = turn
     payload["preview"] = pv.to_dict()
+    partial = sum(1 for f in pv.files if f.reason == turn_checkpoints.CHANGED_BEFORE_BACKUP)
+    left = _left_as_they_are(pv)
     payload["notice"] = (
-        f"Restored {len(res.restored)} file(s) to their state at the end of turn {turn}. "
-        "The conversation was NOT rewound. The files' previous contents were themselves "
-        f"checkpointed as turn {res.safety_turn}, so this rewind is reversible."
+        f"Restored {len(res.restored)} file(s) to their state at the end of turn {turn}"
+        + (
+            f", {partial} of them only as far as a later backup, because something with no "
+            "backup changed them first"
+            if partial
+            else ""
+        )
+        + ". "
+        + (
+            f"{left} file(s) that changed after turn {turn} with no backup were left as they "
+            "are. "
+            if left
+            else ""
+        )
+        + "The conversation was NOT rewound."
+        + (
+            " The files' previous contents were themselves checkpointed as turn "
+            f"{res.safety_turn}, so this rewind is reversible."
+            if res.safety_turn > 0
+            else ""
+        )
     )
     if not res.ok:
         payload["error"] = {

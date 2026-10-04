@@ -502,9 +502,9 @@ function CheckpointsSection({ checkpoints, setCheckpoints }: {
   }
   const on = checkpoints.enabled !== false
   return (
-    <Section title="File checkpoints" hint="Before the agent's first write to a file in a turn, its current bytes are saved so /rewind-to-turn can restore them. Files only — never the conversation. Credential files (.env, keys) are never copied, so they are never restored either.">
+    <Section title="File checkpoints" hint="Before the agent's first edit of a file in a turn, with its own file tools or as an agent CLI that asks first, the file's current bytes are saved so /rewind-to-turn can restore them. What a shell command changes, and what an agent CLI edits without asking, has no backup: the rewind's preview lists those files in the chat's folder (not in its version-control, dependency or build folders) and leaves them as they are. Files only — never the conversation. Credential files (.env, keys) are never copied, so they are never restored either.">
       <RowGroup>
-        <Row label="Back up files before an edit" hint={on ? 'A wrong edit is recoverable with /rewind-to-turn N.' : 'Off — a wrong edit is gone. Nothing is being recorded.'}>
+        <Row label="Back up files before an edit" hint={on ? "An edit by the agent's file tools, or one an agent CLI asked about, can be put back with /rewind-to-turn N. A command's changes cannot." : 'Off — a wrong edit is gone. Nothing is being recorded.'}>
           <div className="flex items-center gap-s"><SavedToast show={saved} /><Toggle on={on} onChange={(v) => patch('enabled', v)} label="Back up files before an edit" /></div>
         </Row>
         {on && (

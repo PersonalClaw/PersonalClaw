@@ -29,7 +29,7 @@ from personalclaw.acp.types import (
 from personalclaw.agents.instructions import agent_instructions
 from personalclaw.answer_rules import over_limit_notice
 from personalclaw.approval_brief import call_blast_radius
-from personalclaw.audit_subject import log_title
+from personalclaw.audit_subject import FILE_CHANGE_KINDS, log_title
 from personalclaw.config.loader import AppConfig, resolve_agent_bindings
 from personalclaw.constants import CHAT_TURN_TIMEOUT
 from personalclaw.context_engine import assemble_context, check_headroom
@@ -2318,12 +2318,16 @@ async def run_chat(
     # record the identity set. Only at depth 0 — a nested `run_chat` (prompt expansion,
     # auto-continue) is the SAME user turn, and numbering it separately would make
     # /rewind-to-turn N mean something the transcript's turn N does not. A retry is the same
-    # turn too, sent again.
+    # turn too, sent again. The record walks the chat's folder (up to 20,000 files), so it is a
+    # worker thread's: on the event loop it held up every other chat, stream and request for as
+    # long as the walk took. The turn waits for it, because what its tools change must come after.
     if _prompt_depth == 0 and not _retry:
         try:
             from personalclaw import turn_checkpoints
 
-            turn_checkpoints.begin_turn(session.key, cwd=_file_change_base(session))
+            await asyncio.to_thread(
+                turn_checkpoints.begin_turn, session.key, cwd=_file_change_base(session)
+            )
         except Exception:  # noqa: BLE001 — a checkpoint failure must never break a turn
             logger.debug("turn checkpoint: begin_turn skipped", exc_info=True)
         try:
@@ -2705,6 +2709,27 @@ async def run_chat(
         _calls_refused.add(str(event.tool_call_id or ""))
         await turn_endings.refuse(client, event.request_id, ended_as, **screen)
         await _end_mirror_line(event.tool_call_id or "", ended_as)
+
+    async def _let_through(event: Any) -> None:
+        """Answer yes to *event*'s call, whoever decided it. An agent CLI's file change is backed
+        up first (``turn_checkpoints.back_up_named_files``): the CLI writes with its own tools,
+        and this answer is the last moment before it does, so a rewind puts those files back as
+        it does the native file tools' own. Never on the event loop: it reads the files."""
+        named = tuple(getattr(event, "named_files", ()) or ())
+        if named and str(event.tool_kind or "").lower() in FILE_CHANGE_KINDS:
+            try:
+                from personalclaw import turn_checkpoints
+
+                await asyncio.to_thread(
+                    turn_checkpoints.back_up_named_files,
+                    session.key,
+                    named,
+                    cwd=_file_change_base(session),
+                    roots=list(getattr(session, "_extra_tool_roots", []) or []),
+                )
+            except Exception:  # noqa: BLE001 — a missed backup must never hold the answer back
+                logger.debug("turn checkpoint: backing up named files skipped", exc_info=True)
+        await client.approve_tool(event.request_id)
 
     def _steps_made() -> int:
         """How many of the turn's calls may have run: made, and not refused."""
@@ -4296,7 +4321,7 @@ async def run_chat(
                                 metadata={"decided_by": "validation", **_offered},
                             )
                         else:
-                            await client.approve_tool(event.request_id)
+                            await _let_through(event)
                             _tool_title = _broadcast_auto_tool(state, session, event)
                             state.broadcast_ws(
                                 "activity_event",
@@ -4434,7 +4459,7 @@ async def run_chat(
                         await _refuse_call(event, why=f"invalid tool name: {e}")
                         note_refusal(session, event, f"its tool name is invalid ({e})")
                         continue
-                    await client.approve_tool(event.request_id)
+                    await _let_through(event)
                     _tool_title = _broadcast_auto_tool(state, session, event)
                     session.append(
                         "tool",
@@ -4547,7 +4572,7 @@ async def run_chat(
                                 metadata={"decided_by": "hook", **_offered},
                             )
                             continue
-                    await client.approve_tool(event.request_id)
+                    await _let_through(event)
                     _tool_title = _broadcast_auto_tool(state, session, event)
                     sel().log_tool_invocation(
                         session_key=session_key,
@@ -4866,7 +4891,7 @@ async def run_chat(
                             metadata={"reason": "interactive", "decided_by": "hook", **_offered},
                         )
                     else:
-                        await client.approve_tool(event.request_id)
+                        await _let_through(event)
                         _approved_title, _ = redact_exfiltration_urls(event.title)
                         _approved_title, _ = redact_credentials(_approved_title)
                         session.append(

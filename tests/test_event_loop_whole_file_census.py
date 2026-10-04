@@ -94,22 +94,8 @@ STILL_ON_THE_LOOP: dict[tuple[str, str, str], str] = {
         "NativeBuiltinToolProvider.preflight",
         "_read_gate_refusal",
     ): "hashes the file an agent's write would replace, to refuse a write over an unread version",
-    ("dashboard/chat_file_rewind.py", "api_chat_session_rewind", "resume_incomplete_rewind"): (
-        "restores the files of a rewind that stopped part-way"
-    ),
-    ("dashboard/chat_file_rewind.py", "api_chat_session_rewind", "preview_rewind"): (
-        "hashes the files a chat's later turns changed"
-    ),
     ("dashboard/chat_file_rewind.py", "api_chat_session_rewind", "apply_rewind"): (
         "hashes and restores the files a chat's later turns changed"
-    ),
-    (
-        "dashboard/chat_file_rewind.py",
-        "api_chat_session_rewind_preview",
-        "resume_incomplete_rewind",
-    ): "restores the files of a rewind that stopped part-way",
-    ("dashboard/chat_file_rewind.py", "api_chat_session_rewind_preview", "preview_rewind"): (
-        "hashes the files a chat's later turns changed, to say what a rewind restores"
     ),
     ("planning/runner.py", "run_planner_pass", "reclaim_misplaced"): (
         "moves a walkthrough file the planner wrote into the workspace to the loop's folder"

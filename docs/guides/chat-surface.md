@@ -44,6 +44,26 @@ Five rewinds' worth of history are kept per message; a sixth pushes out the olde
 > The retained history is stored on the message itself. It is a 0.x state-shape change, so
 > if you want a restore point before updating, run `personalclaw snapshot`.
 
+### Putting files back: `/rewind-to-turn N`
+
+Rewinding the conversation leaves your files as they are. To put back files the agent edited,
+type `/rewind-to-turn N`: it previews what it would do to each file after turn N, and
+`/rewind-to-turn N --confirm` does it. The conversation is not rewound.
+
+A file comes back when it was backed up before it changed, which happens for two kinds of edit: one
+the agent makes with its own file tools, and one an agent CLI such as Claude Code or Codex asks
+PersonalClaw to allow, backed up the moment it is allowed. It comes back with the permissions it
+had then, so a script stays runnable and a private file stays private. Nothing can back up a file
+before a shell command changes it, or before an agent CLI edits it without asking, because nobody
+knows beforehand which file that is. The preview lists each such file in the chat's folder,
+changed, created or deleted after turn N, and the rewind leaves it as it is. It leaves out the
+folder's version-control, dependency, build and cache folders (`.git`, `node_modules`, `.venv`,
+`dist`, `build`, …) and long-term memory, which keeps a history of its own, and it says when a
+folder of more than 20,000 files was too big to list in full. A file that a command changed before
+the agent edited it comes back only as far as the agent's backup, and the preview says so.
+Credential files (`.env`, keys) are never copied, so they never come back either. **Settings → Chat
+→ File checkpoints** holds how much is kept.
+
 ### Retry, when a turn ended without its answer
 
 A turn that ends in an error, is cut short, or is cut off by a restart says so where its answer

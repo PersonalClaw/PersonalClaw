@@ -35,7 +35,10 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 SCREENS = frozenset({"screen_tool_call", "run_bounds.screen"})
 
 _DECIDES: dict[str, str] = {
-    "dashboard/chat_runner.py::run_chat": "a chat's call: the card, Trust, YOLO, a hook pattern",
+    "dashboard/chat_runner.py::run_chat._let_through": (
+        "a chat's call: the card, Trust, YOLO, a hook pattern; the one yes they all answer with, "
+        "which first backs up the files an agent CLI's file change names"
+    ),
     "llm_helpers.py::_resolve_permission": (
         "the background helper, under every approval mode: an announce, a heartbeat, a room "
         "member's turn, a one-shot call"

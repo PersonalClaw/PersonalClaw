@@ -94,7 +94,7 @@ import { SnipOverlay } from '../ui/SnipOverlay'
 import { chooseCaptureProvider, cropToPngFile, displayCaptureSupported, grabOneFrame, type SnipRect } from '../ui/composer/displayCapture'
 import { notify } from '../app/appSdk'
 import { spring, stagger, listItemEnter, expr } from '../design/motion'
-import { api, ApiError, hasApiCode, isSwitchedOff, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type RewindFileWire, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
+import { api, ApiError, hasApiCode, isSwitchedOff, transcriptionFailure, type ApprovalMode, type TaskMode, type ReasoningEffort, type ChatSessionSummary, type ChatHistoryMsg, type DiscoveredAgent, type MemoryMode, type NudgeLoop, type ChatFolder, type ChatTag, type RetagJob, type SessionTemplate, type ChannelRuntime, type SessionSearchAnswer } from '../lib/api'
 import { refreshKinds, useChatSocket, type WsMessage } from '../lib/useChatSocket'
 import { useStreamCoalescer } from './chat/useStreamCoalescer'
 import { FindBar } from '../ui/FindBar'
@@ -113,6 +113,7 @@ import { resolveStalledStream, STREAM_HEAL_WARNING } from './chat/streamStall'
 import { chatDoneOutcome, TURN_RESPONDING, turnEndedSentence, turnOutcomeOf, type TurnOutcome } from './chat/turnOutcome'
 import { useQuery, invalidateKeys, peekQuery, writeQuery } from '../lib/data'
 import { downloadFrom } from '../lib/download'
+import { rewindPreviewText } from '../lib/rewindPreview'
 import { sessionRecencyMs, sessionActivitySeconds, epochSeconds } from '../lib/epoch'
 import { sessionTitle } from '../lib/sessionTitle'
 import { useComposerData } from '../lib/useComposerData'
@@ -574,7 +575,7 @@ const SLASH_HELP = [
   '- `/project` — scope this new chat to a project (before it starts)',
   '- `/tools` — open the Tools page',
   '- `/undo [N]` — roll back the last N conversation turns (default 1; side effects are not reverted)',
-  '- `/rewind-to-turn N` — restore the FILES this chat changed after turn N (preview first; add `--confirm` to apply). The conversation is not rewound.',
+  '- `/rewind-to-turn N` — put back the files the agent edited after turn N, with its own file tools or as an agent CLI that asked first (preview first; add `--confirm` to apply). A command\'s changes, and an agent CLI\'s edits made without asking, have no backup: the preview lists the files they changed in the chat\'s folder, and those stay. The conversation is not rewound.',
   '- `/compact` — compact the conversation to free up context',
   '',
   'Type `/` in the message box any time to see and filter the full list.',
@@ -2591,25 +2592,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   async function rewindToTurn(turn: number, confirm: boolean) {
     const s = sessionRef.current
     if (!s) return
-    const fmt = (f: RewindFileWire) =>
-      f.action === 'not_captured'
-        ? `- \`${f.path}\` — NOT captured (${f.reason}); it will not be restored`
-        : f.action === 'delete'
-          ? `- \`${f.path}\` — would be DELETED (it did not exist at turn ${turn})`
-          : f.action === 'unchanged'
-            ? `- \`${f.path}\` — already matches turn ${turn}; no change`
-            : `- \`${f.path}\` — restore ${f.current_size} → ${f.restored_size} bytes`
     try {
       if (!confirm) {
         const p = await api.rewindPreview(s, turn)
-        const lines = [
-          `**Rewind to turn ${turn} — preview.** Nothing has been written yet.`,
-          ...(p.warnings || []).map((w) => `> ${w}`),
-          ...(p.files || []).map(fmt),
-          (p.files || []).length === 0 ? '_No recorded file changes after that turn._' : '',
-          `Run \`/rewind-to-turn ${turn} --confirm\` to apply. This restores files only — the conversation stays as the record of what happened.`,
-        ].filter(Boolean)
-        setTurns((prev) => [...prev, assistantTurn(lines.join('\n'))])
+        setTurns((prev) => [...prev, assistantTurn(rewindPreviewText(p, turn))])
         return
       }
       const r = await api.rewindToTurn(s, turn)

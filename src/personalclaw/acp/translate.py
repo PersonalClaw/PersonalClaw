@@ -126,6 +126,23 @@ class SeenToolCall:
 
     kind: str = ""
     title: str = ""
+    #: The files the call names, on the opening frame or on an update since (:func:`named_files`).
+    files: tuple[str, ...] = ()
+
+
+def named_files(update: dict) -> tuple[str, ...]:
+    """The files one tool-call frame names: each of its ``locations`` and the path of each
+    ``diff`` it carries, once each, in order. The Agent Client Protocol names both by absolute
+    path. What the call DOES to them is its ``kind``'s to say; this is only which files."""
+    found: list[str] = []
+    for location in update.get("locations") or ():
+        if isinstance(location, dict) and isinstance(location.get("path"), str):
+            found.append(location["path"])
+    for block in update.get("content") or ():
+        if isinstance(block, dict) and block.get("type") == "diff":
+            if isinstance(block.get("path"), str):
+                found.append(block["path"])
+    return tuple(dict.fromkeys(p for p in found if p.strip()))
 
 
 def extract_tool_event(
@@ -229,7 +246,9 @@ def extract_tool_event(
         # correlation because the two gaps are one seam: a permission frame that cannot
         # say WHAT it is gating usually cannot say WHICH tool either.
         if tool_call_id:
-            tool_call_seen[tool_call_id] = SeenToolCall(kind=kind, title=title)
+            tool_call_seen[tool_call_id] = SeenToolCall(
+                kind=kind, title=title, files=named_files(update)
+            )
         tool_calls_sink.append((kind, title))
         return AcpEvent(
             kind=EVENT_TOOL_CALL,
@@ -400,12 +419,17 @@ def extract_tool_update_events(
     if _upd_kind:
         _upd_kind, _ = redact_exfiltration_urls(_upd_kind)
         _upd_kind, _ = redact_credentials(_upd_kind)
-    if tool_call_id and (_upd_kind or title):
+    # The files too: an adapter that opens a call with no input names its files on an update
+    # (claude-code's does), and they are added to what the call named before, never replace it.
+    _upd_files = named_files(update)
+    if tool_call_id and (_upd_kind or title or _upd_files):
         _seen = tool_call_seen.get(tool_call_id, SeenToolCall())
         if _upd_kind:
             _seen = replace(_seen, kind=_upd_kind)
         if title:
             _seen = replace(_seen, title=title)
+        if _upd_files:
+            _seen = replace(_seen, files=tuple(dict.fromkeys((*_seen.files, *_upd_files))))
         tool_call_seen[tool_call_id] = _seen
     # A frame that declares ONLY a diff (no resolved rawInput, no refined title) still
     # has to produce an event, or the chip it declared is dropped on the floor.
@@ -563,6 +587,10 @@ def build_permission_event(
                 else str(raw_input)
             )
 
+    # The files the call names: the frame's own and those the call's earlier frames named (the
+    # same correlation). What the host backs up before it lets a file change through.
+    files = tuple(dict.fromkeys((*named_files(tool_call), *(seen.files if seen else ()))))
+
     logger.info("Permission requested for tool: %s (req=%s)", log_title(title), request_id)
     logger.debug("Permission toolCall payload: %s", audit_text(tool_call))
     return AcpEvent(
@@ -573,6 +601,7 @@ def build_permission_event(
         options=options,
         tool_input=tool_input,
         tool_call_id=tool_call_id,
+        named_files=files,
     )
 
 

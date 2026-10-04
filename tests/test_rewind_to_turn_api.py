@@ -167,3 +167,28 @@ async def test_the_preview_finishes_a_rewind_that_died_mid_commit(scene, monkeyp
     assert not tc.pending_rewinds(session.key)
     for path, want in originals.items():
         assert _sha(Path(path)) == want
+
+
+@pytest.mark.asyncio
+async def test_a_file_changed_with_no_backup_is_listed_and_the_notice_says_it_was_left(scene):
+    """A file a command changed in the turn being undone had no backup. The preview lists it as
+    not restored, and once applied the notice says how many files were left as they are, beside
+    the count of those restored, so "Restored 3 file(s)" is not read as the whole story."""
+    state, _session, ws, originals = scene
+    by_a_command = ws / "notes.md"
+    by_a_command.write_text("written by a command, never backed up\n", encoding="utf-8")
+    async with TestClient(TestServer(_app(state))) as client:
+        r = await client.get("/api/chat/sessions/s1/rewind?turn=1")
+        body = await r.json()
+        listed = {f["path"]: f for f in body["files"]}
+        entry = listed.get(str(by_a_command.resolve()))
+        assert entry and (entry["action"], entry["reason"]) == ("not_captured", "created"), body
+        r = await client.post("/api/chat/sessions/s1/rewind", json={"turn": 1, "confirm": True})
+        assert r.status == 200, await r.text()
+        applied = await r.json()
+    assert set(applied["restored"]) == set(originals)
+    assert applied["notice"].startswith(f"Restored {len(originals)} file(s)"), applied["notice"]
+    assert "1 file(s) that changed after turn 1 with no backup were left as they are" in (
+        applied["notice"]
+    )
+    assert by_a_command.read_text(encoding="utf-8") == "written by a command, never backed up\n"

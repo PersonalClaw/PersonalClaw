@@ -7734,9 +7734,12 @@ export interface PackUninstallRec {
 }
 
 // /rewind-to-turn. `action` is a closed set — "not_captured" is
-// the honest case: the file was deliberately never backed up (credential-shaped, or over
-// the per-file cap), so the rewind will NOT restore it and the UI must say so rather than
-// implying success.
+// the honest case: the rewind will NOT restore the file and the UI must say so rather than
+// implying success. Its `reason` says why: a backup that was skipped (credential-shaped, over
+// the per-file cap, outside the chat's folders), or a change with no backup at all, `changed`,
+// `created` or `deleted` (a shell command's, an agent CLI's edit made without asking). A
+// restore or delete whose `reason` is `changed_before_backup` goes back only as far as the
+// backup in its `turn`, because something with no backup changed the file first.
 export interface RewindFileWire {
   path: string
   action: 'restore' | 'delete' | 'unchanged' | 'not_captured'
@@ -9065,8 +9068,9 @@ export const api = {
   undoChat: (session: string, n = 1) =>
     post<{ ok: boolean; turns_undone: number; notice: string }>(`/api/chat/sessions/${session}/undo`, { n }),
   // /rewind-to-turn N — the FILESYSTEM counterpart of /undo:
-  // restores files the turns after N wrote, and never touches the transcript. GET is a
-  // read-only preview (what would change, with diffs); POST needs confirm:true.
+  // restores the files the turns after N backed up before editing, names the ones they changed
+  // with no backup, and never touches the transcript. GET is a read-only preview (what would
+  // change, with diffs); POST needs confirm:true.
   rewindPreview: (session: string, turn: number) =>
     get<RewindPreviewWire>(`/api/chat/sessions/${session}/rewind?turn=${turn}`),
   rewindToTurn: (session: string, turn: number) =>

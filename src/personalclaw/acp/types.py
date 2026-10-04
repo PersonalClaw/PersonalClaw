@@ -208,6 +208,9 @@ class AcpEvent:
     # Mirror of AgentEvent.tool_meta (typed tool I/O metadata). ACP backends leave
     # it empty; kept field-identical so LLMEvent can point at either.
     tool_meta: dict[str, Any] = field(default_factory=dict)
+    #: On a permission request, the files the call names (``translate.named_files``): its
+    #: ``locations`` and its ``diff`` paths, from the request and the call's earlier frames.
+    named_files: tuple[str, ...] = ()
 
 
 @dataclass

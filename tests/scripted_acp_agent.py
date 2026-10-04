@@ -44,11 +44,18 @@ In both of those, a prompt that follows a refused one is answered without the co
     Answers every prompt at once, :data:`FIRST_REVIEW` first and :data:`LATER_REVIEW` after, and
     reports its context as :data:`FULL_CONTEXT_PCT` full after each answer (the metadata
     notification that carries ``contextUsagePercentage``), asking nothing.
+``edits``
+    Asks to edit :data:`EDITED_FILE` in the folder it was started in, naming the file the way
+    claude-code's adapter does: the ``tool_call`` opens with no input, an update names it in
+    ``locations`` and a ``diff``, and the permission request carries only the call's id and
+    title. It writes :data:`EDITED_TEXT` there only once the request is answered yes, and leaves
+    the file as it was on a refusal.
 
 Every scenario advertises ``loadSession`` and answers ``session/load``, so a resume of a session
 it served is recorded like any other request.
 
-Standard library only, and nothing outside its two arguments is read or written.
+Standard library only, and nothing outside its two arguments is read or written, but the one file
+``edits`` edits in the folder it was started in.
 """
 
 from __future__ import annotations
@@ -76,6 +83,9 @@ DYING_STDERR = "engine: the connection to its service was reset"
 FULL_CONTEXT_PCT = 95.0
 FIRST_REVIEW = "The change bumps the version in pyproject.toml and nothing else."
 LATER_REVIEW = "Next, check that the changelog names the new version."
+#: The file ``edits`` edits, in the folder the agent was started in, and its text after the edit.
+EDITED_FILE = "plan.md"
+EDITED_TEXT = "The plan, rewritten by the agent.\n"
 
 _OPTIONS = {
     "deny-continues": [
@@ -105,6 +115,7 @@ _OPTIONS = {
     ],
 }
 _OPTIONS["ignores-stop"] = _OPTIONS["wait-for-stop"]
+_OPTIONS["edits"] = _OPTIONS["wait-for-stop"]
 _OPTIONS["deny-and-give-up"] = _OPTIONS["deny-only-cancel"]
 
 ANSWER_WITHOUT_THE_COMMAND = (
@@ -175,6 +186,55 @@ class Agent:
             }
         )
 
+    def start_edit(self, request_id: object) -> None:
+        self.prompt_id = request_id
+        target = os.path.join(os.getcwd(), EDITED_FILE)
+        with open(target, encoding="utf-8") as handle:
+            before = handle.read()
+        title = f"Edit {EDITED_FILE}"
+        self.update(
+            {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "call-1",
+                "title": title,
+                "kind": "edit",
+                "status": "pending",
+                "rawInput": {},
+            }
+        )
+        self.update(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-1",
+                "rawInput": {"file_path": target},
+                "locations": [{"path": target}],
+                "content": [
+                    {"type": "diff", "path": target, "oldText": before, "newText": EDITED_TEXT}
+                ],
+            }
+        )
+        self.send(
+            {
+                "id": PERMISSION_ID,
+                "method": "session/request_permission",
+                "params": {
+                    "sessionId": SESSION_ID,
+                    "toolCall": {"toolCallId": "call-1", "title": title},
+                    "options": [self.keyed(o) for o in _OPTIONS[self.scenario]],
+                },
+            }
+        )
+
+    def finish_edit(self, allowed: bool) -> None:
+        if allowed:
+            with open(os.path.join(os.getcwd(), EDITED_FILE), "w", encoding="utf-8") as handle:
+                handle.write(EDITED_TEXT)
+            self.log("edited", path=EDITED_FILE)
+        status = "completed" if allowed else "failed"
+        self.update({"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": status})
+        self.say("I rewrote the plan." if allowed else "I left the plan as it was.")
+        self.end_turn("end_turn")
+
     def keyed(self, option: dict) -> dict:
         if self.keys != "id-label":
             return dict(option)
@@ -188,7 +248,9 @@ class Agent:
             return  # the turn already ended (a cancel got here first), or it never ends
         offered = {o["optionId"]: o for o in _OPTIONS[self.scenario]}
         kind = offered.get(chosen, {}).get("kind", "")
-        if outcome.get("outcome") != "selected" or not kind:
+        if self.scenario == "edits":
+            self.finish_edit(outcome.get("outcome") == "selected" and kind.startswith("allow"))
+        elif outcome.get("outcome") != "selected" or not kind:
             self.end_turn("cancelled")
         elif kind.startswith("allow"):
             self.update(
@@ -289,6 +351,8 @@ class Agent:
                 }
             )
             self.end_turn("end_turn")
+        elif method == "session/prompt" and self.scenario == "edits":
+            self.start_edit(req_id)
         elif method == "session/prompt" and self.refused:
             self.prompt_id = req_id
             if self.scenario == "deny-and-give-up":

@@ -413,7 +413,7 @@ _SLASH_COMMAND_HINTS: dict[str, str] = {
     "/project": "Scope this new chat to a project",
     "/tools": "Open the Tools page",
     "/undo": "Roll back the last N conversation turns",
-    "/rewind-to-turn": "Restore files to their state at the end of turn N",
+    "/rewind-to-turn": "Put back the agent's file edits after turn N (not a command's)",
     "/compact": "Compact the conversation to free context",
 }
 

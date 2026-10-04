@@ -3173,9 +3173,11 @@ class CheckpointsConfig:
         default=True,
         metadata=_meta(
             "File Checkpoints",
-            "Back up a file's current bytes before an agent's first write to it in a turn, "
-            "so /rewind-to-turn can restore it. Filesystem-only: it never rewinds the "
-            "conversation. Off means a wrong edit is unrecoverable.",
+            "Back up a file's current bytes before the agent's first edit of it in a turn, "
+            "with its own file tools or as an agent CLI that asks first, so /rewind-to-turn "
+            "can restore it. A shell command's changes, and an agent CLI's edits made without "
+            "asking, have no backup: the rewind lists them and leaves them. Filesystem-only: "
+            "it never rewinds the conversation. Off means a wrong edit is unrecoverable.",
         ),
     )
     max_mb: int = field(

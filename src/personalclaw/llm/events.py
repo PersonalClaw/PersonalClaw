@@ -321,3 +321,8 @@ class AgentEvent:
     #: the host answers the call without asking anyone (``approval_grants.declared_answer``).
     #: False from a backend that declares nothing. Last, so no field moves.
     work_asks: bool = False
+    #: On an agent CLI's PERMISSION_REQUEST, the files the call names (the Agent Client
+    #: Protocol's ``locations`` and the path of each ``diff`` it declares): what the chat backs up
+    #: before it lets a file change through, so a rewind can put it back. Empty from a backend
+    #: whose own tools back their files up (the native loop's). Last, so no field moves.
+    named_files: tuple[str, ...] = ()

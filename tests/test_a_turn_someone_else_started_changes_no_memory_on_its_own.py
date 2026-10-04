@@ -694,7 +694,7 @@ async def _cli_turn(
         _set_stream,
     )
 
-    from personalclaw.llm.base import EVENT_PERMISSION_REQUEST, LLMEvent
+    from personalclaw.llm.base import EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, LLMEvent
     from personalclaw.turn_source import arrived_on
 
     state, client = _make_state(tmp_path, context_builder=_context_builder())
@@ -713,6 +713,10 @@ async def _cli_turn(
                 request_id="req-1",
                 tool_input=json.dumps(args),
             ),
+            # The agent answers after its call, as an agent CLI does. A turn that wrote nothing is
+            # sent again once on its own, as a task of its own, which would run beside the next
+            # turn a test drives and answer the call a second time.
+            LLMEvent(kind=EVENT_TEXT_CHUNK, text="Done."),
             LLMEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
         ],
     )

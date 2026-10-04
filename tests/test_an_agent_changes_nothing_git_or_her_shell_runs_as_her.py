@@ -418,7 +418,9 @@ async def test_in_a_trusted_chat_the_clis_write_to_a_hook_is_refused_and_an_ordi
 ):
     """🔴 Before: with the chat's Trust on, the agent CLI's own write to the hook was approved
     without asking. The chat runner asks the one screen first; the hook chain here allows every
-    call, so what refuses it is the reading of the call's input."""
+    call, so what refuses it is the reading of the call's input. A refused write is not backed up
+    either, and the ordinary write PersonalClaw lets through is backed up first, with Trust's yes
+    its one decision."""
     from test_acp_permission_authority import (
         _context_builder,
         _drive,
@@ -427,8 +429,10 @@ async def test_in_a_trusted_chat_the_clis_write_to_a_hook_is_refused_and_an_ordi
         _set_stream,
     )
 
+    from personalclaw import turn_checkpoints
     from personalclaw.llm.base import EVENT_COMPLETE as DONE
     from personalclaw.llm.base import EVENT_PERMISSION_REQUEST as ASKS
+    from personalclaw.llm.base import EVENT_TEXT_CHUNK as SAYS
     from personalclaw.llm.base import LLMEvent
 
     async def asks(title: str, args: dict[str, Any]):
@@ -443,7 +447,13 @@ async def test_in_a_trusted_chat_the_clis_write_to_a_hook_is_refused_and_an_ordi
                     tool_kind="edit",
                     request_id="req-1",
                     tool_input=json.dumps(args),
+                    # The file the request names, as the protocol's translator reads it.
+                    named_files=(args["file_path"],),
                 ),
+                # The agent answers after its call, as an agent CLI does. A turn that wrote
+                # nothing is sent again once on its own, as a task of its own, which would run
+                # inside the next call's turn and record its refusal there.
+                LLMEvent(kind=SAYS, text="Done."),
                 LLMEvent(kind=DONE, stop_reason="end_turn"),
             ],
         )
@@ -454,19 +464,29 @@ async def test_in_a_trusted_chat_the_clis_write_to_a_hook_is_refused_and_an_ordi
             for c in rows.return_value.log_tool_invocation.call_args_list
             if c.kwargs.get("request_id") == "req-1"
         ]
-        return client, decided, json.dumps([m.get("content") for m in session.messages])
+        backed_up = {
+            entry["path"]
+            for entry in turn_checkpoints.recorded_file_entries(session.key)
+            if entry.get("sha256")
+        }
+        chat = json.dumps([m.get("content") for m in session.messages])
+        return client, decided, chat, backed_up
 
     title, args = _calls(owner)["a write"]
-    client, decided, chat = await asks(title, args)
+    client, decided, chat, backed_up = await asks(title, args)
     client.reject_tool.assert_awaited_once_with("req-1")
     client.approve_tool.assert_not_awaited()
     assert decided == [("refused", "owner_only")], decided
     assert "an agent may not change it" in chat
+    assert backed_up == set(), backed_up
 
     readme = str(owner.repo / "README.md")
-    client, decided, _ = await asks(f"Write {readme}", {"file_path": readme, "content": "x"})
+    client, decided, _, backed_up = await asks(
+        f"Write {readme}", {"file_path": readme, "content": "x"}
+    )
     client.approve_tool.assert_awaited_once_with("req-1")
-    assert decided and decided[0][0] == "auto_approved", decided
+    assert decided == [("auto_approved", "trust")], decided
+    assert backed_up == {os.path.realpath(readme)}, backed_up
 
 
 # ── the agent's shell ───────────────────────────────────────────────────────────────────────

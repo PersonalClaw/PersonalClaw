@@ -442,16 +442,28 @@ def test_session_slug_is_injective_for_keys_that_sanitize_alike():
     assert a != b, "two distinct session keys must not share a checkpoint tree"
 
 
+def _folder_record(turn: int) -> dict:
+    """The record of the folder a turn's manifest names, decompressed: what the store holds."""
+    import gzip
+
+    man = json.loads((tc._turn_dir(SESSION, turn) / "manifest.json").read_text())
+    path = tc.session_dir(SESSION) / "identity" / f"{man['identity']['record']}.json.gz"
+    return json.loads(gzip.decompress(path.read_bytes()))
+
+
 def test_the_identity_set_records_paths_without_copying_bytes(ws):
     turn = tc.begin_turn(SESSION, cwd=ws)
-    man = json.loads((tc._turn_dir(SESSION, turn) / "manifest.json").read_text())
-    names = {e["path"] for e in man["identity"]}
-    assert {"alpha.py", "beta.txt", "gamma.json"} <= names
-    assert all("size" in e and "mtime" in e for e in man["identity"])
-    # Phase 1 is a manifest, not a copy: no blob directory exists yet.
+    record = _folder_record(turn)
+    assert {"alpha.py", "beta.txt", "gamma.json"} <= set(record)
+    size, mtime_ns = record["alpha.py"]
+    assert size == (ws / "alpha.py").stat().st_size
+    assert mtime_ns == (ws / "alpha.py").stat().st_mtime_ns
+    # Phase 1 is a record, not a copy: no blob directory exists yet.
     assert not (tc.session_dir(SESSION) / "blobs").exists()
-    # ...and the identity set is metadata only — it must not contain file CONTENT.
-    assert b"def alpha" not in _all_store_bytes(tc.store_root())
+    # ...and the identity set is metadata only — it must not contain file CONTENT, read as the
+    # store holds it once decompressed.
+    assert "def alpha" not in json.dumps(record)
+    assert PLANTED_SECRET not in json.dumps(record)
 
 
 # ── the interception point: the real tool handlers ─────────────────────────────────
@@ -511,6 +523,178 @@ def test_the_real_write_file_tool_never_stores_a_dotenv_body(ws):
     assert not result.success
     assert PLANTED_SECRET in (ws / ".env").read_text(encoding="utf-8")
     assert PLANTED_SECRET.encode() not in _all_store_bytes(tc.store_root())
+
+
+def _mode(p: Path) -> int:
+    return p.stat().st_mode & 0o777
+
+
+def test_a_restored_file_comes_back_with_the_permissions_it_had(ws):
+    """A rewind gives a file back its permissions with its bytes: a script stays executable, and a
+    file only its owner could read is not left readable by everyone. The tools edit in place, so
+    the edit keeps both; before the fix the restore wrote both at the writer's default."""
+    script, private = ws / "run.sh", ws / "private.txt"
+    script.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    private.write_text("only mine\n", encoding="utf-8")
+    script.chmod(0o755)
+    private.chmod(0o600)
+    tc.begin_turn(SESSION, cwd=ws)
+    p = _provider(ws)
+    _observe(p, "run.sh", "private.txt")
+    asyncio.run(p.invoke("write_file", {"path": "run.sh", "content": "#!/bin/sh\nexit 1\n"}))
+    asyncio.run(
+        p.invoke("edit_file", {"path": "private.txt", "old_str": "only", "new_str": "not only"})
+    )
+    assert (_mode(script), _mode(private)) == (0o755, 0o600)
+    assert script.read_text(encoding="utf-8") == "#!/bin/sh\nexit 1\n"
+
+    res = tc.apply_rewind(SESSION, 0)
+    assert res.ok, res.errors
+    assert script.read_text(encoding="utf-8") == "#!/bin/sh\necho hi\n"
+    assert private.read_text(encoding="utf-8") == "only mine\n"
+    assert (_mode(script), _mode(private)) == (0o755, 0o600)
+
+
+def test_a_restore_under_the_home_keeps_the_owners_bits_and_adds_no_other():
+    """Under the PersonalClaw home every file is written with no group or other bit, so a restore
+    there keeps the owner's bits alone: a script the owner could run stays runnable, and a file
+    another user could read comes back private, rather than the restore refusing to write it."""
+    from personalclaw.config.loader import config_dir
+
+    folder = Path(config_dir()) / "workspace"
+    folder.mkdir(parents=True, exist_ok=True)
+    script, shared = folder / "tidy.sh", folder / "shared.txt"
+    script.write_text("#!/bin/sh\necho tidy\n", encoding="utf-8")
+    shared.write_text("anyone may read\n", encoding="utf-8")
+    script.chmod(0o755)
+    shared.chmod(0o644)
+    tc.begin_turn(SESSION, cwd=folder)
+    for f in (script, shared):
+        assert tc.capture_pre_edit(SESSION, f, cwd=folder) == "captured"
+        f.write_text("MANGLED\n", encoding="utf-8")
+
+    res = tc.apply_rewind(SESSION, 0)
+    assert res.ok, res.errors
+    assert script.read_text(encoding="utf-8") == "#!/bin/sh\necho tidy\n"
+    assert (_mode(script), _mode(shared)) == (0o700, 0o600)
+
+
+def test_the_folder_record_leaves_out_personalclaws_own_state_and_only_that():
+    """PersonalClaw writes its own state during and between turns (a memory consolidation, an
+    index, a log), so a record that held it would name PersonalClaw's own writes on every preview
+    as changes with no backup. Left out wherever a chat's folder reaches it, and nothing else is:
+    a folder of the agent's work that lies in the home keeps every file it holds."""
+    from personalclaw import memory
+    from personalclaw.config.loader import config_dir, memory_root
+
+    home = Path(config_dir()).resolve()
+    workspace = memory_root().resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "draft.md").write_text("the agent's own file\n", encoding="utf-8")
+    long_term, partitions = (Path(f) for f in memory.memory_folders())
+    long_term.mkdir(parents=True, exist_ok=True)
+    (long_term / "preferences.md").write_text("- prefers tea\n", encoding="utf-8")
+    (partitions / "_default").mkdir(parents=True, exist_ok=True)
+    (partitions / "_default" / "memory_index.db").write_bytes(b"index")
+    (workspace / "knowledge").mkdir(exist_ok=True)
+    (workspace / "knowledge" / "knowledge.db").write_bytes(b"library")
+    (home / "gateway.log").write_text("a log line\n", encoding="utf-8")
+
+    in_workspace, _ = tc._identity_set(workspace)
+    assert "draft.md" in in_workspace
+    assert not [p for p in in_workspace if p.startswith(("memory/", "_ext/"))], in_workspace
+    assert "knowledge/knowledge.db" not in in_workspace
+
+    checkout = home / "code" / "repo"
+    checkout.mkdir(parents=True)
+    (checkout / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    assert set(tc._identity_set(checkout)[0]) == {"main.py"}
+
+    holder, _ = tc._identity_set(home.parent)
+    at = home.relative_to(home.parent).as_posix()
+    assert f"{at}/gateway.log" not in holder
+    assert f"{at}/workspace/draft.md" in holder
+    assert f"{at}/workspace/memory/preferences.md" not in holder
+
+
+def test_what_a_shell_command_changed_is_named_and_left_as_it_is(ws):
+    """A command's change is never backed up: PersonalClaw cannot know before a command runs
+    which files it will touch. So the preview names every file the turns being undone changed
+    with no backup, changed, created or deleted, says plainly that the rewind leaves it, and the
+    rewind does. The file the native ``write_file`` changed in the same turn still comes back."""
+    tc.begin_turn(SESSION, cwd=ws)
+    tc.begin_turn(SESSION, cwd=ws)
+    original_alpha = _sha(ws / "alpha.py")
+    p = _provider(ws)
+    _observe(p, "alpha.py")
+    assert asyncio.run(p.invoke("write_file", {"path": "alpha.py", "content": "WRECKED\n"})).success
+    from personalclaw.agents.native.builtin_tools import NativeBuiltinToolProvider
+
+    shell = NativeBuiltinToolProvider(cwd=ws, session_key=SESSION, sandbox_mode="off")
+    command = "printf 'by a command\\n' > beta.txt && rm gamma.json && printf 'new\\n' > made.txt"
+    ran = asyncio.run(shell.invoke("bash", {"command": command}))
+    assert ran.success, ran.error
+    assert (ws / "beta.txt").read_text(encoding="utf-8") == "by a command\n"
+
+    pv = tc.preview_rewind(SESSION, 1)
+    by_path = {Path(f.path).name: f for f in pv.files}
+    assert (by_path["alpha.py"].action, by_path["alpha.py"].reason) == ("restore", "")
+    assert (by_path["beta.txt"].action, by_path["beta.txt"].reason) == ("not_captured", "changed")
+    assert (by_path["gamma.json"].action, by_path["gamma.json"].reason) == (
+        "not_captured",
+        "deleted",
+    )
+    assert (by_path["made.txt"].action, by_path["made.txt"].reason) == ("not_captured", "created")
+    # Only what changed: a file nothing touched is not on the list.
+    assert ".env" not in by_path
+    # ...and it is said, not left for the user to infer from a missing line.
+    assert any("no backup" in w and "3 files" in w for w in pv.warnings), pv.warnings
+
+    res = tc.apply_rewind(SESSION, 1, preview=pv)
+    assert res.ok, res.errors
+    assert _sha(ws / "alpha.py") == original_alpha
+    assert (ws / "beta.txt").read_text(encoding="utf-8") == "by a command\n"
+    assert not (ws / "gamma.json").exists()
+    assert (ws / "made.txt").read_text(encoding="utf-8") == "new\n"
+
+
+def test_a_file_a_command_changed_before_its_backup_comes_back_only_as_far_as_the_backup(ws):
+    """A backup is taken before the AGENT's first write of a file in a turn. When a command with
+    no backup changed the file before that (a formatter, a ``git checkout``), the backup holds the
+    command's version, so the rewind puts the file back only that far. The preview says so for
+    that file, instead of a plain "restore" the user would read as "back as it was"; and one a
+    command deleted before the agent wrote it anew is deleted, its earlier self not brought back."""
+    tc.begin_turn(SESSION, cwd=ws)
+    tc.begin_turn(SESSION, cwd=ws)
+    from personalclaw.agents.native.builtin_tools import NativeBuiltinToolProvider
+
+    shell = NativeBuiltinToolProvider(cwd=ws, session_key=SESSION, sandbox_mode="off")
+    ran = asyncio.run(
+        shell.invoke("bash", {"command": "printf 'reformatted\\n' > beta.txt && rm gamma.json"})
+    )
+    assert ran.success, ran.error
+    p = _provider(ws)
+    _observe(p, "beta.txt")
+    assert asyncio.run(p.invoke("write_file", {"path": "beta.txt", "content": "agent\n"})).success
+    assert asyncio.run(p.invoke("write_file", {"path": "gamma.json", "content": "{}\n"})).success
+
+    pv = tc.preview_rewind(SESSION, 1)
+    by_path = {Path(f.path).name: f for f in pv.files}
+    assert (by_path["beta.txt"].action, by_path["beta.txt"].reason) == (
+        "restore",
+        tc.CHANGED_BEFORE_BACKUP,
+    )
+    assert (by_path["gamma.json"].action, by_path["gamma.json"].reason) == (
+        "delete",
+        tc.CHANGED_BEFORE_BACKUP,
+    )
+    said = [w for w in pv.warnings if "only to how it was then" in w]
+    assert {Path(w.split(":")[0]).name for w in said} == {"beta.txt", "gamma.json"}, pv.warnings
+
+    res = tc.apply_rewind(SESSION, 1)
+    assert res.ok, res.errors
+    assert (ws / "beta.txt").read_text(encoding="utf-8") == "reformatted\n"
+    assert not (ws / "gamma.json").exists()
 
 
 def test_three_files_mangled_through_the_real_tools_restore_byte_identical(ws):
