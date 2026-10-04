@@ -1318,6 +1318,19 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # asked could not answer; the message is the reason, relayed.
     "skills_marketplace_not_found": "No skill catalogue of that name is set up here.",
     "skills_search_failed": "The skill catalogue could not be searched.",
+    # ── a newer version of a skill that comes with PersonalClaw, offered over the owner's copy
+    #    (dashboard/handlers/skills.py — POST /api/skills/bundled/update and …/keep) ──
+    # 409: the version named is not the one PersonalClaw ships now (it was updated since the
+    # offer was read), so nothing was changed. 500: the version could not be installed, and the
+    # owner's copy is as it was.
+    "skill_bundled_version_changed": (
+        "The version of this skill that comes with PersonalClaw is not the one offered, so "
+        "nothing was changed. Read the skill again to see the version it offers now."
+    ),
+    "skill_bundled_update_failed": (
+        "The version of this skill that comes with PersonalClaw could not be installed; your "
+        "copy is as it was."
+    ),
     # ── the prices model calls are counted at (dashboard/handlers/model_rates.py —
     #    PUT/DELETE /api/models/rates) ──
     # 409: `config.json`, where your prices are kept, could not be read, so saving would replace

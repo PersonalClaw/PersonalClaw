@@ -64,7 +64,7 @@ SKILLS = {
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """The test's own home, with the library above and the agents the tests name."""
     # The bundled skills would join the library on every loader built: they are not this test's.
-    monkeypatch.setattr("personalclaw.skills.loader._ensure_builtin_skills", lambda _base: None)
+    monkeypatch.setattr("personalclaw.skills.shipped.sync", lambda _base: None)
     root = config_loader.config_dir()
     for name, text in SKILLS.items():
         folder = root / "skills" / name

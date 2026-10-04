@@ -74,6 +74,7 @@ describe('a clipped skill description can still be read', () => {
     // Those are the local precedent this change converges onto; if they vanish, the "settled idiom"
     // reasoning needs rewriting rather than silently passing.
     expect(SKILLS).toMatch(/title="Always loaded"/)
-    expect(SKILLS).toMatch(/title="Integrity check failed — files changed since install"/)
+    expect(SKILLS).toMatch(/title="Changed since it was installed"/)
+    expect(SKILLS).toMatch(/title="Its install record is damaged, so PersonalClaw can’t tell what was installed"/)
   })
 })

@@ -1576,8 +1576,9 @@ Examples:
     )
     skills_sub.add_parser(
         "verify",
-        help="Check installed skills' file hashes against their install baseline "
-        "(.pclaw-lock.json) — detects a skill mutated/tampered after install",
+        help="Compare each installed skill's files with its install record (.pclaw-lock.json): "
+        "intact, edited since it was installed (and what changed), or with a damaged record, "
+        "which exits 1",
     )
 
     _hide_internal_commands(parser)
@@ -2043,17 +2044,15 @@ def _handle_skills(args) -> None:  # noqa: ANN001
     """Dispatch personalclaw skills subcommands.
 
     A refusal is said on stderr and exits 1 (`_refuse`), and so does a `verify` that finds a
-    tampered skill: an install the scanner refused used to exit 0, which a setup script reads as
-    the skill being there.
+    skill whose install record is damaged: an install the scanner refused used to exit 0, which a
+    setup script reads as the skill being there. An edited skill is the owner's edit, reported
+    with what changed, and exits 0.
     """
     import shutil
-    from pathlib import Path
-
-    from personalclaw.agent import _all_skill_paths
 
     # skills.sh moved to a standalone app (apps/skills-sh/); it registers via the app
     # loader when installed, so core no longer eager-imports it here.
-    from personalclaw.skills.loader import skills_dir
+    from personalclaw.skills.loader import SkillsLoader, skills_dir
     from personalclaw.skills.marketplace import get_default_skills_registry, list_local_skills
     from personalclaw.supply_chain import rule_gloss
 
@@ -2136,19 +2135,17 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         name = args.name
         if not name or Path(name).name != name or name in (".", ".."):
             _refuse(f"❌ '{name}' is not a skill name")
-        # Only the home's own skills are PersonalClaw's to delete; one found in another root
-        # (the folder AI tools share, a project's skills) is left exactly where it is.
-        skill_dir = skills_dir() / name
-        if skill_dir.is_dir():
-            shutil.rmtree(skill_dir)
-            print(f"✅ Removed: {skill_dir}")
+        # The copy agents get (the loader's order, which the Skills list follows). Only the
+        # home's own skills are PersonalClaw's to delete; one in the folder AI tools share is left
+        # exactly where it is, and a folder that holds skills without being one is not a skill.
+        found = SkillsLoader(install_builtins=False).skill_file(name)
+        if found is not None and skills_dir() in found.parents:
+            shutil.rmtree(found.parent)
+            print(f"✅ Removed: {found.parent}")
             return
-        elsewhere = next(
-            (Path(b) / name for b in _all_skill_paths() if (Path(b) / name).is_dir()), None
-        )
-        if elsewhere is not None:
+        if found is not None:
             _refuse(
-                f"❌ Skill '{name}' is in {elsewhere.parent}, outside PersonalClaw's home, so "
+                f"❌ Skill '{name}' is in {found.parent.parent}, outside PersonalClaw's home, so "
                 "PersonalClaw does not delete it. Remove it there if you no longer want it."
             )
         _refuse(f"❌ Skill '{name}' not found")
@@ -2167,31 +2164,39 @@ def _handle_skills(args) -> None:  # noqa: ANN001
         return
 
     if cmd == "verify":
-        from personalclaw.skills.loader import skills_dir
-        from personalclaw.skills.marketplace import verify_skill_integrity
+        from personalclaw.skills.loader import iter_skill_files
+        from personalclaw.skills.marketplace import (
+            EDITED,
+            INTACT,
+            TAMPERED,
+            verify_skill_integrity,
+        )
 
-        root = skills_dir()
-        dirs = sorted(p for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
-        if not dirs:
+        installed = iter_skill_files(skills_dir())
+        if not installed:
             print("No installed skills to verify.")
             return
-        tampered = 0
-        for d in dirs:
-            rep = verify_skill_integrity(d)
-            # unlocked FIRST: an unverifiable skill (no baseline) is neither pass nor
-            # fail — a green check would falsely imply "verified intact".
-            mark = "·" if rep.unlocked else ("✅" if rep.ok else "⚠️")
-            print(f"  {mark} {rep.summary()}")
+        edited = damaged = 0
+        marks = {INTACT: "✅", EDITED: "✎", TAMPERED: "⚠️"}
+        for name, skill_md in installed:
+            rep = verify_skill_integrity(skill_md.parent)
+            # A skill with no record gets "·", not a check: there is nothing to compare it with,
+            # and a green check would falsely imply "verified intact".
+            summary = rep.summary().split(": ", 1)[1]
+            print(f"  {marks.get(rep.state, '·')} {name}: {summary}")
             for f in rep.mutated:
-                print(f"       mutated: {f}")
+                print(f"       changed: {f}")
             for f in rep.missing:
                 print(f"       missing: {f}")
             for f in rep.added:
                 print(f"       added:   {f}")
-            if not rep.ok and not rep.unlocked:
-                tampered += 1
-        print(f"\n{len(dirs)} skill(s) checked, {tampered} tampered.")
-        if tampered:
+            edited += rep.state == EDITED
+            damaged += rep.state == TAMPERED
+        print(
+            f"\n{len(installed)} skill(s) checked: {edited} edited since they were installed, "
+            f"{damaged} with a damaged install record."
+        )
+        if damaged:
             sys.exit(1)
 
 

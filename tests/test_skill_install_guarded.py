@@ -108,10 +108,11 @@ def test_warning_needs_force(tmp_path):
     assert result.report.verdict.value == "warning"
 
 
-def test_integrity_lint_detects_tamper(tmp_path):
+def test_integrity_lint_names_what_changed_since_install(tmp_path):
     """verify_skill_integrity compares on-disk hashes vs the install-time
-    .pclaw-lock.json baseline — a fresh install is intact; a file mutated/added after
-    install is flagged TAMPERED; a skill with no lock is unverifiable (not a failure)."""
+    .pclaw-lock.json baseline — a fresh install is intact; a file changed or added after
+    install reads edited, with what changed (the owner's edit, never called tampering); a skill
+    with no lock is unverifiable (not a failure)."""
     from personalclaw.skills.marketplace import verify_skill_integrity
 
     reg = _registry(
@@ -127,7 +128,7 @@ def test_integrity_lint_detects_tamper(tmp_path):
 
     (skill / "ref.txt").write_text("EDITED AFTER INSTALL")
     r = verify_skill_integrity(skill)
-    assert r.ok is False and "ref.txt" in r.mutated
+    assert r.ok is False and r.state == "edited" and "ref.txt" in r.mutated
 
     (skill / "rogue.sh").write_text("#!/bin/sh\necho pwned")
     r2 = verify_skill_integrity(skill)

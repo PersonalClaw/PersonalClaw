@@ -81,15 +81,15 @@ trigger phrases.
 | Tier | Directory | Role |
 |---|---|---|
 | **Bundled** | `src/personalclaw/skills/bundled/` (inside the wheel) | The 17 skills PersonalClaw ships |
-| **Project** | `$PERSONALCLAW_PROJECT_DIR/skills/` | Skills that travel with one workspace |
+| **Project** | `$PERSONALCLAW_PROJECT_DIR/skills/` | Skills that travel with one checkout; a project skill wins over a bundled one of the same name |
 | **Global** | `~/.personalclaw/skills/`, plus `~/.agents/skills/` once you allow it | Your library; the install target is always the first |
 | **Agent-local** | `~/.personalclaw/agents/<agent>/skills/` | Visible to one agent only |
 
 Two of those four are **install sources, not search paths**, and it is worth
-knowing which. On startup `_ensure_builtin_skills` *copies* the bundled and
-project trees into `~/.personalclaw/skills/<key>/`, whole directory at a time. So
-a bundled skill is not consulted in place — by the time anything reads it, it
-lives in the global tier.
+knowing which. Each start copies the bundled and project skills into
+`~/.personalclaw/skills/<key>/` (`skills/shipped.py`). So a bundled skill is not
+consulted in place — by the time anything reads it, it lives in the global tier, as
+your copy (see [Your copy of a bundled skill](#your-copy-of-a-bundled-skill)).
 
 Name resolution (`SkillsLoader._search_dirs`) then walks exactly three
 directories, first hit wins:
@@ -100,21 +100,40 @@ directories, first hit wins:
    **Settings → Security → Outside PersonalClaw's home**. PersonalClaw only reads it: nothing is
    installed into it, changed there or deleted from it
 
-That order carries two consequences the tier table does not show:
+That one order is the rule everywhere a copy is chosen: what a turn loads, what the
+**Skills** page lists for a skill, the files and the Re-verify of its details, and the copy
+its editor saves. The row of an agent's own skill reads and writes that agent's copy. Two
+consequences the tier table does not show:
 
 - **An agent-local skill overrides a same-named global one, for that agent only** —
   and a skill in `~/.personalclaw/skills/` likewise wins over one of the same name
   in `~/.agents/skills/`. This is how you give one agent a different version of a
   procedure without forking your library.
-- **A project skill does not reliably override a bundled skill of the same name.**
-  Both copy into the same destination, and the copy is gated on file mtime
-  (`src.stat().st_mtime > dest.stat().st_mtime`), so the newer *file* wins rather
-  than the higher tier. Name your project skills distinctly instead of relying on
-  a shadowing rule that is not there.
+- **An edit lands in the copy that is read.** Saving a skill whose agent keeps its own copy
+  writes that copy; a skill in `~/.agents/skills/` is never written.
 
-Editing a bundled skill in the home library is also not durable: the next sync
-overwrites your copy as soon as the packaged file is newer. Copy it to a new key
-and edit that.
+### Your copy of a bundled skill
+
+The copy in your library is yours to change: edit it on the Skills page (**Edit SKILL.md**)
+or in its folder, and add files beside it. It carries an install record
+(`.pclaw-lock.json`): a digest of each file PersonalClaw installed. Each start decides by
+those digests, never by when a file was written:
+
+- **A copy you have not changed** is replaced, whole, when a new version of PersonalClaw
+  ships a changed skill: a file the new version dropped goes too.
+- **A copy you changed is kept**, file for file. The Skills page marks the skill **new
+  version**, and its details offer the version that ships: **Use the new version** replaces
+  your copy with it, and your changes are not kept; **Keep mine** keeps yours and stops
+  offering that version, until a later one ships.
+- **A copy from a version that kept no record** is replaced only when it is, byte for byte, a
+  version PersonalClaw shipped. Any other copy is yours, and is kept and offered the same way.
+- **A skill PersonalClaw stops shipping** is removed while its copy is still what was
+  installed and carries no refinement you accepted. A copy you changed stays, as your own.
+  Nothing is removed for its name alone.
+
+A bundled skill is not deleted from the Skills page, because the next start would install
+PersonalClaw's copy again. That is also the way back: `personalclaw skills remove <name>`
+removes your copy, and the next start installs the version that ships.
 
 ## How a skill reaches the model
 
@@ -273,9 +292,14 @@ same list:
 
 - **`personalclaw skills install <id>`** fetches from a marketplace into
   `~/.personalclaw/skills/`, after a supply-chain scan whose `DANGEROUS` verdict is not
-  overridable. `personalclaw skills verify` re-checks installed skills' file
-  hashes against their install baseline, so a skill mutated after install is
-  detectable. A marketplace an app adds is there while the app is installed and
+  overridable. Installing a skill again leaves exactly the new version's files: one the
+  new version dropped is removed, and a version the scan or the format check refuses
+  leaves the installed copy as it was. `personalclaw skills verify` compares each
+  installed skill's files with its install record: one changed since it was installed
+  reads **edited**, with what changed (your edit, never called tampering), and one whose
+  record is damaged, so nothing can say what was installed, reads as such and makes the
+  command exit 1. The Skills page says the same: **Verified**, **Edited**, or **Can't
+  verify**. A marketplace an app adds is there while the app is installed and
   switched on: switching the app off or uninstalling it takes the marketplace off
   Skills > Browse at once, and the skills you installed from it stay in your library.
 - **Auto-created skills** land under the `auto/` namespace when
@@ -352,7 +376,9 @@ the queue moves such a proposal into it, and its Inbox row follows.
 
 | Path | What |
 |---|---|
-| `~/.personalclaw/skills/<key>/SKILL.md` | Your library — and where bundled/project skills are synced to |
+| `~/.personalclaw/skills/<key>/SKILL.md` | Your library — and your copy of each bundled/project skill |
+| `~/.personalclaw/skills/<key>/.pclaw-lock.json` | An installed skill's install record: a digest of each file installed |
+| `~/.personalclaw/entity_settings/skill_updates.json` | The newer bundled versions you chose to keep your copy over |
 | `~/.personalclaw/skills/imported/<source>/<name>/SKILL.md` | A skill imported from another tool, with its install lock |
 | `~/.agents/skills/<key>/SKILL.md` | Cross-client directory, read only once you allow it; never written |
 | `~/.personalclaw/agents/<agent>/skills/<key>/SKILL.md` | One agent's private override |

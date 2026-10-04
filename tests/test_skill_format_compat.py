@@ -31,7 +31,7 @@ def test_absent_triggers_never_matches_but_still_lists(tmp_path: Path) -> None:
     """A skill with no `triggers:` is inert for matching, not broken.
 
     Note a scoped loader still syncs the BUNDLED skills into its directory
-    (`_ensure_builtin_skills`), so assert on our row rather than the whole list.
+    (`skills.shipped.sync`), so assert on our row rather than the whole list.
     """
     d = tmp_path / "vanilla-pdf-tools"
     d.mkdir()

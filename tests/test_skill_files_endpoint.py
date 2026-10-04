@@ -37,11 +37,12 @@ def _make_skill(root: Path, name: str, files: dict[str, str]) -> Path:
 
 
 @pytest.fixture
-def skill_root(tmp_path, monkeypatch):
-    """A single skill discovery root, wired into _all_skill_paths."""
-    root = tmp_path / "skills"
-    root.mkdir()
-    monkeypatch.setattr("personalclaw.agent._all_skill_paths", lambda: [str(root)])
+def skill_root():
+    """The home's library: where the routes find a skill, by the loader's own order."""
+    from personalclaw.skills.loader import skills_dir
+
+    root = skills_dir()
+    root.mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -182,8 +183,9 @@ def test_verify_unlocked_skill_is_unverified(skill_root):
     assert body["integrity"] == "unverified" and body["unlocked"] is True
 
 
-def test_verify_detects_tamper(skill_root):
-    """A locked skill whose file changed on disk → tampered, naming the mutated file."""
+def test_verify_names_what_an_edit_changed(skill_root):
+    """A locked skill whose file changed on disk → edited (the owner's edit, not tampering),
+    naming the changed file."""
     import hashlib
     import json as _json
 
@@ -195,12 +197,22 @@ def test_verify_detects_tamper(skill_root):
     # intact first
     status, body = _verify("locked")
     assert body["integrity"] == "intact"
-    # tamper → detected
-    (skill / "SKILL.md").write_text("---\nname: locked\n---\nEVIL", encoding="utf-8")
+    # an edit → reported as one, with what changed
+    (skill / "SKILL.md").write_text("---\nname: locked\n---\nmine", encoding="utf-8")
     status, body = _verify("locked")
     assert status == 200
-    assert body["integrity"] == "tampered"
+    assert body["integrity"] == "edited"
     assert body["mutated"] == ["SKILL.md"]
+
+
+def test_the_tree_leaves_out_the_install_record(skill_root):
+    """The install record describes a skill's files and is not one of them: Integrity reads it,
+    and the tree lists the skill's own files."""
+    skill = _make_skill(skill_root, "recorded", {"SKILL.md": "---\nname: recorded\n---\nbody"})
+    (skill / ".pclaw-lock.json").write_text('{"sha256": {}}', encoding="utf-8")
+    status, body = _files("recorded")
+    assert status == 200
+    assert [f["path"] for f in body["files"]] == ["SKILL.md"]
 
 
 def test_verify_unsafe_name_rejected(skill_root):

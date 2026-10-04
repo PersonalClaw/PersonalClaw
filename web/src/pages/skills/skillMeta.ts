@@ -43,7 +43,9 @@ export function provenanceMeta(provenance?: string): { label: string; title: str
  *  the either-or, because that is all anything knows about it. `dashboard` gets no row marker in
  *  `provenanceMeta` above — like a hand-placed skill it is the user's own, which is most rows. */
 export function noBaselineReason(skill: { source: string; provenance?: string }): string {
-  if (skill.source === 'bundled') return 'bundled with PersonalClaw'
+  // A bundled skill's copy is installed with its record; one without is from before PersonalClaw
+  // kept them, and differs from every version it shipped, or it would have been recorded.
+  if (skill.source === 'bundled') return 'installed before PersonalClaw kept install records'
   if (skill.provenance === 'dashboard') return 'created in the dashboard'
   if (skill.provenance === 'taught') return 'taught in a session'
   if (skill.provenance === 'auto') return 'extracted from session activity'

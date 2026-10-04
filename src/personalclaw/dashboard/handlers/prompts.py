@@ -13,6 +13,7 @@ from personalclaw.security import MASK_CONFLICT, redact_for_display, restore_mas
 from personalclaw.skills.loader import (
     DASHBOARD_SKILL_SOURCE_VALUE,
     DIRECT_SKILL_MAX_CONTENT_CHARS,
+    SkillsLoader,
     validate_skill_md,
     with_source_marker,
 )
@@ -1101,10 +1102,15 @@ async def api_skill_detail(request: web.Request) -> web.Response:
     when it loads, and ``loaded`` is the body a session is given. The PUT replaces the own text
     and must name the read's revision in ``If-Match``: a stale one is refused with ``409
     stale_write`` and nothing is written. A refinement stays where it is kept and is applied once:
-    a copy of one in the PUT's text is not written into the file."""
+    a copy of one in the PUT's text is not written into the file.
+
+    Both read and write the copy agents get, the one the Skills list shows: with ``?agent=``, the
+    one that agent gets (its own copy, where it has one), so the row of an agent's own skill edits
+    that copy and not the library's skill of the same name."""
     state: DashboardState = request.app["state"]
     name = request.match_info["name"]
-    skills = _get_skills(state)
+    agent = request.query.get("agent", "").strip()
+    skills = SkillsLoader(install_builtins=False, agent=agent) if agent else _get_skills(state)
 
     if request.method == "PUT":
         try:

@@ -373,7 +373,9 @@ def assert_midscan_payload_swap_refused(
 
 def assert_integrity_tamper_detected(case: dict[str, Any], tmp_path: Path) -> None:
     """A clean install, then bytes edited on disk. The install-time scan cannot see this;
-    the lock baseline must, and an untracked added file must surface too."""
+    the lock baseline must, and an untracked added file must surface too. It reads as an edit,
+    each changed and added file named: PersonalClaw cannot tell a program's change to a file in
+    the home from the owner's, and her own edit is never called tampering."""
     market = AdversarialMarket(payload(case))
     mk.install_scanned(market, "adversarial", "helper", tmp_path / "live")
     skill_dir = tmp_path / "live" / "helper"
@@ -385,7 +387,8 @@ def assert_integrity_tamper_detected(case: dict[str, Any], tmp_path: Path) -> No
     assert report.ok is False
     assert "scripts/setup.sh" in report.mutated, report.mutated
     assert "extra.sh" in report.added, report.added
-    assert "TAMPERED" in report.summary()
+    assert report.state == mk.EDITED
+    assert report.summary() == "helper: edited (1 changed, 1 added)"
 
 
 def assert_oversize_read_by_walk_and_refused(case: dict[str, Any], tmp_path: Path) -> None:

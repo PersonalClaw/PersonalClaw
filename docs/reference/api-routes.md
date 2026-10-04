@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **927 registrations** over **752 distinct paths** — 920 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **929 registrations** over **754 distinct paths** — 922 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -34,8 +34,8 @@ The 128 families the surface divides into, largest first.
 | `/api/inbox` | 24 | 23 |
 | `/api/apps` | 23 | 15 |
 | `/api/mcp` | 21 | 16 |
+| `/api/skills` | 21 | 17 |
 | `/api/triggers` | 21 | 18 |
-| `/api/skills` | 19 | 15 |
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
 | `/api/sessions` | 15 | 12 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 920 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 922 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -906,8 +906,10 @@ The 920 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/sessions/{id}/agents/{agent_id}/stream` | SSE stream of result file. |
 | `DELETE` | `/api/sessions/{key}` | permanently delete a history session. |
 | `GET` | `/api/sessions/{key}` | return messages for a session. |
-| `GET` | `/api/skills` | list locally installed skills from all discovery paths. |
+| `GET` | `/api/skills` | every skill agents get, each row the copy they get. |
 | `POST` | `/api/skills` | create a new skill. |
+| `POST` | `/api/skills/bundled/keep` | keep the owner's copy over a bundled skill's newer version. |
+| `POST` | `/api/skills/bundled/update` | use a bundled skill's newer version over the owner's copy. |
 | `GET` | `/api/skills/ephemeral/{session}` | the session-live drafts awaiting a |
 | `POST` | `/api/skills/ephemeral/{session}/promote` | promote ONE draft to a tier. |
 | `DELETE` | `/api/skills/ephemeral/{session}/{slug}` | forget one draft, or |
@@ -920,11 +922,11 @@ The 920 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/skills/proposals/{id}` | full proposal incl. procedure + fenced source. |
 | `POST` | `/api/skills/proposals/{id}/accept` | refine the skill it names, or add it as a skill. |
 | `GET` | `/api/skills/search` | search across all registered skill providers. |
-| `DELETE` | `/api/skills/{name}` | remove a skill installed in the home. |
+| `DELETE` | `/api/skills/{name}` | remove a skill the home holds. |
 | `GET` | `/api/skills/{name}` | get or update a skill. (Listing is served by |
 | `PUT` | `/api/skills/{name}` | get or update a skill. (Listing is served by |
 | `GET` | `/api/skills/{name}/files` | provider-backed file browser. |
-| `POST` | `/api/skills/{name}/verify` | S6 integrity lint for one installed skill. |
+| `POST` | `/api/skills/{name}/verify` | compare one skill with its install record. |
 | `GET` | `/api/slash-commands` | the slash commands the composer "/" menu offers. |
 | `DELETE` | `/api/spawn` | clear all completed subagents. |
 | `GET` | `/api/spawn` | list all subagents. |

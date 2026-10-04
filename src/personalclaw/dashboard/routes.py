@@ -307,6 +307,8 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
         api_ephemeral_skill_discard,
         api_ephemeral_skill_promote,
         api_ephemeral_skills_list,
+        api_skill_bundled_keep,
+        api_skill_bundled_update,
         api_skill_files,
         api_skill_overlay_revert,
         api_skill_proposal_accept,
@@ -340,6 +342,10 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     # Accepted-refinement sidecar overlays — revert = delete one file. Literal
     # 'overlay' segment, registered before the catch-all /{name} routes below.
     app.router.add_post("/api/skills/overlay/revert", api_skill_overlay_revert)
+    # A newer version of a skill that comes with PersonalClaw, offered over the owner's edited
+    # copy: hers to take or decline. Literal 'bundled' segment, before the catch-alls below.
+    app.router.add_post("/api/skills/bundled/update", api_skill_bundled_update)
+    app.router.add_post("/api/skills/bundled/keep", api_skill_bundled_keep)
     # Provider-backed file browser — must precede the catch-all skill-detail GET.
     app.router.add_get("/api/skills/{name}/files", api_skill_files)
     app.router.add_post("/api/skills/{name}/verify", api_skill_verify)

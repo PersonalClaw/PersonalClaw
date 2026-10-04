@@ -344,12 +344,13 @@ def measure_deficits() -> list[Deficit]:
     except Exception:
         logger.debug("deficit: inbox maintenance measure failed", exc_info=True)
 
-    # Skill-library tamper (the `verify_skill_integrity` — finally SCHEDULED, here,
-    # on every engine pass and every Doctor read, instead of only when a human opens the
-    # Skills page). Deliberately job-less and ``reachable=False``: verification is a
-    # DETECTOR, not a fix — no job can un-tamper a skill, and re-baselining a mutated one
-    # would launder the tamper. So it never burns budget; it DOES lower the score (a tampered
-    # skill is a health problem whether or not a job can clear it), it surfaces on the
+    # A skill whose install record is damaged (`verify_skill_integrity`, SCHEDULED here on every
+    # engine pass and every Doctor read, instead of only when a human opens the Skills page). An
+    # edit is not this: it is the owner's, and is never counted. Deliberately job-less and
+    # ``reachable=False``: verification is a DETECTOR, not a fix — no job can say what was
+    # installed once the record is gone, and writing a new record over the files would bless
+    # whatever they now hold. So it never burns budget; it DOES lower the score (a skill nothing
+    # can vouch for is a health problem whether or not a job can clear it), it surfaces on the
     # Doctor's deficit list, and ``verify_skill_integrity`` emits its own SEL audit on every
     # detection.
     try:
@@ -365,7 +366,8 @@ def measure_deficits() -> list[Deficit]:
                 # it. Reviewing the skill is the only move, and nothing else on the surface
                 # would tell a reader that.
                 blocked_by=(
-                    "a tampered skill needs a person — review it on the Skills page, then "
+                    "a skill whose install record is damaged needs a person — PersonalClaw "
+                    "can't tell what was installed, so review it on the Skills page, then "
                     "reinstall or remove it"
                 ),
             )
@@ -452,30 +454,19 @@ def _failed_check_deficits(measured: dict[str, int]) -> list[Deficit]:
 
 
 def _count_tampered_skills() -> int:
-    """Installed skills whose on-disk hashes diverge from their install-time lock.
+    """Skills whose install record is damaged (``marketplace.verify_skill_integrity``), over the
+    copies agents get, as the Skills list shows them.
 
-    Only *locked* skills are hashed — ``verify_skill_integrity`` returns ``unlocked``
-    before reading any file — so bundled/hand-placed skills cost a single stat.
+    An edited skill is not counted: it is the owner's edit, and the advice below (reinstall or
+    remove it) would undo it. Only a skill with a record is hashed, so the rest cost a stat.
     """
-    from personalclaw.agent import _all_skill_paths
-    from personalclaw.skills.marketplace import _SKILL_FILENAME, verify_skill_integrity
+    from personalclaw.skills.loader import SkillsLoader
+    from personalclaw.skills.marketplace import TAMPERED, verify_skill_integrity
 
-    tampered = 0
-    seen: set[str] = set()
-    for base_str in _all_skill_paths():
-        base = Path(base_str)
-        if not base.is_dir():
-            continue
-        for entry in sorted(base.iterdir()):
-            if not entry.is_dir() or entry.name in seen:
-                continue
-            if not (entry / _SKILL_FILENAME).is_file():
-                continue
-            seen.add(entry.name)
-            rep = verify_skill_integrity(entry)
-            if not rep.unlocked and not rep.ok:
-                tampered += 1
-    return tampered
+    return sum(
+        verify_skill_integrity(Path(row["dir"])).state == TAMPERED
+        for row in SkillsLoader(install_builtins=False).list_skills()
+    )
 
 
 def health_score(deficits: list[Deficit]) -> float:

@@ -246,9 +246,9 @@ def test_engaged_skills_ignores_bundled_baseline(monkeypatch: pytest.MonkeyPatch
     """Passive turn-time injection of bundled skills is not the user teaching one
     (issue 458 defect 2: a single plain chat message hid 'Teach it a reusable
     skill'). Engaged = a skill exists beyond what the install ships."""
-    from personalclaw.skills.loader import _BUILTIN_SKILLS_DIR
+    from personalclaw.skills import shipped
 
-    bundled_names = [p.name for p in _BUILTIN_SKILLS_DIR.iterdir() if p.is_dir()]
+    bundled_names = sorted(shipped.shipped())
     assert bundled_names, "baseline sanity: bundled skills ship with the code"
 
     def _loader_with(keys):

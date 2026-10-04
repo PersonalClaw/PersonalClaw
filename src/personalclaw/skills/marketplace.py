@@ -5,11 +5,16 @@ The agentskills.io format (https://agentskills.io) is the standard:
   - Frontmatter fields: name, description, license, compatibility, metadata, allowed-tools.
   - The body is Markdown loaded on demand by the LLM.
 
-Discovery paths (loaded by ``_all_skill_paths()`` in ``agent.py``):
-  - ``PERSONALCLAW_PROJECT_DIR/skills/``  — project-level
-  - ``<home>/skills/``                    — installed and user-created, the only install target
+Discovery paths (:func:`skill_discovery_paths`, after an agent's own folder in
+``SkillsLoader``'s order, which every surface follows):
+  - ``<home>/skills/``                    — installed and user-created, the only install target,
+                                            and where the skills PersonalClaw ships are kept
+                                            (``skills.shipped``)
   - ``~/.agents/skills/``                 — agentskills.io's shared folder, read only once the
                                             owner allows it (``personalclaw.outside_home``)
+
+An installed skill's folder carries its install record (:data:`LOCK_FILENAME`): a digest of each
+file installed, which :func:`verify_skill_integrity` compares the files with.
 
 ``SkillsRegistry`` holds named ``SkillsMarketplace`` implementations.
 Additional marketplaces (an app's, a configured catalog) register via
@@ -18,8 +23,15 @@ registers leaves with the app.
 """
 
 import builtins
+import hashlib
+import json
 import logging
+import os
+import shutil
+import tempfile
+import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -31,6 +43,10 @@ from personalclaw.skills.loader import validate_skill_md as _validate_skill_md
 logger = logging.getLogger(__name__)
 
 _SKILL_FILENAME = "SKILL.md"
+
+#: A skill's install record, in its folder: what was installed there, a digest per file. Written
+#: by :func:`write_install_record` and read by :func:`install_record`, and by nothing else.
+LOCK_FILENAME = ".pclaw-lock.json"
 
 
 def skill_discovery_paths() -> list[Path]:
@@ -222,109 +238,201 @@ def _stage_files(files: "list[dict[str, Any]]", staged_skill: Path) -> None:
         out.write_bytes(_entry_bytes(entry))
 
 
-def _write_lock(
-    target_dir: Path, detail: "SkillDetail", source: str, tier: "Any", report: "Any"
+def file_digests(skill_dir: Path) -> dict[str, str]:
+    """Each file in *skill_dir* and the sha256 of its bytes, by its path in the folder.
+
+    The install record itself is left out: it describes the files, it is not one of them. A file
+    that cannot be read is left out too, so a comparison with a record reads it as missing.
+    """
+    skill_dir = Path(skill_dir)
+    out: dict[str, str] = {}
+    for f in sorted(skill_dir.rglob("*")):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(skill_dir).as_posix()
+        if rel == LOCK_FILENAME:
+            continue
+        try:
+            out[rel] = hashlib.sha256(f.read_bytes()).hexdigest()
+        except OSError:
+            continue
+    return out
+
+
+def files_digest(sha256: Mapping[str, str]) -> str:
+    """One digest for a set of files: sha256 over their sorted ``<path>\\0<sha256>`` lines.
+
+    Two folders hold the same files exactly when their digests are equal, whatever their files'
+    times say. The algorithm is a stable contract: :data:`shipped.EARLIER_VERSIONS` holds digests
+    of versions that shipped before install records were kept.
+    """
+    lines = "".join(f"{rel}\0{sha256[rel]}\n" for rel in sorted(sha256))
+    return hashlib.sha256(lines.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class InstallRecord:
+    """What a skill folder's install record says was installed: its source, and each file."""
+
+    source: str
+    sha256: dict[str, str]
+
+    @property
+    def digest(self) -> str:
+        return files_digest(self.sha256)
+
+
+class DamagedInstallRecord(ValueError):
+    """A skill's install record is there and cannot be read as one, so nothing can say what was
+    installed in its folder."""
+
+
+def install_record(skill_dir: Path) -> InstallRecord | None:
+    """The install record in *skill_dir*, or ``None`` when it has none (nothing installed it).
+
+    Raises :class:`DamagedInstallRecord` when ``.pclaw-lock.json`` is there but is not a record:
+    unreadable, not JSON, not an object, or without a ``sha256`` map of file paths to digests.
+    """
+    path = Path(skill_dir) / LOCK_FILENAME
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise DamagedInstallRecord(f"{path.name} cannot be read: {exc}") from exc
+    if not isinstance(data, dict):
+        raise DamagedInstallRecord(f"{path.name} is not an object")
+    digests = data.get("sha256")
+    if not isinstance(digests, dict) or not all(
+        isinstance(rel, str) and isinstance(digest, str) for rel, digest in digests.items()
+    ):
+        raise DamagedInstallRecord(f"{path.name} holds no digest of the files installed")
+    source = data.get("source")
+    return InstallRecord(source=source if isinstance(source, str) else "", sha256=dict(digests))
+
+
+def write_install_record(
+    skill_dir: Path,
+    *,
+    skill_id: str,
+    source: str,
+    trust_tier: str,
+    verdict: str,
+    sha256: Mapping[str, str],
 ) -> None:
-    """Record install provenance + an integrity baseline in ``<skill>/.pclaw-lock.json``:
-    id, source, tier, verdict, per-file sha256, timestamp. A later integrity lint (S6)
-    compares on-disk sha256 vs this to detect a skill mutated after install."""
-    import hashlib
+    """Record in *skill_dir* that *sha256* (each file and its digest) was installed there from
+    *source*, scanned at *trust_tier* with *verdict*. Atomic; a failure to write it is logged and
+    leaves the skill without a record, which reads as unverified."""
     import time
 
     from personalclaw.atomic_write import atomic_json_write
 
-    skill_dir = Path(target_dir) / (detail.name or detail.id)
-    if not skill_dir.is_dir():
-        return
-    hashes: dict[str, str] = {}
-    for entry in detail.files:
-        rel = entry.get("path", "")
-        if rel and ".." not in rel and not rel.startswith("/"):
-            hashes[rel] = hashlib.sha256(_entry_bytes(entry)).hexdigest()
-    lock = {
-        "id": detail.id,
+    record = {
+        "id": skill_id,
         "source": source,
-        "trust_tier": getattr(tier, "value", str(tier)),
-        "verdict": getattr(report.verdict, "value", str(report.verdict)),
-        "sha256": hashes,
+        "trust_tier": trust_tier,
+        "verdict": verdict,
+        "sha256": dict(sha256),
         "installed_at": time.time(),
     }
     try:
-        atomic_json_write(skill_dir / ".pclaw-lock.json", lock)
+        atomic_json_write(Path(skill_dir) / LOCK_FILENAME, record)
     except OSError:
-        logger.debug("could not write skill lock file for %s", skill_dir, exc_info=True)
+        logger.warning("could not write the install record of %s", skill_dir, exc_info=True)
+
+
+def payload_digests(files: "list[dict[str, Any]]") -> dict[str, str]:
+    """Each file of an install payload and the sha256 of the bytes it writes
+    (:func:`_entry_bytes`), the install record left out."""
+    return {
+        str(entry.get("path", "")): hashlib.sha256(_entry_bytes(entry)).hexdigest()
+        for entry in files
+        if entry.get("path") and entry.get("path") != LOCK_FILENAME
+    }
+
+
+def _write_lock(
+    target_dir: Path, detail: "SkillDetail", source: str, tier: "Any", report: "Any"
+) -> None:
+    """Record what an install wrote (:func:`write_install_record`): the payload's files, which
+    are exactly the folder's files (:func:`install_skill_files`), from *source* at *tier*."""
+    skill_dir = Path(target_dir) / (detail.name or detail.id)
+    if not skill_dir.is_dir():
+        return
+    write_install_record(
+        skill_dir,
+        skill_id=detail.id,
+        source=source,
+        trust_tier=getattr(tier, "value", str(tier)),
+        verdict=getattr(report.verdict, "value", str(report.verdict)),
+        sha256=payload_digests(detail.files),
+    )
+
+
+#: The four answers to "are this skill's files what was installed?". ``intact``: exactly what its
+#: record holds. ``edited``: changed since (a file changed, added or removed), whoever changed
+#: it: the owner's save in the skill editor, a change she made to the files, PersonalClaw's own
+#: writers. ``tampered``: its record is there and cannot be read (:class:`DamagedInstallRecord`),
+#: so nothing can say what was installed; an edit never touches the record. ``unverified``: no
+#: record, so nothing installed it, or it was installed before records were kept.
+INTACT = "intact"
+EDITED = "edited"
+TAMPERED = "tampered"
+UNVERIFIED = "unverified"
 
 
 @dataclass
 class IntegrityReport:
-    """S6 post-install integrity check for one skill vs its ``.pclaw-lock.json``.
-
-    ``ok`` is True when every locked file's on-disk sha256 matches the baseline recorded
-    at install. ``mutated`` / ``missing`` / ``added`` name the drift so a tamper (a skill
-    edited on disk after a clean install) is visible. ``unlocked`` = no lock file (a
-    pre-gate or hand-placed skill — not a failure, just unverifiable)."""
+    """One skill's files compared with its install record. ``state`` is one of the four answers
+    above; ``mutated`` / ``missing`` / ``added`` name what changed, for an ``edited`` skill."""
 
     skill: str
-    ok: bool = True
-    unlocked: bool = False
-    mutated: list[str] = field(default_factory=list)  # locked file whose hash changed
-    missing: list[str] = field(default_factory=list)  # locked file now gone
-    added: list[str] = field(default_factory=list)  # new file not in the lock
+    state: str = UNVERIFIED
+    mutated: list[str] = field(default_factory=list)  # a recorded file whose bytes changed
+    missing: list[str] = field(default_factory=list)  # a recorded file now gone
+    added: list[str] = field(default_factory=list)  # a file the record does not hold
+    #: The digest of the folder's files as they are (:func:`files_digest`), when it was read.
+    digest: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.state == INTACT
+
+    @property
+    def unlocked(self) -> bool:
+        return self.state == UNVERIFIED
 
     def summary(self) -> str:
-        if self.unlocked:
-            return f"{self.skill}: no lock (unverifiable)"
-        if self.ok:
+        if self.state == UNVERIFIED:
+            return f"{self.skill}: no install record (unverifiable)"
+        if self.state == TAMPERED:
+            return f"{self.skill}: its install record is damaged, so what was installed is unknown"
+        if self.state == INTACT:
             return f"{self.skill}: intact"
         parts = []
         if self.mutated:
-            parts.append(f"{len(self.mutated)} mutated")
+            parts.append(f"{len(self.mutated)} changed")
         if self.missing:
             parts.append(f"{len(self.missing)} missing")
         if self.added:
             parts.append(f"{len(self.added)} added")
-        return f"{self.skill}: TAMPERED ({', '.join(parts)})"
+        return f"{self.skill}: edited ({', '.join(parts)})"
 
 
 def verify_skill_integrity(skill_dir: Path) -> IntegrityReport:
-    """S6: compare a skill's on-disk file hashes against its ``.pclaw-lock.json`` baseline
-    to detect post-install mutation (a skill edited/replaced after a clean install — the
-    tamper case a static install-time scan can't catch on its own). Content-only:
-    ``.pclaw-lock.json`` itself is excluded. Emits a SEL audit on detected tamper."""
-    import hashlib
-    import json
+    """Compare a skill's files with its install record (:func:`install_record`).
 
+    Its owner's edit reads ``edited``, with what changed, and never as tampering: PersonalClaw
+    cannot tell who changed a file in the home, and a change to a skill there is the owner's to
+    make. A damaged record is the one finding that is not an edit; it reads ``tampered`` and is
+    written to the security log.
+    """
     skill_dir = Path(skill_dir)
     name = skill_dir.name
-    lock_path = skill_dir / ".pclaw-lock.json"
-    if not lock_path.is_file():
-        return IntegrityReport(skill=name, unlocked=True)
     try:
-        locked = (json.loads(lock_path.read_text(encoding="utf-8")) or {}).get("sha256", {})
-    except (OSError, json.JSONDecodeError):
-        return IntegrityReport(skill=name, unlocked=True)
-
-    rep = IntegrityReport(skill=name)
-    on_disk: dict[str, str] = {}
-    for f in sorted(skill_dir.rglob("*")):
-        if not f.is_file() or f.name == ".pclaw-lock.json":
-            continue
-        rel = f.relative_to(skill_dir).as_posix()
-        try:
-            on_disk[rel] = hashlib.sha256(f.read_bytes()).hexdigest()
-        except OSError:
-            continue
-    for rel, want in locked.items():
-        got = on_disk.get(rel)
-        if got is None:
-            rep.missing.append(rel)
-        elif got != want:
-            rep.mutated.append(rel)
-    for rel in on_disk:
-        if rel not in locked:
-            rep.added.append(rel)
-    rep.ok = not (rep.mutated or rep.missing or rep.added)
-    if not rep.ok:
+        record = install_record(skill_dir)
+    except DamagedInstallRecord as exc:
+        rep = IntegrityReport(skill=name, state=TAMPERED)
         try:
             from personalclaw.sel import sel
 
@@ -334,10 +442,23 @@ def verify_skill_integrity(skill_dir: Path) -> IntegrityReport:
                 outcome="tampered",
                 source="skills",
                 resources=name,
-                error=rep.summary(),
+                error=str(exc),
             )
         except Exception:
             logger.debug("integrity SEL audit failed", exc_info=True)
+        return rep
+    on_disk = file_digests(skill_dir)
+    if record is None:
+        return IntegrityReport(skill=name, state=UNVERIFIED, digest=files_digest(on_disk))
+    rep = IntegrityReport(skill=name, digest=files_digest(on_disk))
+    for rel, want in record.sha256.items():
+        got = on_disk.get(rel)
+        if got is None:
+            rep.missing.append(rel)
+        elif got != want:
+            rep.mutated.append(rel)
+    rep.added = [rel for rel in on_disk if rel not in record.sha256]
+    rep.state = EDITED if (rep.mutated or rep.missing or rep.added) else INTACT
     return rep
 
 
@@ -491,7 +612,6 @@ def warnings_consent(detail: "SkillDetail", report: "Any") -> str:
     give the same value, and a file that changes after the scan (a second command appended to a
     script the scan had already flagged once) gives another, and is not installed on it.
     """
-    import hashlib
 
     from personalclaw.supply_chain import Verdict
 
@@ -516,8 +636,6 @@ def scan_before_install(marketplace: "SkillsMarketplace", skill_id: str) -> "tup
     an install is the verdict the install reaches on unchanged bytes. Writes nothing but its
     own quarantine directory, which it removes, and audits nothing: nothing was installed or
     refused."""
-    import shutil
-    import tempfile
 
     tier = _tier_of(marketplace)
     detail = _installable(marketplace, skill_id)
@@ -557,8 +675,6 @@ def install_scanned(
     Quarantine-first means dangerous content never lands in the live skills tree.
     Raises :class:`SkillInstallRefused` on a blocked verdict; returns an
     :class:`InstallResult` on success."""
-    import shutil
-    import tempfile
 
     from personalclaw.supply_chain import Verdict
 
@@ -677,10 +793,17 @@ def install_skill_files(
     skill_name: str,
     target_base: Path,
 ) -> Path:
-    """Write skill files to ``target_base/<skill_name>/``.
+    """Make ``target_base/<skill_name>/`` hold exactly *files*, and nothing else.
 
-    Validates SKILL.md content and rejects any path containing ``..``.
-    Returns the path to the written SKILL.md.
+    THE writer of an installed skill's folder: a marketplace install and reinstall, a pack's
+    install and update, an app's skills, an import from another tool and the skills PersonalClaw
+    ships all come here. Returns the path to the written SKILL.md.
+
+    Every file is checked before anything is written: no path may climb out of the folder, the
+    scanner must not find one dangerous, and a SKILL.md must validate. Then the files are written
+    into a new folder beside the skill's, which takes its place whole
+    (:func:`replace_skill_folder`): a file the previous version had and this one dropped goes with
+    the old folder, and a refused or failed install leaves the installed copy exactly as it was.
 
     🔴 THE DIRECTORY NAME IS VALIDATED TOO. Every *file* path here was checked for ``..`` and for a
     leading ``/`` — and ``skill_name``, which names the directory all of them are written into, was
@@ -702,7 +825,7 @@ def install_skill_files(
 
     for file_entry in files:
         rel_path = file_entry.get("path", "")
-        if ".." in rel_path or rel_path.startswith("/"):
+        if not rel_path or ".." in rel_path or rel_path.startswith("/"):
             raise ValueError(f"Rejected unsafe file path: {rel_path!r}")
         # A binary entry (``data``) carries no scannable text — the text ruleset can't
         # analyze it; its provenance is the sha256 recorded in the lock. Only text
@@ -724,19 +847,60 @@ def install_skill_files(
                 f"skill install refused: scanner flagged {rel_path!r} as dangerous ({cats})"
             )
 
-    skill_dir.mkdir(parents=True, exist_ok=True)
-    written_skill_md: Path | None = None
+    skill_md: str | None = None
     for file_entry in files:
         rel_path = file_entry.get("path", "")
-        out_path = skill_dir / rel_path
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        if rel_path.endswith("SKILL.md") or rel_path == "SKILL.md":
+        if rel_path.endswith("SKILL.md"):
             errors = _validate_skill_md(str(file_entry.get("contents", "")))
             if errors:
                 raise ValueError(f"SKILL.md validation failed: {'; '.join(errors)}")
-            written_skill_md = out_path
-        out_path.write_bytes(_entry_bytes(file_entry))
-
-    if written_skill_md is None:
+            skill_md = rel_path
+    if skill_md is None:
         raise ValueError(f"No SKILL.md found in files for skill {skill_name!r}")
-    return written_skill_md
+
+    replace_skill_folder(skill_dir, files)
+    return skill_dir / skill_md
+
+
+def replace_skill_folder(folder: Path, files: "list[dict[str, Any]]") -> None:
+    """Make *folder* hold exactly *files* (``{path, contents | data}`` entries) and nothing else.
+
+    The files are written into a new folder beside it, under a hidden name no skill listing reads
+    (``loader.iter_skill_files`` skips one), which then takes *folder*'s place: two renames in
+    one directory. Whatever *folder* held goes with it; a failure before the swap leaves *folder*
+    as it was. A *folder* that is a link is replaced, as a link: what it led to is not touched.
+    """
+    folder = Path(folder)
+    parent = folder.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    tag = uuid.uuid4().hex[:12]
+    staging = parent / f".{folder.name}.{tag}.installing"
+    old = parent / f".{folder.name}.{tag}.replaced"
+    had = False
+    try:
+        staging.mkdir()
+        for entry in files:
+            out = staging / str(entry.get("path", ""))
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(_entry_bytes(entry))
+        had = folder.exists() or folder.is_symlink()
+        if had:
+            os.rename(folder, old)
+        try:
+            os.rename(staging, folder)
+        except OSError:
+            if had:
+                os.rename(old, folder)
+            raise
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    if not had:
+        return
+    try:
+        if old.is_symlink() or not old.is_dir():
+            old.unlink()
+        else:
+            shutil.rmtree(old)
+    except OSError:
+        logger.warning("could not remove the replaced copy %s", old, exc_info=True)

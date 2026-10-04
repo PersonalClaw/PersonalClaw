@@ -220,17 +220,17 @@ def test_the_rail_sees_each_way_to_name_the_home(code, caught):
 
 
 def test_a_skill_in_the_shared_agents_folder_is_not_read_until_allowed(real_home):
-    from personalclaw.agent import _all_skill_paths
     from personalclaw.skills.loader import SkillsLoader
+    from personalclaw.skills.marketplace import skill_discovery_paths
 
     shared = real_home / ".agents" / "skills"
     _skill(shared, "shared-one")
     assert "shared-one" not in {s["name"] for s in SkillsLoader().list_skills()}
-    assert str(shared) not in _all_skill_paths()
+    assert shared not in skill_discovery_paths()
 
     _allow("agent-skills")
     assert "shared-one" in {s["name"] for s in SkillsLoader().list_skills()}
-    assert str(shared) in _all_skill_paths()
+    assert shared in skill_discovery_paths()
 
 
 def test_what_a_session_touched_in_the_shared_folder_is_attributed_only_when_allowed(real_home):
@@ -273,6 +273,7 @@ class _Market:
 def _json_request(body: dict | None = None, match: dict | None = None) -> MagicMock:
     req = MagicMock()
     req.match_info = match or {}
+    req.rel_url.query = {}
     req.get = lambda *_a, **_k: "owner"
     req.json = AsyncMock(return_value=body or {})
     return req

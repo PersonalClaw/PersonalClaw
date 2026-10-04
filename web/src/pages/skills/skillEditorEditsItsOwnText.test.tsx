@@ -129,7 +129,7 @@ describe('the SKILL.md editor', () => {
 describe('the inspector', () => {
   it('names a skill’s accepted refinements and offers to revert each, a skill it cannot edit too', async () => {
     vi.spyOn(api, 'skillDocument').mockResolvedValue(doc([CITE]))
-    render(<SkillInspector skill={item({ source: 'bundled', type: 'bundled' })} onDeleted={() => {}} />)
+    render(<SkillInspector skill={item({ source: 'shared', type: 'read-only' })} onDeleted={() => {}} />)
     const list = await screen.findByRole('list', { name: 'Accepted refinements of notes' })
     expect(list.textContent).toContain('Cite the source of every note.')
     expect(screen.getByText(/Added after the skill’s own text each time it loads/)).toBeTruthy()

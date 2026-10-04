@@ -316,10 +316,11 @@ def _engaged_skills(_state: Any) -> bool:
     `_engaged_apps` instead: engaged means a skill the install didn't ship —
     authored, learned, or imported.
     """
-    from personalclaw.skills.loader import _BUILTIN_SKILLS_DIR, SkillsLoader
+    from personalclaw.skills import shipped
+    from personalclaw.skills.loader import SkillsLoader
 
     try:
-        bundled = {p.name for p in _BUILTIN_SKILLS_DIR.iterdir() if p.is_dir()}
+        bundled = set(shipped.shipped())
     except OSError:
         bundled = set()
     return any(s["key"] not in bundled for s in SkillsLoader().list_skills())

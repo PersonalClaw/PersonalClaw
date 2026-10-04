@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion, GraduationCap, Undo2 } from 'lucide-react'
+import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion, GraduationCap, Undo2, FilePen, RefreshCw } from 'lucide-react'
 import hljs from 'highlight.js/lib/common'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
@@ -16,10 +16,25 @@ import { SOURCE_TONE, holdsRefinementCopy, noBaselineReason, provenanceMeta } fr
 import { toneChipSkin } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
 
+/** The copy of a skill one row describes, as its routes address it: an agent's own copy (an
+ *  `agent-local` row) with its `agent`, any other by its name alone — the copy agents get, the one
+ *  the list shows. `key` keeps the two apart in the read cache. */
+function copyOf(name: string, agent?: string) {
+  return {
+    key: agent ? `${name}@${agent}` : name,
+    files: (path?: string) => (agent ? api.skillFiles(name, path, agent) : api.skillFiles(name, path)),
+    document: () => (agent ? api.skillDocument(name, agent) : api.skillDocument(name)),
+    update: (content: string, revision: string) =>
+      (agent ? api.updateSkill(name, content, revision, agent) : api.updateSkill(name, content, revision)),
+    remove: () => (agent ? api.deleteSkill(name, agent) : api.deleteSkill(name)),
+    verify: () => (agent ? api.verifySkill(name, agent) : api.verifySkill(name)),
+  }
+}
+
 /** Installed-skill inspector for the SidePanel: metadata + the skill's real file
  *  list, each openable to read its content (SKILL.md rendered as markdown,
- *  other files as highlighted code). Edit (SKILL.md) + Delete are offered for
- *  local/installed skills; bundled ones are protected. */
+ *  other files as highlighted code). Edit (SKILL.md) is offered for every copy in the
+ *  home, and Delete for every one but a bundled skill's. */
 export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem; onDeleted: () => void; onSaved?: () => void }) {
   const [openFile, setOpenFile] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -30,10 +45,17 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
   // the skill their own session just taught (#576).
   // A `shared` skill is in the folder AI tools share, outside PersonalClaw's home: read, never
   // edited or deleted from here (the server refuses both), so neither is offered.
+  // A `bundled` skill is the library's copy of one that comes with PersonalClaw, the copy agents
+  // read: hers to edit, and an update keeps her edit (it offers its own version instead). It is not
+  // deleted from here: the next start would put PersonalClaw's copy back.
   const shared = skill.source === 'shared'
-  const editable = skill.source !== 'bundled' && !shared
+  const bundled = skill.source === 'bundled'
+  const editable = !shared
+  const deletable = !shared && !bundled
+  const agent = skill.source === 'agent-local' ? skill.agent : undefined
+  const copy = copyOf(skill.name, agent)
 
-  const { data: files } = useQuery<SkillFile[]>(`skill:files:${skill.name}`, () => api.skillFiles(skill.name).then((d) => d.files ?? []).catch(() => []), { persist: true })
+  const { data: files } = useQuery<SkillFile[]>(`skill:files:${copy.key}`, () => copy.files().then((d) => d.files ?? []).catch(() => []), { persist: true })
 
   // Reset the sub-views when switching to a different skill.
   useEffect(() => { setOpenFile(null); setEditing(false) }, [skill.name])
@@ -45,12 +67,12 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
     // open, the skill present, and nothing said: the only reasonable read is that the click
     // missed. `onDeleted()` stays GATED, per reportingWrite's own rule — closing the inspector
     // on a failed delete would claim the removal it did not make.
-    if (!(await reportingWrite(`delete the skill "${skill.name}"`, () => api.deleteSkill(skill.name)))) return
+    if (!(await reportingWrite(`delete the skill "${skill.name}"`, () => copy.remove()))) return
     onDeleted()
   }
 
-  if (editing) return <SkillEditor name={skill.name} onBack={() => setEditing(false)} onSaved={() => { setEditing(false); onSaved?.() }} />
-  if (openFile) return <FileView name={skill.name} path={openFile} onBack={() => setOpenFile(null)} />
+  if (editing) return <SkillEditor name={skill.name} agent={agent} onBack={() => setEditing(false)} onSaved={() => { setEditing(false); onSaved?.() }} />
+  if (openFile) return <FileView name={skill.name} agent={agent} path={openFile} onBack={() => setOpenFile(null)} />
 
   return (
     <div className="flex flex-col gap-l">
@@ -109,15 +131,22 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
           library's skill of that name, not the agent's own. */}
       {skill.source !== 'agent-local' && <RefinementsSection name={skill.name} />}
 
-      <IntegritySection skill={skill} />
+      <BundledUpdate skill={skill} onChanged={onSaved} />
+
+      <IntegritySection skill={skill} verify={copy.verify} />
 
       {skill.path && <div className="flex items-start gap-s text-on-surface-low text-[0.75rem]"><FileText size={13} className="shrink-0 mt-0.5" /><span className="font-mono break-all">{skill.path}</span></div>}
 
       {editable && (
         <div className="flex items-center gap-s">
           <Button size="sm" variant="secondary" onClick={() => setEditing(true)}><Pencil size={14} /> Edit SKILL.md</Button>
-          <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete skill</Button>
+          {deletable && <Button size="sm" variant="ghost" onClick={del}><Trash2 size={14} /> Delete skill</Button>}
         </div>
+      )}
+      {bundled && (
+        <p data-type="body-s" className="text-on-surface-low">
+          This skill comes with PersonalClaw. Edit it as you like: when PersonalClaw updates, your version is kept, and a newer one is offered here for you to take or decline.
+        </p>
       )}
       {shared && (
         <p data-type="body-s" className="text-on-surface-low">
@@ -134,10 +163,12 @@ type ReverifyOutcome =
   | { kind: 'error'; message: string }
 
 /** S6 integrity: shows the install-time status from the list, plus a Re-verify action
- *  that re-hashes on-disk files against the .pclaw-lock.json baseline and reports drift.
- *  A skill with no lock (not installed from a marketplace) is "unverified" — expected, not an
- *  error — and the line says why there is none as far as the skill's origin is recorded. */
-function IntegritySection({ skill }: { skill: SkillItem }) {
+ *  that re-hashes on-disk files against the .pclaw-lock.json baseline and names what changed.
+ *  A change is the owner's edit, said as one ("Edited"), never as tampering; only a record that
+ *  cannot be read is ("Can't verify"). A skill with no lock (not installed from a marketplace) is
+ *  "unverified" — expected, not an error — and the line says why there is none as far as the
+ *  skill's origin is recorded. */
+function IntegritySection({ skill, verify: check }: { skill: SkillItem; verify: () => Promise<SkillIntegrity> }) {
   const [outcome, setOutcome] = useState<ReverifyOutcome>({ kind: 'idle' })
   const [busy, setBusy] = useState(false)
   // The row already carries an install-time status; a successful re-verify supersedes it.
@@ -147,7 +178,7 @@ function IntegritySection({ skill }: { skill: SkillItem }) {
   async function verify() {
     setBusy(true)
     try {
-      const data = await api.verifySkill(skill.name)
+      const data = await check()
       setOutcome({ kind: 'ok', at: Date.now(), data })
     }
     catch (e) { setOutcome({ kind: 'error', message: (e as Error).message || 'Re-verification failed' }) }
@@ -155,9 +186,10 @@ function IntegritySection({ skill }: { skill: SkillItem }) {
   }
 
   const tone = status === 'intact' ? 'var(--color-ok)' : status === 'tampered' ? 'var(--color-danger)' : 'var(--color-on-surface-low)'
-  const Icon = status === 'intact' ? ShieldCheck : status === 'tampered' ? ShieldAlert : ShieldQuestion
+  const Icon = status === 'intact' ? ShieldCheck : status === 'tampered' ? ShieldAlert : status === 'edited' ? FilePen : ShieldQuestion
   const label = status === 'intact' ? 'Verified — matches install baseline'
-    : status === 'tampered' ? 'Tampered — files changed since install'
+    : status === 'edited' ? 'Edited — changed since it was installed'
+    : status === 'tampered' ? 'Can’t verify — its install record is damaged, so what was installed is unknown'
     : `Unverified — no install baseline (${noBaselineReason(skill)})`
   const drift = outcome.kind === 'ok' && (outcome.data.mutated.length + outcome.data.missing.length + outcome.data.added.length > 0)
   const outcomeLine = outcome.kind === 'idle' ? ''
@@ -174,18 +206,20 @@ function IntegritySection({ skill }: { skill: SkillItem }) {
         </div>
       </div>
       {outcome.kind === 'ok' && drift && (
-        <div className="mt-2 flex flex-col gap-1 text-[0.75rem] font-mono">
-          {outcome.data.mutated.map((f) => <div key={`m${f}`} className="text-danger">changed: {f}</div>)}
-          {outcome.data.missing.map((f) => <div key={`x${f}`} className="text-danger">missing: {f}</div>)}
-          {outcome.data.added.map((f) => <div key={`a${f}`} className="text-warn">added: {f}</div>)}
+        <div className="mt-s flex flex-col gap-xs text-[0.75rem] font-mono text-on-surface-var">
+          {outcome.data.mutated.map((f) => <div key={`m${f}`}>changed: {f}</div>)}
+          {outcome.data.missing.map((f) => <div key={`x${f}`}>missing: {f}</div>)}
+          {outcome.data.added.map((f) => <div key={`a${f}`}>added: {f}</div>)}
         </div>
       )}
     </Section>
   )
 }
 
-/** Inline SKILL.md editor → GET content, PUT /api/skills/{name} {content} over its revision. */
-function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => void; onSaved: () => void }) {
+/** Inline SKILL.md editor → GET content, PUT /api/skills/{name} {content} over its revision, of the
+ *  copy the row describes (`agent`: that agent's own copy). */
+function SkillEditor({ name, agent, onBack, onSaved }: { name: string; agent?: string; onBack: () => void; onSaved: () => void }) {
+  const copy = copyOf(name, agent)
   // Cache the fetched SKILL.md so reopening the editor paints instantly; local
   // `content` is the editable copy, seeded from the cache when it lands.
   //
@@ -200,8 +234,8 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
   // The read is now the text the file holds, with that text's revision, and the refinements applied
   // on top come with it to be shown under the editor (`skillDocument`). Its own key, the inspector's
   // too, and not the one an older build cached the loaded body under.
-  const key = `skill:own:${name}`
-  const { data: fetched, error: fetchErr, refresh } = useQuery<SkillDocument>(key, () => api.skillDocument(name), { persist: true })
+  const key = `skill:own:${copy.key}`
+  const { data: fetched, error: fetchErr, refresh } = useQuery<SkillDocument>(key, () => copy.document(), { persist: true })
   // The copy `content` was seeded from — the base a save names, so it moves only with a re-seed.
   const [base, setBase] = useState<Revisioned<string> | null>(null)
   const [content, setContent] = useState<string | null>(null)
@@ -215,10 +249,10 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
   // save its copy straight over any of that. A stale copy is refused now, and the edit, which is a
   // text change, is re-applied onto what is stored (`ui/StaleWriteNotice`).
   const guard = useStaleWriteGuard<string>({
-    read: () => api.skillDocument(name),
-    write: (next, revision) => api.updateSkill(name, next, revision),
+    read: () => copy.document(),
+    write: (next, revision) => copy.update(next, revision),
     onSaved: () => {
-      invalidateKeys(key); invalidateKeys(`skill:content:${name}:SKILL.md`); invalidateKeys(`skill:files:${name}`)
+      invalidateKeys(key); invalidateKeys(`skill:content:${copy.key}:SKILL.md`); invalidateKeys(`skill:files:${copy.key}`)
       onSaved()
     },
     onDiscard: () => { invalidateKeys(key); refresh() },
@@ -325,8 +359,53 @@ function AppliedRefinements({ name, refinements, intro, draft }: {
   )
 }
 
-function FileView({ name, path, onBack }: { name: string; path: string; onBack: () => void }) {
-  const { data: content, error } = useQuery<string>(`skill:content:${name}:${path}`, () => api.skillFiles(name, path).then((d) => d.content ?? ''), { persist: true })
+/** A newer version of a skill that comes with PersonalClaw, kept from the owner's changed copy
+ *  (`SkillItem.bundled_update`): hers to take in place of her copy, or to decline. Nothing does
+ *  either for her: an update keeps her copy and says so here. */
+function BundledUpdate({ skill, onChanged }: { skill: SkillItem; onChanged?: () => void }) {
+  const [busy, setBusy] = useState<'' | 'take' | 'keep'>('')
+  const offer = skill.bundled_update
+  if (!offer) return null
+  const settled = () => {
+    invalidateKeys(`skill:own:${skill.name}`); invalidateKeys(`skill:content:${skill.name}:SKILL.md`); invalidateKeys(`skill:files:${skill.name}`)
+    onChanged?.()
+  }
+  async function take(digest: string) {
+    const ok = await confirmDestructive(
+      `Use the version of “${skill.name}” that comes with PersonalClaw?`,
+      'It replaces your copy, with any files you added to it, and your changes are not kept.',
+      { confirmLabel: 'Use the new version' },
+    )
+    if (!ok) return
+    setBusy('take')
+    if (await reportingWrite(`use the new version of "${skill.name}"`, () => api.useBundledSkill(skill.name, digest))) settled()
+    setBusy('')
+  }
+  async function keep(digest: string) {
+    setBusy('keep')
+    if (await reportingWrite(`keep your copy of "${skill.name}"`, () => api.keepSkillCopy(skill.name, digest))) settled()
+    setBusy('')
+  }
+  return (
+    <Section label="Newer version">
+      <p data-type="body-s" className="text-on-surface">
+        A newer version of this skill comes with PersonalClaw. Your copy differs from it, so PersonalClaw kept yours and didn’t update it.
+      </p>
+      <div className="mt-s flex flex-wrap items-center gap-s">
+        <Button size="sm" variant="secondary" onClick={() => void take(offer.digest)} loading={busy === 'take'} disabled={busy !== ''}>
+          <RefreshCw size={14} /> Use the new version
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => void keep(offer.digest)} loading={busy === 'keep'} disabled={busy !== ''}>
+          Keep mine
+        </Button>
+      </div>
+    </Section>
+  )
+}
+
+function FileView({ name, agent, path, onBack }: { name: string; agent?: string; path: string; onBack: () => void }) {
+  const copy = copyOf(name, agent)
+  const { data: content, error } = useQuery<string>(`skill:content:${copy.key}:${path}`, () => copy.files(path).then((d) => d.content ?? ''), { persist: true })
   const err = error ? (error instanceof Error ? error.message : 'failed to load') : ''
 
   const isMd = path.toLowerCase().endsWith('.md')

@@ -170,7 +170,7 @@ describe('noBaselineReason says where a skill came from when anything recorded i
   it('names the other recorded origins instead of guessing', () => {
     expect(noBaselineReason({ source: 'local', provenance: 'taught' })).toBe('taught in a session')
     expect(noBaselineReason({ source: 'local', provenance: 'auto' })).toBe('extracted from session activity')
-    expect(noBaselineReason({ source: 'bundled', provenance: '' })).toBe('bundled with PersonalClaw')
+    expect(noBaselineReason({ source: 'bundled', provenance: '' })).toBe('installed before PersonalClaw kept install records')
   })
 
   it('keeps the either-or only where nothing is recorded (the vacuity control)', () => {

@@ -753,8 +753,10 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/sessions/{id}/agents/{agent_id}/stream` — SSE stream of result file.
 - `DELETE /api/sessions/{key}` — permanently delete a history session.
 - `GET /api/sessions/{key}` — return messages for a session.
-- `GET /api/skills` — list locally installed skills from all discovery paths.
+- `GET /api/skills` — every skill agents get, each row the copy they get.
 - `POST /api/skills` — create a new skill.
+- `POST /api/skills/bundled/keep` — keep the owner's copy over a bundled skill's newer version.
+- `POST /api/skills/bundled/update` — use a bundled skill's newer version over the owner's copy.
 - `GET /api/skills/ephemeral/{session}` — the session-live drafts awaiting a
 - `POST /api/skills/ephemeral/{session}/promote` — promote ONE draft to a tier.
 - `DELETE /api/skills/ephemeral/{session}/{slug}` — forget one draft, or
@@ -767,11 +769,11 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/skills/proposals/{id}` — full proposal incl. procedure + fenced source.
 - `POST /api/skills/proposals/{id}/accept` — refine the skill it names, or add it as a skill.
 - `GET /api/skills/search` — search across all registered skill providers.
-- `DELETE /api/skills/{name}` — remove a skill installed in the home.
+- `DELETE /api/skills/{name}` — remove a skill the home holds.
 - `GET /api/skills/{name}` — get or update a skill. (Listing is served by
 - `PUT /api/skills/{name}` — get or update a skill. (Listing is served by
 - `GET /api/skills/{name}/files` — provider-backed file browser.
-- `POST /api/skills/{name}/verify` — S6 integrity lint for one installed skill.
+- `POST /api/skills/{name}/verify` — compare one skill with its install record.
 - `GET /api/slash-commands` — the slash commands the composer "/" menu offers.
 - `DELETE /api/spawn` — clear all completed subagents.
 - `GET /api/spawn` — list all subagents.

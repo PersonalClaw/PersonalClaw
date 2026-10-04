@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fvs } from '../../design/fontWeight'
-import { Sparkles, Search, Zap, Store, Download, Loader2, Plus, ShieldCheck, ShieldAlert, Lightbulb, GraduationCap } from 'lucide-react'
+import { Sparkles, Search, Zap, Store, Download, Loader2, Plus, ShieldCheck, ShieldAlert, Lightbulb, GraduationCap, FilePen, RefreshCw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Button } from '../../ui/Button'
@@ -193,8 +193,12 @@ function Installed({ onBrowse, onProposals, query, setQuery }: { onBrowse: () =>
                         <span className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{s.name}</span>
                         {s.always && <span className="shrink-0 inline-flex items-center gap-1 text-warn text-[0.75rem]" title="Always loaded"><Zap size={11} /> always</span>}
                         {s.integrity === 'intact' && <ShieldCheck size={12} className="shrink-0 text-ok" aria-label="Integrity verified" role="img" />}
-                        {s.integrity === 'tampered' && <span className="shrink-0 inline-flex items-center gap-1 text-danger text-[0.75rem]" title="Integrity check failed — files changed since install"><ShieldAlert size={11} /> tampered</span>}
-                        {/* Provenance rides with `always`/`tampered` rather than beside the source
+                        {/* `edited` is the owner's change since the skill was installed, said plainly; only a
+                            damaged install record is a warning, since then nothing can say what was installed. */}
+                        {s.integrity === 'edited' && <span className="shrink-0 inline-flex items-center gap-xs text-on-surface-low text-[0.75rem]" title="Changed since it was installed"><FilePen size={11} /> edited</span>}
+                        {s.integrity === 'tampered' && <span className="shrink-0 inline-flex items-center gap-xs text-danger text-[0.75rem]" title="Its install record is damaged, so PersonalClaw can’t tell what was installed"><ShieldAlert size={11} /> can’t verify</span>}
+                        {s.bundled_update && <span className="shrink-0 inline-flex items-center gap-xs text-info text-[0.75rem]" title="A newer version comes with PersonalClaw. Yours was kept: open the skill to take it or keep yours."><RefreshCw size={11} /> new version</span>}
+                        {/* Provenance rides with `always`/`edited` rather than beside the source
                             chip: it is a fact about THIS skill's origin, not the tier badge, and
                             these markers already render only when they apply — a hand-authored
                             skill adds nothing, which is most rows. Raw semantic ink, no tint, so

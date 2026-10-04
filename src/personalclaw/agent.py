@@ -297,45 +297,6 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
-def _all_skill_paths() -> list[str]:
-    """Discover all skill directories.
-
-    Returns directories containing SKILL.md files from (in priority order):
-    - ``PERSONALCLAW_PROJECT_DIR/skills`` (project-level, highest priority)
-    - ``<home>/skills`` (installed and user-created)
-    - ``~/.agents/skills/`` (the folder AI tools share), only once the owner allowed it
-    - Package-bundled skills (lowest priority, always available)
-    """
-    paths: set[str] = set()
-    # Project-level skills (highest priority — project overrides user)
-    proj = _project_dir()
-    if proj:
-        sd = proj / "skills"
-        if sd.is_dir():
-            paths.add(str(sd))
-    # User-created skills under the configured config dir (respects PERSONALCLAW_HOME).
-    # Must match the path used by SkillsLoader (personalclaw/skills/loader.py) so
-    # skills written by api_skills_create are visible to api_skills_list.
-    from personalclaw.skills.loader import skills_dir as _user_skills_dir
-
-    user_skills = _user_skills_dir()
-    if user_skills.is_dir():
-        paths.add(str(user_skills))
-    # The folder AI tools share, read only when the owner allowed it (outside the home).
-    from personalclaw import outside_home
-
-    shared = outside_home.place_path(outside_home.AGENT_SKILLS)
-    if shared is not None and shared.is_dir():
-        paths.add(str(shared))
-    # Package-bundled skills (always available as baseline)
-    from personalclaw.skills.native import _bundled_root
-
-    bundled = _bundled_root()
-    if bundled.is_dir():
-        paths.add(str(bundled))
-    return sorted(paths)
-
-
 def _inject_skill_paths(bm: dict, skill_paths: list[str]) -> None:
     """Strip existing --skill-paths from ACP agent args and inject valid ones."""
     args = list(bm.get("args", []))

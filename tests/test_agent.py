@@ -61,7 +61,6 @@ def _run_install(tmp_path: Path, cfg_dir: Path, managed_mcps: dict | None = None
         patch("personalclaw.agent._prompt_path", return_value=prompt),
         patch("personalclaw.agent._shipped_defaults", return_value=cfg_dir / "defaults.json"),
         patch("personalclaw.agent._project_dir", return_value=None),
-        patch("personalclaw.agent._all_skill_paths", return_value=[]),
         patch("personalclaw.agent.shutil.which", side_effect=lambda c, **kw: c),
         # Patched at definition site: agent.py uses a local `from personalclaw.config import
         # config_path` inside function bodies, so the from-import re-resolves each call.
@@ -689,7 +688,6 @@ class TestAgentHooksMerge:
             patch("personalclaw.agent._prompt_path", return_value=prompt),
             patch("personalclaw.agent._shipped_defaults", return_value=cfg_dir / "defaults.json"),
             patch("personalclaw.agent._project_dir", return_value=None),
-            patch("personalclaw.agent._all_skill_paths", return_value=[]),
             patch("personalclaw.agent.shutil.which", side_effect=lambda c, **kw: c),
             patch("personalclaw.config.config_path", return_value=pc_config),
         ]

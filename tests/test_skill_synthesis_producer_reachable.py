@@ -54,10 +54,10 @@ def isolated(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def skill_root(tmp_path, monkeypatch):
+def skill_root(tmp_path):
+    """The home's library (the ``isolated`` home above is ``tmp_path``)."""
     root = tmp_path / "skills"
     root.mkdir()
-    monkeypatch.setattr("personalclaw.agent._all_skill_paths", lambda: [str(root)])
     return root
 
 

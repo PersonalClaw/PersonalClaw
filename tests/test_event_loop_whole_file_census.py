@@ -140,12 +140,6 @@ STILL_ON_THE_LOOP: dict[tuple[str, str, str], str] = {
     ("dashboard/handlers/apps.py", "api_apps_list", "ui_revision"): (
         "hashes the entry files of each app's interface, for its revision"
     ),
-    ("dashboard/handlers/skills.py", "api_skill_verify", "verify_skill_integrity"): (
-        "hashes a skill's files to check them against its install record"
-    ),
-    ("dashboard/handlers/skills.py", "api_skills_list", "verify_skill_integrity"): (
-        "hashes each listed skill's files to check them against its install record"
-    ),
     ("dashboard/handlers/packs.py", "api_pack_bundled_install", "import_pack"): _PACK_FILES,
     ("dashboard/handlers/packs.py", "api_pack_one_link", "import_onelink"): _PACK_FILES,
     ("dashboard/handlers/packs.py", "api_pack_update", "apply_update"): _PACK_FILES,

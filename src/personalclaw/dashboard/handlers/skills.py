@@ -1,13 +1,16 @@
 """Skills marketplace API handlers.
 
 Routes:
-    GET  /api/skills                             — list locally installed skills
+    GET  /api/skills                             — list the skills agents get, as the copy they get
     GET  /api/skills/marketplaces                — list registered marketplaces
     GET  /api/skills/search?q=...&marketplace=.. — search a marketplace
     POST /api/skills/install                     — install a skill
+    POST /api/skills/bundled/update              — use the newer version of a bundled skill
+    POST /api/skills/bundled/keep                — keep the owner's copy over it
     DELETE /api/skills/:name                     — remove a local skill
 """
 
+import asyncio
 import fnmatch
 import logging
 import shutil
@@ -191,80 +194,100 @@ def _synthesis_producer(key: str, provenance: str) -> dict[str, str] | None:
     return {"producer_kind": "skill_synthesis", "producer_id": key}
 
 
-async def api_skills_list(request: web.Request) -> web.Response:
-    """GET /api/skills — list locally installed skills from all discovery paths.
+def _integrity_and_offer(
+    folder: Path, name: str, offers: Any | None
+) -> tuple[str, dict[str, str] | None, str]:
+    """A library copy's integrity, the newer version that comes with PersonalClaw offered over it
+    (``{"digest"}``, or ``None``), and its record's source (``""`` for none or a damaged one)."""
+    from personalclaw.skills.marketplace import (
+        DamagedInstallRecord,
+        install_record,
+        verify_skill_integrity,
+    )
 
-    Each skill carries an ``integrity`` field from the S6 lint (``verify_skill_integrity``):
-    ``intact`` (on-disk hashes match the install-time ``.pclaw-lock.json`` baseline),
-    ``tampered`` (a locked file changed/went missing or an unexpected file appeared), or
-    ``unverified`` (no lock — any skill not installed from a marketplace, not a failure).
+    rep = verify_skill_integrity(folder)
+    try:
+        record = install_record(folder)
+    except DamagedInstallRecord:
+        record = None
+    source = record.source if record is not None else ""
+    digest = offers(name, current=rep.digest) if offers is not None else None
+    return rep.state, ({"digest": digest} if digest else None), source
+
+
+async def api_skills_list(request: web.Request) -> web.Response:
+    """GET /api/skills — every skill agents get, each row the copy they get.
+
+    The rows follow ``SkillsLoader``'s own order, the one rule for which copy of a skill wins:
+    the library in the home (``source`` ``local``, or ``bundled`` for a skill that comes with
+    PersonalClaw), then the folder other AI tools share once the owner allows it (``shared``);
+    a name in both is the library's. Each agent's own copies follow as ``agent-local`` rows. The
+    package's own copy of a bundled skill is never a row: no agent reads it, and each start
+    copies it into the library (``skills.shipped``), where agents read it and the owner edits it.
+
+    ``integrity`` is the copy's files against its install record (``verify_skill_integrity``):
+    ``intact``, ``edited`` (changed since it was installed: the owner's edit, never called
+    tampering), ``tampered`` (its record is there and cannot be read) or ``unverified`` (no
+    record).
+
+    ``bundled_update`` is, for a bundled skill whose copy the owner changed, the newer version
+    that comes with PersonalClaw: ``{"digest"}``, what ``POST /api/skills/bundled/update`` takes
+    to install it, and ``null`` on every other row. Her copy is kept; taking the version or
+    keeping hers (``POST /api/skills/bundled/keep``) is hers to do.
 
     Each also carries ``provenance`` — ``auto`` (extracted), ``taught`` (promoted from a
     session draft), ``dashboard`` (created with New skill), or ``""`` (nothing recorded) —
-    read from the file's own frontmatter and kept separate from the directory-derived
-    ``source``; see ``_parse_provenance``.
+    read from the file's own frontmatter and kept separate from the tier in ``source``; see
+    ``_parse_provenance``.
 
     An ``auto`` skill additionally carries ``feedback_producer`` (see
     :func:`_synthesis_producer`) so the inspector's ``synthesized_skill`` thumbs attribute a
     verdict to the synthesizer with no lookup — the identity Feedback-Signal's one enforced
-    suppression gate keys on."""
-    from personalclaw import outside_home
-    from personalclaw.agent import _all_skill_paths
-    from personalclaw.skills.loader import iter_skill_files
-    from personalclaw.skills.marketplace import _parse_description, verify_skill_integrity
-    from personalclaw.skills.native import _bundled_root
+    suppression gate keys on.
 
-    bundled_path = str(_bundled_root())
-    # The folder AI tools share, when the owner lets PersonalClaw read it: its skills are listed
-    # as `shared`, read-only here, because nothing there is PersonalClaw's to edit or delete.
-    shared = outside_home.place_path(outside_home.AGENT_SKILLS)
-    shared_path = str(shared) if shared is not None else None
+    Off the event loop: each row hashes its skill's files."""
+    return web.json_response(await asyncio.to_thread(_skill_rows))
 
+
+def _skill_rows() -> list[dict[str, Any]]:
+    """The rows of ``GET /api/skills`` (:func:`api_skills_list`)."""
+    from personalclaw.skills import shipped
+    from personalclaw.skills.loader import SkillsLoader, skills_dir
+    from personalclaw.skills.marketplace import _parse_description
+
+    library = skills_dir()
+    offers = shipped.Offers(library)
     skills: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for base_str in _all_skill_paths():
-        base = Path(base_str)
-        if not base.is_dir():
-            continue
-        is_bundled = base_str == bundled_path
-        is_shared = base_str == shared_path
-        # 🔴 `iter_skill_files` — the LOADER's own enumeration, shared rather than re-derived.
-        # This walked ONE level with `iterdir()`, so a NAMESPACE directory — `auto/`, which holds
-        # every accepted skill proposal and has no `SKILL.md` of its own — was skipped whole.
-        # Three `auto/*` skills were loaded into every agent's context
-        # while `GET /api/skills` reported none of them, so they were un-inspectable and
-        # un-deletable from the UI (#302). The loader and the listing must agree about what a skill
-        # is; they were two answers to that question and only one of them decided what the user
-        # could see. Calling the loader's function is what makes them agree by construction — a
-        # second recursive copy here would just be a divergence waiting to happen.
-        #
-        # `name` is the path RELATIVE to the base, so `auto/loop-worker` keeps its namespace — which
-        # is what `SkillsLoader` calls it, what the delete route takes, and what
-        # `_loaded_by_agents` matches on. A bare basename would collide `auto/x` with a
-        # top-level `x` and make the dedup set drop one of them.
-        for name, skill_md in iter_skill_files(base):
-            entry = skill_md.parent
-            if name in seen:
-                continue
-            seen.add(name)
-            rep = verify_skill_integrity(entry)
-            integrity = "unverified" if rep.unlocked else ("intact" if rep.ok else "tampered")
-            provenance = _parse_provenance(skill_md)
-            row: dict[str, Any] = {
-                "key": name,
-                "name": name,
-                "description": _parse_description(skill_md),
-                "always": _parse_always(skill_md),
-                "path": str(skill_md),
-                "source": "bundled" if is_bundled else ("shared" if is_shared else "local"),
-                "provenance": provenance,
-                "type": "bundled" if is_bundled else ("read-only" if is_shared else "installed"),
-                "integrity": integrity,
-            }
-            producer = _synthesis_producer(name, provenance)
-            if producer is not None:
-                row["feedback_producer"] = producer
-            skills.append(row)
+    # 🔴 THE LOADER'S OWN ORDER AND ENUMERATION (`list_skills`), shared rather than re-derived. The
+    # listing walked its own folders, sorted by path, and listed the package's copy of each bundled
+    # skill: a row described whichever copy's folder sorted first while agents loaded another,
+    # and a NAMESPACE directory (`auto/`) was once skipped whole by a one-level walk (#302). The
+    # loader and the listing must agree about what a skill is and which copy is it.
+    for listed in SkillsLoader(install_builtins=False).list_skills():
+        name = listed["key"]
+        skill_md = Path(listed["path"])
+        in_library = library in skill_md.parents
+        integrity, update, recorded = _integrity_and_offer(
+            skill_md.parent, name, offers if in_library else None
+        )
+        bundled = in_library and offers.ships(name) and recorded in ("", shipped.SOURCE)
+        provenance = _parse_provenance(skill_md)
+        row: dict[str, Any] = {
+            "key": name,
+            "name": name,
+            "description": _parse_description(skill_md),
+            "always": _parse_always(skill_md),
+            "path": str(skill_md),
+            "source": "bundled" if bundled else ("local" if in_library else "shared"),
+            "provenance": provenance,
+            "type": "bundled" if bundled else ("installed" if in_library else "read-only"),
+            "integrity": integrity,
+            "bundled_update": update,
+        }
+        producer = _synthesis_producer(name, provenance)
+        if producer is not None:
+            row["feedback_producer"] = producer
+        skills.append(row)
     # Annotate which agents load each skill (PersonalClaw Agent entity).
     by_agent = _loaded_by_agents([s["key"] for s in skills])
     for s in skills:
@@ -299,9 +322,7 @@ async def api_skills_list(request: web.Request) -> web.Response:
             # directory shape as the global one, so a one-level walk hid a nested agent-local
             # skill exactly the way it hid `auto/*` above (#302's fourth site).
             for skill_name, skill_md in iter_skill_files(adir):
-                entry = skill_md.parent
-                rep = verify_skill_integrity(entry)
-                integrity = "unverified" if rep.unlocked else ("intact" if rep.ok else "tampered")
+                integrity, _, _ = _integrity_and_offer(skill_md.parent, skill_name, None)
                 skills.append(
                     {
                         "key": f"{ag_name}/{skill_name}",
@@ -313,13 +334,14 @@ async def api_skills_list(request: web.Request) -> web.Response:
                         "provenance": _parse_provenance(skill_md),
                         "type": "agent-local",
                         "integrity": integrity,
+                        "bundled_update": None,
                         "agent": ag_name,
                         "loaded_by_agents": [ag_name],
                     }
                 )
     except Exception:
         logger.debug("agent-local skill listing failed", exc_info=True)
-    return web.json_response(skills)
+    return skills
 
 
 async def api_skills_marketplaces(request: web.Request) -> web.Response:
@@ -457,7 +479,7 @@ def search_marketplaces_counted(
     🔴 Already-installed hits are ANNOTATED (``SkillEntry.installed``), never withheld.
     Dropping them read as "no results" for every query a stock install can make (#301):
     the gateway copies the whole bundled tree into the user's skills dir at startup
-    (``skills/loader.py:_ensure_builtin_skills``) and the ``native`` marketplace is
+    (``skills/shipped.py:sync``) and the ``native`` marketplace is
     registered against that same bundled dir, so ``native``'s ids were ALWAYS a subset of
     the installed set and the filter emptied the catalogue structurally rather than
     occasionally. It also inverted this endpoint's documented contract — an unscoped
@@ -553,31 +575,35 @@ def _safe_skill_name(name: str) -> bool:
     return bool(name) and ".." not in name and "\\" not in name and not name.startswith("/")
 
 
-def _resolve_skill_root(name: str) -> Path | None:
-    """Return the discovery dir that owns ``<name>/SKILL.md``, or None.
+def _row_loader(request: web.Request) -> Any:
+    """The loader a Skills page row's routes resolve through: the agent's (``?agent=``) for the
+    row of an agent's own skill, so it reaches that agent's copy; the library's otherwise."""
+    from personalclaw.skills.loader import SkillsLoader
 
-    Mirrors ``api_skills_list``: the first match across ``_all_skill_paths()`` wins.
-    """
-    from personalclaw.agent import _all_skill_paths
+    agent = request.rel_url.query.get("agent", "").strip()
+    return SkillsLoader(install_builtins=False, agent=agent or None)
 
-    for base_str in _all_skill_paths():
-        base = Path(base_str)
-        if (base / name / "SKILL.md").is_file():
-            return base
-    return None
+
+def _skill_folder(request: web.Request, name: str) -> Path | None:
+    """The folder of the copy of ``name`` the row describes, by the loader's own order (the one
+    the list follows), or None."""
+    skill_md = _row_loader(request).skill_file(name)
+    return skill_md.parent if skill_md is not None else None
 
 
 async def api_skill_files(request: web.Request) -> web.Response:
-    """GET /api/skills/{name}/files[?path=<rel>] — provider-backed file browser.
+    """GET /api/skills/{name}/files[?path=<rel>][&agent=<agent>] — provider-backed file browser.
 
     No ``path``: return the skill's file tree ``{name, files: [{path, size}]}``
     (contents omitted). With ``path``: return that one file ``{name, path,
-    content}``. Reads go through the Skills entity provider's ``fetch()``, which
-    only ever enumerates under one resolved skill root — that single-root read
-    is the containment boundary. ``is_sensitive_path`` + size/entry caps are the
+    content}``. The files are those of the copy the row describes (:func:`_skill_folder`): the
+    agent's own with ``agent``, the copy agents get otherwise. Reads go through the Skills entity
+    provider's ``fetch()``, which only ever enumerates under that one folder — that single-root
+    read is the containment boundary. ``is_sensitive_path`` + size/entry caps are the
     defense-in-depth backstop. Every access (incl. rejections) is SEL-audited.
     """
     from personalclaw.security import is_sensitive_path
+    from personalclaw.skills.marketplace import LOCK_FILENAME
     from personalclaw.skills.native import NativeSkillsMarketplace
 
     name = request.match_info["name"]
@@ -587,28 +613,27 @@ async def api_skill_files(request: web.Request) -> web.Response:
         _sel_log("skills.files", "denied", f"unsafe:{name}:{rel}", request)
         return web.json_response({"error": "invalid skill or path"}, status=400)
 
-    root = _resolve_skill_root(name)
-    if root is None:
+    skill_dir = _skill_folder(request, name)
+    if skill_dir is None:
         _sel_log("skills.files", "denied", f"notfound:{name}", request)
         return web.json_response({"error": f"Skill '{name}' not found"}, status=404)
 
     try:
-        detail = NativeSkillsMarketplace(root=root).fetch(name)
+        detail = NativeSkillsMarketplace(root=skill_dir.parent).fetch(skill_dir.name)
     except Exception:
         _sel_log("skills.files", "denied", f"fetch-failed:{name}", request)
         return web.json_response({"error": f"Skill '{name}' not found"}, status=404)
-
-    skill_dir = root / name
 
     def _is_sensitive(entry_path: str) -> bool:
         return is_sensitive_path(str(skill_dir / entry_path))
 
     if not rel:
-        # Tree view — paths + sizes, sensitive entries dropped, capped.
+        # Tree view — paths + sizes, sensitive entries dropped, capped. The install record is not
+        # one of the skill's files (it describes them, and Integrity reads it), so it is not listed.
         files: list[dict[str, Any]] = []
         for f in detail.files:
             p = f.get("path", "")
-            if not p or _is_sensitive(p):
+            if not p or p == LOCK_FILENAME or _is_sensitive(p):
                 continue
             files.append({"path": p, "size": len(f.get("contents", "").encode("utf-8"))})
             if len(files) >= SKILL_FILES_MAX:
@@ -699,35 +724,38 @@ async def api_skills_install(request: web.Request) -> web.Response:
 
 
 async def api_skills_delete(request: web.Request) -> web.Response:
-    """DELETE /api/skills/:name — remove a skill installed in the home.
+    """DELETE /api/skills/:name[?agent=<agent>] — remove a skill the home holds.
 
-    Only ``<home>/skills/<name>`` is ever removed. A skill that lives anywhere else (the folder AI
-    tools share, a project's skills, the bundled set) is not PersonalClaw's to delete: 409, and
-    the folder is left exactly as it is."""
+    With ``agent``: that agent's own copy, and only it (the library's skill of the same name is
+    another skill). Without: the copy agents get (the loader's order, which the list follows),
+    when it is in the home's library. A skill that lives anywhere else (the folder AI tools
+    share) is not PersonalClaw's to delete: 409, and the folder is left exactly as it is. A
+    folder that holds skills but is not one (``auto/``) is not a skill, and is not found."""
     name = request.match_info["name"]
     # Reject path-traversal before any rmtree — ``name`` is a single URL segment
     # but ``..`` alone still resolves to a skill dir's parent.
     if not _safe_skill_name(name):
         _sel_log("skills.delete", "denied", f"unsafe:{name}", request)
         return web.json_response({"error": "invalid skill name"}, status=400)
-    from personalclaw.agent import _all_skill_paths
-    from personalclaw.skills.loader import skills_dir
+    from personalclaw.skills.loader import agent_skills_dir, skills_dir
 
-    skill_dir = skills_dir() / name
-    if skill_dir.is_dir():
-        shutil.rmtree(skill_dir)
-        _sel_log("skills.delete", "ok", name, request)
-        return web.json_response({"ok": True, "removed": str(skill_dir)})
-
-    elsewhere = next(
-        (Path(base) / name for base in _all_skill_paths() if (Path(base) / name).is_dir()), None
-    )
-    if elsewhere is not None:
+    agent = request.rel_url.query.get("agent", "").strip()
+    home = agent_skills_dir(agent) if agent else skills_dir()
+    if agent:
+        own = home / name
+        folder = own if (own / "SKILL.md").is_file() else None
+    else:
+        folder = _skill_folder(request, name)
+    if folder is not None and home in folder.parents:
+        shutil.rmtree(folder)
+        _sel_log("skills.delete", "ok", f"{agent}:{name}" if agent else name, request)
+        return web.json_response({"ok": True, "removed": str(folder)})
+    if folder is not None:
         _sel_log("skills.delete", "denied", f"outside-home:{name}", request)
         return web.json_response(
             {
                 "error": (
-                    f"Skill '{name}' is in {elsewhere.parent}, outside PersonalClaw's home, so "
+                    f"Skill '{name}' is in {folder.parent}, outside PersonalClaw's home, so "
                     "PersonalClaw does not delete it. Remove it there if you no longer want it."
                 )
             },
@@ -737,32 +765,35 @@ async def api_skills_delete(request: web.Request) -> web.Response:
 
 
 async def api_skill_verify(request: web.Request) -> web.Response:
-    """POST /api/skills/:name/verify — S6 integrity lint for one installed skill.
+    """POST /api/skills/:name/verify[?agent=<agent>] — compare one skill with its install record.
 
-    Compares on-disk file hashes against the install-time ``.pclaw-lock.json`` baseline
-    and returns the drift (``mutated``/``missing``/``added``) so a tamper is visible from
-    the dashboard, not just the CLI. ``unlocked`` = no baseline (bundled/hand-placed)."""
+    The copy the row describes (:func:`_skill_folder`), its files hashed against the install
+    record (``.pclaw-lock.json``) and the difference named (``mutated``/``missing``/``added``):
+    ``integrity`` is ``intact``, ``edited`` (the owner's edit, never called tampering),
+    ``tampered`` (a damaged record) or ``unverified`` (no record)."""
     name = request.match_info["name"]
     if not _safe_skill_name(name):
         _sel_log("skills.verify", "denied", f"unsafe:{name}", request)
         return web.json_response({"error": "invalid skill name"}, status=400)
 
-    root = _resolve_skill_root(name)
-    if root is None:
+    folder = _skill_folder(request, name)
+    if folder is None:
         _sel_log("skills.verify", "denied", f"notfound:{name}", request)
         return web.json_response({"error": f"Skill '{name}' not found"}, status=404)
 
-    from personalclaw.skills.marketplace import verify_skill_integrity
+    from personalclaw.skills.marketplace import TAMPERED, verify_skill_integrity
 
-    rep = verify_skill_integrity(root / name)
-    status = "unverified" if rep.unlocked else ("intact" if rep.ok else "tampered")
+    rep = await asyncio.to_thread(verify_skill_integrity, folder)
     _sel_log(
-        "skills.verify", "ok" if rep.ok or rep.unlocked else "tampered", f"{name}:{status}", request
+        "skills.verify",
+        "tampered" if rep.state == TAMPERED else "ok",
+        f"{name}:{rep.state}",
+        request,
     )
     return web.json_response(
         {
             "name": name,
-            "integrity": status,
+            "integrity": rep.state,
             "ok": rep.ok,
             "unlocked": rep.unlocked,
             "mutated": rep.mutated,
@@ -771,6 +802,61 @@ async def api_skill_verify(request: web.Request) -> web.Response:
             "summary": rep.summary(),
         }
     )
+
+
+async def api_skill_bundled_update(request: web.Request) -> web.Response:
+    """POST /api/skills/bundled/update — use a bundled skill's newer version over the owner's copy.
+
+    The version of a skill that comes with PersonalClaw, in place of the owner's copy of it. Body
+    ``{name, digest}``: ``digest`` is the version she was offered (the list's
+    ``bundled_update.digest``), so what is installed is the version she saw offered, exactly, and
+    her copy is replaced by it. 404 ``not_found``: PersonalClaw ships no skill of that name.
+    409 ``skill_bundled_version_changed``: the version that ships now is another (PersonalClaw was
+    updated since the offer was read), and nothing changed. 500 ``skill_bundled_update_failed``:
+    it could not be installed, and her copy is as it was."""
+    from personalclaw.skills import shipped
+    from personalclaw.skills.loader import skills_dir
+
+    body = await json_object_body(request)
+    name = require_string(body, "name")
+    digest = require_string(body, "digest")
+    try:
+        await asyncio.to_thread(shipped.use_shipped, skills_dir(), name, digest)
+    except shipped.NotShipped:
+        return json_error(
+            "not_found", message=f"No skill named {name!r} comes with PersonalClaw.", status=404
+        )
+    except shipped.VersionChanged:
+        return json_error("skill_bundled_version_changed", status=409)
+    except shipped.NotInstalled:
+        _sel_log("skills.bundled_update", "error", name, request)
+        return json_error("skill_bundled_update_failed", status=500)
+    _sel_log("skills.bundled_update", "ok", name, request)
+    return web.json_response({"ok": True, "name": name})
+
+
+async def api_skill_bundled_keep(request: web.Request) -> web.Response:
+    """POST /api/skills/bundled/keep — keep the owner's copy over a bundled skill's newer version.
+
+    The owner's copy of a skill that comes with PersonalClaw, over the version offered. Body
+    ``{name, digest}``, the version offered: it is not offered again, and a later version
+    is. Her copy is not touched. 404 ``not_found`` and 409 ``skill_bundled_version_changed`` as
+    for ``…/update``, recording nothing."""
+    from personalclaw.skills import shipped
+
+    body = await json_object_body(request)
+    name = require_string(body, "name")
+    digest = require_string(body, "digest")
+    try:
+        await asyncio.to_thread(shipped.keep_own, name, digest)
+    except shipped.NotShipped:
+        return json_error(
+            "not_found", message=f"No skill named {name!r} comes with PersonalClaw.", status=404
+        )
+    except shipped.VersionChanged:
+        return json_error("skill_bundled_version_changed", status=409)
+    _sel_log("skills.bundled_keep", "declined", name, request)
+    return web.json_response({"ok": True, "name": name})
 
 
 async def api_skill_overlay_revert(request: web.Request) -> web.Response:

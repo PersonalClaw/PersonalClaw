@@ -45,11 +45,12 @@ def _make_skill(root: Path, name: str, frontmatter: str) -> Path:
 
 
 @pytest.fixture
-def skill_root(tmp_path, monkeypatch):
-    """A single global skill discovery root, wired into `_all_skill_paths`."""
-    root = tmp_path / "skills"
-    root.mkdir()
-    monkeypatch.setattr("personalclaw.agent._all_skill_paths", lambda: [str(root)])
+def skill_root():
+    """The home's library, the global tier the listing reads first."""
+    from personalclaw.skills.loader import skills_dir
+
+    root = skills_dir()
+    root.mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -251,6 +252,7 @@ def test_the_marked_body_passes_the_same_check_an_edit_applies(skill_root):
     read = MagicMock()
     read.method = "GET"
     read.match_info = {"name": "q4-release-checklist"}
+    read.query = {}
     read.app = app
     got = json.loads(asyncio.run(api_skill_detail(read)).body)
     stored = got["content"]
@@ -258,6 +260,7 @@ def test_the_marked_body_passes_the_same_check_an_edit_applies(skill_root):
     req = MagicMock()
     req.method = "PUT"
     req.match_info = {"name": "q4-release-checklist"}
+    req.query = {}
     req.headers = {"If-Match": got["revision"]}
 
     async def _json():

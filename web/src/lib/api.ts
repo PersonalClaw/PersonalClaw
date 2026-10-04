@@ -132,6 +132,15 @@ const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) => wr
 const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('PATCH', p, body, extra)
 const del = (p: string) => refuseIfSignedOut() ?? withFreshSignIn(() => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }))
 
+/** The query of a skill's route: a file `path`, and the `agent` whose own copy it addresses. */
+const skillQuery = (fields: { path?: string; agent?: string }): string => {
+  const q = new URLSearchParams()
+  if (fields.path) q.set('path', fields.path)
+  if (fields.agent) q.set('agent', fields.agent)
+  const text = q.toString()
+  return text ? `?${text}` : ''
+}
+
 /** A memory route asked about one folder's memory (`?partition=<id>`, an id
  *  `memoryPartitions` lists), or about the memory every chat shares when `partition` is "". */
 const inMemory = (path: string, partition = '') =>
@@ -2889,7 +2898,14 @@ export interface PromptSyntax { functions: PromptSyntaxFn[]; constructs: PromptS
  *  ('skill_synthesis', key) identity the inspector's thumbs attribute to. Absent on taught and
  *  hand-authored skills: a verdict there would retire the extractor over a skill the user chose
  *  themselves. Read it, never derive it — the server decides which skills carry one. */
-export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; provenance?: 'dashboard' | 'auto' | 'taught' | ''; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string; feedback_producer?: FeedbackProducer }
+/** A skill's files against its install record. `edited`: changed since it was installed, which is
+ *  the owner's edit and never called tampering; `tampered`: the record itself is damaged, so nothing
+ *  can say what was installed; `unverified`: it has no record. */
+export type SkillIntegrityState = 'intact' | 'edited' | 'tampered' | 'unverified'
+/** One row of `GET /api/skills`: the copy of the skill agents get. `bundled_update` is, for a skill
+ *  that comes with PersonalClaw whose copy the owner changed, the newer version kept from her copy
+ *  (its `digest` is what taking it consents to), and `null` on every other row. */
+export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; provenance?: 'dashboard' | 'auto' | 'taught' | ''; type: string; loaded_by_agents: string[]; integrity?: SkillIntegrityState; agent?: string; feedback_producer?: FeedbackProducer; bundled_update?: { digest: string } | null }
 /** One accepted refinement of a skill. `text` is its block exactly as the skill loads it, added after
  *  the skill's own text; `id` names it across a revert of another, whose `version` (its place in the
  *  list, 1-based) moves. */
@@ -2928,7 +2944,7 @@ export interface LearningSummary {
   pending_proposals: LearningSummaryGroup
   facts: LearningSummaryGroup
 }
-export interface SkillIntegrity { name: string; integrity: 'intact' | 'tampered' | 'unverified'; ok: boolean; unlocked: boolean; mutated: string[]; missing: string[]; added: string[]; summary: string }
+export interface SkillIntegrity { name: string; integrity: SkillIntegrityState; ok: boolean; unlocked: boolean; mutated: string[]; missing: string[]; added: string[]; summary: string }
 export interface SkillFile { path: string; size: number }
 export interface SkillMarketplace { name: string; type: string }
 /** `installed` is the server's answer to "is this already in my skills dir" — an ANNOTATION on a
@@ -9481,11 +9497,13 @@ export const api = {
 
   // skills
   skills: () => get<SkillItem[]>('/api/skills'),
-  skillFiles: (name: string, path?: string) => get<{ name: string; files?: SkillFile[]; path?: string; content?: string }>(`/api/skills/${encodeURIComponent(name)}/files${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  // A skill's routes address the copy its row describes: with `agent`, that agent's own copy (an
+  // `agent-local` row), and otherwise the copy agents get.
+  skillFiles: (name: string, path?: string, agent?: string) => get<{ name: string; files?: SkillFile[]; path?: string; content?: string }>(`/api/skills/${encodeURIComponent(name)}/files${skillQuery({ path, agent })}`),
   // The skill's own text — what its SKILL.md holds, and what the editor saves — with the revision the
   // same read reported for it, plus the refinements applied on top and the body a session loads.
-  skillDocument: (name: string) =>
-    get<{ content: string; revision: string; refinements: SkillRefinement[]; loaded: string }>(`/api/skills/${encodeURIComponent(name)}`).then(
+  skillDocument: (name: string, agent?: string) =>
+    get<{ content: string; revision: string; refinements: SkillRefinement[]; loaded: string }>(`/api/skills/${encodeURIComponent(name)}${skillQuery({ agent })}`).then(
       (d): SkillDocument => ({ value: d.content, revision: d.revision, refinements: d.refinements, loaded: d.loaded })),
   // The read-only view: the skill as a session is given it, its accepted refinements included.
   skillContent: (name: string) => api.skillDocument(name).then((d) => d.loaded),
@@ -9493,14 +9511,19 @@ export const api = {
   // Replaces the skill's own text, which the gateway also rewrites (the curator, a consolidation, app
   // and pack updates) — so it names the revision of the copy it was built from. A refinement is never
   // written into it: one copied into `content` word for word is left out, as it is applied on top.
-  updateSkill: (name: string, content: string, base: string) =>
-    put<{ ok: boolean; revision: string }>(`/api/skills/${encodeURIComponent(name)}`, { content }, basedOn(base)),
+  updateSkill: (name: string, content: string, base: string, agent?: string) =>
+    put<{ ok: boolean; revision: string }>(`/api/skills/${encodeURIComponent(name)}${skillQuery({ agent })}`, { content }, basedOn(base)),
   // Revert ONE accepted refinement (its `id` from the skill's read): the skill loads without it from
   // then on. Answers the refinements still applied.
   revertSkillRefinement: (name: string, refinement: string) =>
     post<{ ok: boolean; reverted: number; refinements: SkillRefinement[] }>('/api/skills/overlay/revert', { name, refinement }),
-  deleteSkill: (name: string) => del(`/api/skills/${encodeURIComponent(name)}`),
-  verifySkill: (name: string) => post<SkillIntegrity>(`/api/skills/${encodeURIComponent(name)}/verify`),
+  deleteSkill: (name: string, agent?: string) => del(`/api/skills/${encodeURIComponent(name)}${skillQuery({ agent })}`),
+  verifySkill: (name: string, agent?: string) => post<SkillIntegrity>(`/api/skills/${encodeURIComponent(name)}/verify${skillQuery({ agent })}`),
+  // The newer version of a skill that comes with PersonalClaw, offered over the owner's changed copy
+  // (`SkillItem.bundled_update`): take it in place of hers, or keep hers. `digest` names the version
+  // she was offered, and nothing is changed when another version ships by then (409).
+  useBundledSkill: (name: string, digest: string) => post<{ ok: boolean; name: string }>('/api/skills/bundled/update', { name, digest }),
+  keepSkillCopy: (name: string, digest: string) => post<{ ok: boolean; name: string }>('/api/skills/bundled/keep', { name, digest }),
   // Skill proposals inbox (skill-evolution-proposal-only) — propose-only review.
   // ── Learning Flywheel §6.1: the Proposal Inbox + the staging week panel ──
   // `accept`/`reject` carry NO actor: the backend derives it from the request, because a caller that

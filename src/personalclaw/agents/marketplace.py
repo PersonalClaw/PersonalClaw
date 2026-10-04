@@ -37,8 +37,8 @@ class AgentDefinition:
     ``name`` is the stable identifier (``[a-z0-9-]``, max 64 chars).
     ``provider_entry`` optionally names a registry ``ProviderEntry``; when
     omitted the chat runner uses the configured default provider.
-    ``skills`` lists skill names available to this agent (matched against
-    ``_all_skill_paths()`` at session start).
+    ``skills`` lists skill names available to this agent (``agents.skill_list``, which narrows
+    the agent's ``SkillsLoader`` to them).
     ``mcp_servers`` is a free-form dict written into the agent's MCP config.
     """
 

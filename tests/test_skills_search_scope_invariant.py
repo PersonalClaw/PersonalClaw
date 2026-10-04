@@ -7,7 +7,7 @@ that the scoped branch does not have, and on a stock install that filter removed
 catalogue:
 
 * the gateway copies the whole bundled skill tree into the user's skills dir at startup
-  (`skills/loader.py:_ensure_builtin_skills`);
+  (`skills/shipped.py:sync`);
 * the `native` marketplace is registered against that same bundled dir, and its entry
   `id`/`name` is the bare directory name;
 * `installed_names` is keyed on those same names.

@@ -62,9 +62,6 @@ AUTO_SKILL_MAX_PROCEDURE_CHARS = 10_240
 # this is an additional sanitization layer specific to auto-gen.
 _AUTO_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$")
 
-# Bundled fallback — inside the backend package
-_BUILTIN_SKILLS_DIR = Path(__file__).parent / "bundled"
-
 
 @dataclass(frozen=True)
 class AutoSkillProvenance:
@@ -169,16 +166,6 @@ def _build_auto_skill_content(
     return "\n".join(header_lines) + "\n\n" + body + "\n"
 
 
-def _project_skills_dir() -> Path | None:
-    """Return project-level skills/ dir from PERSONALCLAW_PROJECT_DIR, or None."""
-    val = os.environ.get("PERSONALCLAW_PROJECT_DIR")
-    if val:
-        p = Path(val) / "skills"
-        if p.is_dir():
-            return p
-    return None
-
-
 def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
     """Recursively find all SKILL.md files under *base*.
 
@@ -192,7 +179,10 @@ def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
     while the listing reported none of them (#302, #409). Four surfaces did exactly that.
 
     A ``SKILL.md`` at *base* itself names no skill and is skipped: the key is the path relative
-    to the root, and the root's own relative path is ``"."``.
+    to the root, and the root's own relative path is ``"."``. So is one under a hidden folder (a
+    name starting with ``.``), which is PersonalClaw's own bookkeeping, never a skill: the
+    refinements beside the library (``.overlays``), and a new copy of a skill while an install
+    writes it, before it takes the skill's place (``marketplace.replace_skill_folder``).
     """
     results: list[tuple[str, Path]] = []
     if not base.exists():
@@ -202,6 +192,8 @@ def iter_skill_files(base: Path) -> list[tuple[str, Path]]:
             continue
         # Name is the parent dir's path relative to base
         rel = skill_file.parent.relative_to(base)
+        if any(part.startswith(".") for part in rel.parts):
+            continue
         name = str(rel).replace("\\", "/")
         results.append((name, skill_file))
     return results
@@ -217,39 +209,6 @@ def is_instructions_file(name: str) -> bool:
     (``file_scope``), leave this one to ``skill_invoke``.
     """
     return name.casefold() == "skill.md"
-
-
-def _ensure_builtin_skills(base: Path) -> None:
-    """Sync built-in skills: copy new/updated, remove stale.
-
-    Supports nested directories (e.g. ``utils/tiny-url/SKILL.md``).
-    Copies the entire skill directory (scripts, assets, etc.), not just SKILL.md.
-    Removes skills from *base* that no longer exist in any source.
-    """
-    # Collect all source skill names
-    source_names: set[str] = set()
-    for src_root in (_project_skills_dir(), _BUILTIN_SKILLS_DIR):
-        if not src_root or not src_root.exists():
-            continue
-        for name, src_file in iter_skill_files(src_root):
-            source_names.add(name)
-            src_dir = src_file.parent
-            dest_dir = base / name
-            dest_file = dest_dir / "SKILL.md"
-            if not dest_file.exists() or src_file.stat().st_mtime > dest_file.stat().st_mtime:
-                if dest_dir.exists():
-                    shutil.rmtree(dest_dir)
-                shutil.copytree(src_dir, dest_dir)
-                logger.info("Synced skill: %s", name)
-
-    # Remove known stale builtin skills (replaced by MCP tools)
-    stale_builtins = {"learn", "subagent", "cron", "personalclaw-core"}
-    if base.exists():
-        for name in stale_builtins:
-            stale = base / name
-            if stale.is_dir():
-                shutil.rmtree(stale)
-                logger.info("Removed stale builtin skill: %s", name)
 
 
 def skills_dir() -> Path:
@@ -570,14 +529,17 @@ class SkillsLoader:
     Directory layout::
 
         ~/.personalclaw/skills/
-        ├── learn/SKILL.md
-        ├── subagent/SKILL.md
+        ├── grill/SKILL.md          (comes with PersonalClaw: ``skills.shipped``)
         ├── code/
         │   ├── workspace-tools/SKILL.md
         │   └── code-task-generation/SKILL.md
         └── utils/
             ├── tiny-url/SKILL.md
             └── mcp-debug/SKILL.md
+
+    A default loader builds that library's copy of the skills PersonalClaw ships first
+    (``install_builtins``, :func:`personalclaw.skills.shipped.sync`), which never overwrites a
+    copy the owner changed.
     """
 
     def __init__(
@@ -601,7 +563,9 @@ class SkillsLoader:
         if agent is not None and not self._scoped:
             self._agent_dir = agent_skills_dir(agent)
         if install_builtins:
-            _ensure_builtin_skills(self._dir)
+            from personalclaw.skills import shipped
+
+            shipped.sync(self._dir)
         # Cache: path → (mtime, parsed_frontmatter)
         self._fm_cache: dict[str, tuple[float, dict[str, str]]] = {}
         # The skills this loader sees of the shared library, when it is one agent's view of it
@@ -613,32 +577,25 @@ class SkillsLoader:
         return self._allows is None or self._allows(name)
 
     def _iter(self) -> list[tuple[str, Path]]:
-        """Return all ``(name, skill_file)`` pairs from this loader's directories.
+        """Every ``(name, skill_file)`` this loader resolves, each name once, as the copy
+        :meth:`skill_file` resolves it to: the same folders, in the same order
+        (:meth:`_search_dirs`), the first copy of a name winning.
 
-        The default loader aggregates the global discovery paths; a loader
-        constructed with an explicit ``skills_path`` stays confined to it. An agent's
-        view (:func:`narrowed`) lists only the shared skills its list allows, and every
-        skill of the agent's own tier.
+        The default loader aggregates the global discovery paths; a loader constructed with an
+        explicit ``skills_path`` stays confined to it. An agent's view (:func:`narrowed`) lists
+        only the shared skills its list allows, and every skill of the agent's own tier.
         """
-        # Agent-local tier first, so its slugs win the first-match-wins dedup
-        # below (an agent-local skill overrides a same-named global/bundled one).
         results: list[tuple[str, Path]] = []
-        if self._agent_dir is not None and self._agent_dir.is_dir():
-            results.extend(iter_skill_files(self._agent_dir))
-        results.extend(
-            (name, path) for name, path in iter_skill_files(self._dir) if self._sees(name)
-        )
-        if self._scoped:
-            return results
-        from personalclaw.skills.marketplace import skill_discovery_paths
-
-        seen = {name for name, _ in results}
-        for extra_dir in skill_discovery_paths():
-            if extra_dir.is_dir() and extra_dir != self._dir:
-                for name, path in iter_skill_files(extra_dir):
-                    if name not in seen and self._sees(name):
-                        results.append((name, path))
-                        seen.add(name)
+        seen: set[str] = set()
+        for search_dir in self._search_dirs():
+            if not search_dir.is_dir():
+                continue
+            own = search_dir == self._agent_dir
+            for name, path in iter_skill_files(search_dir):
+                if name in seen or (not own and not self._sees(name)):
+                    continue
+                seen.add(name)
+                results.append((name, path))
         return results
 
     def _cached_frontmatter(self, path: Path) -> dict[str, str]:
@@ -708,8 +665,14 @@ class SkillsLoader:
 
     @staticmethod
     def _safe_name(name: str) -> bool:
-        """Return True if skill name is safe (no path traversal)."""
-        return bool(name) and ".." not in name and "\\" not in name
+        """Whether *name* names a folder inside a tier: relative, each segment a name, no ``..``.
+
+        Absolute is refused with the rest: ``tier / "/x"`` is ``/x``, so a name with a leading
+        slash would resolve, read and write outside every tier.
+        """
+        if not name or ".." in name or "\\" in name or name.startswith("/"):
+            return False
+        return all(part not in ("", ".") for part in name.split("/"))
 
     def _search_dirs(self) -> list[Path]:
         """Directories this loader resolves names against.
@@ -723,7 +686,25 @@ class SkillsLoader:
 
         # Agent-local dir leads so an agent's own skill overrides a global one.
         agent_dirs = [self._agent_dir] if self._agent_dir is not None else []
-        return agent_dirs + [self._dir] + skill_discovery_paths()
+        ordered: list[Path] = []
+        for folder in agent_dirs + [self._dir] + skill_discovery_paths():
+            if folder not in ordered:
+                ordered.append(folder)
+        return ordered
+
+    def _resolve(self, name: str) -> tuple[Path, Path] | None:
+        """The tier *name* resolves in (one of :meth:`_search_dirs`) and its ``SKILL.md``, or
+        None: THE rule for which copy of a skill wins, read by the loads, the listing
+        (:meth:`_iter`), the editor's write (:meth:`update_skill`) and the Skills page."""
+        if not self._safe_name(name):
+            return None
+        for search_dir in self._search_dirs():
+            if search_dir != self._agent_dir and not self._sees(name):
+                return None
+            skill_file = search_dir / name / "SKILL.md"
+            if skill_file.exists():
+                return search_dir, skill_file
+        return None
 
     def skill_file(self, name: str) -> Path | None:
         """The ``SKILL.md`` this loader resolves *name* to, or None.
@@ -734,15 +715,13 @@ class SkillsLoader:
         An agent's view (:func:`narrowed`) resolves a shared skill its list does not
         allow to nothing, and a skill of the agent's own tier as ever.
         """
-        if not self._safe_name(name):
-            return None
-        for search_dir in self._search_dirs():
-            if search_dir != self._agent_dir and not self._sees(name):
-                return None
-            skill_file = search_dir / name / "SKILL.md"
-            if skill_file.exists():
-                return skill_file
-        return None
+        resolved = self._resolve(name)
+        return resolved[1] if resolved is not None else None
+
+    def _written_tiers(self) -> list[Path]:
+        """The tiers this loader writes: the agent's own folder and its library, both in the
+        home. Never the folder other AI tools share, which PersonalClaw only reads."""
+        return [d for d in (self._agent_dir, self._dir) if d is not None]
 
     def load_skill(self, name: str) -> str | None:
         """Load a single skill's content by name, searching this loader's dirs.
@@ -969,17 +948,22 @@ class SkillsLoader:
         return True
 
     def update_skill(self, name: str, content: str, *, over: str | None = None) -> bool:
-        """Replace an existing skill's own text with *content*.  Returns True when written.
+        """Replace the own text of the copy of *name* this loader resolves, the copy its agents
+        read (:meth:`skill_file`), with *content*.  Returns True when written.
 
+        An agent's loader writes the agent's own copy where it has one, and the library's
+        otherwise; a copy in the folder other AI tools share is never written
+        (:meth:`_written_tiers`).
         *content* is the skill's own text (:meth:`skill_text`), never the body a session loads:
         a copy of an applied refinement in it is left out, so the refinement is still applied
         once. With *over*, the own text *content* was built from, nothing is written once the file
         reads otherwise — an edit saved since is kept, and this returns False."""
-        if not self._safe_name(name):
+        resolved = self._resolve(name)
+        if resolved is None or resolved[0] not in self._written_tiers():
             return False
-        if not self._write_skill_md(name, self._dir / name / "SKILL.md", content, over=over):
+        if not self._write_skill_md(name, resolved[1], content, over=over):
             return False
-        logger.info("Updated skill: %s", name)
+        logger.info("Updated skill: %s (in %s)", name, resolved[0])
         return True
 
     def delete_skill(self, name: str) -> bool:
