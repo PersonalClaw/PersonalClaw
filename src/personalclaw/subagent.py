@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
@@ -752,20 +752,32 @@ class SubagentManager:
                 return approval_grants.TRIGGER
         if info.parent_run and approval_grants.batch_allowed(info.parent_run):  # so is a batch's
             return approval_grants.BATCH_ALLOWED  # task, on her Allow of the batch (`batch_start`)
-        if grant := self._start_grant(info.parent_session_key):
+        if grant := self._start_grant(info.parent_session_key, asked_by=self._asked_for(info)):
             return grant
         return approval_grants.APPROVED_BEFORE_RESUME if self._allowed_before(info) else ""
 
-    def _start_grant(self, session_key: str) -> str:
+    def _start_grant(self, session_key: str, *, asked_by: Mapping[str, str] | None = None) -> str:
         """What starts work *session_key* asks for unasked, read now (YOLO, its Trust, the hook
-        setting), or ``""``; unbounded (the caller asks `stands`). A batch that only reads too."""
+        setting), or ``""``; unbounded (the caller asks `stands`). A batch that only reads too.
+
+        None of the owner's own grants starts work someone else asked for (*asked_by*, by default
+        the work running now's: ``approval_grants.someone_else``): its start is asked of her, and
+        the operator's hook setting still answers it."""
+        if asked_by is None:
+            asked_by = memory_writes.asker()
         hooks = self._ctx_builder.hooks if self._ctx_builder else None
-        if self._is_yolo and self._is_yolo():
-            return approval_grants.YOLO
+        candidates = [approval_grants.YOLO] if self._is_yolo and self._is_yolo() else []
         if session_key and self._sessions.get_approval_policy(session_key) in ("auto", "yolo"):
-            return approval_grants.PARENT_TRUST
-        spawns = hooks is not None and hooks.auto_approve_subagent_spawn is True
-        return approval_grants.HOOK_SETTING if spawns else ""
+            candidates.append(approval_grants.PARENT_TRUST)
+        if hooks is not None and hooks.auto_approve_subagent_spawn is True:
+            candidates.append(approval_grants.HOOK_SETTING)
+        return approval_grants.first_for(candidates, asked_by)
+
+    @staticmethod
+    def _asked_for(info: SubagentInfo) -> dict[str, str]:
+        """Who asked for the work *info*'s agent does, when the owner did not: whoever asked for
+        the turn that started it, which its mark keeps (``memory_writes.hand_on``)."""
+        return memory_writes.asked_for_work(agent_work_id(info.id))
 
     async def _ask_to_start(self, event: LLMEvent, session_key: str) -> ToolDecision:
         """Ask *event*, a start *session_key* asks for, through the start's relay; refused with
@@ -795,20 +807,22 @@ class SubagentManager:
         the agent (its Trust or YOLO pushed into its policy), the spawn's own ``approval_mode``,
         YOLO, the owner's Approval mode "Auto" (for an agent no chat started, and only once the
         owner chose it: the mode ships asking, `approval_grants.setting_grant`), the hook setting.
-        Not checked against the ceiling: :meth:`_grant_now` is.
+        None of the owner's own answers for an agent someone else asked for (:meth:`_asked_for`,
+        `approval_grants`, rule 4). Not checked against the ceiling: :meth:`_grant_now` is.
         """
+        candidates: list[str] = []
         if self._sessions.get_approval_policy(info.parent_session_key) in ("auto", "yolo"):
-            return approval_grants.PARENT_TRUST
+            candidates.append(approval_grants.PARENT_TRUST)
         if info.approval_mode == "auto":
-            return approval_grants.APPROVAL_MODE
+            candidates.append(approval_grants.APPROVAL_MODE)
         if self._is_yolo and self._is_yolo():
-            return approval_grants.YOLO
+            candidates.append(approval_grants.YOLO)
         if not info.parent_session_key and (setting := approval_grants.setting_grant()):
-            return setting
+            candidates.append(setting)
         hooks = self._ctx_builder.hooks if self._ctx_builder else None
         if hooks is not None and hooks.auto_approve_subagent_tools is True:
-            return approval_grants.HOOK_SETTING
-        return ""
+            candidates.append(approval_grants.HOOK_SETTING)
+        return approval_grants.first_for(candidates, self._asked_for(info)) if candidates else ""
 
     def _grant_now(self, info: SubagentInfo, *, audit: bool) -> str:
         """:meth:`_standing_grant`, if the operator ceiling lets it stand; else ``""``."""

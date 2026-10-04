@@ -686,7 +686,10 @@ for her Allow, `batch_start`). Its tick loop runs as its own work wherever it is
 resumed from (`run_start.run_context`), and every step, stage and request of it
 reads that record (`lasting_work.asker_of`), so what the run would change of her
 memory is held for her word after the turn has ended and after a restart, and its
-run-end learning takes nothing.
+run-end learning takes nothing. None of her standing grants answers its steps' calls
+either (`approval_grants.stands_for_work`): an attended step's call is asked of her,
+naming who asked, while a stage the run itself was allowed to run on its own
+(`approval_mode: "auto"`) runs as before.
 
 ## Mid-flight mutation
 

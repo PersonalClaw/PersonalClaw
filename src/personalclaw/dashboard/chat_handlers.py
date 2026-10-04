@@ -2627,10 +2627,10 @@ async def api_chat_mode(request: web.Request) -> web.Response:
                     )
                 except Exception:
                     logger.warning("SEL audit failed for bulk approval %s", aid, exc_info=True)
-    # Propagate trust/yolo to session approval policies so subagents inherit.
+    # Hand each chat's runtime the policy its posture answers now, so subagents inherit it: none
+    # for a turn someone else asked for, nor for a conversation an app started.
     for session in state._sessions.values():
-        policy = "auto" if session._trust or state.is_yolo_active() else ""
-        state.sessions.set_approval_policy(f"dashboard:{session.key}", policy)
+        state.push_chat_policy(session)
 
     state.push_sessions_update()
     return web.json_response({"ok": True, "mode": mode})

@@ -263,7 +263,8 @@ def _reads(folder: str) -> str:
 def _start_grant(state: Any, session_key: str, name: str, work: AppWork | None) -> str:
     """The grant that starts a batch that only reads from *session_key* without asking: the one
     that would start a subagent that session asked for (`SubagentManager._start_grant`: YOLO, its
-    Trust, the hook setting), if the operator ceiling lets it stand. An app's batch (*work*) starts
+    Trust, the hook setting; none of the owner's own for a turn someone else asked for, read for
+    the request making it), if the operator ceiling lets it stand. An app's batch (*work*) starts
     on the app's install consent alone (`approval_grants.APP`), as one subagent its agent starts
     does (`SubagentManager._spawn_grant`): her grants are for her own agents. ``""`` when the
     batch asks."""

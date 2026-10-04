@@ -171,7 +171,14 @@ from personalclaw.sel import sel
 from personalclaw.session_pid import tie_to_session
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
-from personalclaw.turn_source import QUEUED_FROM, asked_by, shared_source, source_of, taught_by
+from personalclaw.turn_source import (
+    QUEUED_FROM,
+    asked_by,
+    named,
+    shared_source,
+    source_of,
+    taught_by,
+)
 from personalclaw.turn_streams import close_stream
 from personalclaw.usage_ledger import Attribution, recorder, spent_rows
 
@@ -2123,6 +2130,9 @@ def _apply_approval_floor(
       allowed", the default no longer "trust reads" — takes the chat back to asking at its next
       turn, and the latch reopens so whatever floor there is now seeds instead. A posture you set
       yourself since (the mode switch, a card's scope) clears the mark and is never withdrawn here.
+    * **It answers only what you ask for.** It seeds whoever asked for the turn, since the posture
+      lasts past it; each call is held to who asked for its turn where it is decided
+      (``approval_grants.stands_for_work``), so in a turn someone else asked for it answers none.
     """
     seeded = session._trust_from_floor
     if seeded:
@@ -2187,18 +2197,6 @@ def _apply_approval_floor(
             )
         except Exception:
             logger.warning("SEL audit failed for trust_reads floor seeding", exc_info=True)
-
-
-def auto_approval_reason(yolo_active: bool) -> str:
-    """Whose switch approved a call nobody was asked about — the ``reason`` its audit row names.
-
-    ``yolo`` while your YOLO is on, else ``trust``: your Trust for this chat, or an agent's "always
-    allow" seeded into it. Neither reaches a conversation an app started (:func:`started_by_app`),
-    which approves nothing on its own. One answer for both runtimes — the ACP gate asks it when it
-    auto-approves a permission request, and the native runtime's waived asks
-    (``TOOL_META_APPROVAL_WAIVED``) are recorded with it at their result.
-    """
-    return approval_grants.YOLO if yolo_active else approval_grants.TRUST
 
 
 def _settle_granted(
@@ -3055,12 +3053,11 @@ async def run_chat(
                 global_approval_mode=global_approval_mode,
             )
 
-        # Propagate trust/YOLO to session so subagents inherit auto-approve. YOLO is yours, so it
-        # does not reach a conversation an app started.
-        if session._trust or (not _app_chat and state.is_yolo_active()):
-            state.sessions.set_approval_policy(session_key, "auto")
-        else:
-            state.sessions.set_approval_policy(session_key, "")
+        # The runtime runs a call unasked, and a subagent inherits that, only while the chat's
+        # posture answers this turn's calls (`DashboardState.chat_policy`): its Trust and YOLO are
+        # yours, so neither reaches a conversation an app started, nor a turn someone else asked
+        # for, whose calls the gate below puts to you.
+        state.push_chat_policy(session)
 
         # Propagate the task mode to the runtime so its tool gate (ask/plan/build)
         # holds regardless of approval — the runtime enforces it before approval,
@@ -4024,8 +4021,10 @@ async def run_chat(
                     # is never one the policy approved, whatever answered its ask.
                     _control_refused = refusal_audit(_tmeta)
                     _waived = bool(_tmeta.get(TOOL_META_APPROVAL_WAIVED)) and not _control_refused
+                    # Waived by the policy the chat's posture set (`DashboardState.chat_policy`):
+                    # the posture's grant is whose switch it was.
                     _decided_by = (
-                        auto_approval_reason(not _app_chat and state.is_yolo_active())
+                        state.standing_grant(session) or approval_grants.SESSION_POLICY
                         if _waived
                         else unasked_reason(_tmeta)
                     )
@@ -4500,12 +4499,12 @@ async def run_chat(
                         grant=_unasked_by,
                     )
                     continue
-                # Trust mode (per-session) or YOLO mode (global) — auto-approve, if the operator
-                # ceiling lets that grant stand.
-                if (session._trust or yolo_active) and approval_grants.stands_for_call(
-                    auto_approval_reason(yolo_active),
-                    session_key=session_key,
-                    event=event,
+                # The chat's posture (its loop's own grant, YOLO, its Trust) auto-approves, if the
+                # call is in work you asked for (`approval_grants`, rule 4) and the operator ceiling
+                # lets that grant stand. In a turn someone else asked for it is asked below.
+                _standing = state.standing_grant(session)
+                if _standing and approval_grants.stands_for_call(
+                    _standing, session_key=session_key, event=event
                 ):
                     try:
                         validated_tool = _validate_tool_name(event.title, event.tool_kind)
@@ -4589,9 +4588,9 @@ async def run_chat(
                         # under the "risk is an indicator, floor covers everything" model.
                         metadata={
                             **_offered,
-                            "reason": auto_approval_reason(yolo_active),
+                            "reason": _standing,
                             "risk": effective_risk,
-                            "decided_by": auto_approval_reason(yolo_active),
+                            "decided_by": _standing,
                         },
                     )
                     _settle_granted(
@@ -4599,7 +4598,7 @@ async def run_chat(
                         session,
                         tool=event.title,
                         tool_input=event.tool_input,
-                        grant=auto_approval_reason(yolo_active),
+                        grant=_standing,
                     )
                     continue
                 # A request sent together with a refused one is refused the way it was: a Deny,
@@ -4721,6 +4720,14 @@ async def run_chat(
                 # destructive call until the user widens them deliberately.
                 perm_meta["risk"] = effective_risk
                 perm_meta["reach"] = _reach_note = run_bounds.event_note(event, session_key)
+                # Who asked for this turn, when it was not you: the card names them, offers your
+                # answer for this call alone, and every row of the ask says who it was
+                # (`approval_grants`, rule 4).
+                _someone = memory_writes.asker()
+                _asked_for = approval_grants.asked_for_line(_someone)
+                _asked_by = {"asked_by": named(_someone)} if _someone else {}
+                if _asked_for:
+                    perm_meta["asked_for"] = _asked_for
                 # Whether "Always for this agent" can actually persist, and onto WHICH
                 # agent — the fact the card needs BEFORE the user picks that scope (#541).
                 # Without it the card promised "in this chat and future ones"
@@ -4800,6 +4807,7 @@ async def run_chat(
                         grant_agent=perm_meta.get("grant_agent", ""),
                         reach=_reach_note,
                         deny_effect=_deny_effect,
+                        asked_for=_asked_for,
                     )
                     # Push via global SSE AFTER registering the future, so the
                     # session dict reflects pending_approval=true and Board cards
@@ -4925,6 +4933,7 @@ async def run_chat(
                                 "reason": "interactive",
                                 "risk": effective_risk,
                                 "decided_by": approval_grants.YOU,
+                                **_asked_by,
                             },
                         )
                 else:
@@ -4979,6 +4988,7 @@ async def run_chat(
                                 else approval_grants.YOU
                             ),
                             **({"answered": _answer["answered"]} if _answer else {}),
+                            **_asked_by,
                         },
                     )
                     # Refuse the requests already waiting behind this one the same way, and continue

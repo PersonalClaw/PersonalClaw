@@ -207,7 +207,8 @@ class TestCallSiteCarriesTheBrief:
         gateway.dashboard_state.request_approval.assert_awaited_once()
         kwargs = gateway.dashboard_state.request_approval.call_args.kwargs
         assert APPROVAL_BRIEF_META_KEY not in kwargs
-        # The tool's server labels travel with it, so the registry's radius can show them.
+        # The tool's server labels travel with it, so the registry's radius can show them, and
+        # so does who asked for the work when the owner did not, so its card can name them.
         assert set(kwargs) == {
             "tool_input",
             "tool_purpose",
@@ -216,7 +217,9 @@ class TestCallSiteCarriesTheBrief:
             "risk_level",
             "tool_kind",
             "annotations",
+            "asked_for",
         }
+        assert kwargs["asked_for"] == "", "her own background work names nobody"
 
 
 # ── 2. Additive, with vacuity proofs ────────────────────────────────────────────

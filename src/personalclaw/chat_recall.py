@@ -11,6 +11,10 @@ chats held. :func:`search` is that search, for the agent, and it keeps three pro
   :data:`TEMPORARY`.
 * **The chat it is asked from is not in it either** (:func:`chats_of`): that chat is already in
   front of the agent, and handed back it would read as earlier work.
+* **It searches her chats only for her.** A search made for work someone other than the owner
+  asked for (a colleague's turn in a shared thread, a correspondent's, a program's, and the work
+  such a turn starts: ``memory_writes.asker``) searches nothing, and is answered with
+  :func:`not_searched_for`. The gateway's route and the inbound door's search both say it.
 * **It is bounded**: a few chats (:data:`MAX_CHATS`), a few turns of each (:data:`TURNS_PER_CHAT`),
   and a window of each turn (:data:`TURN_CHARS`) around where the words were said.
 
@@ -50,6 +54,19 @@ TEMPORARY = (
     "This is a Temporary chat: it starts blank and reads nothing from your other chats, so none "
     "were searched."
 )
+
+
+def not_searched_for(source: Mapping[str, str]) -> str:
+    """What a search of her chats made for work *source* asked for, someone other than the owner,
+    is answered with: who asked, and that her chats are searched only for her own requests. The
+    agent can pass it on as it is."""
+    from personalclaw.turn_source import named
+
+    return (
+        f"None of the owner's other chats were searched: {named(source)} asked for this, and "
+        "nothing says they are the owner, whose chats are searched only for their own requests."
+    )
+
 
 #: How a chat's start and last activity are written: as the prompt's own ``[CURRENT DATE]`` line
 #: writes today (``context.py``), in the zone it uses, so "Tuesday" means the same day in both.

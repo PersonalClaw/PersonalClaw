@@ -264,9 +264,19 @@ async def _task_get(arguments: dict, state: Any) -> str:
 
 
 async def _sessions_search(arguments: dict, state: Any) -> str:
+    """Search the owner's conversations for a client she let in. A call it serves for work
+    someone other than the owner asked for (``memory_writes.asker``: the turn of the session a
+    request names, which a colleague's message started) searches nothing and says who asked
+    (``chat_recall.not_searched_for``), as the agent's own search does. A call for no one's turn,
+    the client's own, is hers."""
+    from personalclaw import chat_recall, memory_writes
+
     _reject_unknown(arguments, ("query", "limit"))
     query = _require_text(arguments, "query")
     limit = _clamp_limit(arguments, default=5, ceiling=10)
+    someone = memory_writes.asker()
+    if someone:
+        return chat_recall.not_searched_for(someone)
 
     def _run():
         from personalclaw import session_search

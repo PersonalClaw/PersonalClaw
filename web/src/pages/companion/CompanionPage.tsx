@@ -368,7 +368,7 @@ function ApprovalMeta({ ap }: { ap: PendingApproval }) {
   // means "nothing could be established" and must not render as a reassurance.
   const facets = establishedFacets(blastRadiusOf(ap.blast_radius))
   if (facets.length) rows.push(['Can touch', facets.map((f) => f.label).join(' · ')])
-  if (!rows.length && !ap.deny_effect) return null
+  if (!rows.length && !ap.deny_effect && !ap.asked_for) return null
   return (
     <>
       {rows.length > 0 && (
@@ -381,6 +381,8 @@ function ApprovalMeta({ ap }: { ap: PendingApproval }) {
           ))}
         </dl>
       )}
+      {/* Who asked for the turn when it was not you (`approval_grants.asked_for_line`). */}
+      {ap.asked_for && <p data-type="body-s" className="mt-s text-on-surface-var">{ap.asked_for}</p>}
       {/* What a Deny does when it does more than decline the call (`turn_endings.deny_effect`). */}
       {ap.deny_effect && <p data-type="body-s" className="mt-s text-on-surface-low">{ap.deny_effect}</p>}
     </>

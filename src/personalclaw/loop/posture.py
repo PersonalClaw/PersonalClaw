@@ -119,6 +119,24 @@ def arm(session: Any, posture: Posture, *, granted: bool = False) -> None:
         session.acp_mode = "bypassPermissions" if unattended else ""
 
 
+def runs_on_its_loops_grant(session: Any) -> bool:
+    """Whether the Trust *session* holds is its loop's own grant (``approval_grants.LOOP_MODE``):
+    it is one of a loop's sessions, its Trust is on, and its loop gave it, by the Unattended Mode
+    the loop runs under or by "This loop" on one of this run's approval cards
+    (``manager.grant_every_worker``). That grant answers its calls whoever asked for the loop, as
+    the start that set the loop going was allowed for it; any other Trust a loop's session holds
+    (an agent's "Always allow" seeded into it, a switch you turned on) is yours, for what you ask.
+    """
+    from personalclaw.loop.manager import loop_granted, session_loop
+
+    trusted = getattr(session, "_trust", None) is True
+    seeded = bool(getattr(session, "_trust_from_floor", None))
+    loop_id = session_loop(str(getattr(session, "key", None) or "")) if trusted else ""
+    if not loop_id or seeded:
+        return False
+    return getattr(session, "_unattended", None) is True or loop_granted(loop_id)
+
+
 def frame(posture: Posture, message: str) -> str:
     """*message*, told that no person is there to reply when nobody answers the session's calls.
 

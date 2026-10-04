@@ -17,11 +17,22 @@ This module owns the three rules every grant is held to, because each was broken
    whatever a toggle, an agent profile, a spawn argument, a workflow node or a trigger's action
    says (``guardrails.policy.ceiling_permits_approval``). Only the subagent's tool-approval grant
    consulted it; the spawn gate, the chat, the gateway's relay and the runtime's own policy did
-   not. :func:`stands` is the one question each of them asks now, and a refusal is audited, so a
-   downgraded grant is never indistinguishable from one never asked for.
+   not. :func:`stands` is the ceiling's question, which each of them asks now (with rule 4,
+   through :func:`stands_for_work`), and a refusal is audited, so a downgraded grant is never
+   indistinguishable from one never asked for.
 3. **What decided is written down.** A grant's name is a closed vocabulary (the constants below),
    so the audit row of every decision can say who decided it — a person, a named grant, or nobody —
    and an Inbox note a grant settled can say which one did.
+4. **Her grants answer only what she asks for.** The owner's own standing grants
+   (:data:`OWNERS_OWN`: a chat's Trust, Trust reads and YOLO, an agent's "Always allow", her
+   Approval mode "Auto", her chat's Trust as a subagent it started holds it) are hers, for what
+   she asks. A turn someone else asked for (a colleague's message in a shared thread, a
+   correspondent's, a program's: ``memory_writes.asker``), and the work such a turn starts, is
+   answered by none of them, on every runtime: its call is asked of her, the card naming who
+   asked, and the hold is audited, naming them too. What a call's tool declares, the operator's
+   hook settings and patterns, and a grant given for that one run (a loop's Mode, an
+   automation's or a run's own approval mode, a trigger's Allow) answer as before.
+   :func:`stands_for_work` is that question, which every grant that answers a call asks.
 
 The other way a call is settled, a person's answer, waits one window wherever it is asked
 (:func:`approval_window_secs`).
@@ -30,6 +41,7 @@ The other way a call is settled, a person's answer, waits one window wherever it
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -70,6 +82,10 @@ AGENT_FLOOR = "agent_floor"
 PARENT_TRUST = "parent_trust"
 #: The spawn's own ``approval_mode: "auto"``: an automation's action, an unattended run's stage.
 APPROVAL_MODE = "approval_mode"
+#: A loop's own grant to its sessions, given for that loop's run: the Mode an Unattended loop was
+#: started under, or "This loop" on one of the run's approval cards
+#: (``loop.posture.runs_on_its_loops_grant``).
+LOOP_MODE = "loop_mode"
 #: The owner allowed the trigger's action to run (the create dialog, the editor, the Triggers
 #: page's switch or its Allow), and the action starts an agent: the agent starts on that yes. It
 #: covers the start only; the agent's own calls ask as any agent's do
@@ -135,6 +151,15 @@ EVAL_SAFE_TOOLS = "eval_safe_tools"
 #: one does not.
 LEVEL_AUTO = "auto"
 LEVEL_HOOK = "hook_based"
+
+#: The owner's own standing grants: the switches she sets for her chats and her agents, her chat's
+#: Trust or YOLO as a subagent it started holds them, and the announce turn of a subagent's report
+#: in a chat she is in. Each answers only calls in work she asked for herself (rule 4).
+OWNERS_OWN = frozenset({TRUST, TRUST_READS, YOLO, AGENT_FLOOR, PARENT_TRUST, SETTING, INJECTION})
+
+#: The security log's outcome for a call one of those grants did not answer because someone else
+#: asked for the work: it waits for a person, as a call a deny-list rule asks you about does.
+WAITS_FOR_HER = "needs_human"
 
 
 @dataclass(frozen=True)
@@ -217,6 +242,10 @@ def stands(
 ) -> bool:
     """Whether *grant* may approve without asking, under the operator ceiling in force.
 
+    The ceiling's half of the question: a call is decided by :func:`stands_for_work`, which asks
+    this after rule 4. Asked alone where a grant is set rather than used (a switch, a card's
+    scope, an agent's floor seeding its chat), where who asked for a turn decides nothing.
+
     ``caller`` and ``subject`` go on the audit row of a refusal: who was asking (a session key, a
     subagent, a source) and what (the tool, the spawn). ``audit=False`` is for a caller that asks
     the same question more than once for one decision and audits it itself.
@@ -239,18 +268,71 @@ def stands(
     return False
 
 
+def someone_else(grant: str, asked_by: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Who asked for the work a call *grant* would answer is for, when *grant* is one of the
+    owner's own (:data:`OWNERS_OWN`) and someone other than she asked (rule 4); ``{}`` otherwise.
+
+    *asked_by* is that work's asker as its caller read it, the source of the message that started
+    its turn (``turn_source.asked_by``); by default, the work running now
+    (``memory_writes.asker``), which follows a subagent, a run and a loop to the turn that started
+    them. Any other grant is ``{}``: it was given for the one run it answers, or by the operator."""
+    if grant not in OWNERS_OWN:
+        return {}
+    if asked_by is None:
+        from personalclaw import memory_writes
+
+        asked_by = memory_writes.asker()
+    return dict(asked_by)
+
+
+def first_for(candidates: Iterable[str], asked_by: Mapping[str, str]) -> str:
+    """The first of *candidates* that may answer a call in work *asked_by* asked for: none of the
+    owner's own grants when someone else asked (:func:`someone_else`), so the next one answers
+    instead, or nobody (``""``)."""
+    return next((grant for grant in candidates if not someone_else(grant, asked_by)), "")
+
+
+def stands_for_work(
+    grant: str,
+    *,
+    caller: str,
+    subject: str = "",
+    level: str = LEVEL_AUTO,
+    asked_by: Mapping[str, str] | None = None,
+    audit: bool = True,
+) -> bool:
+    """Whether *grant* may approve a call without asking anyone, for the work it is made in: the
+    question every grant that answers a call asks, on every runtime and in every channel.
+
+    One of the owner's own grants answers nothing in work someone else asked for
+    (:func:`someone_else`, read for *asked_by*): the call is asked of her instead, and the hold is
+    audited naming who asked (:func:`held_for_her`). Every grant is then bounded by the operator
+    ceiling (:func:`stands`). ``audit=False`` is for a caller that asks more than once for one
+    decision and audits it where it lands."""
+    someone = someone_else(grant, asked_by)
+    if someone:
+        if audit:
+            held_for_her(grant, caller=caller, subject=subject, asked_by=someone)
+        return False
+    return stands(grant, caller=caller, subject=subject, level=level, audit=audit)
+
+
 def stands_for_call(
-    grant: str, *, session_key: str, event: object, level: str = LEVEL_AUTO
+    grant: str,
+    *,
+    session_key: str,
+    event: object,
+    level: str = LEVEL_AUTO,
+    asked_by: Mapping[str, str] | None = None,
 ) -> bool:
     """Whether *grant* may approve one call, the one *event* asks about in the session
-    *session_key*, without asking anyone: :func:`stands`, for that call.
+    *session_key*, without asking anyone: :func:`stands_for_work`, for that call.
 
     No grant answers a call that reaches a host off the allowed hosts (``run_bounds``): that one is
-    put to a person. A refusal by the ceiling is audited, naming the call. A refused grant falls
-    through to what comes next: the call asks, or on an unattended turn is declined because nobody
-    can answer it. What a chat's runner asks of an operator's hook pattern and of its Trust, YOLO
-    and Trust reads, and what a channel running a conversation itself asks of the same grants
-    (``chat_trust.chat_grant``).
+    put to a person. A refused grant falls through to what comes next: the call asks, or on an
+    unattended turn is declined because nobody can answer it. What a chat's runner asks of an
+    operator's hook pattern and of its Trust, YOLO and Trust reads, and what a channel running a
+    conversation itself asks of the same grants (``chat_trust.chat_grant``).
     """
     from personalclaw.run_bounds import off_list
     from personalclaw.security import redact_credentials, redact_exfiltration_urls
@@ -259,7 +341,44 @@ def stands_for_call(
         return False
     title, _ = redact_exfiltration_urls(str(getattr(event, "title", "") or ""))
     title, _ = redact_credentials(title)
-    return stands(grant, caller=session_key, subject=f"tool={title[:80]}", level=level)
+    return stands_for_work(
+        grant, caller=session_key, subject=f"tool={title[:80]}", level=level, asked_by=asked_by
+    )
+
+
+def held_for_her(grant: str, *, caller: str, subject: str, asked_by: Mapping[str, str]) -> None:
+    """Audit a grant of hers that answered nothing because someone else asked for the work: the
+    call goes to her, and the row names who asked (best-effort, like every audit write here)."""
+    try:
+        from personalclaw.sel import sel
+        from personalclaw.turn_source import named
+
+        sel().log_api_access(
+            caller=caller or "approval",
+            operation="approval.grant_held",
+            outcome=WAITS_FOR_HER,
+            source="guardrails",
+            resources=f"grant={grant},held_for=asked_by_someone_else"
+            + (f",{subject[:120]}" if subject else ""),
+            metadata={"asked_by": named(asked_by)},
+        )
+    except Exception:  # noqa: BLE001 - an audit write never decides an approval
+        logger.warning("SEL audit failed for a held %s grant", grant, exc_info=True)
+
+
+def asked_for_line(asked_by: Mapping[str, str]) -> str:
+    """What every surface that asks her about a call someone else asked for says of it, beside
+    the call: who asked, and that her standing grants answer only what she asks for. ``""`` for a
+    call in her own work. Its card offers her answer for that call alone, since none of those
+    grants would answer the next one either."""
+    if not asked_by:
+        return ""
+    from personalclaw.turn_source import named
+
+    return (
+        f"{named(asked_by)} asked for this, not you. Your Trust, Trust reads, YOLO and an agent's "
+        "Always allow answer only what you ask for, so this call waits for your answer."
+    )
 
 
 def refusal_sentence() -> str:

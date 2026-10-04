@@ -1129,9 +1129,10 @@ What this does not hold:
   question your run is waiting on, or an edit it makes to the plan of a loop of yours before it
   starts, goes into your work: the work's record says you asked for it, so what it does next is
   judged as yours.
-- **How the work's calls are approved.** The record decides whose memory a change is held for, not
-  who approves the work's other calls: a loop made Unattended in a colleague's turn runs its calls
-  on its standing grant, as one you made Unattended would.
+- **A grant given for that one run.** None of your standing grants answers the work's calls (§23),
+  but a grant the run itself was given does: a loop made Unattended in a colleague's turn runs its
+  calls on its own grant, as one you made Unattended would, once you allowed the call that
+  started it.
 
 **What this means for you:** answer your runs' questions yourself, and check the Mode of a loop
 someone else asked for before it runs.
@@ -1231,6 +1232,33 @@ changed: `git config --list --show-origin --show-scope` and a listing of `.git/h
 without running anything. Set `safe.bareRepository` to `explicit` in your own git settings, so a
 folder that only looks like a bare repository is not read as one, and treat a repository an agent
 made, or one someone else prepared, as one a stranger sent you.
+
+## 23. A turn someone else asked for takes none of your grants, but it still reads
+
+A turn someone other than you asked for (a colleague's message in a shared thread, a correspondent's,
+a program's) is answered by none of your standing grants: your Trust, Trust reads and YOLO, an
+agent's "Always allow" and your Approval mode "Auto" answer only what you ask for, on either runtime,
+in a channel that runs its turns itself, and in the work such a turn starts (`approval_grants`, rule
+4). Its calls are asked of you, their card naming who asked, and it searches none of your chats:
+`chat_search` and the inbound door's `sessions_search` answer it with a sentence that names who
+asked.
+
+What this does not hold:
+
+- **What a call's tool declares.** A call whose tool declares that it only reads asks nobody, in
+  their turn as in yours: a file read, a memory recall, a list of your tasks, a connector's read of
+  an account of yours. What it finds can be answered into the shared thread.
+- **What the turn is handed.** The turn's context carries your memory as any turn of the chat does
+  (saved facts, lessons, standing instructions, what it recalls of earlier conversations), and
+  `memory_recall` answers it. Only the transcripts of your other chats are withheld.
+- **The operator's hook settings and patterns**, which answer their calls as before, and a grant
+  given for that one run (§20).
+- **Where the call is asked.** It is asked where the chat's calls are asked: in a shared thread,
+  the thread's own prompt, which your colleague sees and only you can answer.
+
+**What this means for you:** a shared thread is a conversation your colleagues have with what the
+agent reads of yours. Connect a shared channel to an agent whose memory and read-only tools you are
+content to have used for them, and answer the calls they ask for yourself.
 
 ## Why these are listed, not fixed
 

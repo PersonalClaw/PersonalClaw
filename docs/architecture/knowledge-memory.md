@@ -922,7 +922,12 @@ item vector).
   the app holds the `memory` permission: a conversation the app started, an agent
   run it asked for, an agent its scheduled job started, an agent working for any
   of them, and the app's own requests. A refused read answers why, in words the
-  agent passes on, rather than "nothing found". The same grant governs what such
+  agent passes on, rather than "nothing found". Work someone other than the owner
+  asked for (a colleague's turn in a shared thread, and what it starts:
+  `memory_writes.asker`) reads her memory as any turn of its chat does, but searches
+  none of her chats: `chat_search` (`/api/sessions/recall`) and the inbound door's
+  `sessions_search` answer it with a sentence naming who asked
+  (`chat_recall.not_searched_for`). The same grant governs what such
   work changes: without it the memory store refuses its writes, its lesson and
   triage-rule tools say why, the after-turn review and the run-end learner learn
   nothing from it and its conversation is never consolidated; with it, each record

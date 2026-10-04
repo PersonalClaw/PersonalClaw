@@ -106,12 +106,15 @@ def chat_grant(session_key: str, event: Any) -> str:
       grant (``approval_grants.declared_answer``).
     * ``trust_reads``, ``trust`` or ``yolo``: the chat's Trust reads, for a read-only shell
       command, its Trust, and YOLO. None of them for a conversation an app started, which
-      approves nothing on its own.
+      approves nothing on its own, nor in a turn someone other than the owner asked for (the
+      sender the channel names for it, ``memory_writes.turn_asked_by``): they are hers, for what
+      she asks, so that call is asked, its prompt naming who asked.
 
-    Each grant is held to the chat runner's two rules (``approval_grants.stands_for_call``, which
-    audits a refusal): none answers a call that reaches a host off the allowed hosts, and the
-    operator ceiling bounds every one. Nothing answers a call the hook chain refuses, read on the
-    command that would run as well as on the call's title, which need not carry it; the channel
+    Each grant is held to the chat runner's rules (``approval_grants.stands_for_call``, which
+    audits a refusal): none answers a call that reaches a host off the allowed hosts, none of hers
+    answers a call someone else asked for, and the operator ceiling bounds every one. Nothing
+    answers a call the hook chain refuses, read on the command that would run as well as on the
+    call's title, which need not carry it; the channel
     refuses that call before it asks this (``screen_tool_call``), so ``""`` here means asked. The
     settings and the chat are read at every call, so a pattern the owner removes, or the chat's
     Trust switched off in the dashboard, makes the next call ask.

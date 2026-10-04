@@ -5788,6 +5788,10 @@ export interface PendingApproval {
    *  only by ending its turn (`turn_endings.deny_effect`) — said on the card before it is pressed;
    *  "" or absent when a Deny declines the call and the agent goes on. */
   deny_effect?: string
+  /** Who asked for the work the call is made in when it was not you, and why none of your
+   *  standing grants answers it (`approval_grants.asked_for_line`): the card shows it and
+   *  answers this call alone. "" or absent for your own work. */
+  asked_for?: string
   /** The store id of the trigger whose run asked (its action's agent), "" for anything else. */
   trigger?: string
   /** That trigger's name, "" when it has none or is gone. */

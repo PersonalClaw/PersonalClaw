@@ -24,7 +24,9 @@ What a row records decides whose words it holds (:func:`sent_by_owner`), which e
 the owner's own words asks (``own_words.own_words``): a channel's conversation can have other
 people in it, and the door lets in everyone the owner trusts to talk to the agent. It decides who
 asked for the turn a row starts too (:func:`asked_by`), which is what a change to her memory that
-turn makes waits on (``memory_writes.asker``), who asked for what that turn learns from its words
+turn makes waits on (``memory_writes.asker``), what none of her standing grants answers
+(``approval_grants.stands_for_work``) and what of her chats it may not search
+(``chat_recall.not_searched_for``), who asked for what that turn learns from its words
 (:func:`taught_by`), and how a model is shown such a line in any history of the conversation
 (:func:`turn_line`): as memory consolidation shows it, whole, fenced, and labelled as someone
 else's words.

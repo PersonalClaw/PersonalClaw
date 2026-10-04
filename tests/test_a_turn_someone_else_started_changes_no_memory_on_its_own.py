@@ -681,11 +681,18 @@ _READS: dict[str, Any] = {
 
 
 async def _cli_turn(
-    tmp_path: Path, sender: str, title: str, args: dict, *, mode: str = "persistent"
+    tmp_path: Path,
+    sender: str,
+    title: str,
+    args: dict,
+    *,
+    mode: str = "persistent",
+    answer: str | None = None,
 ) -> tuple[Any, list[tuple[Any, Any]], str]:
     """One turn of a chat with Trust on whose agent CLI asks about one call of its own tool, the
-    turn's message sent by *sender* in a thread of the channel. Returns the CLI, the audit rows'
-    (outcome, who decided), and the transcript's text."""
+    turn's message sent by *sender* in a thread of the channel, and the owner's *answer* when the
+    call is asked of her. Returns the CLI, the audit rows' (outcome, who decided), and the
+    transcript's text."""
     from test_acp_permission_authority import (
         _context_builder,
         _drive,
@@ -721,7 +728,7 @@ async def _cli_turn(
         ],
     )
     rows = MagicMock()
-    await _drive(state, session, sel_mock=rows)
+    await _drive(state, session, sel_mock=rows, answer=answer)
     decided = [
         (c.kwargs.get("outcome"), (c.kwargs.get("metadata") or {}).get("decided_by"))
         for c in rows.return_value.log_tool_invocation.call_args_list
@@ -756,12 +763,16 @@ async def test_an_agent_clis_own_tool_changes_no_memory_document_in_a_colleagues
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("read", sorted(_READS))
-async def test_an_agent_clis_read_of_a_memory_document_in_a_colleagues_turn_runs(tmp_path, read):
-    """The control: a read changes nothing, so the gate leaves it to the chat's Trust."""
+async def test_an_agent_clis_read_of_a_memory_document_in_a_colleagues_turn_is_hers_to_answer(
+    tmp_path, read
+):
+    """The control: a read changes nothing, so the memory check refuses none of it. Like every
+    call of his turn it is hers to answer, since her Trust answers only what she asks for: she is
+    asked, and her Allow runs it."""
     title, args = _READS[read](_a_memory_document())
-    client, rows, _ = await _cli_turn(tmp_path, COLLEAGUE, title, args)
+    client, rows, _ = await _cli_turn(tmp_path, COLLEAGUE, title, args, answer="approved")
     client.approve_tool.assert_awaited_once_with("req-1")
-    assert rows and rows[0][0] == "auto_approved", rows
+    assert rows and rows[0] == ("approved", "you"), rows
 
 
 @pytest.mark.asyncio

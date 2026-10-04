@@ -1440,7 +1440,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         trust_mode.disable_yolo()
 
     def _on_yolo_disabled(self, reason: str) -> None:
-        """trust_mode callback: audit + clear untrusted per-session policies.
+        """trust_mode callback: audit + hand each chat's runtime the policy its posture answers
+        now (``push_chat_policy``).
 
         Fires whenever YOLO turns off (manual toggle, TTL expiry, or config-driven YOLO taken out
         of the config) so a lapsed override no longer leaves auto-approve policies on untrusted
@@ -1463,8 +1464,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             except Exception:
                 self._log.warning("SEL audit failed for YOLO %s", reason, exc_info=True)
         for session in self._sessions.values():
-            if not session._trust and not session._trust_reads:
-                self.sessions.set_approval_policy(f"dashboard:{session.key}", "")
+            self.push_chat_policy(session)
 
     def is_yolo_active(self) -> bool:
         """Return whether YOLO mode is currently active, auto-expiring after TTL."""

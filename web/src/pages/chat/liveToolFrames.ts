@@ -69,6 +69,7 @@ export function applyApprovalFrame(segs: Segment[], d: Frame): Segment[] {
     reach: d.reach ? String(d.reach) : '',
     ...(d.source ? { queued: true } : {}),
     ...(d.deny_effect ? { denyEffect: String(d.deny_effect) } : {}),
+    ...(d.asked_for ? { askedFor: String(d.asked_for) } : {}),
   }]
 }
 

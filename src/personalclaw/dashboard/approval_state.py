@@ -23,7 +23,7 @@ from personalclaw.approval_answer import AnswerRefused, Principal
 from personalclaw.approval_brief import RISK_LABELS, derive_blast_radius
 from personalclaw.channel_delivery import APPROVAL_ENDINGS
 from personalclaw.config import loader as config_loader
-from personalclaw.constants import DASHBOARD_SESSION_PREFIX
+from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
 from personalclaw.run_bounds import reach_note
 from personalclaw.security import redact_field
 from personalclaw.sel import sel
@@ -268,6 +268,7 @@ class DashboardApprovalState:
     conversation_log: ConversationLog | None
     broadcast_ws: Callable[..., None]
     enable_yolo: Callable[..., None]
+    is_yolo_active: Callable[[], bool]
     push_sessions_update: Callable[[], None]
     channel_provider_for: Callable[[str], str]
     get_or_create_session: Callable[..., _ChatSession]
@@ -324,12 +325,17 @@ class DashboardApprovalState:
         tool_kind: str = "",
         annotations: dict[str, Any] | None = None,
         answered_alone: bool = False,
+        asked_for: str = "",
     ) -> bool:
         """Request interactive approval. Returns True if approved, False if rejected/timeout.
 
         ``answered_alone`` is an ask only a decision on it answers: a Trust or YOLO switch, which
         answers every pending approval it covers (``chat_handlers.api_chat_mode``), leaves it
         asking. A batch's consent to change things is one (``workflows.batch_start``).
+
+        ``asked_for`` is the line saying someone other than the owner asked for the work the call
+        is made in (``approval_grants.asked_for_line``), shown with it on every surface; ``""``
+        for her own work. Such a call is answered alone too (:meth:`answered_alone`).
 
         ``risk_level`` is what the tool behind the call DECLARES (``AgentEvent.risk_level``;
         ``""`` when nothing does). The pending row carries the call's effective risk from it,
@@ -407,6 +413,7 @@ class DashboardApprovalState:
             # exactly that.
             risk=reading.risk if risk_level or reading.effects is not None else "",
             reach=reach_note(risk_level, tool, tool_kind, tool_input, session),
+            asked_for=asked_for,
         )
         if answered_alone:
             self.__dict__.setdefault("_answered_alone", set()).add(approval_id)
@@ -452,12 +459,15 @@ class DashboardApprovalState:
     def answered_alone(self, approval_id: str) -> bool:
         """Whether only a decision on *approval_id* answers it: a Trust or YOLO switch, which
         answers every pending approval it covers (``chat_handlers.api_chat_mode``), leaves it
-        asking. One its asker marked so (``request_approval``'s ``answered_alone``), and a call
+        asking. One its asker marked so (``request_approval``'s ``answered_alone``), a call
         asked because it reaches a host off the allowed hosts, which no grant answers
-        (``run_bounds``): its entry's ``reach`` says so, as its card does."""
+        (``run_bounds``): its entry's ``reach`` says so, as its card does; and a call in work
+        someone other than the owner asked for, which none of her switches answers
+        (``approval_grants``, rule 4): its entry's ``asked_for`` says so."""
         if approval_id in self.__dict__.get("_answered_alone", set()):
             return True
-        return bool((self._pending_approvals.get(approval_id) or {}).get("reach"))
+        entry = self._pending_approvals.get(approval_id) or {}
+        return bool(entry.get("reach") or entry.get("asked_for"))
 
     async def hold_session_approval(
         self,
@@ -474,6 +484,7 @@ class DashboardApprovalState:
         grant_agent: str,
         reach: str = "",
         deny_effect: str = "",
+        asked_for: str = "",
     ) -> None:
         """Publish the approval a chat's runner is about to wait on, under
         :func:`chat_approval_id`.
@@ -487,7 +498,8 @@ class DashboardApprovalState:
         read and ``blast_radius`` what it can touch, both read off the RAW input — the rule
         `request_approval` states, kept by the one caller that holds the raw object.
         ``deny_effect`` is what a Deny does when it does more than decline the call
-        (``turn_endings.deny_effect``), "" when it declines it.
+        (``turn_endings.deny_effect``), "" when it declines it. ``asked_for`` names who asked for
+        the turn when the owner did not (``approval_grants.asked_for_line``).
         """
         entry = self._approval_entry(
             chat_approval_id(session.key, request_id),
@@ -506,6 +518,7 @@ class DashboardApprovalState:
             grant_agent=grant_agent,
             reach=reach,
             deny_effect=deny_effect,
+            asked_for=asked_for,
             asked_by=approval_answer.asker_of_chat(
                 f"{DASHBOARD_SESSION_PREFIX}{session.key}", created_by_app=session.created_by_app
             ).label,
@@ -531,6 +544,7 @@ class DashboardApprovalState:
         trigger: str = "",
         reach: str = "",
         deny_effect: str = "",
+        asked_for: str = "",
     ) -> dict[str, Any]:
         """The ONE shape a pending approval has, whatever raised it.
 
@@ -554,6 +568,9 @@ class DashboardApprovalState:
         scheduled job), ``""`` for yours: no grant of yours approves it. ``deny_effect`` is what a
         Deny does when it does more than decline the call (an agent CLI that can refuse it only
         by ending its turn), said on every card before it is pressed; "" when it declines it.
+        ``asked_for`` says someone other than the owner asked for the work the call is made in,
+        naming them (``approval_grants.asked_for_line``), and why none of her switches answers it;
+        "" for her own work. Its card answers this call alone.
         """
         from personalclaw.approval_source import approval_source_label, live_chat_name, whose_work
         from personalclaw.triggers.store import trigger_name
@@ -579,6 +596,7 @@ class DashboardApprovalState:
             "grant_agent": grant_agent,
             "reach": redact_field(reach),
             "deny_effect": deny_effect,
+            "asked_for": redact_field(asked_for),
             "trigger": trigger,
             "trigger_name": named,
             "whose_work": whose,
@@ -1232,7 +1250,8 @@ class DashboardApprovalState:
         its chat, the prompt offers what the card offers for the call: Allow for this chat too,
         where the card would (``channel_delivery.chat_answers``: a call that may not destroy
         anything, reaches no host off the allowed hosts, under a ceiling that lets a chat's Trust
-        stand).
+        stand). A call someone other than the owner asked for (its ``asked_for``) is answered
+        alone there too, as its card answers it: the chat's Trust would not answer the next one.
         """
         from personalclaw.channel_delivery import ONE_CALL_ANSWERS, chat_answers
 
@@ -1240,7 +1259,7 @@ class DashboardApprovalState:
         its_own = session is not None and entry.get("id") == chat_approval_id(
             session.key, str(entry.get("request_id") or "")
         )
-        if not in_its_chat or not its_own:
+        if not in_its_chat or not its_own or entry.get("asked_for"):
             return ONE_CALL_ANSWERS
         return chat_answers(risk=str(entry.get("risk") or ""), reach=str(entry.get("reach") or ""))
 
@@ -1371,7 +1390,7 @@ class DashboardApprovalState:
             return False
         session._trust = True
         session._trust_from_floor = ""  # yours, not a floor's to withdraw
-        self.sessions.set_approval_policy(f"dashboard:{name}", "auto")
+        self.push_chat_policy(session)
         self.push_sessions_update()
         try:
             sel().log_api_access(
@@ -1398,6 +1417,54 @@ class DashboardApprovalState:
         if session._trust:
             return "trust"
         return "trust_reads" if session._trust_reads else ""
+
+    # ── What a chat's own posture answers (`approval_grants`, rule 4) ─────────────────────────
+
+    def standing_grant(self, session: "_ChatSession") -> str:
+        """The grant the chat *session*'s posture answers a call with, without asking, as it
+        reads now: its loop's own for a loop's session its loop armed to run on its own
+        (``approval_grants.LOOP_MODE``), YOLO, its Trust (an agent's "Always allow" seeds that),
+        else ``""``: its calls ask. Trust reads answers only what it is for, at the gate. None of
+        them answers in a conversation an app started (``chat_runner.started_by_app``)."""
+        from personalclaw import approval_grants
+        from personalclaw.loop.posture import runs_on_its_loops_grant
+
+        if getattr(session, "created_by_app", ""):
+            return ""
+        if runs_on_its_loops_grant(session):
+            return approval_grants.LOOP_MODE
+        if self.is_yolo_active():
+            return approval_grants.YOLO
+        return approval_grants.TRUST if session._trust else ""
+
+    def chat_policy(self, session: "_ChatSession") -> str:
+        """The approval policy the chat *session*'s own runtime is handed: ``"auto"`` while its
+        posture's grant (:meth:`standing_grant`) answers the calls of the turn it is running, so a
+        native runtime runs them without asking, and ``""`` when they ask. Read for whoever asked
+        for that turn (``memory_writes.asked_for_work``): in one someone else asked for, none of
+        the owner's grants answers (``approval_grants.stands_for_work``), so the runtime puts each
+        call to the turn engine's gate, which asks her. Unaudited here: the gate audits each call
+        it decides."""
+        from personalclaw import approval_grants, memory_writes
+
+        grant = self.standing_grant(session)
+        if not grant:
+            return ""
+        key = dashboard_history_key(session.key)
+        asked = memory_writes.asked_for_work(key)
+        return (
+            "auto"
+            if approval_grants.stands_for_work(grant, caller=key, asked_by=asked, audit=False)
+            else ""
+        )
+
+    def push_chat_policy(self, session: "_ChatSession") -> None:
+        """Hand the chat *session*'s runtime its approval policy as it reads now
+        (:meth:`chat_policy`): when its turn begins, and whenever its posture or YOLO changes, so
+        the runtime never runs a call unasked that its posture does not answer."""
+        self.sessions.set_approval_policy(
+            dashboard_history_key(session.key), self.chat_policy(session)
+        )
 
     def _channel_chat(self, name: str) -> "_ChatSession | None":
         """The chat that holds the conversation *name*: the one open here, else the conversation
@@ -1539,7 +1606,7 @@ class DashboardApprovalState:
         if action == "trust":
             session._trust = True
             session._trust_from_floor = ""  # yours now, not a floor's to withdraw
-            self.sessions.set_approval_policy(f"dashboard:{name}", "auto")
+            self.push_chat_policy(session)
             action = "approved"
         # Trust-agent ("Always allow for this agent"): trust THIS chat now (like trust)
         # AND persist the grant onto the bound agent's profile (approval_mode="auto") so
@@ -1550,7 +1617,7 @@ class DashboardApprovalState:
         elif action == "trust_agent":
             session._trust = True
             session._trust_from_floor = ""
-            self.sessions.set_approval_policy(f"dashboard:{name}", "auto")
+            self.push_chat_policy(session)
             action = "approved"
             from personalclaw.agents.defaults import persistable_grant_target
 
@@ -1597,7 +1664,7 @@ class DashboardApprovalState:
         elif action == "yolo":
             self.enable_yolo()
             for s in self._sessions.values():
-                self.sessions.set_approval_policy(f"dashboard:{s.key}", "auto")
+                self.push_chat_policy(s)
             action = "approved"
         # A loop's worker asks for its loop. A standing grant given on its card reaches every
         # worker of this run of the loop — the stage worker, its task workers, and the ones the

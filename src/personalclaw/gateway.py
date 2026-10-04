@@ -318,6 +318,17 @@ class AnnounceRefused(Exception):
     """
 
 
+def _asked_for_call(request_id: str) -> dict[str, str]:
+    """Who asked for the work a background call *request_id* is made in, when the owner did not:
+    a subagent's, or its start's, keeps who asked for the turn that started it
+    (``memory_writes.hand_on``), read from its own work wherever its relay is called from; any
+    other origin's (a schedule, a heartbeat) is the work running now's."""
+    agent_id = approval_subagent_id(request_id)
+    if agent_id:
+        return memory_writes.asked_for_work(agent_work_id(agent_id))
+    return memory_writes.asker()
+
+
 def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
     """Tool-approval policy for a subagent RESULT-INJECTION turn (AUTONOMY-GUARDRAILS §3, AG-11).
 
@@ -335,7 +346,9 @@ def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
     The interactive parent's AUTO_APPROVE is a grant like any other (`approval_grants`), which the
     operator ceiling bounds: refused, the announce takes what the ceiling does allow a turn nobody
     is asked in (``guardrails.policy.no_one_to_ask``) — the hooks' say under ``hook_based``,
-    nothing under ``ask``.
+    nothing under ``ask``. It is the owner's, for work she asked for (rule 4): the report of a
+    subagent someone else asked for runs as asked for by them (``memory_writes.turn_asked_by``), so
+    its announce takes the hooks' say alone, as nobody can be asked there.
     """
     from personalclaw.guardrails.policy import (
         approval_policy_for_session,
@@ -346,7 +359,7 @@ def injection_approval_policy(parent_key: str) -> "ToolApprovalPolicy":
 
     if is_unattended_session(parent_key):
         return approval_policy_for_session(parent_key)
-    if approval_grants.stands(approval_grants.INJECTION, caller=parent_key):
+    if approval_grants.stands_for_work(approval_grants.INJECTION, caller=parent_key):
         return ToolApprovalPolicy.AUTO_APPROVE
     hooks_may = approval_grants.stands(
         approval_grants.INJECTION,
@@ -635,6 +648,10 @@ class GatewayOrchestrator:
             request_id = str(event.request_id)
             asked_in = session_resolver(request_id) if session_resolver else resolved_session
             asked_by = trigger_resolver(request_id) if trigger_resolver else ""
+            # Who asked for the work this call is made in, when the owner did not: none of her own
+            # grants answers it (`approval_grants`, rule 4), and every surface it is asked on names
+            # them.
+            someone = _asked_for_call(request_id)
 
             # A standing grant approves without asking — read NOW, not from the config the gateway
             # started with (`approval_grants`, rule 1), and only if the operator ceiling lets it
@@ -652,10 +669,11 @@ class GatewayOrchestrator:
                     resolved_session=resolved_session,
                 )
             )
-            if grant and approval_grants.stands(
+            if grant and approval_grants.stands_for_work(
                 grant,
                 caller=f"source:{source}",
                 subject=redact_exfiltration_urls(redact_credentials(event.title or "")[0])[0][:80],
+                asked_by=someone,
             ):
                 if grant_row is not None:
                     try:
@@ -717,6 +735,7 @@ class GatewayOrchestrator:
                                 risk_level=event.risk_level,
                                 tool_kind=event.tool_kind,
                                 annotations=getattr(event, "annotations", None),
+                                asked_for=approval_grants.asked_for_line(someone),
                             )
                         )
 
@@ -743,7 +762,7 @@ class GatewayOrchestrator:
                     # `tool_meta` key and changes no argument — a channel that ignores
                     # it prompts exactly as before. The dashboard stays the rich
                     # surface; this is data, not rendering.
-                    attach_approval_brief(event)
+                    attach_approval_brief(event, asked_by=someone)
                     try:
                         approved = await asker.request_approval(
                             event,
@@ -797,6 +816,7 @@ class GatewayOrchestrator:
                     risk_level=event.risk_level,
                     tool_kind=event.tool_kind,
                     annotations=getattr(event, "annotations", None),
+                    asked_for=approval_grants.asked_for_line(someone),
                 )
                 return self._asked_decision(request_id, answered)
             # Nowhere to ask (no dashboard, no channel): nobody can say yes, so the call does not
@@ -818,9 +838,11 @@ class GatewayOrchestrator:
         """The standing grant that approves this background call without asking, read NOW.
 
         Returns the grant's name (`approval_grants`) and the audit row that records it, which the
-        caller writes only once the operator ceiling has let the grant stand — an "ok, approved"
-        row for a grant the ceiling then refused would record an approval that never happened.
-        ``("", None)`` when nothing stands and the call is asked.
+        caller writes only once the grant stands for the work the call is made in
+        (``approval_grants.stands_for_work``: none of the owner's own for work someone else asked
+        for, and the operator ceiling) — an "ok, approved" row for a grant then refused would
+        record an approval that never happened. ``("", None)`` when nothing stands and the call is
+        asked.
 
         Every read here is of the setting as it is now: ``hooks.auto_approve_sources`` came from
         the config the gateway started with, so a source the owner took off the list kept

@@ -1655,3 +1655,20 @@ report back to its chat; an automation is not made or changed on someone else's
 say-so, and a loop takes the words of whoever asked for it alone. Details in
 [chat-sessions.md](chat-sessions.md#session-model) and
 [knowledge-memory.md](knowledge-memory.md#recall--the-privacy-guard).
+
+Nor does any standing grant of yours answer for such work (`approval_grants`, rule 4). A chat's
+Trust, Trust reads and YOLO, an agent's "Always allow", your Approval mode "Auto", your chat's Trust
+as a subagent it started holds it, and the turn that announces a subagent's report in a chat you are
+in are yours, for what you ask. In a turn someone else asked for, and in the work it starts, none of
+them answers a call, on either runtime and in a channel that runs its turns itself:
+`approval_grants.stands_for_work` is the one question every grant that answers a call asks, and the
+policy a chat's native runtime is handed is read through it for whoever asked for the turn it runs
+(`DashboardState.chat_policy`). The call is asked of you instead, on your own surfaces. Its card
+names who asked (`asked_for`) and offers your answer for that call alone, a Trust or YOLO switch
+answers none of those calls, a channel's prompt offers no Allow for this chat for them, and each
+hold is audited (`approval.grant_held`, naming who asked) beside the decision row, which names them
+too. What a call's tool declares (a read, a call whose work asks you itself), the operator's hook
+settings and patterns, and a grant given for that one run (a loop's Mode or "This loop", a run's
+own approval mode, a trigger's Allow) answer as before. Such work searches none of your chats
+either: `chat_search`, `GET /api/sessions/recall` and the inbound door's `sessions_search` search
+nothing for it, answering with a sentence that names who asked (`chat_recall.not_searched_for`).

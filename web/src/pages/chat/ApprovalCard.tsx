@@ -173,9 +173,12 @@ function wordsFor(scope: (typeof REMEMBER_SCOPES)[number], words: ScopeWords) {
  *
  *  `destructive` and `unchecked` (a shell command the screen could not vouch for), matching the
  *  route's own gate. An absent tier keeps every scope: legacy transcript rows and risk-less
- *  external tools must not be harder to answer than `bash`. */
-function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean, reach: boolean) {
-  if (reach) return [REMEMBER_SCOPES[0]]
+ *  external tools must not be harder to answer than `bash`.
+ *
+ *  `alone`: no standing grant would answer the next call like it, so none is offered — a call
+ *  that reaches a host off the allowed hosts, and one someone else asked for. */
+function offeredScopes(risk: ApprovalSegment['risk'], widened: boolean, alone: boolean) {
+  if (alone) return [REMEMBER_SCOPES[0]]
   if (mayDestroy(risk) && !widened) return [REMEMBER_SCOPES[0]]
   return REMEMBER_SCOPES
 }
@@ -257,7 +260,10 @@ export function ApprovalCard({
   // grant selected — a scope the user can no longer see must not be the one Allow posts.
   // A call reaching a host off the allowed hosts is asked about whatever a grant says, so no
   // standing grant is offered for it: one would promise a "without asking" it cannot keep.
-  const offered = answers === 'once' ? [REMEMBER_SCOPES[0]] : offeredScopes(seg.risk, widened, Boolean(seg.reach))
+  // So is a call someone else asked for: none of her standing grants would answer the next one.
+  const offered = answers === 'once'
+    ? [REMEMBER_SCOPES[0]]
+    : offeredScopes(seg.risk, widened, Boolean(seg.reach || seg.askedFor))
   const chosen = offered.find((s) => s.key === scope) ?? offered[0]
   const chosenWords = wordsFor(chosen, scopeWords)
   const promise = chosenWords.promise(seg.grantAgent || '')
@@ -274,6 +280,8 @@ export function ApprovalCard({
       meta={<>
         <BlastRadiusChips radius={seg.blastRadius} />
         {seg.reach && <p data-type="caption" className="mt-xs text-on-surface-var">{seg.reach}</p>}
+        {/* Who asked for the turn when it was not her, on every surface the call is asked on. */}
+        {seg.askedFor && <p data-type="caption" className="mt-xs text-on-surface-var">{seg.askedFor}</p>}
         {/* What a Deny does when it is more than declining this call — an agent CLI that can
             refuse it only by ending its turn — read before either verb, on every surface. */}
         {seg.denyEffect && <p data-type="caption" className="mt-xs text-on-surface-low">{seg.denyEffect}</p>}
@@ -293,7 +301,7 @@ export function ApprovalCard({
               cannot read is a scope they cannot consent to. Announced politely (not
               assertively) because the user caused the change by choosing it. */}
           <p aria-live="polite" data-type="caption" className="text-on-surface-low">{promise}</p>
-          {mayDestroy(seg.risk) && !seg.reach && (
+          {mayDestroy(seg.risk) && !seg.reach && !seg.askedFor && (
             // The extra rung, and it states the CONSEQUENCE rather than the risk — the chip
             // above already names the tier, and "destructive" is not what the user is
             // deciding here. What they are deciding is whether future destructive calls stop

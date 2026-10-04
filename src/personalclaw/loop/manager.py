@@ -230,6 +230,12 @@ def announce_reprompt(state, key: str, attempt: int, of: int, title: str = "") -
 _LOOP_GRANTS: set[str] = set()
 
 
+def loop_granted(loop_id: str) -> bool:
+    """Whether "This loop" was answered on one of this run of *loop_id*'s approval cards
+    (:func:`grant_every_worker`), so its workers run their tools without asking."""
+    return loop_id in _LOOP_GRANTS
+
+
 def _arm_posture(worker, loop: Loop) -> None:
     """Arm *worker* from its loop's Mode (``posture``), each time the loop arms it, with "This
     loop" when one of this run's own approval cards gave it (:func:`grant_every_worker`).
@@ -240,7 +246,7 @@ def _arm_posture(worker, loop: Loop) -> None:
     grants that already stand for chats stand here too: an agent's "Always allow", Trust reads,
     YOLO, an operator's hook pattern.
     """
-    posture.arm(worker, posture.of(loop), granted=loop.id in _LOOP_GRANTS)
+    posture.arm(worker, posture.of(loop), granted=loop_granted(loop.id))
 
 
 def grant_every_worker(state, loop_id: str) -> None:
@@ -248,9 +254,9 @@ def grant_every_worker(state, loop_id: str) -> None:
     until this run of the loop ends (a pause, a stop, or a restart ends it; see
     :func:`_arm_posture`). Its live workers take the grant now, mid-turn included; a task
     worker the scheduler starts later takes it when it is armed. Each is bounded by the
-    operator ceiling where it is applied (``SessionManager.set_approval_policy``)."""
-    from personalclaw.constants import dashboard_session_key
-
+    operator ceiling where it is applied (``SessionManager.set_approval_policy``). It is the loop's
+    own grant (``approval_grants.LOOP_MODE``), given for this run of it, so it answers its workers'
+    calls whoever asked for the loop."""
     _LOOP_GRANTS.add(loop_id)
     for key in worker_session_keys(state, loop_id):
         worker = state._sessions.get(key)
@@ -259,7 +265,7 @@ def grant_every_worker(state, loop_id: str) -> None:
         worker._trust = True
         worker._trust_from_floor = ""
         try:
-            state.sessions.set_approval_policy(dashboard_session_key(key), "auto")
+            state.push_chat_policy(worker)
         except Exception:
             logger.warning("loop: could not extend the grant to %s", key, exc_info=True)
 

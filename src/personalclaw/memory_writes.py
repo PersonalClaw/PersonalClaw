@@ -53,7 +53,10 @@ teaches as hers. A change the agent's memory tools ask for in such a turn is hel
 instead (``dashboard.memory_holds``): she is asked, and what she allows is written as hers
 (:func:`on_the_owners_word`). Memory consolidation is PersonalClaw's own pass over the whole
 conversation, which takes only her words from it, so it runs as the session's own
-(:func:`as_its_session`), whoever asked for the turn it follows.
+(:func:`as_its_session`), whoever asked for the turn it follows. The same answer decides what
+else of hers such work takes: none of her standing grants answers its calls
+(``approval_grants.stands_for_work``), and it searches none of her chats
+(``chat_recall.not_searched_for``).
 
 Nothing of such a session is handed to a background model either: its title, tags and suggested
 follow-ups, a condensed copy of its history, the suggestions built from recent chats. Each of those

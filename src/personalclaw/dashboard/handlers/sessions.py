@@ -208,7 +208,10 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
     an Incognito or a Temporary chat. From a Temporary chat's work nothing is: it starts blank. For
     an app's work, only the conversations that app started are searched, as the app's own content
     search is (:func:`api_sessions_search`). Whose work the call is, is
-    :func:`memory_reads.reach_of`'s answer, the one every memory read asks.
+    :func:`memory_reads.reach_of`'s answer, the one every memory read asks. For work someone other
+    than the owner asked for (a colleague's turn in a shared thread, and what such a turn starts:
+    ``memory_writes.asker``, read for that work) nothing is searched either, and ``result`` says
+    who asked (``chat_recall.not_searched_for``).
 
     Returns ``{result, query, chats, matched, searched, complete, index}``. ``result`` is what the
     tool hands the agent. ``chats`` holds each chat found, best first: its ``key``, ``title``,
@@ -217,7 +220,7 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
     ``at``, ``text``), how many ``more`` of its turns use the words, and the ``snippet`` the search
     found. Titles, turns and snippets are masked.
     """
-    from personalclaw import chat_recall, memory_reads
+    from personalclaw import chat_recall, memory_reads, memory_writes
 
     state: DashboardState = request.app["state"]
     q = " ".join(sanitize_string(request.query.get("q", "")).split())[:500]
@@ -242,6 +245,17 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
             resources=asking[-1],
         )
         said = chat_recall.TEMPORARY if reach.temporary else reach.blank
+        return web.json_response({"result": said, "query": q, "chats": []})
+    someone = memory_writes.asker()
+    if someone:
+        _sel().log_api_access(
+            caller=asking[0] if asking else "dashboard",
+            operation="sessions.recall",
+            outcome="denied",
+            source="dashboard",
+            resources=f"{asking[-1] if asking else ''},asked_by_someone_else",
+        )
+        said = chat_recall.not_searched_for(someone)
         return web.json_response({"result": said, "query": q, "chats": []})
     log = state.conversation_log
     if not log:

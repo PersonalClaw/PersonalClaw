@@ -12,7 +12,7 @@ export function approvalInputText(raw: unknown): string {
 export type ApprovalCardInput = Pick<
   PendingApproval,
   'id' | 'request_id' | 'tool' | 'tool_input' | 'tool_purpose' | 'risk' | 'blast_radius' | 'grant_agent'
-  | 'session' | 'source_label' | 'reach' | 'deny_effect'
+  | 'session' | 'source_label' | 'reach' | 'deny_effect' | 'asked_for'
 >
 
 /** A registry row (`GET /api/approvals`, the `approval` frame) as the card's segment, so every
@@ -30,6 +30,7 @@ export function approvalSegmentOf(a: ApprovalCardInput): ApprovalSegment {
     grantAgent: a.grant_agent || '',
     reach: a.reach || '',
     ...(a.deny_effect ? { denyEffect: a.deny_effect } : {}),
+    ...(a.asked_for ? { askedFor: a.asked_for } : {}),
   }
 }
 
