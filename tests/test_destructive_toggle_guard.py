@@ -59,6 +59,7 @@ from typing import Any, Callable
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw import seed as seed_mod
 
@@ -301,7 +302,9 @@ def _app() -> web.Application:
 
     app = web.Application()
     app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
-    return app
+    # No sign-in stands in front of this route, so say so: a write that needs a recent sign-in
+    # (owner_presence) is refused on a gateway that does not declare its authentication off.
+    return without_sign_in(app)
 
 
 @pytest.mark.asyncio
