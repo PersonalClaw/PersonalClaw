@@ -19,6 +19,11 @@ whose prompt offers them declares it.
 approval prompt and keeps none of its own (``personalclaw.sdk.channel.approval_brief_for(event,
 chat=...)``, ``answer_in_chat`` and ``chat_grant``). A channel app that uses them declares it.
 
+``CLOSING_STREAMS``: an app that reads a model's stream reads it inside
+``personalclaw.sdk.model.closing_stream``, and the stream is closed the moment the app stops
+reading it, by any way out; an agent CLI's turn left part way then tells the agent to stop and
+gives its session back at once. An app that reads a model's stream declares it.
+
 ``DIGEST_REPLIES``: a channel that runs a conversation itself offers PersonalClaw the owner's
 message before its own turn (``services.answer_channel_reply``), so the owner's answer to the
 Morning triage digest that DM received is answered as the digest's card answers it. A channel app
@@ -46,6 +51,7 @@ that saves its turns or imports a thread with them declares it.
 from personalclaw.apps.core_features import (
     APPROVAL_ANSWERS,
     CHAT_TRUST,
+    CLOSING_STREAMS,
     CORE_FEATURES,
     DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
@@ -58,6 +64,7 @@ from personalclaw.apps.core_features import (
 __all__ = [
     "APPROVAL_ANSWERS",
     "CHAT_TRUST",
+    "CLOSING_STREAMS",
     "CORE_FEATURES",
     "DIGEST_REPLIES",
     "GUARDED_DOWNLOAD",

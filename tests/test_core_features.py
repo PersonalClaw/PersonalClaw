@@ -19,6 +19,7 @@ from personalclaw.sdk import features
 from personalclaw.sdk.features import (
     APPROVAL_ANSWERS,
     CHAT_TRUST,
+    CLOSING_STREAMS,
     CORE_FEATURES,
     DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
@@ -33,6 +34,7 @@ from personalclaw.sdk.features import (
 OFFERED_ONCE = {
     "approval-answers",
     "chat-trust",
+    "closing-streams",
     "digest-replies",
     "guarded-download",
     "links-name-their-channel",
@@ -45,6 +47,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert set(features.__all__) == {
         "APPROVAL_ANSWERS",
         "CHAT_TRUST",
+        "CLOSING_STREAMS",
         "CORE_FEATURES",
         "DIGEST_REPLIES",
         "GUARDED_DOWNLOAD",
@@ -55,6 +58,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     }
     assert APPROVAL_ANSWERS == "approval-answers"
     assert CHAT_TRUST == "chat-trust"
+    assert CLOSING_STREAMS == "closing-streams"
     assert DIGEST_REPLIES == "digest-replies"
     assert GUARDED_DOWNLOAD == "guarded-download"
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
@@ -63,6 +67,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     for name in (
         APPROVAL_ANSWERS,
         CHAT_TRUST,
+        CLOSING_STREAMS,
         DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
@@ -349,10 +354,96 @@ def _digest_replies_hold() -> None:
             os.environ[key] = before
 
 
+def _closing_streams_hold() -> None:
+    """A stream read inside ``closing_stream`` is closed as its reader leaves the block, by a break
+    or by an error, and so is the stream beneath it that it reads the same way. An agent CLI's turn
+    left part way like that gives its session back at once and tells the agent to stop."""
+    import asyncio
+    import inspect
+
+    from personalclaw.acp.session import AcpSession
+    from personalclaw.acp.types import METHOD_SESSION_UPDATE, JsonRpcMessage
+    from personalclaw.sdk.model import closing_stream
+
+    async def beneath():
+        yield "Reading the commit"
+        yield "It changes one adapter."
+
+    async def passes_on(events):
+        async with closing_stream(events) as stream:
+            async for event in stream:
+                yield event
+
+    async def reads_one(events) -> None:
+        async with closing_stream(events) as stream:
+            async for _event in stream:
+                break
+
+    async def fails_on_one(events) -> None:
+        async with closing_stream(events) as stream:
+            async for _event in stream:
+                raise LookupError("the reader's own work failed")
+
+    async def check() -> None:
+        for reader in (reads_one, fails_on_one):
+            inner = beneath()
+            outer = passes_on(inner)
+            try:
+                await reader(outer)
+            except LookupError:
+                pass
+            assert inspect.getasyncgenstate(outer) == inspect.AGEN_CLOSED, reader.__name__
+            assert inspect.getasyncgenstate(inner) == inspect.AGEN_CLOSED, reader.__name__
+
+        queue: asyncio.Queue[JsonRpcMessage] = asyncio.Queue()
+        told_to_stop: list[str] = []
+
+        async def send_request(method, params):
+            return 1, asyncio.get_running_loop().create_future()
+
+        async def send_response(req_id, result):
+            return None
+
+        async def cancel_session():
+            told_to_stop.append("sess-1")
+
+        session = AcpSession(
+            "sess-1",
+            queue,
+            send_request=send_request,
+            send_response=send_response,
+            cancel_session=cancel_session,
+            is_process_alive=lambda: True,
+        )
+        queue.put_nowait(
+            JsonRpcMessage(
+                method=METHOD_SESSION_UPDATE,
+                params={
+                    "sessionId": "sess-1",
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": "Reading the commit"},
+                    },
+                },
+            )
+        )
+        turn = session.stream_events("Review the last commit", timeout=5)
+        await reads_one(turn)
+        assert not session._turn_lock.locked(), "the turn its reader left still held the session"
+        for _ in range(500):
+            if told_to_stop:
+                break
+            await asyncio.sleep(0.01)
+        assert told_to_stop == ["sess-1"], "the agent was never told to stop"
+
+    asyncio.run(check())
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     APPROVAL_ANSWERS: _approval_answers_hold,
     CHAT_TRUST: _chat_trust_holds,
+    CLOSING_STREAMS: _closing_streams_hold,
     DIGEST_REPLIES: _digest_replies_hold,
     GUARDED_DOWNLOAD: _guarded_download_holds,
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,

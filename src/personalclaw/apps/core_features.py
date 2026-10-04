@@ -81,11 +81,21 @@ LINKS_NAME_THEIR_CHANNEL = "links-name-their-channel"
 #: app that names one fails to save its turns.
 TURNS_NAME_THEIR_CHANNEL = "turns-name-their-channel"
 
+#: A model's stream an app reads is closed the moment the app stops reading it:
+#: ``personalclaw.sdk.model.closing_stream(events)`` reads *events* inside a block, and leaving the
+#: block by any way out (the terminal event, a ``break``, an error, a cancel) closes the stream at
+#: once, and with it every stream beneath it. An agent CLI's turn closed part way tells the agent
+#: to stop and gives its session back, so the session's next prompt is sent as soon as the agent
+#: has answered, never when the interpreter collects the stream. A core without it has no
+#: ``closing_stream``, so an app that imports it does not load.
+CLOSING_STREAMS = "closing-streams"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
         APPROVAL_ANSWERS,
         CHAT_TRUST,
+        CLOSING_STREAMS,
         DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,

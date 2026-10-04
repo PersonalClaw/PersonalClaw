@@ -253,6 +253,27 @@ The agent can compact the conversation on its own in the middle of a turn: an
 the result of a `/compact`, since it is the same pass, and keeps the answer that streamed before
 it. Silently dropping it leaves the conversation missing its middle with nothing said.
 
+### A turn you stop reading is closed
+
+A channel that runs its own turns reads each turn's stream (`client.stream(...)`, and a
+`/compact`'s `stream_command`) inside `personalclaw.sdk.model.closing_stream`, and stops reading
+wherever it means to: at the terminal event, after a call whose approval was not given, on an error
+or a stop.
+
+```python
+async with closing_stream(client.stream(message)) as events:
+    async for event in events:
+        ...
+```
+
+Leaving the block by any way out closes the stream at once. An agent CLI's session sends one prompt
+at a time, and its turn holds the session until the turn's stream is closed: closed part way, the
+turn tells the agent to stop and gives the session back, so the thread's next message goes out as
+soon as the agent has answered. A stream left open goes back only when the interpreter collects it,
+which can be much later, and the next message waits for it, unsent. Declare
+`"requiresCoreFeatures": ["closing-streams"]` (`personalclaw.sdk.features.CLOSING_STREAMS`); a
+PersonalClaw without it has no `closing_stream`, and refuses to install or update the app.
+
 ### Declare capabilities honestly
 
 `ChannelCapabilities` is the routing input, so a field you set to `True` is a promise:
