@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { hydrateTurns, type HistMsg } from './chatTypes'
 
-// A reply cut at the model's OUTPUT cap ends mid-sentence. The backend stamps
-// `meta.finish_reason: 'length'` on the turn's LAST assistant message (and only then — a reply
-// that finished on its own carries no key), and the chat renders a "Cut off" line under it.
+// A reply cut at the model's OUTPUT cap ends mid-sentence, and an answer cut off before the model
+// finished it ends wherever its stream stopped. The backend stamps `meta.finish_reason` on the
+// turn's LAST assistant message (`'length'` or `'incomplete'`, and only then — a reply that
+// finished on its own carries no key), and the chat renders a line under it that says which.
 // These pin the rehydration half: what a reload shows must be what the live turn showed.
 
 const msg = (role: string, content: string, meta?: HistMsg['meta']): HistMsg =>
@@ -15,7 +16,17 @@ describe('hydrateTurns — a cut reply stays marked on reload', () => {
       msg('user', 'tell me a long story'),
       msg('assistant', 'Once upon a time, in a land that', { finish_reason: 'length' }),
     ])
-    expect(turns.find((t) => t.role === 'assistant')?.cutOff).toBe(true)
+    expect(turns.find((t) => t.role === 'assistant')?.cutOff).toBe('length')
+  })
+
+  it('marks the part of an answer that arrived before it was cut off as partial', () => {
+    // The turn then ends on its error row; the kept text is still the assistant turn's.
+    const turns = hydrateTurns([
+      msg('user', 'summarize the Q3 numbers'),
+      msg('assistant', 'Revenue rose 12% in Q3, and', { finish_reason: 'incomplete' }),
+      msg('error', "The model's answer was cut off: its stream ended before the model said it was finished."),
+    ])
+    expect(turns.find((t) => t.role === 'assistant')?.cutOff).toBe('incomplete')
   })
 
   it('leaves a reply that finished on its own unmarked', () => {

@@ -102,6 +102,12 @@ from personalclaw.llm.registry import (  # noqa: F401
     own_model,
     require_model,
 )
+
+# How a provider that reads its own wire reads it: a stream that ends before the event its
+# protocol ends an answer with was cut off, never complete. The rule lives in core so every
+# adapter keeps it the same way: what an adapter emits only once its answer has ended (its tool
+# calls, its terminal event) is never emitted for a cut stream, and the turn says it was cut off.
+from personalclaw.llm.stream_end import until_terminal  # noqa: F401
 from personalclaw.llm.stream_tags import (  # noqa: F401
     CHANNEL_CLOSE,
     CHANNEL_OPEN,
@@ -160,6 +166,9 @@ __all__ = [
     # A provider whose stream passes another one on reads it inside this, so closing its own
     # stream closes the one beneath (the bundled `ollama-models` and `bundled-chat`).
     "closing_stream",
+    # A provider that reads its own wire reads it through this, so a stream cut before its
+    # answer ended raises instead of reading as complete (`ollama-models`, `bedrock-models`).
+    "until_terminal",
     "EVENT_COMPLETE",
     "EVENT_TEXT_CHUNK",
     "EVENT_THINKING_CHUNK",

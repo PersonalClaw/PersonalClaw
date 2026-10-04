@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ResultAnnouncement } from '../ui/ListControls'
 import { failureSentence, reportActionFailure, reportingWrite } from '../app/reportingWrite'
 import { unavailableWhen, BUSY_REASON } from '../ui/unavailable'
@@ -78,7 +78,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import { sessionTemplatePatch } from './chat/sessionTemplate'
 import { Modal } from '../ui/Modal'
 import { confirm, promptInput } from '../ui/dialog'
-import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf } from './chat/chatTypes'
+import { type ChatTurn, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, appendThinking, type SubagentCard, type HistMsg, type MemoryCitation, type SkillUsed, userTurn, assistantTurn, hydrateTurns, livePartialOf, turnText, failedStepCount, unaskedStepCount, foldStepLine, noteOf, LEDGER_ACTIVITY_KINDS, deriveActivity, markCoordOf, skillsUsedLabel, skillsUsedTitle, imageDeliveryOf, noticeSegment, ranPromptOf, replyCutOf, type ReplyCut } from './chat/chatTypes'
 import { isImagePath } from './chat/imageAttachments'
 import { AttachmentChips, TurnAttachments } from './chat/AttachmentChips'
 import { applyApprovalFrame, applyApprovalResolved, applyToolCallFrame, applyToolResultFrame } from './chat/liveToolFrames'
@@ -1656,18 +1656,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           if (sk !== sessionRef.current) return
           const byTs = new Map<string, MemoryCitation[]>()
           let lastCites: MemoryCitation[] | null = null
-          // A reply cut at the output cap (`finish_reason: 'length'`) is stamped on the same meta
-          // and is just as invisible to the WS stream. It describes ONE turn, so only the
-          // snapshot's LAST assistant message may speak for the trailing just-streamed turn.
-          const cutByTs = new Set<string>()
-          let lastIsCut = false
+          // A reply that did not finish (`finish_reason`: cut at the output cap, or cut off before
+          // the model finished) is stamped on the same meta and is just as invisible to the WS
+          // stream. It describes ONE turn, so only the snapshot's LAST assistant message may speak
+          // for the trailing just-streamed turn.
+          const cutByTs = new Map<string, ReplyCut>()
+          let lastCut: ReplyCut | undefined
           // "Ran on X instead of Y" is stamped the same way, for the same one turn.
           const subByTs = new Map<string, string>()
           let lastSub = ''
           for (const m of d.messages || []) {
             if (m.role !== 'assistant') continue
-            lastIsCut = m.meta?.finish_reason === 'length'
-            if (lastIsCut && m.ts) cutByTs.add(m.ts)
+            lastCut = replyCutOf(m.meta)
+            if (lastCut && m.ts) cutByTs.set(m.ts, lastCut)
             lastSub = m.meta?.model_substitution || ''
             if (lastSub && m.ts) subByTs.set(m.ts, lastSub)
             const c = m.meta?.memory_citations
@@ -1676,7 +1677,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
               if (m.ts) byTs.set(m.ts, c)
             }
           }
-          if (byTs.size || lastCites || cutByTs.size || lastIsCut || subByTs.size || lastSub) setTurns((prev) => {
+          if (byTs.size || lastCites || cutByTs.size || lastCut || subByTs.size || lastSub) setTurns((prev) => {
             const lastIdx = prev.map((t) => t.role).lastIndexOf('assistant')
             return prev.map((t, i) => {
               if (t.role !== 'assistant') return t
@@ -1686,8 +1687,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 // Trailing streamed turn with no ts → attach the session's one manifest.
                 else if (i === lastIdx && !t.ts && lastCites) patch.citations = lastCites
               }
-              if (!t.cutOff && ((t.ts && cutByTs.has(t.ts)) || (i === lastIdx && !t.ts && lastIsCut))) {
-                patch.cutOff = true
+              if (!t.cutOff) {
+                if (t.ts && cutByTs.has(t.ts)) patch.cutOff = cutByTs.get(t.ts)
+                else if (i === lastIdx && !t.ts && lastCut) patch.cutOff = lastCut
               }
               if (!t.modelSubstitution) {
                 if (t.ts && subByTs.has(t.ts)) patch.modelSubstitution = subByTs.get(t.ts)
@@ -4639,8 +4641,9 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
   chatSessionKey?: string
   citations?: MemoryCitation[]
   skillsUsed?: SkillUsed[]
-  /** The reply stopped at the model's output cap (`meta.finish_reason === 'length'`). */
-  cutOff?: boolean
+  /** How the reply did not finish (`meta.finish_reason`): its model's output cap, or an answer
+   *  cut off before the model finished, whose kept part is marked where it stops. */
+  cutOff?: ReplyCut
   /** "Ran on X instead of Y: …" — another model answered than the one chosen for this chat. */
   modelSubstitution?: string
 }) {
@@ -4674,6 +4677,9 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
   // The last segment the turn shows in its body: the ledger's rows are pulled out into its footer.
   const inLedger = (s: Segment) => s.kind === 'activity' && LEDGER_ACTIVITY_KINDS.includes((s as ActivitySegment).activityKind || '')
   const lastShown = [...segments].reverse().find((s) => !inLedger(s))
+  // An answer cut off before the model finished is marked where its kept text stops, above the
+  // error the turn ends on: that text is the turn's last.
+  const cutHere = cutOff === 'incomplete' && !streaming ? [...segments].reverse().find((s) => s.kind === 'text') : undefined
 
   // Render one segment as its own card/line. Tool/approval/error cards carry their
   // OWN leading icon + status glyph, so there is no separate timeline dot+rail (the
@@ -4731,7 +4737,9 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
     if (seg.kind === 'text') {
       // hide the raw [OPTIONS: …] and [SWITCH_TO_AGENT: …] markers from the prose
       const body = parseSwitchToAgent(parseOptions(seg.text).body).body
-      return body ? <Markdown key={i} widgets onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown> : null
+      if (!body) return null
+      const prose = <Markdown key={i} widgets onFileClick={onOpenFile} chatSessionKey={chatSessionKey} messageTs={messageTs} streaming={streaming} citations={citations}>{body}</Markdown>
+      return seg === cutHere ? <Fragment key={i}>{prose}<ReplyCutNote cut="incomplete" /></Fragment> : prose
     }
     return null
   }
@@ -4789,7 +4797,7 @@ function AssistantSegments({ segments, liveCards, isLast, messageTs, streaming, 
           folded into the collapsed work disclosure. */}
       {sdlcNodes.length > 0 && <div className="flex flex-col gap-1">{sdlcNodes}</div>}
       {finalNodes}
-      {cutOff && !streaming && <ReplyCutNote />}
+      {cutOff === 'length' && !streaming && <ReplyCutNote cut="length" />}
       {modelSubstitution && !streaming && <ModelSubstitutionNote text={modelSubstitution} />}
 
       {/* What CAPABILITY fed the turn — a peer of the ledger's "what context fed it",
@@ -4881,16 +4889,18 @@ function ActivityLine({ seg }: { seg: ActivitySegment }) {
 }
 
 
-/** A reply that stopped at the model's OUTPUT cap, said at the point it stops.
+/** A reply that did not finish, said at the point it stops: one that reached the model's OUTPUT
+ *  cap, or the part of an answer that arrived before it was cut off (the turn's error under it
+ *  then says why, with Retry).
  *
  *  Measured on the bundled model: a 320-token cap ended replies mid-sentence and nothing said
  *  so, which reads as the model trailing off — or as the product being broken — rather than as
  *  a limit. The line sits directly under the reply, where the unfinished sentence is. */
-function ReplyCutNote() {
+function ReplyCutNote({ cut }: { cut: ReplyCut }) {
   return (
     <div className="mt-1.5 mb-1 flex items-center gap-1.5 text-on-surface-low/80 text-[0.75rem]">
       <Scissors size={11} className="shrink-0 opacity-70" aria-hidden />
-      <span>Cut off: this reply reached the model's maximum length.</span>
+      <span>{cut === 'length' ? "Cut off: this reply reached the model's maximum length." : "Partial: the model's answer was cut off here, before it finished."}</span>
     </div>
   )
 }

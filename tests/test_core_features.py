@@ -21,6 +21,7 @@ from personalclaw.sdk.features import (
     CHAT_TRUST,
     CLOSING_STREAMS,
     CORE_FEATURES,
+    CUT_OFF_ANSWERS,
     DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
@@ -37,6 +38,7 @@ OFFERED_ONCE = {
     "approval-answers",
     "chat-trust",
     "closing-streams",
+    "cut-off-answers",
     "digest-replies",
     "guarded-download",
     "links-name-their-channel",
@@ -53,6 +55,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "CHAT_TRUST",
         "CLOSING_STREAMS",
         "CORE_FEATURES",
+        "CUT_OFF_ANSWERS",
         "DIGEST_REPLIES",
         "GUARDED_DOWNLOAD",
         "LINKS_NAME_THEIR_CHANNEL",
@@ -65,6 +68,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert APPROVAL_ANSWERS == "approval-answers"
     assert CHAT_TRUST == "chat-trust"
     assert CLOSING_STREAMS == "closing-streams"
+    assert CUT_OFF_ANSWERS == "cut-off-answers"
     assert DIGEST_REPLIES == "digest-replies"
     assert GUARDED_DOWNLOAD == "guarded-download"
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
@@ -76,6 +80,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         APPROVAL_ANSWERS,
         CHAT_TRUST,
         CLOSING_STREAMS,
+        CUT_OFF_ANSWERS,
         DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
@@ -315,6 +320,38 @@ def _turns_name_their_channel_holds() -> None:
         delete_credential(key)
 
 
+def _cut_off_answers_hold() -> None:
+    """A provider's own stream read through ``until_terminal`` passes through whole when it reaches
+    the event that ends its answer, and raises ``AnswerCutOff`` when it ends before it, a provider
+    failure the chat says was a cut-off answer, after every event that did arrive."""
+    import asyncio
+
+    from personalclaw.guardrails.failure import AnswerCutOff, FailureMode
+    from personalclaw.llm_helpers import humanize_provider_error
+    from personalclaw.sdk.model import until_terminal
+
+    async def wire(*events):
+        for event in events:
+            yield event
+
+    async def read(*events) -> tuple[list[str], BaseException | None]:
+        seen: list[str] = []
+        try:
+            async for event in until_terminal(
+                wire(*events), ends=lambda e: e == "done", adapter="Example", missing="its done"
+            ):
+                seen.append(event)
+        except AnswerCutOff as cut:
+            return seen, cut
+        return seen, None
+
+    assert asyncio.run(read("Saved", "done")) == (["Saved", "done"], None)
+    seen, cut = asyncio.run(read("Saved"))
+    assert seen == ["Saved"]
+    assert isinstance(cut, AnswerCutOff) and cut.mode is FailureMode.PROVIDER_ERROR
+    assert humanize_provider_error(cut).startswith("The model's answer was cut off")
+
+
 def _digest_replies_hold() -> None:
     """The services handle takes the owner's answer to the digest her DM received, says in the DM
     what it did, and returns True; her ordinary message, and the same answer from anyone else, it
@@ -526,6 +563,7 @@ WITNESSES = {
     APPROVAL_ANSWERS: _approval_answers_hold,
     CHAT_TRUST: _chat_trust_holds,
     CLOSING_STREAMS: _closing_streams_hold,
+    CUT_OFF_ANSWERS: _cut_off_answers_hold,
     DIGEST_REPLIES: _digest_replies_hold,
     GUARDED_DOWNLOAD: _guarded_download_holds,
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,

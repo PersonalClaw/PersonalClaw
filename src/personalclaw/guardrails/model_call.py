@@ -75,6 +75,7 @@ from personalclaw.llm.base import (
 )
 from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import served_on_this_machine
+from personalclaw.llm.stream_end import until_terminal
 from personalclaw.llm.tool_use import uses_tools
 from personalclaw.turn_streams import closing_stream
 
@@ -121,6 +122,11 @@ class _WhatItProduced:
         from personalclaw.agents.native.tools import ARGUMENTS_UNREADABLE, read_tool_arguments
 
         return any(read_tool_arguments(raw) is not ARGUMENTS_UNREADABLE for raw in self.calls)
+
+
+def _completes(event: LLMEvent) -> bool:
+    """Whether *event* is a provider stream's terminal one, which ends its answer."""
+    return event.kind == EVENT_COMPLETE
 
 
 def naming_the_call(event: LLMEvent, audit_id: str, price: "CallPrice | None" = None) -> LLMEvent:
@@ -644,8 +650,9 @@ class ModelCallGuard(ModelProvider):
         (``stream_and_collect``) ``break``s on ``EVENT_COMPLETE`` rather than draining to
         ``StopAsyncIteration``: a guard that only recorded after loop-exit would then be
         suspended at the terminal ``yield`` forever and never audit. A ``_recorded`` flag makes
-        the outcome fire exactly once; a stream that ends via ``StopAsyncIteration`` with no
-        COMPLETE event still records once at loop-exit.
+        the outcome fire exactly once. A stream that ends with no ``EVENT_COMPLETE`` was cut off
+        (``llm.stream_end.until_terminal``, the rule every adapter's reader keeps): the call failed,
+        is recorded so, and raises ``AnswerCutOff``, whoever built the provider.
         """
         audit_id = new_audit_id()
         called = model or self._model
@@ -729,6 +736,15 @@ class ModelCallGuard(ModelProvider):
                 unsent=self.unsent_options,
                 substitution=substituted.sentence() if substituted is not None else "",
             )
+            # Read through the rule every adapter's reader keeps, so a provider whose stream ends
+            # with no terminal event fails here as cut off, whoever built it.
+            answer = until_terminal(
+                source,
+                ends=_completes,
+                adapter=self._provider_name,
+                missing="its terminal event",
+                model=called,
+            )
             try:
                 while True:
                     if deadline is not None:
@@ -736,12 +752,12 @@ class ModelCallGuard(ModelProvider):
                         if remaining <= 0:
                             raise TimeoutError
                         try:
-                            event = await asyncio.wait_for(source.__anext__(), remaining)
+                            event = await asyncio.wait_for(answer.__anext__(), remaining)
                         except StopAsyncIteration:
                             break
                     else:
                         try:
-                            event = await source.__anext__()
+                            event = await answer.__anext__()
                         except StopAsyncIteration:
                             break
                     if call is not None:
@@ -796,7 +812,7 @@ class ModelCallGuard(ModelProvider):
                     yield event
             except TimeoutError:
                 self._record_failure()
-                await self._aclose(source)
+                await self._aclose(answer)
                 if not recorded:
                     self._audit(
                         audit_id,
@@ -824,11 +840,13 @@ class ModelCallGuard(ModelProvider):
                 # success was already recorded; otherwise record nothing (genuine abort) — except
                 # on the call record, where an abandoned generation is exactly what a cancel's
                 # accounting has to count.
-                await self._aclose(source)
+                await self._aclose(answer)
                 if not recorded:
                     _mark(call, ABANDONED)
                 raise
             except Exception:
+                # A cut-off answer lands here too (`AnswerCutOff`): the stream ended before its
+                # `EVENT_COMPLETE`, so nothing recorded the call, and it failed.
                 if not recorded:
                     self._record_failure()
                     self._audit(
@@ -844,27 +862,6 @@ class ModelCallGuard(ModelProvider):
                     )
                     _mark(call, FAILED)
                 raise
-
-            # Stream ended via StopAsyncIteration. If no COMPLETE event ever arrived,
-            # record the (clean) outcome once here so a provider that omits COMPLETE is
-            # still audited exactly once — and charged, as any call that completed is.
-            if not recorded:
-                price = self._price(None, called)
-                self._record_success()
-                self._charge(hold, tokens_in, tokens_out, price, called)
-                self._audit(
-                    audit_id,
-                    1,
-                    FailureMode.NONE,
-                    now_ms() - started,
-                    tokens_in,
-                    tokens_out,
-                    True,
-                    strategy,
-                    price=price,
-                    model=called,
-                )
-                self._settle_call(call, tokens_in, tokens_out, price)
         finally:
             if turn is not None:
                 turn.release()

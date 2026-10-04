@@ -13,9 +13,9 @@ registration (capability descriptor + factory) lives in the standalone
 
 Anthropic streams ``tool_use`` blocks as a sequence of ``content_block_*``
 events; ``input_json_delta`` fragments are accumulated per content-block
-index and emitted as a single :data:`EVENT_TOOL_CALL` once the block
-ends. ``tool_result`` is NOT emitted by the provider at the stream
-layer — Anthropic clients submit tool results via subsequent ``messages``
+index and emitted as a single :data:`EVENT_TOOL_CALL` each once the message
+says how it ended (its ``stop_reason``). ``tool_result`` is NOT emitted by
+the provider at the stream layer — Anthropic clients submit tool results via subsequent ``messages``
 turns, so tool-result handling lives at the conversation layer (session /
 chat runner) rather than in :meth:`AnthropicProvider.stream`.
 """
@@ -41,6 +41,7 @@ from personalclaw.llm.credentials import Credential
 from personalclaw.llm.inflight import InFlightRequests
 from personalclaw.llm.prompt_cache import CACHE_HINT_KEY, VOLATILE_KEY, PromptCache
 from personalclaw.llm.registry import CredentialMissing, require_model
+from personalclaw.llm.stream_end import until_terminal
 from personalclaw.turn_streams import closing_stream
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,10 @@ logger = logging.getLogger(__name__)
 # Max conversation history entries before trimming oldest. Mirrors
 # ``personalclaw.providers.openai._MAX_HISTORY``.
 _MAX_HISTORY = 50
+
+#: Whose stream this adapter reads, and the event its answer ends with, as a cut-off names them.
+_ADAPTER = "Anthropic-compatible"
+_STOP = "a stop_reason"
 
 # Reasoning effort → Anthropic extended-thinking token budget. "" / unknown =
 # no thinking (model default). Clamped to < max_tokens at request time. These are
@@ -100,6 +105,45 @@ def _read_cache_usage(usage: object) -> tuple[int, int]:
         return v if isinstance(v, int) else 0
 
     return _int("cache_creation_input_tokens"), _int("cache_read_input_tokens")
+
+
+def _stop_reason_of(event: Any) -> str:
+    """How the message ended, when *event* is the ``message_delta`` that says it, else ``""``.
+
+    That event ends the answer: every content block has closed before it, and only
+    ``message_stop``, which carries nothing, follows it. Read from ``delta`` first (where the wire
+    puts it) and then the event, because the two SDK generations differ and guessing one costs the
+    signal.
+    """
+    if getattr(event, "type", None) != "message_delta":
+        return ""
+    delta = getattr(event, "delta", None)
+    return str(getattr(delta, "stop_reason", None) or getattr(event, "stop_reason", None) or "")
+
+
+def _ends_the_answer(event: Any) -> bool:
+    return bool(_stop_reason_of(event))
+
+
+def _tool_call_events(tool_blocks: dict[int, dict[str, str]], stop_reason: str) -> list[LLMEvent]:
+    """The answer's ``tool_use`` blocks, one ``EVENT_TOOL_CALL`` each in the order they opened,
+    once the message has said how it ended, each carrying that ``stop_reason``.
+
+    ``max_tokens`` is the one that matters: a block cut at the output cap reaches the runtime as a
+    truncation rather than as a malformed call. A stream that ends before the message's stop reason
+    emits none: its reading raises first (``until_terminal``), since a block's arguments may never
+    have finished.
+    """
+    return [
+        LLMEvent(
+            kind=EVENT_TOOL_CALL,
+            tool_call_id=block["id"],
+            title=block["name"],
+            tool_input=block["arguments"],
+            stop_reason=stop_reason,
+        )
+        for _index, block in sorted(tool_blocks.items())
+    ]
 
 
 def _translate_tools(tools: list[dict]) -> list[dict]:
@@ -548,10 +592,12 @@ class AnthropicProvider(ModelProvider):
           ``input_json_delta`` / ``thinking_delta`` payloads. Text and
           thinking are emitted immediately; tool-input JSON is
           accumulated per block index.
-        * ``content_block_stop`` finalizes a block; for ``tool_use`` we
-          emit a single :data:`EVENT_TOOL_CALL` with the accumulated
-          JSON string.
-        * ``message_delta`` carries cumulative ``usage.output_tokens``.
+        * ``content_block_stop`` finalizes a block.
+        * ``message_delta`` carries the message's ``stop_reason`` and cumulative
+          ``usage.output_tokens``. It ends the answer, and each ``tool_use`` block is
+          then emitted as one :data:`EVENT_TOOL_CALL` with its accumulated JSON
+          string; a stream that ends before it raises ``AnswerCutOff``
+          (``until_terminal``) and emits none.
 
         SDK runtime types live under ``anthropic.types``; we use
         duck-typed ``getattr`` access here so the module never imports
@@ -572,11 +618,9 @@ class AnthropicProvider(ModelProvider):
         assistant_text = ""
         # Per content-block-index accumulators for tool_use blocks.
         tool_blocks: dict[int, dict[str, str]] = {}
-        emitted_tool_calls: set[int] = set()
-        #: The provider's own reason the message ended, once `message_delta` reports it.
-        #: `"max_tokens"` is what makes an unfinalized tool block a TRUNCATION rather than a
-        #: mid-stream crash — the two land in the same defensive flush and are otherwise
-        #: indistinguishable to the runtime.
+        #: The provider's own reason the message ended, once `message_delta` reports it, carried
+        #: on every tool call: `"max_tokens"` is what makes a block whose JSON never closed a
+        #: TRUNCATION rather than a malformed call, which the runtime could not otherwise tell.
         stop_reason = ""
 
         input_tokens = 0
@@ -585,7 +629,9 @@ class AnthropicProvider(ModelProvider):
         cache_read_tokens = 0
 
         async with self._client.messages.stream(**request_kwargs) as stream:
-            async for event in stream:
+            async for event in until_terminal(
+                stream, ends=_ends_the_answer, adapter=_ADAPTER, missing=_STOP, model=model
+            ):
                 event_type = getattr(event, "type", None)
 
                 if event_type == "message_start":
@@ -633,33 +679,10 @@ class AnthropicProvider(ModelProvider):
                         if thinking:
                             yield LLMEvent(kind=EVENT_THINKING_CHUNK, text=thinking)
 
-                elif event_type == "content_block_stop":
-                    index = getattr(event, "index", 0) or 0
-                    bucket = tool_blocks.get(index)
-                    if bucket is not None and index not in emitted_tool_calls:
-                        emitted_tool_calls.add(index)
-                        yield LLMEvent(
-                            kind=EVENT_TOOL_CALL,
-                            tool_call_id=bucket["id"],
-                            title=bucket["name"],
-                            tool_input=bucket["arguments"],
-                        )
-
                 elif event_type == "message_delta":
-                    # `stop_reason` was never read here at all — `llm/events.py` declared the field
-                    # and nothing on this path wrote it (issue 1773). `max_tokens` is the one that
-                    # matters: a completion cut mid-`tool_use` never gets its `content_block_stop`,
-                    # so the block lands in the defensive flush below, and without the reason the
-                    # runtime cannot tell a truncated call from a malformed one.
-                    #
-                    # Read from `delta` first (where the wire puts it) and fall back to the event,
-                    # because the two SDK generations differ and guessing one costs the signal.
-                    delta_obj = getattr(event, "delta", None)
-                    reason = getattr(delta_obj, "stop_reason", None) or getattr(
-                        event, "stop_reason", None
-                    )
+                    reason = _stop_reason_of(event)
                     if reason:
-                        stop_reason = str(reason)
+                        stop_reason = reason
                     usage = getattr(event, "usage", None)
                     if usage is not None:
                         ot = getattr(usage, "output_tokens", None)
@@ -669,21 +692,8 @@ class AnthropicProvider(ModelProvider):
                 # ``message_stop`` is informational; the ``async with``
                 # context exit handles teardown.
 
-        # Defensive flush — emit any unfinalized tool blocks (the SDK
-        # normally emits ``content_block_stop`` for every started block,
-        # but we don't want a crash mid-stream to swallow a tool call).
-        for index, bucket in tool_blocks.items():
-            if index in emitted_tool_calls:
-                continue
-            emitted_tool_calls.add(index)
-            yield LLMEvent(
-                kind=EVENT_TOOL_CALL,
-                tool_call_id=bucket["id"],
-                title=bucket["name"],
-                tool_input=bucket["arguments"],
-                # A block that never closed, on a `max_tokens` stop, IS the truncation.
-                stop_reason=stop_reason,
-            )
+        for event in _tool_call_events(tool_blocks, stop_reason):
+            yield event
 
         if input_tokens > 0:
             # ``override=`` and deliberately NOT ``local=``: the binding's declaration is
@@ -747,10 +757,11 @@ class AnthropicProvider(ModelProvider):
         content blocks, and ``role: "tool"`` results become ``tool_result``
         blocks inside a user turn.
 
-        Streaming + token accumulation mirror :meth:`stream` exactly; a
-        completed ``tool_use`` block emits one :data:`EVENT_TOOL_CALL` with
-        ``tool_call_id`` = the block id, ``title`` = the tool name, and
-        ``tool_input`` = the accumulated JSON argument string.
+        Streaming + token accumulation mirror :meth:`stream` exactly; once the
+        message says how it ended, each ``tool_use`` block emits one
+        :data:`EVENT_TOOL_CALL` with ``tool_call_id`` = the block id, ``title`` =
+        the tool name, and ``tool_input`` = the accumulated JSON argument string.
+        A stream that ends before that raises ``AnswerCutOff`` and emits none.
         """
         # Stage the image BEFORE translation so the block rides through as a plain
         # list-content user message (which `_translate_messages` passes through).
@@ -778,11 +789,7 @@ class AnthropicProvider(ModelProvider):
 
         # Per content-block-index accumulators for tool_use blocks.
         tool_blocks: dict[int, dict[str, str]] = {}
-        emitted_tool_calls: set[int] = set()
-        #: The provider's own reason the message ended, once `message_delta` reports it.
-        #: `"max_tokens"` is what makes an unfinalized tool block a TRUNCATION rather than a
-        #: mid-stream crash — the two land in the same defensive flush and are otherwise
-        #: indistinguishable to the runtime.
+        #: The provider's own reason the message ended — see the note at the streaming twin.
         stop_reason = ""
 
         input_tokens = 0
@@ -791,7 +798,13 @@ class AnthropicProvider(ModelProvider):
         cache_read_tokens = 0
 
         async with self._client.messages.stream(**request_kwargs) as stream:
-            async for event in stream:
+            async for event in until_terminal(
+                stream,
+                ends=_ends_the_answer,
+                adapter=_ADAPTER,
+                missing=_STOP,
+                model=str(request_kwargs["model"]),
+            ):
                 event_type = getattr(event, "type", None)
 
                 if event_type == "message_start":
@@ -838,52 +851,18 @@ class AnthropicProvider(ModelProvider):
                         if thinking:
                             yield LLMEvent(kind=EVENT_THINKING_CHUNK, text=thinking)
 
-                elif event_type == "content_block_stop":
-                    index = getattr(event, "index", 0) or 0
-                    bucket = tool_blocks.get(index)
-                    if bucket is not None and index not in emitted_tool_calls:
-                        emitted_tool_calls.add(index)
-                        yield LLMEvent(
-                            kind=EVENT_TOOL_CALL,
-                            tool_call_id=bucket["id"],
-                            title=bucket["name"],
-                            tool_input=bucket["arguments"],
-                        )
-
                 elif event_type == "message_delta":
-                    # `stop_reason` was never read here at all — `llm/events.py` declared the field
-                    # and nothing on this path wrote it (issue 1773). `max_tokens` is the one that
-                    # matters: a completion cut mid-`tool_use` never gets its `content_block_stop`,
-                    # so the block lands in the defensive flush below, and without the reason the
-                    # runtime cannot tell a truncated call from a malformed one.
-                    #
-                    # Read from `delta` first (where the wire puts it) and fall back to the event,
-                    # because the two SDK generations differ and guessing one costs the signal.
-                    delta_obj = getattr(event, "delta", None)
-                    reason = getattr(delta_obj, "stop_reason", None) or getattr(
-                        event, "stop_reason", None
-                    )
+                    reason = _stop_reason_of(event)
                     if reason:
-                        stop_reason = str(reason)
+                        stop_reason = reason
                     usage = getattr(event, "usage", None)
                     if usage is not None:
                         ot = getattr(usage, "output_tokens", None)
                         if ot is not None:
                             output_tokens = ot
 
-        # Defensive flush — emit any unfinalized tool blocks.
-        for index, bucket in tool_blocks.items():
-            if index in emitted_tool_calls:
-                continue
-            emitted_tool_calls.add(index)
-            yield LLMEvent(
-                kind=EVENT_TOOL_CALL,
-                tool_call_id=bucket["id"],
-                title=bucket["name"],
-                tool_input=bucket["arguments"],
-                # A block that never closed, on a `max_tokens` stop, IS the truncation.
-                stop_reason=stop_reason,
-            )
+        for event in _tool_call_events(tool_blocks, stop_reason):
+            yield event
 
         context_pct: float | None = None
         if input_tokens > 0:

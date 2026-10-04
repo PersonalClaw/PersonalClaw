@@ -261,6 +261,64 @@ class EmptyCompletion(GuardError):
         return "it answered with nothing"
 
 
+class AnswerCutOff(GuardError):
+    """A model's answer stream ended before its provider said the answer was finished.
+
+    Raised by a model adapter's reader (``llm.stream_end.until_terminal``) when the stream it reads
+    ends without the event its protocol ends an answer with: a connection that closed cleanly part
+    way, a body a proxy cut short, a server that stopped writing. Read as the end of the answer, the
+    text so far read as the whole reply and a tool call whose arguments never finished was passed
+    on to run. What streamed before it stays what it was, part of an answer.
+
+    ``PROVIDER_ERROR``, as a connection lost mid-reply is: the turn's one retry, its fallback, the
+    breaker and every chain walk read it the same way. ``adapter`` names whose stream it was and
+    ``missing`` the event that never came, for the log and the turn's record.
+    """
+
+    mode = FailureMode.PROVIDER_ERROR
+
+    def __init__(self, *, adapter: str, missing: str, model: str = "") -> None:
+        self.adapter = adapter
+        self.missing = missing
+        self.model = model
+        whose = f"the {adapter} stream for {model}" if model else f"the {adapter} stream"
+        super().__init__(f"{whose} ended before {missing} arrived: the answer was cut off")
+
+    def sentence(self, *, room_member: str = "") -> str:
+        """The failure as the chat shows it. No remedy here is the chat's alone, so a room
+        (*room_member*) reads the same words."""
+        return (
+            "The model's answer was cut off: its stream ended before the model said it was "
+            "finished. Try again; if it keeps happening, check the model's provider and the "
+            "gateway log."
+        )
+
+    def reason(self) -> str:
+        """Why it did not serve, as the substitution sentence of the model that did reads it."""
+        return "its stream ended before its answer was finished"
+
+    def chat_meta(self) -> dict[str, dict[str, str]]:
+        """What the error row a chat turn ends on records of the cut: whose stream it was, the event
+        that never came, and the model asked."""
+        record = {"adapter": self.adapter, "missing": self.missing}
+        if self.model:
+            record["model"] = self.model
+        return {"cut_off": record}
+
+
+def answer_cut_off(exc: object) -> AnswerCutOff | None:
+    """The cut-off answer *exc* is, or was raised from, else ``None`` (five hops, as every cause
+    walk here keeps)."""
+    seen = exc if isinstance(exc, BaseException) else None
+    for _ in range(5):
+        if seen is None:
+            return None
+        if isinstance(seen, AnswerCutOff):
+            return seen
+        seen = seen.__cause__
+    return None
+
+
 def breaker_open_reason(provider: str) -> str:
     """Why a model whose provider's breaker is open did not serve, as a clause: one wording for
     the resolution that passes over it and the call it refuses."""

@@ -28,14 +28,14 @@ async def complete_text(use_case: str, prompt: str, *, images: list[str] | None 
     """Resolve *use_case* → provider → one-shot completion; return collected text.
 
     *images* (paths) are attached for vision use-cases when the provider supports
-    multimodal content blocks. Returns ``""`` on any failure.
+    multimodal content blocks. Returns ``""`` on any failure: the part of an answer that
+    arrived before its call failed (a stream cut off before its provider said it was finished,
+    a connection lost, a timeout) is not the answer, and handed back it was stored as the
+    step's whole text, a truncated transcription or description nothing marked.
 
     With a >1-entry chain bound to *use_case*, a provider failure advances to the next
     entry (T2.4) instead of degrading on the first one. A one-entry/unbound axis takes
-    the plain single-resolve path below — byte-for-byte the previous behaviour, including
-    its two distinct WARNING lines. The chain path keeps the "partial text survives a
-    total failure" degrade by handing back the LAST attempt's chunks: two models' partial
-    answers cannot be concatenated, so each attempt replaces rather than extends.
+    the plain single-resolve path below, with its two distinct WARNING lines.
 
     Each completed call writes its usage row, as background work: a library ingests unwatched.
     And each is metered, whatever the axis (``provider_bridge.resolve_metered_model``, which the
@@ -60,23 +60,17 @@ async def _complete_text(use_case: str, prompt: str, images: list[str] | None) -
     from personalclaw.usage_ledger import UNATTENDED, recorder
 
     messages = _build_messages(prompt, images)
-    # The chunks of the most recent FAILED attempt. ``_collect`` must re-raise so the
-    # walk can advance — a swallowed error would pin it to entry 0 — so the partial is
-    # stashed here for the degrade path rather than returned.
-    partial: list[str] = []
 
     async def _collect(provider) -> str:
+        # A failure is raised, never swallowed here, so the walk can advance: a swallowed error
+        # would pin it to entry 0.
         parts: list[str] = []
         record = recorder(provider, UNATTENDED)
-        try:
-            async for ev in provider.complete(messages):
-                if ev.kind == EVENT_TEXT_CHUNK:
-                    parts.append(getattr(ev, "text", "") or "")
-                elif ev.kind in (EVENT_COMPLETE, EVENT_SPENT):
-                    record(ev)
-        except Exception:
-            partial[:] = parts
-            raise
+        async for ev in provider.complete(messages):
+            if ev.kind == EVENT_TEXT_CHUNK:
+                parts.append(getattr(ev, "text", "") or "")
+            elif ev.kind in (EVENT_COMPLETE, EVENT_SPENT):
+                record(ev)
         return "".join(parts)
 
     chain = use_case_chain(use_case)
@@ -94,7 +88,7 @@ async def _complete_text(use_case: str, prompt: str, images: list[str] | None) -
                 len(chain),
                 exc_info=True,
             )
-            return "".join(partial)
+            return ""
     else:
         try:
             provider = await _single_provider(use_case)
@@ -114,7 +108,7 @@ async def _complete_text(use_case: str, prompt: str, images: list[str] | None) -
             logger.warning(
                 "knowledge node completion failed (use-case %s)", use_case, exc_info=True
             )
-            return "".join(partial)
+            return ""
     result = text.strip()
     if not result:
         # No exception but empty output — the model returned nothing (or dropped the

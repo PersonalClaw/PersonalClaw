@@ -626,11 +626,12 @@ class TestDirectConsumerAdvance:
         assert calls == [""]  # one resolve, no override
 
     @pytest.mark.asyncio
-    async def test_knowledge_node_whole_chain_failure_keeps_the_last_partial(
+    async def test_knowledge_node_whole_chain_failure_hands_back_no_partial_answer(
         self, isolated_store, monkeypatch
     ):
         """An exhausted chain degrades (never raises into the pipeline) and hands back
-        the LAST attempt's partial text — two models' partials cannot be concatenated."""
+        nothing: the part of an answer that arrived before its call failed is not the answer,
+        and the node stored it as its whole text."""
         from unittest.mock import patch
 
         from personalclaw.knowledge.pipeline.nodes import _llm
@@ -651,7 +652,7 @@ class TestDirectConsumerAdvance:
         ):
             out = await _llm.complete_text("image_modality", "describe")
         assert calls == ["p1:m1", "p2:m2"]
-        assert out == "second-half"
+        assert out == ""
 
     @pytest.mark.asyncio
     async def test_loop_gate_judge_advances_past_a_failed_entry0(self, isolated_store, monkeypatch):

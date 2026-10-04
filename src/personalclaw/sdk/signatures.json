@@ -4896,7 +4896,8 @@
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
  "personalclaw.sdk.features.CLOSING_STREAMS": {"kind": "value", "type": "str", "value": "'closing-streams'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'messages-run-once', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'messages-run-once', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked'})"},
+ "personalclaw.sdk.features.CUT_OFF_ANSWERS": {"kind": "value", "type": "str", "value": "'cut-off-answers'"},
  "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
  "personalclaw.sdk.features.GUARDED_DOWNLOAD": {"kind": "value", "type": "str", "value": "'guarded-download'"},
  "personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'links-name-their-channel'"},
@@ -7543,6 +7544,17 @@
    {"annotation": "object", "kind": "positional_or_keyword", "name": "model"}
   ],
   "returns": "str"
+ },
+ "personalclaw.sdk.model.until_terminal": {
+  "kind": "async generator function",
+  "params": [
+   {"annotation": "AsyncIterator[_E]", "kind": "positional_or_keyword", "name": "events"},
+   {"annotation": "Callable[[_E], bool]", "kind": "keyword_only", "name": "ends"},
+   {"annotation": "str", "kind": "keyword_only", "name": "adapter"},
+   {"annotation": "str", "kind": "keyword_only", "name": "missing"},
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "model"}
+  ],
+  "returns": "AsyncIterator[_E]"
  },
  "personalclaw.sdk.net.CONNECTOR": {"kind": "value", "type": "EgressPolicy", "value": "EgressPolicy(name='connector', allow_schemes=('http', 'https'), allow_private=False, loopback_only=False, allow_hosts=(), deny_hosts=(), allow_only=False, max_redirects=5, max_bytes=10000000, timeout_s=20.0, pin_resolved_ip=True, on_violation='deny')"},
  "personalclaw.sdk.net.EgressBlocked": {

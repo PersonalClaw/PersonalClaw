@@ -81,6 +81,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     per_call_temperature,
     prompt_text_chars,
     require_model,
+    until_terminal,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,10 @@ _CONNECT_TIMEOUT = 10.0
 # The Request Timeout's label on the instance form (the manifest's ``timeout_secs`` x-meta label):
 # the setting a first-token timeout tells the user to raise.
 _TIMEOUT_SETTING = "Request Timeout"
+
+#: Whose stream this provider reads, and the line its answer ends with, as a cut-off names them.
+_ADAPTER = "Ollama"
+_DONE = "the done line"
 
 
 def _timeout_or_default(raw: object) -> float:
@@ -468,6 +473,27 @@ def _events(segments: list) -> list[LLMEvent]:
     ]
 
 
+async def _chunks(response: Any) -> AsyncIterator[dict]:
+    """The objects of a streamed ``/api/chat`` answer, one per NDJSON line. A blank line is
+    skipped, and so is a line that is not a JSON object, which is logged."""
+    async for line in response.aiter_lines():
+        if not line:
+            continue
+        try:
+            chunk = json.loads(line)
+        except json.JSONDecodeError:
+            chunk = None
+        if not isinstance(chunk, dict):
+            logger.warning("Ollama stream returned non-JSON line: %r", line[:200])
+            continue
+        yield chunk
+
+
+def _done(chunk: dict) -> bool:
+    """Whether *chunk* is the line that ends the answer (``"done": true``)."""
+    return bool(chunk.get("done"))
+
+
 class OllamaProvider(ModelProvider):
     """ModelProvider backed by a local Ollama HTTP server.
 
@@ -676,7 +702,8 @@ class OllamaProvider(ModelProvider):
         body as newline-delimited JSON. Each non-final chunk's
         ``message.content`` becomes an :data:`EVENT_TEXT_CHUNK`; the final
         ``{"done": true, ...}`` chunk produces an :data:`EVENT_COMPLETE`
-        event populated with ``prompt_eval_count`` / ``eval_count``.
+        event populated with ``prompt_eval_count`` / ``eval_count``. A body
+        that ends before that line raises ``AnswerCutOff`` (``until_terminal``).
         """
         model = require_model(self._model)
         self._history.append({"role": "user", "content": message})
@@ -717,29 +744,26 @@ class OllamaProvider(ModelProvider):
                     )
                     _raise_refused(response, err_text)
                 response.raise_for_status()
-                async for line in response.aiter_lines():
-                    answered = True
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        logger.warning("Ollama stream returned non-JSON line: %r", line[:200])
-                        continue
-                    # Where the server answered it from, before the turn's price is reckoned.
-                    _heard_one(self._endpoint, model, chunk)
+                answer = until_terminal(
+                    _chunks(response), ends=_done, adapter=_ADAPTER, missing=_DONE, model=model
+                )
+                async with closing_stream(answer) as chunks:
+                    async for chunk in chunks:
+                        answered = True
+                        # Where the server answered it from, before the turn's price is reckoned.
+                        _heard_one(self._endpoint, model, chunk)
 
-                    for ev in reasoning.feed(chunk.get("message") or {}):
-                        if ev.kind == EVENT_TEXT_CHUNK:
-                            assistant_text += ev.text
-                        yield ev
+                        for ev in reasoning.feed(chunk.get("message") or {}):
+                            if ev.kind == EVENT_TEXT_CHUNK:
+                                assistant_text += ev.text
+                            yield ev
 
-                    if chunk.get("done"):
-                        input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
-                        output_tokens = int(chunk.get("eval_count", 0) or 0)
-                        # `length` when the answer reached its output cap (`num_predict`).
-                        stop_reason = str(chunk.get("done_reason") or "")
-                        break
+                        if chunk.get("done"):
+                            input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
+                            output_tokens = int(chunk.get("eval_count", 0) or 0)
+                            # `length` when the answer reached its output cap (`num_predict`).
+                            stop_reason = str(chunk.get("done_reason") or "")
+                            break
         except self._httpx_module.ReadTimeout as exc:
             if answered:
                 raise
@@ -827,7 +851,8 @@ class OllamaProvider(ModelProvider):
         # Accumulate tool calls by index — Ollama may stream them across chunks
         # (name first, then argument fragments) like the OpenAI delta protocol,
         # or deliver a complete list in the final message. Either way we emit
-        # one EVENT_TOOL_CALL per call after the stream ends.
+        # one EVENT_TOOL_CALL per call once the done line has arrived, and none
+        # for a body that ends before it (``until_terminal`` raises).
         tool_calls: dict[int, dict[str, Any]] = {}
         reasoning = _Reasoning()
 
@@ -860,31 +885,32 @@ class OllamaProvider(ModelProvider):
                     )
                     _raise_refused(response, err_text)
                 response.raise_for_status()
-                async for line in response.aiter_lines():
-                    answered = True
-                    if not line:
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        logger.warning("Ollama stream returned non-JSON line: %r", line[:200])
-                        continue
-                    # Where the server answered it from, before the turn's price is reckoned.
-                    _heard_one(self._endpoint, body["model"], chunk)
+                answer = until_terminal(
+                    _chunks(response),
+                    ends=_done,
+                    adapter=_ADAPTER,
+                    missing=_DONE,
+                    model=str(body["model"]),
+                )
+                async with closing_stream(answer) as chunks:
+                    async for chunk in chunks:
+                        answered = True
+                        # Where the server answered it from, before the turn's price is reckoned.
+                        _heard_one(self._endpoint, body["model"], chunk)
 
-                    msg = chunk.get("message") or {}
-                    for ev in reasoning.feed(msg):
-                        yield ev
+                        msg = chunk.get("message") or {}
+                        for ev in reasoning.feed(msg):
+                            yield ev
 
-                    for idx, tc in enumerate(msg.get("tool_calls") or []):
-                        _accumulate_ollama_tool_call(tool_calls, idx, tc)
+                        for idx, tc in enumerate(msg.get("tool_calls") or []):
+                            _accumulate_ollama_tool_call(tool_calls, idx, tc)
 
-                    if chunk.get("done"):
-                        input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
-                        output_tokens = int(chunk.get("eval_count", 0) or 0)
-                        # `length` when the answer reached its output cap (`num_predict`).
-                        stop_reason = str(chunk.get("done_reason") or "")
-                        break
+                        if chunk.get("done"):
+                            input_tokens = int(chunk.get("prompt_eval_count", 0) or 0)
+                            output_tokens = int(chunk.get("eval_count", 0) or 0)
+                            # `length` when the answer reached its output cap (`num_predict`).
+                            stop_reason = str(chunk.get("done_reason") or "")
+                            break
         except self._httpx_module.ReadTimeout as exc:
             if answered:
                 raise

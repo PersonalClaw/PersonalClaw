@@ -52,6 +52,7 @@ from personalclaw.dashboard.chat_queue import ASKED_FOR_BY
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_context_fed,
+    stamp_cut_off,
     stamp_finish_reason,
     stamp_learned,
     stamp_model_substitution,
@@ -102,7 +103,7 @@ from personalclaw.dashboard.state import (
 from personalclaw.dashboard.step_notes import note_on_call, note_refusal
 from personalclaw.dashboard.ungated_calls import report_ungated_call
 from personalclaw.declined_calls import declined_step
-from personalclaw.guardrails.failure import budget_refusal
+from personalclaw.guardrails.failure import answer_cut_off, budget_refusal
 from personalclaw.guardrails.loop_breaker import (
     WARN_THRESHOLD,
     only_reads,
@@ -5569,12 +5570,18 @@ async def run_chat(
             await _fire(HOOK_EVENT_ERROR, _err_text)
     except Exception as exc:
         _log_turn_failure(session.key, exc)
+        # The model's answer was cut off: what arrived is kept, marked as the part it is, and the
+        # error row records whose stream it was and what never came.
+        _cut = answer_cut_off(exc)
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)
+            if _cut is not None:
+                stamp_cut_off(session)
         _err_text, _ = redact_exfiltration_urls(humanize_provider_error(exc))
         _err_text, _ = redact_credentials(_err_text)
         session._last_turn_refusal = _cap = budget_refusal(exc)  # a known ending, not a crash
-        session.append("error", _err_text, "msg msg-err", meta=_cap.chat_meta() if _cap else None)
+        _err_meta = _cap.chat_meta() if _cap else (_cut.chat_meta() if _cut else None)
+        session.append("error", _err_text, "msg msg-err", meta=_err_meta)
         # Definitive turn-outcome flag (the last message isn't a reliable signal:
         # the finally block below appends more — queued re-dispatch etc.). Read
         # by the autonudge re-arm and the gateway goal-loop done-callback.

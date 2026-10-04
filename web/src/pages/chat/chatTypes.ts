@@ -339,10 +339,11 @@ export interface ChatTurn {
   // message that started the turn (`joinedSkillsOf`), so it is absent on the turns that
   // loaded no skill (and on every user turn) rather than an empty array.
   skillsUsed?: SkillUsed[]
-  // The reply stopped at the model's OUTPUT cap and ends mid-sentence — the assistant
-  // message's `meta.finish_reason === 'length'`. Absent (never `false`-by-default noise) on
-  // the turns that finished on their own, which is nearly all of them.
-  cutOff?: boolean
+  // How a reply that did not finish ended (`replyCutOf`): it stopped at the model's OUTPUT cap
+  // mid-sentence (`length`), or the model's answer was cut off before it finished and the reply
+  // is the part that arrived (`incomplete`). Absent on the turns that finished on their own,
+  // which is nearly all of them.
+  cutOff?: ReplyCut
   // The reply came from ANOTHER model than the one chosen for it — the agent's pinned model or
   // the chat's own pick could not run. The sentence, "Ran on X instead of Y: …", from the assistant
   // message's `meta.model_substitution`. Absent when the chosen model answered.
@@ -423,6 +424,16 @@ export function ranPromptOf(raw: unknown): RanPrompt | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const { name, text } = raw as { name?: unknown; text?: unknown }
   return typeof name === 'string' && name && typeof text === 'string' && text ? { name, text } : undefined
+}
+
+/** How a reply that did not finish ended, from its message's `meta.finish_reason`. */
+export type ReplyCut = 'length' | 'incomplete'
+
+/** The reply's cut (`ReplyCut`), or undefined for a reply that finished on its own: the only
+ *  finish reasons the backend stamps are the two that say it did not. */
+export function replyCutOf(meta: { finish_reason?: string } | undefined): ReplyCut | undefined {
+  const reason = meta?.finish_reason
+  return reason === 'length' || reason === 'incomplete' ? reason : undefined
 }
 
 /** A user message's persisted image delivery (`meta.image_delivery`), or undefined. */
@@ -706,10 +717,11 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       if (Array.isArray(m.meta?.memory_citations) && m.meta!.memory_citations.length) {
         at.citations = m.meta!.memory_citations
       }
-      // A reply cut at the model's output cap. The backend stamps it on the turn's LAST
-      // assistant message, and consecutive assistant messages merge into this turn with the
-      // last one winning — so the mark is re-decided per message, not latched by an earlier one.
-      if (m.meta?.finish_reason === 'length') at.cutOff = true
+      // A reply that did not finish. The backend stamps it on the turn's LAST assistant message,
+      // and consecutive assistant messages merge into this turn with the last one winning — so
+      // the mark is re-decided per message, not latched by an earlier one.
+      const cut = replyCutOf(m.meta)
+      if (cut) at.cutOff = cut
       else delete at.cutOff
       // Re-decided per message for the same reason: it describes the turn that message ends.
       if (m.meta?.model_substitution) at.modelSubstitution = m.meta.model_substitution

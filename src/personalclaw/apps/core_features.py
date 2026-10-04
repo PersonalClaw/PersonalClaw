@@ -90,6 +90,15 @@ TURNS_NAME_THEIR_CHANNEL = "turns-name-their-channel"
 #: ``closing_stream``, so an app that imports it does not load.
 CLOSING_STREAMS = "closing-streams"
 
+#: A model app that reads its provider's own wire reads it through
+#: ``personalclaw.sdk.model.until_terminal(events, ends=…, adapter=…, missing=…)``: a stream that
+#: ends before the event its protocol ends an answer with raises ``AnswerCutOff`` (cut off, never
+#: complete), so the app emits nothing it emits only once its answer has ended (its tool calls, its
+#: terminal event), the turn ends saying the answer was cut off, and the log names the app's stream
+#: and the event that never came. A core without it has no ``until_terminal``, so an app that
+#: imports it does not load.
+CUT_OFF_ANSWERS = "cut-off-answers"
+
 #: A turn a channel runs itself names who asked for it: ``with turn_asked_by(session_key,
 #: arrived_on(thread, sender, channel)):`` around the turn says whose message it answers, and while
 #: it runs what its tools would change of the owner's memory waits for her own word unless that
@@ -113,6 +122,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         APPROVAL_ANSWERS,
         CHAT_TRUST,
         CLOSING_STREAMS,
+        CUT_OFF_ANSWERS,
         DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,

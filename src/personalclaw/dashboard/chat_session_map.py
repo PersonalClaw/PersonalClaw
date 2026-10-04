@@ -94,14 +94,17 @@ TURN_TELEMETRY_KEY = "turn_telemetry"
 TURN_SUMMARY_KEY = "summary"
 
 #: The ``meta`` key that says HOW the turn's reply ended, on the same last assistant message —
-#: present only as ``"length"``: the reply reached the model's output cap and stopped
-#: mid-sentence. Named after OpenAI's ``finish_reason`` because that is the vocabulary a reader of
-#: the transcript already knows. Absent = the reply finished on its own, the common case, so a
-#: consumer never has to special-case an ``"end_turn"`` it would only ignore.
+#: present only when it did not finish: ``"length"``, the reply reached the model's output cap and
+#: stopped mid-sentence, or ``"incomplete"``, the model's answer was cut off (its stream ended
+#: before its provider said it was finished) and the reply is the part that arrived. Named after
+#: OpenAI's ``finish_reason`` because that is the vocabulary a reader of the transcript already
+#: knows. Absent = the reply finished on its own, the common case, so a consumer never has to
+#: special-case an ``"end_turn"`` it would only ignore.
 FINISH_REASON_KEY = "finish_reason"
 
-#: The one value :data:`FINISH_REASON_KEY` carries.
+#: The values :data:`FINISH_REASON_KEY` carries.
 FINISH_REASON_LENGTH = "length"
+FINISH_REASON_CUT_OFF = "incomplete"
 
 #: The ``meta`` key that says the turn's reply came from a model OTHER than the one chosen for it:
 #: the sentence (``ModelSubstitution.sentence``, "Ran on X instead of Researcher's model Y: …"),
@@ -518,6 +521,14 @@ def stamp_finish_reason(session: Any, stop_reason: str) -> bool:
     if not is_length_stop(stop_reason):
         return False
     return _stamp_on_last_assistant(session, FINISH_REASON_KEY, FINISH_REASON_LENGTH)
+
+
+def stamp_cut_off(session: Any) -> bool:
+    """Mark the turn's reply as the PART of an answer that arrived before the model's answer was
+    cut off (``guardrails.failure.AnswerCutOff``), so the transcript says so under it rather than
+    reading as everything the model said. Same message, same before-the-save constraint as the
+    telemetry."""
+    return _stamp_on_last_assistant(session, FINISH_REASON_KEY, FINISH_REASON_CUT_OFF)
 
 
 def stamp_model_substitution(session: Any, sentence: str) -> bool:

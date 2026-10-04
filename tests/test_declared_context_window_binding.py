@@ -40,11 +40,20 @@ def _cred() -> Credential:
 
 
 class _FakeStream:
+    """A finished answer with nothing in it: one chunk whose ``finish_reason`` ends it."""
+
+    def __init__(self) -> None:
+        delta = types.SimpleNamespace(content=None, tool_calls=None)
+        choice = types.SimpleNamespace(delta=delta, finish_reason="stop")
+        self._chunks = [types.SimpleNamespace(choices=[choice], usage=None)]
+
     def __aiter__(self) -> "_FakeStream":
         return self
 
     async def __anext__(self) -> Any:
-        raise StopAsyncIteration
+        if not self._chunks:
+            raise StopAsyncIteration
+        return self._chunks.pop(0)
 
 
 class _FakeChatCompletions:
@@ -93,11 +102,19 @@ def fake_openai_module(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
 
 class _FakeStreamIter:
+    """A finished answer with nothing in it: the ``message_delta`` that says how it ended."""
+
+    def __init__(self) -> None:
+        stop = types.SimpleNamespace(stop_reason="end_turn")
+        self._events = [types.SimpleNamespace(type="message_delta", delta=stop, usage=None)]
+
     def __aiter__(self) -> "_FakeStreamIter":
         return self
 
     async def __anext__(self) -> Any:
-        raise StopAsyncIteration
+        if not self._events:
+            raise StopAsyncIteration
+        return self._events.pop(0)
 
 
 class _FakeStreamCM:

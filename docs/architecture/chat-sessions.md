@@ -859,6 +859,27 @@ answered (8,192 tokens)…"), and its workflow step fails with that cause. The
 model-call log records each such call as `output_cap`, failed when it produced
 no text and no tool call that can run.
 
+**An answer cut off.** A model's answer is finished only when its provider
+says so: an OpenAI-compatible choice's `finish_reason`, the Anthropic message's
+`stop_reason`, Ollama's `done` line, Bedrock's `messageStop`. A stream can end
+before that event with no error at all (a connection that closed cleanly part
+way, a body a proxy cut short, a server that stopped writing), and the client
+libraries then simply stop. Every adapter reads its provider's stream through
+one rule, `llm.stream_end.until_terminal`: a stream that ends before its
+terminal event raises `AnswerCutOff` (`guardrails/failure.py`). The adapter
+emits nothing it emits only once its answer has ended, so no tool call of a
+cut answer reaches the loop, none runs, and no terminal event says it finished;
+the log names the adapter and the event that never came. The spend guard reads
+a stream with no terminal `EVENT_COMPLETE` the same way, whoever built the
+provider, and records the call as failed. The native loop treats the cut as it
+treats a connection lost mid-reply: asked once more while nothing of it reached
+the user, otherwise the turn ends in the error that says so. The text that
+arrived stays where it streamed, marked as the part it is (`finish_reason:
+incomplete` on the reply's meta, "Partial: …" under it), the error row records
+whose stream it was and what never came (`cut_off` on its meta), and Retry on
+it asks first, as for any turn, when the turn had finished a step that may have
+changed something.
+
 A subagent started to read or change things on a model that can't use tools
 could only claim it had: it ends failed before any call is made for it
 ("Couldn't do its task: “…” can't use tools, and it was started to work with
@@ -880,6 +901,7 @@ turn, and an agent CLI's endings map onto the same ones
 | It finished with no answer after you denied one of its calls, or stopped itself and could not be carried on again | `error` / `stopped` | "Codex stopped after you denied Run command." — never resent, which would ask you again |
 | It refused to continue (`refusal`) and wrote nothing | `error` | "Codex refused to continue and wrote no answer." — never resent |
 | Its model ran into its output cap (`max_tokens`) and wrote nothing | `error` | "The model ran out of output room before it answered (8,192 tokens). …" — never resent |
+| Its model's stream ended before its provider said the answer was finished (a connection closed cleanly, a body cut short, no stop reason) | `error` | "The model's answer was cut off: its stream ended before the model said it was finished. …" — what arrived stays, marked "Partial"; asked once more on its own only when nothing of it was shown |
 | It stopped itself (`cancelled`), and nobody denied or stopped anything | `stopped` | "The reply stopped before it finished. …" |
 | You pressed Stop | `stopped` | the stop card; never a timeout or an error |
 | Its process ended, or its connection closed, before it answered | the resent turn's | "⟳ Connection lost — retrying…", and the message is resent (up to three times) — unless the turn had made calls nobody refused: "The connection to Codex closed after 2 steps of this turn, so your message was not sent again: that could repeat them. Send it again to retry." |

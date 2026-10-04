@@ -24,6 +24,11 @@ chat=...)``, ``answer_in_chat`` and ``chat_grant``). A channel app that uses the
 reading it, by any way out; an agent CLI's turn left part way then tells the agent to stop and
 gives its session back at once. An app that reads a model's stream declares it.
 
+``CUT_OFF_ANSWERS``: a model app that reads its provider's own wire reads it through
+``personalclaw.sdk.model.until_terminal``, so a stream that ends before the event its protocol ends
+an answer with is cut off, never complete: the app emits no tool call or terminal event for it, and
+the turn says the answer was cut off. A model app that reads its own wire declares it.
+
 ``DIGEST_REPLIES``: a channel that runs a conversation itself offers PersonalClaw the owner's
 message before its own turn (``services.answer_channel_reply``), so the owner's answer to the
 Morning triage digest that DM received is answered as the digest's card answers it. A channel app
@@ -63,6 +68,7 @@ from personalclaw.apps.core_features import (
     CHAT_TRUST,
     CLOSING_STREAMS,
     CORE_FEATURES,
+    CUT_OFF_ANSWERS,
     DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
@@ -78,6 +84,7 @@ __all__ = [
     "CHAT_TRUST",
     "CLOSING_STREAMS",
     "CORE_FEATURES",
+    "CUT_OFF_ANSWERS",
     "DIGEST_REPLIES",
     "GUARDED_DOWNLOAD",
     "LINKS_NAME_THEIR_CHANNEL",

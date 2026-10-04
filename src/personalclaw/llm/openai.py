@@ -31,6 +31,7 @@ from personalclaw.llm.credentials import Credential
 from personalclaw.llm.inflight import InFlightRequests
 from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import CredentialMissing, require_model
+from personalclaw.llm.stream_end import until_terminal
 from personalclaw.llm.stream_tags import KIND_OUTSIDE, make_think_splitter
 from personalclaw.turn_streams import closing_stream
 
@@ -38,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 # Max conversation history entries before trimming oldest.
 _MAX_HISTORY = 50
+
+#: Whose stream this adapter reads, and the event its answer ends with, as a cut-off names them.
+_ADAPTER = "OpenAI-compatible"
+_FINISH = "a finish_reason"
 
 # The context gauge, in ONE place for every adapter — including the rule that an
 # unresolvable window reports NOTHING rather than a percentage of an adapter-local
@@ -106,6 +111,37 @@ def _uncached_prompt_tokens(
     an honest ``0`` remainder rather than a negative token count.
     """
     return max(0, prompt_tokens - cache_creation_tokens - cache_read_tokens)
+
+
+def _finished(chunk: Any) -> bool:
+    """Whether *chunk* ends the answer: a choice of it carries its ``finish_reason``. The SDK keeps
+    the closing ``[DONE]`` line to itself, so this is the end of an answer the adapter can see."""
+    return any(getattr(c, "finish_reason", None) for c in getattr(chunk, "choices", None) or [])
+
+
+def _tool_call_events(tool_calls: dict[str, dict[str, Any]], stop_reason: str) -> list[LLMEvent]:
+    """The answer's tool calls, one ``EVENT_TOOL_CALL`` each, once the answer has ended, each
+    carrying how it ended (``stop_reason``).
+
+    A call cut at ``max_tokens`` (``length``) then reaches the runtime as a truncation, not as a
+    call that left out an argument it made correctly. A stream that ends before its
+    ``finish_reason`` emits none: its reading raises first (``until_terminal``), since the
+    arguments of its calls may never have finished.
+    """
+    events: list[LLMEvent] = []
+    for tc_id, bucket in tool_calls.items():
+        meta = {"extra_content": bucket["extra_content"]} if bucket.get("extra_content") else {}
+        events.append(
+            LLMEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=tc_id,
+                title=bucket["name"],
+                tool_input=bucket["arguments"],
+                tool_meta=meta,
+                stop_reason=stop_reason,
+            )
+        )
+    return events
 
 
 class OpenAIProvider(ModelProvider):
@@ -228,8 +264,9 @@ class OpenAIProvider(ModelProvider):
 
         Tool-call deltas are accumulated per ``tool_call_id`` because the
         SDK emits OpenAI tool arguments as streamed JSON fragments. A
-        single ``EVENT_TOOL_CALL`` is emitted per completed call once the
-        next call begins or the stream finishes.
+        single ``EVENT_TOOL_CALL`` is emitted per call once the answer's
+        ``finish_reason`` has arrived; a stream that ends before it raises
+        ``AnswerCutOff`` (``until_terminal``).
         """
         model = require_model(self._model)
         self._history.append({"role": "user", "content": message})
@@ -275,7 +312,6 @@ class OpenAIProvider(ModelProvider):
         splitter = make_think_splitter()
         # Accumulators for tool-call deltas, keyed by tool_call_id.
         tool_calls: dict[str, dict[str, Any]] = {}
-        emitted_tool_calls: set[str] = set()
         last_tool_call_id: str | None = None
 
         input_tokens = 0
@@ -286,7 +322,9 @@ class OpenAIProvider(ModelProvider):
         # the one a consumer must know, a reply or a turn cut at the output cap.
         stop_reason = ""
 
-        async for chunk in response:
+        async for chunk in until_terminal(
+            response, ends=_finished, adapter=_ADAPTER, missing=_FINISH, model=model
+        ):
             choices = getattr(chunk, "choices", None) or []
             if choices:
                 choice = choices[0]
@@ -330,28 +368,6 @@ class OpenAIProvider(ModelProvider):
                 finish_reason = getattr(choice, "finish_reason", None)
                 if finish_reason:
                     stop_reason = str(finish_reason)
-                # `length` joins the flush set, and the reason RIDES the event. A completion cut at
-                # `max_tokens` used to fall through to the defensive flush below, which emits the
-                # partial call with no indication that it was partial — so the runtime parsed
-                # truncated JSON, got nothing, and told the model it had omitted an argument for a
-                # call it made correctly. The failure was misattributed, which is worse than a
-                # visible error: there was no retry, no counter and no event (issue 1773).
-                if finish_reason in {"tool_calls", "stop", "length"}:
-                    for tc_id, bucket in tool_calls.items():
-                        if tc_id in emitted_tool_calls:
-                            continue
-                        emitted_tool_calls.add(tc_id)
-                        meta = {}
-                        if bucket.get("extra_content"):
-                            meta["extra_content"] = bucket["extra_content"]
-                        yield LLMEvent(
-                            kind=EVENT_TOOL_CALL,
-                            tool_call_id=tc_id,
-                            title=bucket["name"],
-                            tool_input=bucket["arguments"],
-                            tool_meta=meta,
-                            stop_reason=str(finish_reason or ""),
-                        )
 
             usage = getattr(chunk, "usage", None)
             if usage is not None:
@@ -374,21 +390,8 @@ class OpenAIProvider(ModelProvider):
             else:
                 yield LLMEvent(kind=EVENT_THINKING_CHUNK, text=seg.text)
 
-        # Flush any tool calls whose finish_reason did not arrive (defensive).
-        for tc_id, bucket in tool_calls.items():
-            if tc_id in emitted_tool_calls:
-                continue
-            emitted_tool_calls.add(tc_id)
-            meta = {}
-            if bucket.get("extra_content"):
-                meta["extra_content"] = bucket["extra_content"]
-            yield LLMEvent(
-                kind=EVENT_TOOL_CALL,
-                tool_call_id=tc_id,
-                title=bucket["name"],
-                tool_input=bucket["arguments"],
-                tool_meta=meta,
-            )
+        for event in _tool_call_events(tool_calls, stop_reason):
+            yield event
 
         # The gauge measures the WHOLE served prompt, so it reconstructs it from the three
         # disjoint buckets the same way `stats.cache_hit_pct` does (`stats.py:160-162`). A
@@ -459,7 +462,8 @@ class OpenAIProvider(ModelProvider):
         The tool-call delta accumulation mirrors :meth:`stream` exactly: the
         SDK streams OpenAI tool arguments as JSON fragments keyed by
         ``tool_call_id``, so a single :data:`EVENT_TOOL_CALL` is emitted per
-        completed call once the next call begins or the stream finishes.
+        call once the answer's ``finish_reason`` has arrived, and a stream that
+        ends before it raises ``AnswerCutOff`` (``until_terminal``).
         """
         request_kwargs: dict[str, Any] = {
             "model": require_model(model or self._model),
@@ -511,7 +515,6 @@ class OpenAIProvider(ModelProvider):
         splitter = make_think_splitter()
         # Accumulators for tool-call deltas, keyed by tool_call_id.
         tool_calls: dict[str, dict[str, Any]] = {}
-        emitted_tool_calls: set[str] = set()
         last_tool_call_id: str | None = None
 
         input_tokens = 0
@@ -522,7 +525,13 @@ class OpenAIProvider(ModelProvider):
         # the one a consumer must know, a reply or a turn cut at the output cap.
         stop_reason = ""
 
-        async for chunk in response:
+        async for chunk in until_terminal(
+            response,
+            ends=_finished,
+            adapter=_ADAPTER,
+            missing=_FINISH,
+            model=str(request_kwargs["model"]),
+        ):
             choices = getattr(chunk, "choices", None) or []
             if choices:
                 choice = choices[0]
@@ -569,28 +578,6 @@ class OpenAIProvider(ModelProvider):
                 finish_reason = getattr(choice, "finish_reason", None)
                 if finish_reason:
                     stop_reason = str(finish_reason)
-                # `length` joins the flush set, and the reason RIDES the event. A completion cut at
-                # `max_tokens` used to fall through to the defensive flush below, which emits the
-                # partial call with no indication that it was partial — so the runtime parsed
-                # truncated JSON, got nothing, and told the model it had omitted an argument for a
-                # call it made correctly. The failure was misattributed, which is worse than a
-                # visible error: there was no retry, no counter and no event (issue 1773).
-                if finish_reason in {"tool_calls", "stop", "length"}:
-                    for tc_id, bucket in tool_calls.items():
-                        if tc_id in emitted_tool_calls:
-                            continue
-                        emitted_tool_calls.add(tc_id)
-                        meta = {}
-                        if bucket.get("extra_content"):
-                            meta["extra_content"] = bucket["extra_content"]
-                        yield LLMEvent(
-                            kind=EVENT_TOOL_CALL,
-                            tool_call_id=tc_id,
-                            title=bucket["name"],
-                            tool_input=bucket["arguments"],
-                            tool_meta=meta,
-                            stop_reason=str(finish_reason or ""),
-                        )
 
             usage = getattr(chunk, "usage", None)
             if usage is not None:
@@ -610,21 +597,8 @@ class OpenAIProvider(ModelProvider):
                 text=seg.text,
             )
 
-        # Flush any tool calls whose finish_reason did not arrive (defensive).
-        for tc_id, bucket in tool_calls.items():
-            if tc_id in emitted_tool_calls:
-                continue
-            emitted_tool_calls.add(tc_id)
-            meta = {}
-            if bucket.get("extra_content"):
-                meta["extra_content"] = bucket["extra_content"]
-            yield LLMEvent(
-                kind=EVENT_TOOL_CALL,
-                tool_call_id=tc_id,
-                title=bucket["name"],
-                tool_input=bucket["arguments"],
-                tool_meta=meta,
-            )
+        for event in _tool_call_events(tool_calls, stop_reason):
+            yield event
 
         context_pct: float | None = None
         # The whole served prompt, reconstructed from the three disjoint buckets — see the

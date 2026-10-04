@@ -149,22 +149,3 @@ def test_the_overflow_correction_note_now_has_a_writer() -> None:
     # And it is reachable from the argument branch specifically, not merely imported somewhere.
     assert "correction_note(FailureMode.TOKEN_OVERFLOW)" in src
     del subprocess
-
-
-def test_the_openai_flush_recognises_length() -> None:
-    """`"length"` was never a case, so a truncated tool call reached the defensive flush with no
-    stop reason attached — the signal existed on the wire and was dropped at the boundary."""
-    from personalclaw.llm import openai as openai_mod
-
-    src = open(openai_mod.__file__, encoding="utf-8").read()
-    assert '{"tool_calls", "stop", "length"}' in src
-    assert 'stop_reason=str(finish_reason or "")' in src
-
-
-def test_anthropic_reads_a_stop_reason_at_all() -> None:
-    """It read none. The field was declared in `llm/events.py` and never written on this path."""
-    from personalclaw.llm import anthropic as anthropic_mod
-
-    src = open(anthropic_mod.__file__, encoding="utf-8").read()
-    assert "stop_reason = str(reason)" in src
-    assert src.count("stop_reason=stop_reason") >= 2, "both streaming regions must carry it"

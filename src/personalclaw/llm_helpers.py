@@ -1504,6 +1504,9 @@ def humanize_provider_error(exc: object, *, room_member: str = "") -> str:
       generic "did not answer in time" for an untyped timeout cannot; ``ModelCallTimeout``, an
       automated call that ran past the spend guard's ceiling, names the model, the limit and the
       use case whose model to change.
+    * ``AnswerCutOff``: a stream that ended before its provider said the answer was finished
+      raised nothing in the client library, and its own words name the adapter and the event that
+      never came, which are the log's, so the chat says the answer was cut off.
     * A connection that failed or timed out, known by its type or its cause's
       (:func:`_transport_failure_sentence`): a provider SDK's "Request timed out." has words the
       matcher knows nothing in, and read by them it was a failure PersonalClaw doesn't recognize.
@@ -1537,6 +1540,7 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
     from personalclaw.acp.errors import AcpTimeoutError
     from personalclaw.errors import ERROR_CODES, AgentError
     from personalclaw.guardrails.failure import (
+        AnswerCutOff,
         CircuitOpenError,
         FirstTokenTimeout,
         LocalModelBusy,
@@ -1568,7 +1572,14 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
         return exc.sentence()
     if isinstance(
         exc,
-        (NoModelAnswered, FirstTokenTimeout, ModelCallTimeout, CircuitOpenError, LocalModelBusy),
+        (
+            NoModelAnswered,
+            FirstTokenTimeout,
+            ModelCallTimeout,
+            CircuitOpenError,
+            LocalModelBusy,
+            AnswerCutOff,
+        ),
     ):
         return exc.sentence(room_member=room_member)
     if isinstance(exc, ProviderResolutionError) and str(exc).strip():
@@ -1713,13 +1724,14 @@ def failure_clause(exc: BaseException) -> str:
     answered reads as what each did, whoever's chain it was.
     """
     from personalclaw.guardrails.failure import (
+        AnswerCutOff,
         EmptyCompletion,
         LocalModelBusy,
         NoModelAnswered,
         OutputContractError,
     )
 
-    if isinstance(exc, (EmptyCompletion, LocalModelBusy, OutputContractError)):
+    if isinstance(exc, (EmptyCompletion, LocalModelBusy, OutputContractError, AnswerCutOff)):
         return exc.reason()
     if isinstance(exc, NoModelAnswered):
         return f"no model of its chain answered: {exc.tried()}"

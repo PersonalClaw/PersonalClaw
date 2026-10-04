@@ -276,13 +276,20 @@ class _FakeStreamCM:
         return None
 
 
+#: The one event of the fake's answer: the ``message_delta`` that says how the message ended, so
+#: the answer is a finished one (a stream that ends without it was cut off).
+_MESSAGE_ENDS = types.SimpleNamespace(
+    type="message_delta", delta=types.SimpleNamespace(stop_reason="end_turn"), usage=None
+)
+
+
 class _FakeMessages:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
     def stream(self, **kwargs: Any) -> _FakeStreamCM:
         self.calls.append(kwargs)
-        return _FakeStreamCM([])
+        return _FakeStreamCM([_MESSAGE_ENDS])
 
 
 class _FakeAsyncAnthropic:
