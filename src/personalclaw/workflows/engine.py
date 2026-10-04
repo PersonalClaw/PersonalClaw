@@ -962,11 +962,11 @@ async def dispatch_branch(node: Node, ctx: BindingContext) -> NodeResult:
     to infer "not taken" from "routed elsewhere" would also starve any sibling whose
     `needs` merely names this branch, since routing among cases says nothing about it.
 
-    A resolved value with no matching case and no default is a routing failure, reported
-    as one: falling through silently would make a spec that never ran its real work look
-    like a clean pass.
+    A resolved value with no matching case and no default is a routing failure, reported as one:
+    falling through silently would make a spec that never ran its real work look like a clean
+    pass. It records `{"case": label}`; `node_bindings.record_branch_outputs` adds `produced`.
     """
-    from personalclaw.workflows.tick import _select_case, edge_key
+    from personalclaw.workflows import tick
 
     expr = str((node.config or {}).get("on", "") or "")
     if not expr:
@@ -975,13 +975,13 @@ async def dispatch_branch(node: Node, ctx: BindingContext) -> NodeResult:
             "branch node has no `on` binding",
             "add `config.on` naming the value to route on",
         )
-    selected = _select_case(node, ctx)
-    if selected is None:
-        return _fail(
-            FailureClass.USER,
-            "branch selector matched no case and the node has no default",
-            "add a `default` case, or declare `enum` so validation catches this earlier",
-        )
+    try:
+        value = tick.read_named_value(expr, ctx)
+    except BindingError as exc:
+        failure = binding_failure(exc, tick.UNREAD_ROUTE)
+        return NodeResult(state=InstanceState.FAILED, failure=failure)
+    if (selected := tick.case_for(node, value)) is None:
+        return _fail(FailureClass.USER, *tick.unmatched_case(node, value))
     label, case_node = selected
     declined: list[str] = []
     if node.id:
@@ -990,7 +990,7 @@ async def dispatch_branch(node: Node, ctx: BindingContext) -> NodeResult:
             [node.default_case] if node.default_case is not None else []
         ):
             if other is not None and id(other) != taken and other.id:
-                declined.append(edge_key(node.id, other.id))
+                declined.append(tick.edge_key(node.id, other.id))
     return NodeResult(
         state=InstanceState.DONE,
         output={"case": label},

@@ -144,7 +144,10 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
     # different value the moment the body is a container: `goal-pursuit-verifiable` ends its body on
     # `judge` and tests `{{last.output.command_passed}}`, a key only its `fix` stage emits, so that
     # condition could never resolve and the loop exited `condition_unresolvable` every time. A leaf
-    # body layers exactly one mapping, so nothing changes there.
+    # body layers exactly one mapping, so nothing changes there. A branch in the body whose case
+    # this cycle's last step just finished has no tick behind it yet to record what that case
+    # produced, so it is recorded first, and the cycle reads it as the next step would.
+    node_bindings.record_branch_outputs(ctl)
     layered, _ = node_bindings.iteration_output(ctl, parent_path, iteration)
     ctx = BindingContext(
         inputs=ctl.run.inputs,

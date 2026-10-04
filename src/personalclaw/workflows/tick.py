@@ -93,7 +93,13 @@ from personalclaw.workflows.admission import (
     compose,
     default_policies,
 )
-from personalclaw.workflows.bindings import BindingContext, BindingError, resolve_expr
+from personalclaw.workflows.bindings import (
+    BindingContext,
+    BindingError,
+    refs_in,
+    resolve,
+    resolve_expr,
+)
 from personalclaw.workflows.conditions import evaluate as evaluate_condition
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
@@ -104,6 +110,7 @@ from personalclaw.workflows.models import (
     LoopMode,
     Node,
     NodeKind,
+    OnError,
     lane_for,
     walk,
 )
@@ -993,9 +1000,10 @@ def _visit_branch(
 ) -> None:
     """Route: dispatch the branch itself, then visit only the taken case.
 
-    The branch node is REAL work, not pure structure — it evaluates a selector, records
-    the routing decision, and produces `{"case": label}` as an output downstream nodes can
-    bind to. So it runs first and its own state gates its cases.
+    The branch node is REAL work, not pure structure — it evaluates a selector and records the
+    routing decision, `{"case": label}`, on its own step. So it runs first and its own state
+    gates its cases. Once the taken case has ended in success the record also carries what that
+    case produced, `produced` (`node_bindings.record_branch_outputs`).
 
     An unresolvable selector means an upstream node has not produced its output yet, so
     the branch is simply not ready — distinct from "resolved to a value with no case",
@@ -1023,7 +1031,7 @@ def _visit_branch(
     if selected is None:
         return
     label, case_node = selected
-    cpath = f"{path}.cases[{label}]" if label != "__default__" else f"{path}.default"
+    cpath = case_path(path, label)
 
     # Untaken cases are marked SKIPPED so they become terminal. That is precisely what
     # keeps a downstream join alive: a `needs` edge is satisfied by any terminal
@@ -1042,7 +1050,7 @@ def _visit_branch(
     _visit(
         case_node,
         cpath,
-        spec=f"{spec}.cases[{label}]" if label != "__default__" else f"{spec}.default",
+        spec=case_path(spec, label),
         states=states,
         edges=edges,
         iterations=iterations,
@@ -1083,25 +1091,78 @@ def case_key(value: Any) -> str:
     return str(value)
 
 
+#: The label a branch takes its `default` case under: its routing record reads
+#: `{"case": "__default__"}`, and the case lives at `<branch>.default`.
+DEFAULT_CASE = "__default__"
+
+
+def case_path(path: str, label: str) -> str:
+    """Where the case `label` of the branch at `path` lives, in the shape `walk` writes it:
+    `<branch>.cases[<label>]`, or `<branch>.default`. `path` is an instance path or a spec path
+    alike, so the frontier, the derivation and the output a branch hands on agree on it."""
+    return f"{path}.default" if label == DEFAULT_CASE else f"{path}.cases[{label}]"
+
+
+def read_named_value(raw: str, ctx: BindingContext) -> Any:
+    """The value a config key that NAMES one value refers to: a branch's `on`, a fan-out's `items`.
+
+    Text holding references resolves through `bindings.resolve`, the same scan validation splits a
+    value with: one reference keeps its type, and text with several is the text they spell. A
+    test of "begins with `{{` and ends with `}}`" read `{{a}}-{{b}}` as ONE reference, a path
+    named `a}}-{{b`, for a value validation had accepted as two. Without braces the value names a
+    reference bare. Raises `BindingError` when it cannot be read.
+    """
+    return resolve(raw, ctx) if refs_in(raw) else resolve_expr(raw.strip(), ctx)
+
+
+#: How a branch that cannot read the value it routes on fails, ahead of the binding's own words:
+#: "matched no case" would blame its cases, and "has no default" was false for one that has one.
+UNREAD_ROUTE = "branch could not read the value it routes on"
+
+
+def unmatched_case(node: Node, value: Any) -> tuple[str, str]:
+    """`(cause, remediation)` for a branch whose value matches none of its cases and that has no
+    default: the routing failure `engine.dispatch_branch` reports, naming the value and the cases.
+    """
+    return (
+        f"the value this branch routes on is {case_key(value)!r}, which matches none of its "
+        f"cases ({', '.join(node.cases)}), and it has no default",
+        "add a case for that value or a `default` case, or declare `enum` so validation catches "
+        "this earlier",
+    )
+
+
+def case_for(node: Node, value: Any) -> tuple[str, Node] | None:
+    """The case a resolved selector value takes: its own case, else the default, else None."""
+    key = case_key(value)
+    if key in node.cases:
+        return key, node.cases[key]
+    if node.default_case is not None:
+        return DEFAULT_CASE, node.default_case
+    return None
+
+
 def _select_case(node: Node, ctx: BindingContext) -> tuple[str, Node] | None:
     """Resolve `config.on` and pick a case. Returns None when the selector cannot be
     resolved yet."""
     expr = str((node.config or {}).get("on", "") or "")
     if not expr:
         return None
-    inner = expr.strip()
-    if inner.startswith("{{") and inner.endswith("}}"):
-        inner = inner[2:-2].strip()
     try:
-        value = resolve_expr(inner, ctx)
+        value = read_named_value(expr, ctx)
     except BindingError:
         return None
-    key = case_key(value)
-    if key in node.cases:
-        return key, node.cases[key]
-    if node.default_case is not None:
-        return "__default__", node.default_case
-    return None
+    return case_for(node, value)
+
+
+def taken_case(node: Node, path: str, ctx: BindingContext) -> tuple[str, str, Node] | None:
+    """The case the routed branch at instance `path` took, as `(label, instance path, node)`, by
+    the selector the frontier routes it with; None while that does not resolve."""
+    selected = _select_case(node, ctx)
+    if selected is None:
+        return None
+    label, case_node = selected
+    return label, case_path(path, label), case_node
 
 
 def _resolve_items(node: Node, ctx: BindingContext) -> list[Any] | None:
@@ -1110,11 +1171,8 @@ def _resolve_items(node: Node, ctx: BindingContext) -> list[Any] | None:
         return list(raw)
     if not isinstance(raw, str) or not raw.strip():
         return None
-    inner = raw.strip()
-    if inner.startswith("{{") and inner.endswith("}}"):
-        inner = inner[2:-2].strip()
     try:
-        value = resolve_expr(inner, ctx)
+        value = read_named_value(raw, ctx)
     except BindingError:
         return None
     if isinstance(value, list):
@@ -1198,10 +1256,6 @@ def foreach_outcome(policy: ItemErrorPolicy, item_states: list[InstanceState]) -
     )
 
 
-def _on_error(node: Node) -> str:
-    return str((node.config or {}).get("on_error", "null_continue") or "null_continue")
-
-
 def fails_the_run(node: Node | None) -> bool:
     """Does this step declare that its failure ends the run (`on_error: fail_run`)?
 
@@ -1209,8 +1263,9 @@ def fails_the_run(node: Node | None) -> bool:
     such a step once it failed (`_visit`), and the controller ends the run there, saying why
     (`gate_answers.stopping_gate`). Without the second half the first only stopped the
     scheduling, and the run ended "run deadlocked" with the step's reason left on the step.
+    Any `on_error` outside `OnError` is refused when the spec is saved (`WF_BAD_ON_ERROR`).
     """
-    return node is not None and _on_error(node) == "fail_run"
+    return node is not None and (node.config or {}).get("on_error") == OnError.FAIL_RUN.value
 
 
 # ── derived container state ──────────────────────────────────────────────────
@@ -1317,11 +1372,10 @@ def _derive(
             return stored
         if not _is_success(stored):
             return stored  # routing itself failed
-        selected = _select_case(node, ctx)
-        if selected is None:
+        taken = taken_case(node, path, ctx)
+        if taken is None:
             return InstanceState.PENDING
-        label, case_node = selected
-        cpath = f"{path}.cases[{label}]" if label != "__default__" else f"{path}.default"
+        _label, cpath, case_node = taken
         return _derive(case_node, cpath, states, edges, iterations, ctx)
 
     return stored

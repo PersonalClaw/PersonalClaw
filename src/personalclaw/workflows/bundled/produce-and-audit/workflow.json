@@ -116,7 +116,7 @@
         "kind": "stage",
         "id": "produce",
         "config": {
-          "prompt": "Produce the {{inputs.artifact_kind}} for the subject below, using what the gather step established.\n\nWrite the thing itself, not a description of it. Where the research left a gap, say so inline rather than filling it with something plausible.\n\nSubject:\n{{inputs.subject}}\n\nWhat was gathered:\n{{nodes.gather.output}}\n\nAcceptance criteria:\n{{inputs.acceptance}}"
+          "prompt": "Produce the {{inputs.artifact_kind}} for the subject below, using what the gather step established.\n\nWrite the thing itself, not a description of it. Where the research left a gap, say so inline rather than filling it with something plausible.\n\nSubject:\n{{inputs.subject}}\n\nWhat was gathered:\n{{nodes.gather.output.produced}}\n\nAcceptance criteria:\n{{inputs.acceptance}}"
         }
       },
       {

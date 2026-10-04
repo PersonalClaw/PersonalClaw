@@ -27,7 +27,7 @@ from personalclaw.workflows.models import (
     spec_path,
     walk,
 )
-from personalclaw.workflows.tick import ReadyNode
+from personalclaw.workflows.tick import ReadyNode, derive_state, taken_case
 
 if TYPE_CHECKING:
     from personalclaw.workflows.controller import RunController
@@ -352,7 +352,18 @@ def _last_output(ctl: RunController, path: str) -> tuple[Any, bool]:
 
 def iteration_output(ctl: RunController, loop_path: str, iteration: int) -> tuple[Any, bool]:
     """One iteration's layered output. See `_last_output` for the contract it implements."""
-    produced = _accumulated_outputs(ctl, f"{loop_path}.body@{iteration}")
+    return subtree_output(ctl, f"{loop_path}.body@{iteration}")
+
+
+def subtree_output(ctl: RunController, subtree: str) -> tuple[Any, bool]:
+    """What the steps of one subtree produced, LAYERED in document order: `(value, present?)`.
+
+    The one reading of "what this part of the run produced", for a loop's cycle (`_last_output`)
+    and a branch's taken case (`record_branch_outputs`) alike: each mapping's keys merge in and a
+    later step wins a collision, a non-mapping output replaces what came before, and a single
+    step's output is exactly that output.
+    """
+    produced = _accumulated_outputs(ctl, subtree)
     if not produced:
         return None, False
     layered: Any = {}
@@ -362,6 +373,80 @@ def iteration_output(ctl: RunController, loop_path: str, iteration: int) -> tupl
         else:
             layered = value
     return layered, True
+
+
+def record_branch_outputs(ctl: RunController) -> None:
+    """Add to each branch's record what the case it took produced, once that case has ended in
+    success: `{"case": <label>, "produced": <its output>}`, which a step after the branch reads.
+
+    A branch's own step only routes, recording `{"case": label}` (`engine.dispatch_branch`), and
+    its taken case runs after it, so what that case produced exists only once it has run. Until
+    this, the routing was all a step after a branch could read, and no step could reach the case's
+    work at all: a reader of a case that was not taken is skipped, so naming the case's own step
+    works only when it is the one taken. `produced` is the case's output read the way a loop's
+    cycle is (`subtree_output`), and the record is stored the way a finished loop's is
+    (`loop_convergence.finish_loop`): with the branch's step and under its id, so the run page, a
+    resumed run (`RunController._load_outputs`) and every binding read the same value.
+
+    Called before each tick's frontier, so a step the frontier then admits after the branch reads
+    it, and at a loop's cycle boundary, before the cycle's output is read. A case that has not
+    ended, or ended without success, adds nothing, and a step that reads the branch is held or
+    skipped for it by the frontier. Each branch is recorded once per ending of its case:
+    `ctl._branch_recorded` forgets it the moment a tick sees that case unfinished (a rewind is
+    applied before the tick's frontier, a re-route resets the branch), so the next ending records
+    again.
+
+    Inner branches first (reverse document order), so a case holding a branch reads that branch's
+    whole record. Where one branch has several instances (a loop's cycles, a fan-out's items), its
+    id names the latest instance whose case has ended.
+    """
+    tree = dict(walk(ctl.root))
+    branches = {
+        path: node
+        for path in ctl.instances
+        if (node := tree.get(spec_path(path))) is not None and node.kind is NodeKind.BRANCH
+    }
+    if not branches:
+        return
+    states = {path: inst.state for path, inst in ctl.instances.items()}
+    ctx = BindingContext(inputs=ctl.run.inputs, node_outputs=ctl._outputs)
+    latest: dict[str, str] = {}
+    recorded = False
+    for path in sorted(branches, key=instance_order, reverse=True):
+        node = branches[path]
+        taken = taken_case(node, path, ctx) if states[path] in SUCCESS_STATES else None
+        if taken is None or (
+            derive_state(
+                taken[2],
+                taken[1],
+                states,
+                declined_edges=ctl._declined_edges,
+                outputs=ctl._outputs,
+                inputs=ctl.run.inputs,
+                iterations=ctl._iterations,
+            )
+            not in SUCCESS_STATES
+        ):
+            ctl._branch_recorded.pop(path, None)
+            continue
+        if path not in ctl._branch_recorded:
+            label, case_path, _case = taken
+            produced, _present = subtree_output(ctl, case_path)
+            # The routing-only record goes to the attic rather than staying beside the new one:
+            # an output too large to keep inline is stored apart from it, and a read by path
+            # would find the old record first.
+            store.archive_output(ctl.run.id, path, ctl.run.spec_version)
+            inst = ctl.instances[path]
+            inst.output_ref, ctl._branch_recorded[path] = ctl.journal.store_output(
+                path, {"case": label, "produced": produced}
+            )
+            recorded = True
+        if node.id and node.id not in latest:
+            latest[node.id] = path
+    for node_id, path in latest.items():
+        ctl._outputs[node_id] = ctl._branch_recorded[path]
+    if recorded:
+        ctl._persist_state()
 
 
 def _previous_output(ctl: RunController, path: str) -> Any:

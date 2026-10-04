@@ -42,6 +42,7 @@ from personalclaw.workflows.models import (
     InstanceState,
     Node,
     NodeInstance,
+    NodeKind,
     walk,
 )
 
@@ -257,13 +258,28 @@ def dependents_graph(root: Node) -> dict[str, set[str]]:
     Built from bindings, not from the tree. This inversion is the correctness core of
     WF2-R2: it is what finds the later sibling reading an edited node's output, which a
     tree walk cannot see.
+
+    One read reaches past the node it names: a branch's output carries what the case it took
+    produced (`produced`, `node_bindings.record_branch_outputs`), so a step reading a branch
+    consumes every step inside its cases too. Rewinding one of them re-runs that step, and
+    reverting one it has already read is refused. The branch itself is not among them: its
+    routing reads only its selector, never its cases.
     """
     consumers: dict[str, set[str]] = {}
-    for _path, node in walk(root):
+    tree = walk(root)
+    for _path, node in tree:
         if not node.id:
             continue
         for dep in node_deps(node.config or {}):
             consumers.setdefault(dep, set()).add(node.id)
+    for _path, node in tree:
+        readers = consumers.get(node.id, set()) if node.kind is NodeKind.BRANCH else set()
+        if not readers:
+            continue
+        for case in node.child_nodes():
+            for _inner_path, inner in walk(case):
+                if inner.id:
+                    consumers.setdefault(inner.id, set()).update(readers)
     return consumers
 
 

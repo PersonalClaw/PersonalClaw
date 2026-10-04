@@ -102,6 +102,10 @@ WF_ERROR_CODES: dict[str, str] = {
     "WF_BAD_ITEM_ERROR": (
         "A foreach node's `on_item_error` is not one of the per-item failure policies."
     ),
+    "WF_BAD_ON_ERROR": (
+        "A step's `on_error` is neither `null_continue` (the steps after it still run) nor "
+        "`fail_run` (its failure ends the run); any other value would have behaved as the first."
+    ),
     "WF_BAD_LOOP_MODE": "A loop node declares a `mode` the engine does not implement.",
     "WF_BAD_LOOP_COUNT": "A counted loop's `n` is absent or not a positive integer.",
     "WF_MISSING_CONDITION": "An `until` loop has no `condition`, so it has no exit test.",
@@ -239,7 +243,9 @@ WF_ERROR_CODES: dict[str, str] = {
         "A node reads `{{nodes.<id>...}}` that cannot resolve: `<id>` is a sequence, parallel "
         "or foreach, which records no output of its own, or the key read under "
         "`{{nodes.<id>.output.<key>}}` is not one the producer's "
-        "`output_contract.required_keys` guarantees."
+        "`output_contract.required_keys` guarantees, or `<id>` is a branch and the read names a "
+        "field beside its `case` and `produced`, or one under `produced` that a case it can take "
+        "does not produce, so the read fails whenever that case is taken."
     ),
     "WF_UNCONTRACTED_OUTPUT_REF": (
         "A node whose output is read declares no `output_contract`, so nothing checks the "

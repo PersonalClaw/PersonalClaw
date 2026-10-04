@@ -75,6 +75,8 @@ Not flat beside `provider`. A flat argument reaches the provider as an *empty*
 config; it then reports its own required field missing for a value that is
 visibly present in the spec, every downstream binding fails, and the run dies
 reporting "deadlocked". Validation refuses the shape now so that cannot happen.
+The keys the engine reads on any step (`on_error`, `retry`, `success_when` and the
+like) are not arguments, and stay beside `provider`.
 
 **A step's `payload` carries its own inputs, never whose work it is.** Each key
 reaches the provider as written (a `bash` step reads them as its environment), and
@@ -101,7 +103,8 @@ run, such as a preflight that refuses its inputs, declares `"on_error": "fail_ru
 the run then ends there, failed, with the step's reason ("“Check the inputs” failed:
 …, so nothing after it ran"). A step a safety control refused before it ran (the
 action denylist, an app's limits on a run that is its work) stops the run the same
-way, whatever it declares.
+way, whatever it declares. `null_continue` and `fail_run` are the only two values, and
+validation refuses any other.
 
 ## Reading what a container produced
 
@@ -111,11 +114,19 @@ what its kind gives it:
 | Kind | Its output |
 |---|---|
 | `loop` | its last cycle's output, as `{{last.output}}` reads a cycle, once it ends done; nothing when it is handed to you instead, and a step reading it is then skipped |
-| `branch` | its routing, `{"case": "<the case it took>"}` |
+| `branch` | `{"case": "<the case it took>", "produced": <what that case produced>}`, with `produced` once that case has ended in success, read as `{{last.output}}` reads a cycle; a step reading it is skipped when the case failed |
 | `sequence`, `parallel`, `foreach` | nothing: validation refuses the read when you save (`WF_UNSATISFIABLE_OUTPUT_REF`), so read the step inside whose output you need |
 
 A loop's output is its last cycle's, so a loop that should hand on a running account
 has each cycle return one, built on `{{last.output.…}}`.
+
+Read a branch's result as `{{nodes.<branch>.output.produced}}`, or a field of it
+(`{{nodes.<branch>.output.produced.angles}}`), never by the case's own step id: a step
+that reads a case that was not taken is skipped. Validation refuses a field a branch never
+has, such as `{{nodes.<branch>.output.angles}}`, and names the read that works. Under
+`produced` it refuses a field that a case the branch can take does not produce, wherever
+that case's output is known when you save (a transform's object, a stage with no schema,
+which answers `{"result": …}`), because the read fails every time that case runs.
 
 ## Macros: the patterns, as one-liners
 
@@ -190,7 +201,8 @@ not applied.
 
 Declare the `enum`. Validation then catches an uncovered case at save time
 instead of raising a binding error mid-run, after the classifier already spent
-its tokens.
+its tokens. The step after the branch reads what the chosen entry found as
+`{{nodes.gather.output.produced}}`, whichever case it was.
 
 **Capture a baseline before you mutate.** A code-flavoured template runs its
 validation *before* the first mutating node, so a failure afterwards can be told

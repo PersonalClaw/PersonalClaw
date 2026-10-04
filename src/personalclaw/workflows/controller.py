@@ -386,6 +386,10 @@ class RunController:
         #: consumer's gap detection fire on every unpublished journal write.
         self._event_seq = 0
         self._outputs: dict[str, Any] = {}
+        #: branch instance path → the output this controller recorded for it when the case it took
+        #: last ended (`node_bindings.record_branch_outputs`). In memory only: a resumed run records
+        #: each ended case once more, writing the value its step already holds.
+        self._branch_recorded: dict[str, Any] = {}
         self._terminal = asyncio.Event()
         self._load_outputs()
 
@@ -1251,6 +1255,9 @@ class RunController:
         self._persist_state()
 
     def _frontier(self) -> Frontier:
+        # Before the frontier, so a step it admits after a branch reads what the branch's case
+        # produced, and a selector or `items` reading a branch resolves the same value.
+        node_bindings.record_branch_outputs(self)
         states = {p: i.state for p, i in self.instances.items()}
         fr = frontier(
             self.root,

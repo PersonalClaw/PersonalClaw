@@ -1093,7 +1093,7 @@ def resolve(template: Any, ctx: BindingContext) -> Any:
     if not isinstance(template, str):
         return template
 
-    whole = _whole_ref(template)
+    whole = whole_ref(template)
     if whole is not None:
         return resolve_expr(whole.strip(), ctx)
 
@@ -1103,7 +1103,7 @@ def resolve(template: Any, ctx: BindingContext) -> Any:
     return _REF_RE.sub(_sub, template)
 
 
-def _whole_ref(template: str) -> str | None:
+def whole_ref(template: str) -> str | None:
     """The expression of a value that is exactly ONE reference, or None (the whole-value path).
 
     Decided by the scan that splits a value into its references (`_REF_RE`, the one `refs_in` and

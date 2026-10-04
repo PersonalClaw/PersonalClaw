@@ -33,6 +33,7 @@ from personalclaw.workflows.models import (
     TERMINAL_STATES,
     InstanceState,
     NodeKind,
+    OnError,
     RunStatus,
     now_stamp,
     run_ending,
@@ -278,7 +279,8 @@ def tolerates_failure(node: Any) -> bool:
     gate's word about its check.
     """
     cfg = (getattr(node, "config", None) or {}) if node is not None else {}
-    return cfg.get("on_error") == "null_continue" or yes_or_no(cfg.get("allow_failure")) is True
+    tolerated = cfg.get("on_error") == OnError.NULL_CONTINUE.value
+    return tolerated or yes_or_no(cfg.get("allow_failure")) is True
 
 
 def _gate_kind(node: Any) -> str:

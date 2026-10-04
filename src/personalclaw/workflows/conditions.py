@@ -20,9 +20,10 @@ not a string, and the fix is to parse it rather than to interpolate it.
     ==  !=    comparison against a literal or another reference
     <leaf>    bare truthiness of a resolved reference
 
-A leaf operand is one of: a `{{binding}}`, a bare `dotted.path` (resolved through the
-SAME `bindings.resolve_expr` every prompt uses, pipes included), or a literal —
-`true`/`false`/`null`/`none` (case-insensitive), a number, or a quoted string.
+A leaf operand is one of: a `{{binding}}` (several in one operand are the text they spell, as
+in a step's config), a bare `dotted.path` (resolved through the SAME `bindings.resolve_expr`
+every prompt uses, pipes included), or a literal — `true`/`false`/`null`/`none`
+(case-insensitive), a number, or a quoted string.
 
 **Word forms (`and`/`or`/`not`) are deliberately NOT accepted.** Two spellings of one
 operator is a dialect nobody can memorise, and the failure is legible: `a and b` parses
@@ -39,7 +40,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from personalclaw.workflows.bindings import BindingContext, BindingError, resolve_expr
+from personalclaw.workflows.bindings import (
+    BindingContext,
+    BindingError,
+    refs_in,
+    resolve,
+    resolve_expr,
+)
 
 #: Literal spellings that are values rather than references, mapped exhaustively. A bare
 #: word outside this table is a REFERENCE — so an unquoted `pass` raises rather than
@@ -140,16 +147,22 @@ def _equal(left: Any, right: Any) -> bool:
 
 
 def _operand(text: str, ctx: BindingContext, whole: str) -> Any:
-    """One side of a comparison, or a bare truthiness leaf."""
+    """One side of a comparison, or a bare truthiness leaf.
+
+    A quoted operand is text, braces and all. One holding references resolves through
+    `bindings.resolve`, the scan validation splits a value with: a single reference keeps its
+    type, and several are the text they spell. Testing "begins with `{{`, ends with `}}`" read
+    `{{a}}{{b}}` as one path named `a}}{{b`, which no run could resolve.
+    """
     raw = text.strip()
     if not raw:
         raise BindingError("empty condition operand", whole)
 
-    if raw.startswith("{{") and raw.endswith("}}"):
-        return resolve_expr(raw[2:-2].strip(), ctx)
-
     if (raw[0] == raw[-1] == '"' or raw[0] == raw[-1] == "'") and len(raw) >= 2:
         return raw[1:-1]
+
+    if refs_in(raw):
+        return resolve(raw, ctx)
 
     lowered = raw.lower()
     if lowered in _LITERALS:

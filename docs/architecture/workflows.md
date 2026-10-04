@@ -48,7 +48,7 @@ while not terminal:
 | `incident_hold.py` | incident mode's hold on a run: the stage in flight withdrawn as a pause withdraws it, nothing started while the switch is on, the status left `running` with the sentence its views show (`held`), and the run carrying on by itself once the switch is off |
 | `stage_settlement.py` | settling `stage` nodes, whose work runs in a spawned subagent the controller polls rather than awaits: the one out-of-band predicate, the settle, re-queueing after a restart, stopping on cancel and pause. A stage whose answer ignored its declared `schema` settles `failed` (`protocol`), naming what was asked for and what came (`engine.apply_declared_schema`, the same gate every node kind meets at the dispatch seam; a judge is held to its contract instead of every key); one whose time limit ended a wait for the owner's answer settles `timeout` with the typed reason the run's ending reads (`approval_timeout`); one whose subagent's model can't use tools (`subagent_tier.without_tools_ending`) settles `user`, with a fix about its model rather than its tools. The owner's Allow of an attempt's start is kept on its instance (`approved_request`, `approved_at`), so the attempt a restart re-queues starts on it when it asks the same thing (`engine.stage_request_key`) within the step's time limit; a settle or a rewind drops it |
 | `step_dispatch.py` | running one node's dispatcher under its knobs: the retry correction and carried context on a copy of the node, the write-scope snapshot, `timeout_total` as a real kill, `success_when` |
-| `node_bindings.py` | the `BindingContext` a node's `{{…}}` resolve against, built per dispatch from durable run state: outputs, artifacts, `last`, `previous`, siblings, the Session Brief, the secret resolver, the run's own document path |
+| `node_bindings.py` | the `BindingContext` a node's `{{…}}` resolve against, built per dispatch from durable run state: outputs, artifacts, `last`, `previous`, siblings, the Session Brief, the secret resolver, the run's own document path; and what a subtree produced (`subtree_output`), which a loop's cycle and a branch's taken case are both read as, a branch's added to its record as `produced` once its case ends (`record_branch_outputs`) |
 | `input_secrets.py` | the `{{secret:…}}` references a run is handed in its inputs: which inputs its record says carry one, the resolver a step that starts a run keeps them with, the refusal of text from elsewhere that names a secret the step hands on, and the start-up pass that writes the reference over a stored secret's value in a record written before |
 | `iteration_context.py` | the handoff / carryover / decisions lifecycle across a loop's iterations: captured from an iteration's own output, journaled, rehydrated on resume, rendered into a fresh iteration's prompt; and the steering queued for the next iteration, taken at the boundary (`consume_steering`) |
 | `loop_iteration.py` | a loop's iteration boundary: the counter, the `until_dry` streak, the breaker fed and asked, steering, the long-run seen-set, and the continue/stop decision |
@@ -170,7 +170,19 @@ instance so a resumed run reads it back, and a step after the loop reads it as
 `{{nodes.<loop>.output}}`. A loop handed to a person (its budget spent without its
 exit met, a judge that would not decide, a cycle that failed, an exit condition it
 could not read) records nothing, and a step that reads it is skipped. A `branch`
-records its routing, `{"case": label}`. A `sequence`, `parallel` or `foreach`
+records its routing, `{"case": label}`, when it routes, and once the case it took has
+ended in success the same record carries what that case produced, `produced`, read the
+way a loop's cycle is (`node_bindings.record_branch_outputs`): a step after the branch
+reads which case ran as `{{nodes.<branch>.output.case}}` and its result as
+`{{nodes.<branch>.output.produced…}}`. It cannot read the case's own step instead,
+since a reader of a case that was not taken is skipped. Validation refuses a read of
+any other field of a branch, and, under `produced`, a field that a case whose output is
+known when the spec is saved does not carry (`WF_UNSATISFIABLE_OUTPUT_REF`, naming the
+case). A step reading a branch consumes every step inside its cases, so rewinding one of
+them re-runs the reader. Until a branch carried what its case produced, deep-research
+swept with `{"case": "survey"}` where its angles, breadth and depth belonged, and
+produce-and-audit produced from `{"case": "standard"}` as everything it had gathered.
+A `sequence`, `parallel` or `foreach`
 records nothing of its own, so validation refuses a read of one when the spec is saved
 (`WF_UNSATISFIABLE_OUTPUT_REF`): read the step inside it whose output you need. A loop
 that should carry a running account across its cycles has each cycle return it, built
@@ -248,7 +260,19 @@ refresh costs zero tokens. Either field satisfies the validator; neither is
 **Action arguments go under `config.with`.** A flat argument beside `provider`
 reaches the provider as an empty config — it then reports its own required field
 missing for a value visibly present in the spec, and every downstream binding
-fails. Validation refuses the shape at authoring time.
+fails. Validation refuses the shape at authoring time. The keys the engine reads on
+the step itself (`on_error`, `retry`, `success_when` and the rest of
+`validator._ACTION_STEP_KEYS`) are not arguments and stay beside `provider`: moved into
+`with`, one would no longer be read at all. A step's `on_error` is `null_continue` or
+`fail_run`, and validation refuses any other value (`WF_BAD_ON_ERROR`), which used to
+behave as the default unannounced.
+
+**A value names its references the way validation splits it.** A branch's `on`, a
+`foreach`'s `items` and a condition's operand resolve through `bindings.resolve`, so a
+value holding two references is the text they spell, and one reference keeps its type.
+Each used to read anything beginning with `{{` and ending with `}}` as one reference,
+so `{{a}}-{{b}}` looked up a path named `a}}-{{b` that validation had accepted as two.
+A branch whose value cannot be read fails saying so, with the binding's own words.
 
 **A `bash` step runs PersonalClaw as `personalclaw`.** Its command runs in `/bin/sh`
 on the gateway's `PATH`, and in an isolated install nothing there is this install: a

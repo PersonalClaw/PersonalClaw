@@ -20,7 +20,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.workflows.bindings import PIPES, BindingError, node_deps, parse_pipe, refs_in
+from personalclaw.workflows.bindings import (
+    PIPES,
+    BindingError,
+    node_deps,
+    parse_pipe,
+    refs_in,
+    whole_ref,
+)
 from personalclaw.workflows.materialize import OPT_OUT_KEY
 from personalclaw.workflows.models import (
     LLM_KINDS,
@@ -31,6 +38,7 @@ from personalclaw.workflows.models import (
     LoopMode,
     Node,
     NodeKind,
+    OnError,
     valid_name,
     walk,
 )
@@ -129,6 +137,42 @@ _HANDROLLED_FENCE_MARKERS = ("<untrusted_content", "</untrusted_content")
 _MAX_DEPTH = 12
 _MAX_NODES = 500
 
+#: The keys of an action step's config that are NOT its provider's arguments, which the engine
+#: reads from `config.with` alone (`engine.dispatch_action`): what the dispatch itself reads
+#: (`provider`, `context`, `payload`), and what the engine reads on a step of any kind — what its
+#: failure means (`on_error`, `allow_failure`), its `retry`, its `success_when` check, its
+#: `output_contract`, the files it must leave (`required_artifacts`), the holds on its start
+#: (`lease`, `lease_ttl_secs`, `min_dwell_secs`, `metric_pass`, `metric_from`, `metric_floor`),
+#: whether it writes memory (`persists_memory`), the Task it is projected into (`OPT_OUT_KEY`,
+#: `label`, `task_body`, `done_means`), and what undoes or repeats its effect (`teardown`,
+#: `redo_effects`).
+_ACTION_STEP_KEYS = frozenset(
+    {
+        "provider",
+        "context",
+        "payload",
+        "on_error",
+        "allow_failure",
+        "retry",
+        "success_when",
+        "output_contract",
+        "required_artifacts",
+        "lease",
+        "lease_ttl_secs",
+        "min_dwell_secs",
+        "metric_pass",
+        "metric_from",
+        "metric_floor",
+        "persists_memory",
+        OPT_OUT_KEY,
+        "label",
+        "task_body",
+        "done_means",
+        "teardown",
+        "redo_effects",
+    }
+)
+
 #: The config keys that hold a gate's words for someone.
 GATE_TEXT_KEYS: tuple[str, ...] = ("prompt", "message")
 
@@ -217,6 +261,7 @@ def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
     edges = dep_ordering_edges(nodes, ids_seen)
     unreadable = _validate_recorded_outputs(res, dict(nodes), edges)
     _validate_dep_ordering(res, [edge for edge in edges if edge not in unreadable])
+    _validate_branch_reads(res, dict(nodes), edges)
     _validate_output_contract(res, nodes, edges)
     _validate_needs(res, edges)
     if res.ok:
@@ -271,6 +316,18 @@ def _validate_shape(
     """
     kind = node.kind
     cfg = node.config or {}
+
+    on_error = cfg.get("on_error")
+    if on_error not in (None, "") and on_error not in {member.value for member in OnError}:
+        # Read by any step's failure (`tick.fails_the_run`): an unknown value behaved as the
+        # default, so a step its author meant to end the run let what followed it run.
+        _add(
+            res,
+            "WF_BAD_ON_ERROR",
+            f"unknown on_error {on_error!r} — a step's on_error is null_continue (the steps after "
+            "it still run) or fail_run (its failure ends the run)",
+            path,
+        )
 
     if kind in (NodeKind.SEQUENCE, NodeKind.PARALLEL):
         if not node.children:
@@ -419,8 +476,10 @@ def _validate_shape(
             # it then reports its own required field missing — for a value that is visibly right
             # there in the spec. Caught here because the run-time symptom points at the provider
             # rather than at the authoring mistake, and because everything downstream of the
-            # failed action then fails on an unresolved binding, burying the cause.
-            extras = [k for k in cfg if k not in ("provider", "context", "payload", OPT_OUT_KEY)]
+            # failed action then fails on an unresolved binding, burying the cause. The keys the
+            # engine reads on the step itself (`_ACTION_STEP_KEYS`: its `on_error`, `retry`, …)
+            # are not arguments, and moving one into `with` would stop the engine reading it.
+            extras = [k for k in cfg if k not in _ACTION_STEP_KEYS]
             if extras:
                 # Arguments ARE present, just in the wrong place — the run would fail, so this is
                 # an error naming exactly what to move.
@@ -1144,7 +1203,8 @@ def _validate_recorded_outputs(
     so a `{{nodes.<id>…}}` naming one can never resolve: the reader met "unresolved reference"
     mid-run, after everything before it had spent its tokens. The kinds come from the one
     definition the engine records outputs by, so a read this accepts is one a run can resolve: a
-    `loop` records its last cycle's output and a `branch` its routing. This used to accept a read
+    `loop` records its last cycle's output and a `branch` its routing and what its taken case
+    produced (which fields a read may name is `_validate_branch_reads`'). This used to accept a read
     of any node while the engine recorded no loop's output, so three bundled templates failed at
     the step after their loop. Refused under the code an unresolvable read already carries, and
     returned so the ordering rule does not also advise moving a producer that will never produce
@@ -1170,6 +1230,137 @@ def _validate_recorded_outputs(
             edge.reader_path,
         )
     return unreadable
+
+
+def _produced_keys(node: Node) -> frozenset[str] | None:
+    """The fields an output of `node` can carry, or None when that is not known when the spec is
+    saved.
+
+    Known only where the engine, not a model or a provider, gives the output its shape: a
+    transform's object (its own keys) or its text (no fields), a stage that declares no schema
+    (`{"result": <its text>}`, `stage_settlement._settled_stage_output`), and a sequence, parallel
+    or fan-out of such steps (what they produce, layered as `node_bindings.subtree_output` reads
+    them). `required_artifacts` adds the `artifacts` the engine's gate writes onto an object. An
+    answer a model shapes, a provider's result, a gate's record, a loop's or a branch's output:
+    None, so nothing is refused on a guess.
+    """
+    cfg = node.config or {}
+    gated = frozenset({"artifacts"}) if cfg.get("required_artifacts") else frozenset()
+    if node.kind is NodeKind.TRANSFORM and not cfg.get("skeleton"):
+        expr = cfg.get("expr")
+        if isinstance(expr, dict):
+            return frozenset(str(key) for key in expr) | gated
+        if isinstance(expr, str) and whole_ref(expr) is None:
+            return frozenset()
+        return None
+    if node.kind is NodeKind.STAGE:
+        schema = cfg.get("schema")
+        if (isinstance(schema, dict) and schema) or cfg.get("judge_contract"):
+            return None
+        return frozenset({"result"}) | gated
+    if node.kind in NO_OUTPUT_KINDS:
+        parts = [_produced_keys(child) for child in node.child_nodes()]
+        known = [part for part in parts if part is not None]
+        return frozenset().union(*known) if len(known) == len(parts) else None
+    return None
+
+
+#: A branch's output, as an author reads it (`node_bindings.record_branch_outputs`).
+_BRANCH_OUTPUT = '{"case": <the case it took>, "produced": <what that case produced>}'
+
+
+def _case_name(label: str | None) -> str:
+    return "the default case" if label is None else f"case {label!r}"
+
+
+def _fields(keys: frozenset[str]) -> str:
+    return ", ".join(sorted(keys)) or "no fields"
+
+
+def _listing(cases: list[tuple[str | None, frozenset[str]]]) -> str:
+    """`lookup: angles, depth; default: note` — what each named case produces."""
+    return "; ".join(
+        f"{'default' if label is None else label}: {_fields(keys)}" for label, keys in cases
+    )
+
+
+def _validate_branch_reads(
+    res: ValidationResult, tree: dict[str, Node], edges: list[DepEdge]
+) -> None:
+    """Refuse a read of a branch's output that the branch, or a case it can take, never produces.
+
+    A branch's output is `{"case": <the case it took>, "produced": <what that case produced>}`
+    (`node_bindings.record_branch_outputs`), so a field beside those two is never there, and the
+    natural slip is reading the case's own field straight off the branch: the sentence names the
+    read that works. Under `produced`, a case whose output is known when the spec is saved
+    (`_produced_keys`) is held to it: a field it does not carry fails every time that case is
+    taken, and a `| default(…)` pipe cannot save it, since the path is walked before any pipe runs.
+    A case whose output a model or a provider shapes is held to no list, so this refuses only what
+    is certain. Refused under the code an unresolvable read already carries. An edge the ordering
+    rule refuses (a read from inside the branch's own case) is that rule's alone.
+    """
+    for edge in edges:
+        branch = tree.get(edge.producer_path)
+        if edge.origin != EDGE_BINDING or not edge.ordered or branch is None:
+            continue
+        if branch.kind is not NodeKind.BRANCH:
+            continue
+        cases: list[tuple[str | None, Node]] = list(branch.cases.items())
+        if branch.default_case is not None:
+            cases.append((None, branch.default_case))
+        known = [
+            (label, keys) for label, case in cases if (keys := _produced_keys(case)) is not None
+        ]
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        for read in edge.output_reads:
+            if not read or read[0] == "case" or read == ("produced",):
+                continue
+            ref = f"{{{{nodes.{edge.producer_id}.output.{'.'.join(read)}}}}}"
+            if read[0] != "produced":
+                fixed = f"{{{{nodes.{edge.producer_id}.output.produced.{'.'.join(read)}}}}}"
+                _add(
+                    res,
+                    "WF_UNSATISFIABLE_OUTPUT_REF",
+                    (
+                        f"{reader} reads {ref}, but {edge.producer_id!r} is a branch, whose output "
+                        f"is {_BRANCH_OUTPUT}, so it never has {read[0]!r}. Read what the case "
+                        f"produced as {fixed}"
+                    ),
+                    edge.reader_path,
+                )
+                continue
+            field = read[1]
+            lacking = [(label, keys) for label, keys in known if field not in keys]
+            if not lacking:
+                continue
+            if len(lacking) == len(cases):
+                found = (
+                    f"no case produces {field!r} ({_listing(lacking)}) — so the read can never "
+                    "resolve. Give the cases that field, or read one they produce"
+                )
+            elif len(lacking) == 1:
+                label, keys = lacking[0]
+                found = (
+                    f"{_case_name(label)} produces no {field!r} (it produces {_fields(keys)}) — so "
+                    "the read fails whenever that case is taken. Give that case the field too, or "
+                    "read it inside the case that produces it"
+                )
+            else:
+                names = " and ".join(_case_name(label) for label, _keys in lacking)
+                found = (
+                    f"{names} produce no {field!r} ({_listing(lacking)}) — so the read fails "
+                    "whenever one of them is taken. Give those cases the field too, or read it "
+                    "inside the case that produces it"
+                )
+            _add(
+                res,
+                "WF_UNSATISFIABLE_OUTPUT_REF",
+                (
+                    f"{reader} reads {ref}, but {edge.producer_id!r} is a branch, whose `produced` "
+                    f"is what the case it took produced, and {found}"
+                ),
+                edge.reader_path,
+            )
 
 
 def _validate_needs(res: ValidationResult, edges: list[DepEdge]) -> None:

@@ -72,10 +72,11 @@ CONTAINER_KINDS = frozenset(
 #: The kinds that record no output of their own: a `sequence`, `parallel` or `foreach` runs the
 #: steps inside it and produces nothing itself, so a `{{nodes.<id>…}}` naming one can never
 #: resolve. Every other kind records one under its id: a step when it settles (a `branch` records
-#: its routing, `{"case": label}`), and a `loop` when it ends done, its last cycle's output
-#: (`loop_convergence.finish_loop`). ONE definition: the validator refuses a read of one of these
-#: when the spec is saved (`WF_UNSATISFIABLE_OUTPUT_REF`), and the binding error of a run that
-#: meets one names them.
+#: its routing, `{"case": label}`, and adds `produced`, what that case produced, once the case has
+#: ended in success — `node_bindings.record_branch_outputs`), and a `loop` when it ends done, its
+#: last cycle's output (`loop_convergence.finish_loop`). ONE definition: the validator refuses a
+#: read of one of these when the spec is saved (`WF_UNSATISFIABLE_OUTPUT_REF`), and the binding
+#: error of a run that meets one names them.
 NO_OUTPUT_KINDS = frozenset({NodeKind.SEQUENCE, NodeKind.PARALLEL, NodeKind.FOREACH})
 
 #: Kinds that consume model tokens AND take an author-tunable `model_tier`. `visualize`
@@ -144,6 +145,17 @@ class ItemErrorPolicy(str, Enum):
     #: per-item failures are journaled as one `items_collected` ledger record.
     #: "Run everything, then hand me the failures."
     COLLECT = "collect"
+
+
+class OnError(str, Enum):
+    """What a step's FAILURE means for the steps after it: its `config.on_error`. The engine reads
+    exactly these two (`tick.fails_the_run`, `gate_answers.tolerates_failure`), so validation
+    refuses any other value rather than let it behave as the default unannounced."""
+
+    #: The default: the steps after it still run, and its failure still counts in the run's ending.
+    NULL_CONTINUE = "null_continue"
+    #: Its failure ends the run there, saying why.
+    FAIL_RUN = "fail_run"
 
 
 class GateKind(str, Enum):
