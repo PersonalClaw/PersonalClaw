@@ -122,8 +122,9 @@ def emit(source_name: str, event: "SourceEvent", *, now: float = 0.0) -> str:
     3. **Namespace from the REGISTERED name.** Never from the payload (see :func:`namespace`).
     4. **Fence the text AT ORIGIN**, with provenance naming the class (``app:<name>``), the
        instance (the event's key) and the transformation. The ``web_watch`` precedent (S127):
-       fencing here means the downstream ``fence_payload`` leaves it alone (idempotent via
-       ``security.is_fenced``) and the richer attributes survive, instead of a coarse re-wrap.
+       fencing here means the fire's door downstream (``fire_facts.hand_on``) keeps this fence,
+       which holds all of the text (``outside_text.is_whole_fence``), and screens it there, so
+       the richer attributes survive instead of a coarse re-wrap.
     5. **Hand to the ONE bus emitter.** `emit_event` is best-effort and never raises, so a broken
        trigger cannot break the app's own work.
 

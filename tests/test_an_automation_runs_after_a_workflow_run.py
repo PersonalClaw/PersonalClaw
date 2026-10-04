@@ -203,7 +203,10 @@ def test_a_chained_fire_is_told_which_run_ended_and_what_it_produced():
 
     assert "The workflow run 9c2c10ab (deep-research) has finished" in facts.text
     assert "#/workflows/runs/9c2c10ab" in facts.text
-    assert "What the run said it produced:\nThree findings." in facts.text
+    # What the run said is its own words, from outside: fenced, with the trigger as their source.
+    said = facts.text.split("What the run said it produced:\n", 1)[1]
+    assert said.startswith("<untrusted_content source=trigger:run_completed:post "), said
+    assert "Three findings." in said.split("</untrusted_content>", 1)[0]
 
 
 # ── the engine hands its end over, and the gateway chains then ──

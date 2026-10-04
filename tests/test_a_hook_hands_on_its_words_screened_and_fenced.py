@@ -173,21 +173,23 @@ async def test_a_tool_s_result_that_quotes_the_fence_s_marker_still_reaches_its_
 
 
 def test_a_stored_trigger_s_fence_keeps_an_origin_fence_and_wraps_a_quoted_marker():
-    """The trigger fire's own fence (`fence_payload`), which a hook's event shares."""
+    """The trigger fire's own walk of its payload (`outside_text.admit_payload`), which a hook's
+    event shares."""
+    from personalclaw.outside_text import admit_payload
     from personalclaw.security import fence_untrusted
 
     origin = fence_untrusted(
         "Spring sale on seeds", source="web", source_type="web_watch", source_id="shop"
     )
-    out = screen_mod.fence_payload({"new_items": [origin, _DOCS]}, kind="web_watch", trigger_id="w")
+    out = admit_payload({"new_items": [origin, _DOCS]}, kind="web_watch", trigger_id="w").payload
     kept, quoted = out["new_items"]
     assert kept == origin, "a value fenced where it arrived keeps its own fence"
     assert quoted.startswith("<untrusted_content source=trigger:w "), quoted
 
 
 def test_only_one_whole_fence_counts_as_fenced_where_it_arrived():
+    from personalclaw.outside_text import is_whole_fence
     from personalclaw.security import fence_untrusted
-    from personalclaw.triggers.screen import is_whole_fence
 
     whole = fence_untrusted("Spring sale on seeds", source="web", source_type="web_watch")
     other = fence_untrusted("Bulbs", source="web")

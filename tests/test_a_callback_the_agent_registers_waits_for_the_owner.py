@@ -220,8 +220,8 @@ def test_the_owner_is_asked_and_the_yes_lets_it_run(home, runs, audit):
     )
 
     assert _call_back("hook:review:pr-1").status == 200
-    ((_state, key, _message, _name, _agent, _deliver, _timeout, callback),) = runs.calls
-    assert key == "hook:review:pr-1" and callback.context_summary == "when CI answers, merge the PR"
+    ((_state, key, _message, _name, _agent, _deliver, _timeout, restored),) = runs.calls
+    assert key == "hook:review:pr-1" and "when CI answers, merge the PR" in restored
     assert ("trigger.grant", "success") in [(r.get("operation"), r.get("outcome")) for r in audit]
 
 
@@ -320,14 +320,14 @@ def test_an_allowed_callbacks_turn_starts_from_its_context(home, monkeypatch):
     state = types.SimpleNamespace(sessions=_Sessions())
     callback = webhook_callbacks.register("review:pr-1", "merge when green")
 
-    async def _turn(cb):
+    async def _turn(restored):
         await hooks_mod._hook_semaphore.acquire()
         await hooks_mod._run_hook_agent(
-            state, "hook:review:pr-1", "CI passed", "n", None, False, 60, cb
+            state, "hook:review:pr-1", "CI passed", "n", None, False, 60, restored
         )
 
-    asyncio.run(_turn(callback))
-    asyncio.run(_turn(None))
+    asyncio.run(_turn(webhook_callbacks.restored_context(callback).text))
+    asyncio.run(_turn(""))
 
     assert "merge when green" in seen[0] and seen[0].endswith("CI passed")
     assert seen[1] == "CI passed"

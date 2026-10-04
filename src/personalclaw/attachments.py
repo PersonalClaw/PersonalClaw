@@ -29,7 +29,10 @@ import shutil
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from personalclaw.outside_text import Admitted
 
 logger = logging.getLogger(__name__)
 
@@ -290,24 +293,34 @@ async def raw_reading(owner: str, records: Iterable[Mapping[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
-async def reading(owner: str, records: Iterable[Mapping[str, Any]], *, source: str) -> str:
+async def reading(owner: str, records: Iterable[Mapping[str, Any]], *, source: str) -> Admitted:
     """What an agent reading the message is told of its attachments, as standalone text: for each,
     one fence (as data from *source*) holding its name, its type and the text read from it, and
-    beside the fence, in core's own words, its size and why any text is missing."""
-    from personalclaw.security import fence_untrusted, redact_for_model
+    beside the fence, in core's own words, its size and why any text is missing.
+
+    Each is text from outside on its way into a prompt, so it goes through the door every such text
+    takes (``outside_text.admit``): the injection screen reads it first. One it refuses leaves
+    nothing of its words, and the answer's ``refused`` names the groups, so the run it would have
+    been handed to does not run on the rest."""
+    from personalclaw import outside_text
+    from personalclaw.security import redact_for_model
 
     parts: list[str] = []
+    refused: set[str] = set()
     for position, record in enumerate(records or (), start=1):
         text, note = await text_of(owner, record)
         facts = f"name: {record.get('name') or 'attachment'}\ntype: {record.get('mimetype') or ''}"
-        fenced = fence_untrusted(
+        admitted = outside_text.admit(
             f"{facts}\n\n{redact_for_model(text)}" if text else facts,
             source=source,
             source_type="attachment",
             source_id=f"{owner}:{record.get('id')}",
             transformation_path="extract" if text else "list",
         )
+        refused.update(admitted.refused)
         size = human_size(int(record.get("size") or 0))
         said = "its name, its type and its text" if text else f"its name and its type; {note}"
-        parts.append(f"Attachment {position} ({size}), {said}:\n{fenced}")
-    return "\n\n".join(parts)
+        parts.append(f"Attachment {position} ({size}), {said}:\n{admitted.text}")
+    if refused:
+        return outside_text.Admitted(refused=tuple(sorted(refused)))
+    return outside_text.Admitted(text="\n\n".join(parts))

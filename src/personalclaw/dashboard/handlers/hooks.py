@@ -5,7 +5,6 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING
 
 from aiohttp import web
 
@@ -15,9 +14,6 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.guardrails.failure import BudgetExceededError
 from personalclaw.request_validation import bool_field
 from personalclaw.turn_streams import closing_stream
-
-if TYPE_CHECKING:
-    from personalclaw.webhook_callbacks import Callback
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +419,28 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
             route=route,
             refused=f"{session_key}: callback not allowed by the owner",
         )
+    # What the agent saved for this callback's turn, read back through the injection screen and
+    # fenced as data (`webhook_callbacks.restored_context`). Refused here, before anything runs,
+    # when the screen refuses it, naming the pattern class and never the words, so the sender can
+    # tell a callback whose context was refused from one that failed.
+    from personalclaw.outside_text import Admitted
+
+    restored = webhook_callbacks.restored_context(callback) if callback is not None else Admitted()
+    if restored.refused:
+        groups = ", ".join(restored.refused)
+        return door.answer(
+            json_error(
+                "callback_context_refused",
+                message=(
+                    f"The injection screen refused the context this callback saved ({groups}), "
+                    "so its turn did not start. The agent can register it again with other "
+                    "context."
+                ),
+                status=409,
+            ),
+            route=route,
+            refused=f"{session_key}: the injection screen refused its saved context ({groups})",
+        )
 
     name = body.get("name", "Webhook")
     agent = body.get("agent", "") or None
@@ -459,7 +477,7 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
     try:
         task = asyncio.create_task(
             _run_hook_agent(
-                state, session_key, message, name, agent, deliver, timeout_secs, callback
+                state, session_key, message, name, agent, deliver, timeout_secs, restored.text
             )
         )
     except BaseException:
@@ -550,28 +568,27 @@ async def _run_hook_agent(
     agent: str | None,
     deliver: bool,
     timeout_secs: int,
-    callback: "Callback | None" = None,
+    restored: str = "",
 ) -> None:
     """Execute a webhook-triggered agent turn in an ephemeral session.
 
     Sessions are always destroyed after the turn completes (like subagents). Context continuity
-    across webhook calls is the *callback*'s (`webhook_callbacks`): the agent saves it with
-    ``hook_register``, the owner allows it, and this injects it into the next fresh session.
+    across webhook calls is the callback's (`webhook_callbacks`): the agent saves it with
+    ``hook_register``, the owner allows it, and *restored* is that context as the door read it
+    back (`webhook_callbacks.restored_context`: masked, screened and fenced as data), put in
+    front of the next fresh session's message.
     """
-    from personalclaw import webhook_callbacks
     from personalclaw.security import (  # noqa: F811
         redact_credentials,
         redact_exfiltration_urls,
-        redact_for_model,
     )
 
-    saved_context = webhook_callbacks.context_for_turn(callback) if callback is not None else ""
-    if saved_context:
+    if restored:
         # Read back from a prior session and put in front of the webhook's own message, which is
-        # sent as it came: masked here, as a chat turn's read-back is.
+        # sent as it came.
         message = (
             f"=== Restored Context (from prior session) ===\n"
-            f"{redact_for_model(saved_context)}\n"
+            f"{restored}\n"
             f"=== End Restored Context ===\n\n"
             f"{message}"
         )

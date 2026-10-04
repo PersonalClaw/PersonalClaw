@@ -267,21 +267,32 @@ Content and requests arriving from outside the owner's trust boundary:
 - **Untrusted-content fencing** (`security.py::fence_untrusted`) wraps
   third-party text in `<untrusted_content>` markers with a data-not-instructions
   system note; applied to web-search results, inbox content, and third-party
-  payloads, a lifecycle trigger's words and what its action prints included
-  (`hooks.hand_on`, `hooks.take_in`, each after the injection screen). The note
-  is one of the platform's safety rules (the `safety-rules` snippet), which
-  every agent is handed whatever its own prompt says
+  payloads. The note is one of the platform's safety rules (the `safety-rules`
+  snippet), which every agent is handed whatever its own prompt says
   (`prompt_providers/runtime.py::with_safety_rules`; a path that starts an agent
   without them fails `tests/test_agent_safety_rules_census.py`).
+- **One door for text from outside** (`outside_text.py::admit`): the injection
+  screen reads the text, then it is fenced with its source, and text the screen
+  refuses is kept as nothing. The doors that take it: a stored trigger's fire
+  (its payload's words, its `$CONTEXT` line and what started the run,
+  `triggers/fire_facts.hand_on`), a lifecycle trigger's words and what its
+  action prints (`hooks.hand_on`, `hooks.take_in`), a pasted prompt card, a
+  callback's saved context, a scheduled run's result opened as a chat, a group
+  channel's recent messages and a thread's first post, a line someone else sent
+  in a conversation's history, and a refiner's evidence.
+  `tests/test_outside_text_doors_census.py` lists every place core fences text
+  for a model; the doors that still fence without the screen (a page the agent
+  fetches or browses, a file attached in a chat, an Inbox message, what a
+  room's members said, a workflow step's output, among others) are listed
+  there, and that list may only shrink.
 - **Injection screen** (`triggers/screen.py::screen`) reads that text before a
-  model does: a trigger's payload, a lifecycle trigger's words and what its
-  action prints, a refiner's evidence. It refuses text addressed to the model
-  that tells it to drop what it was told, hands it a new purpose, speaks as its
-  system turn, gives whoever reads it a side task, or hides one of those behind
-  encoding or invisible characters, and it fences text that gives the model a
-  role or asks for its configuration. It passes ordinary content: code, Markdown
-  tables, shell pipelines, stack traces, diffs, logs, commit messages and
-  release notes
+  model does, at every door `outside_text.admit` serves (above). It refuses text
+  addressed to the model that tells it to drop what it was told, hands it a new
+  purpose, speaks as its system turn, gives whoever reads it a side task, or
+  hides one of those behind encoding or invisible characters, and it fences text
+  that gives the model a role or asks for its configuration. It passes ordinary
+  content: code, Markdown tables, shell pipelines, stack traces, diffs, logs,
+  commit messages and release notes
   (`tests/test_the_injection_screen_passes_ordinary_text_and_refuses_a_take_over.py`).
   Text quoting a take-over phrase word for word is refused like the phrase. It
   is a filter, not a proof: the fence and a trigger's frozen capability set hold

@@ -12,7 +12,9 @@ import json
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from itertools import groupby
 from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write
@@ -37,6 +39,32 @@ class HistoryEntry:
     thread_ts: str | None = None
     timestamp: float = field(default_factory=time.monotonic)
     wall_ts: float | None = None  # wall-clock time (observe-mode only, for persistence)
+
+
+def _by_participant(
+    channel_id: str, entries: list[HistoryEntry], fmt: Callable[[HistoryEntry], str]
+) -> str:
+    """*entries* as a model reads them: each run of messages one participant sent in a row,
+    formatted by *fmt*, through ``outside_text.admit`` with the channel and the sender's id as
+    its source; one the screen refuses as a line saying it was withheld."""
+    from personalclaw.outside_text import admit, withheld
+
+    blocks: list[str] = []
+    for user, run in groupby(entries, key=lambda entry: entry.user):
+        source = f"channel:{channel_id}:{user}"
+        admitted = admit(
+            "\n".join(fmt(entry) for entry in run),
+            source=source,
+            source_type="channel_history",
+            source_id=user,
+            transformation_path="channel_history",
+        )
+        blocks.append(
+            withheld(f"A message from {source}", admitted.refused)
+            if admitted.refused
+            else admitted.text
+        )
+    return "\n".join(blocks)
 
 
 class ChannelHistory:
@@ -140,6 +168,14 @@ class ChannelHistory:
         When *thread_ts* is provided, messages are split into current-thread
         and other-thread sections so the LLM can distinguish them.
         Returns empty string if no relevant history exists.
+
+        Every message here is what someone in the channel wrote, the owner's earlier messages
+        among them, and their names are what each one chose: text from outside. Each
+        participant's run of messages goes through the door every such text takes into a prompt
+        (``outside_text.admit``): read by the injection screen, then fenced as data with the
+        channel and the sender's id as its source, so the model can tell whose words are whose
+        and reads none of them as an instruction. A run the screen refuses is kept as nothing and
+        said in a line naming the sender's id, never the words.
         """
         buf = self._channels.get(channel_id)
         if not buf:
@@ -164,23 +200,24 @@ class ChannelHistory:
             if len(entry.text) > 300:
                 text += "\u2026"
             display = self._user_names.get(entry.user) or entry.user
-            return f"  {display} ({age_str}): {text}"
+            return f"{display} ({age_str}): {text}"
 
         # Split by thread if thread_ts provided — only include current thread
         if thread_ts:
-            current = [_fmt(e) for e in buf if e.thread_ts == thread_ts]
+            current = [e for e in buf if e.thread_ts == thread_ts]
             if not current:
                 return ""
             return (
                 "[Recent channel messages for context:]\n"
-                "[Current thread:]\n" + "\n".join(current) + "\n[End of channel context]\n\n"
+                "[Current thread:]\n"
+                + _by_participant(channel_id, current, _fmt)
+                + "\n[End of channel context]\n\n"
             )
 
         # No thread_ts — only include top-level (non-thread) messages
-        lines: list[str] = [_fmt(e) for e in buf if e.thread_ts is None]
         return (
             "[Recent channel messages for context:]\n"
-            + "\n".join(lines)
+            + _by_participant(channel_id, [e for e in buf if e.thread_ts is None], _fmt)
             + "\n[End of channel context]\n\n"
         )
 

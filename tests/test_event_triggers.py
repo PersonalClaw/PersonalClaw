@@ -222,7 +222,11 @@ def test_the_value_is_fenced_at_origin_with_its_provenance():
     assert "source_id=project.x" in payload["value"]
     assert "transformation_path=truncate:2000" in payload["value"]
     assert "hello" in payload["value"]
-    assert context.startswith("project.x: ") and "hello" in context
+    # The `$CONTEXT` line: the key and the excerpt, every word of it inside one fence.
+    from personalclaw.outside_text import is_whole_fence
+
+    assert is_whole_fence(context) and "project.x: hello" in context, context
+    assert context.count("<untrusted_content") == 1
 
 
 def test_a_long_value_is_truncated_to_2000_inside_the_fence():

@@ -942,39 +942,36 @@ def hand_on(hook: ScriptHook, context: str, hook_event: dict) -> HandedOn:
     context passes through on its way out of the gateway (``tests/test_hook_context_census.py``).
 
     The action may be a script, a request to another service or another agent's task, so the
-    words the event carried are text from outside by the time they reach it. They are read by the
-    injection screen first and fenced as data with the hook as their source, through the calls a
-    stored trigger's fire uses on its payload (``gateway._fire_store_trigger``): the context, when
+    words the event carried are text from outside by the time they reach it. They go through the
+    door every text from outside takes into a prompt (``outside_text.admit``): read by the
+    injection screen, then fenced as data with the hook as their source. That is the context, when
     its event's is words (:data:`NAMES_ONLY_EVENTS`), and the event's own prose, a prompt or a
-    tool's result (``triggers.screen.payload_text_for`` under :data:`LIFECYCLE_KIND`). Text that is
-    fenced whole, as where it arrived, keeps that fence, and text that only quotes a marker is
-    fenced like any other (``triggers.screen.is_whole_fence``). A screen that refuses the words
-    hands on nothing. Names, and the call a tool event carries, go on as they are: a policy hook
-    judges a call as it was made.
+    tool's result (``outside_text.admit_payload`` under :data:`LIFECYCLE_KIND`), the walk a stored
+    trigger's fire hands its payload through. Text that is fenced whole, as where it arrived, keeps
+    that fence, and text that only quotes a marker is fenced like any other. A screen that refuses
+    the words hands on nothing. Names, and the call a tool event carries, go on as they are: a
+    policy hook judges a call as it was made.
     """
-    from personalclaw.security import fence_untrusted
-    from personalclaw.triggers import screen as screen_mod
+    from personalclaw.outside_text import admit, admit_payload
 
     trigger_id = f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}"
-    words = "" if hook.event in NAMES_ONLY_EVENTS else context
-    prose = screen_mod.payload_text_for(hook_event, kind=LIFECYCLE_KIND)
-    untrusted = "\n".join(text for text in (words, prose) if text.strip())
-    if untrusted:
-        verdict = screen_mod.screen(untrusted)
-        if verdict.blocked:
-            # The groups name the refusal; a verdict that named none still refuses.
-            return HandedOn(refused=verdict.groups or ("injection",))
-    if words.strip() and not screen_mod.is_whole_fence(words):
-        # Labelled as `fence_payload` labels the event's prose, so the two read as one source.
-        context = fence_untrusted(
-            words,
+    handed = admit_payload(hook_event, kind=LIFECYCLE_KIND, trigger_id=trigger_id)
+    refused = set(handed.refused)
+    if hook.event not in NAMES_ONLY_EVENTS:
+        # Labelled as the event's prose is, so the two read as one source.
+        words = admit(
+            context,
             source=f"trigger:{trigger_id}",
             source_type=LIFECYCLE_KIND,
             source_id=trigger_id,
             transformation_path="fire:context",
+            fenced_where_it_arrived=True,
         )
-    payload = screen_mod.fence_payload(hook_event, kind=LIFECYCLE_KIND, trigger_id=trigger_id)
-    return HandedOn(context=context, payload=payload)
+        refused.update(words.refused)
+        context = words.text
+    if refused:
+        return HandedOn(refused=tuple(sorted(refused)))
+    return HandedOn(context=context, payload=handed.payload)
 
 
 @dataclass(frozen=True)
@@ -992,36 +989,38 @@ def take_in(hook: ScriptHook, stdout: str, stderr: str, *, blocked: bool) -> Tak
     """What the gateway takes back of what *hook*'s action printed: the one door a hook's output
     comes back through, on its way into the agent's next turn.
 
-    What it printed (*stdout*) is the context a hook adds to a turn, so it is read by the
-    injection screen and fenced as data with the hook as its source, whatever it holds: a program's
-    output is text from outside, and a fence it printed is only text inside the new one. Refused,
-    it is kept as nothing. A block's reason (*stderr* when *blocked*) goes on unfenced, inside the
-    refusal's own sentence and on the refused call's card, cut at 200 characters, so it is kept
-    only when the screen finds it clean. Any other *stderr* is a warning for the log and the hook's
-    Test, which no model reads, and stays as it is.
+    What it printed (*stdout*) is the context a hook adds to a turn, so it goes through the door
+    every text from outside takes into a prompt (``outside_text.admit``): read by the injection
+    screen and fenced as data with the hook as its source, whatever it holds. A program's output is
+    text from outside, and a fence it printed is only text inside the new one. Refused, it is kept
+    as nothing. A block's reason (*stderr* when *blocked*) goes on unfenced, inside the refusal's
+    own sentence and on the refused call's card, cut at 200 characters, so it is kept only when the
+    screen matches nothing in it. Any other *stderr* is a warning for the log and the hook's Test,
+    which no model reads, and stays as it is.
     """
-    from personalclaw.security import fence_untrusted
-    from personalclaw.triggers import screen as screen_mod
+    from personalclaw.outside_text import admit
 
+    trigger_id = f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}"
     refused: set[str] = set()
-    if stdout.strip():
-        verdict = screen_mod.screen(stdout)
-        if verdict.blocked:
-            refused.update(verdict.groups or ("injection",))
-            stdout = ""
-        else:
-            trigger_id = f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}"
-            stdout = fence_untrusted(
-                stdout,
-                source=f"trigger:{trigger_id}",
-                source_type=LIFECYCLE_KIND,
-                source_id=trigger_id,
-                transformation_path="hook:stdout",
-            )
+    printed = admit(
+        stdout,
+        source=f"trigger:{trigger_id}",
+        source_type=LIFECYCLE_KIND,
+        source_id=trigger_id,
+        transformation_path="hook:stdout",
+    )
+    refused.update(printed.refused)
+    stdout = printed.text
     if blocked and stderr.strip():
-        verdict = screen_mod.screen(stderr)
-        if not verdict.clean:
-            refused.update(verdict.groups or ("injection",))
+        reason = admit(
+            stderr,
+            source=f"trigger:{trigger_id}",
+            source_type=LIFECYCLE_KIND,
+            source_id=trigger_id,
+            transformation_path="hook:block-reason",
+        )
+        if not reason.clean:
+            refused.update(reason.refused or reason.flagged)
             stderr = ""
     return TakenIn(stdout=stdout, stderr=stderr, refused=tuple(sorted(refused)))
 

@@ -523,12 +523,15 @@ async def test_what_a_chat_turn_puts_ahead_of_the_request_is_masked(tmp_path, mo
 def test_a_webhook_turn_reads_its_saved_context_back_masked(monkeypatch):
     """A webhook callback's saved context is read back from a prior session and put in front of
     the webhook's own message, which is sent as it came."""
+    import time
+
     from personalclaw import webhook_callbacks
     from personalclaw.dashboard.handlers import hooks as hook_handlers
 
-    monkeypatch.setattr(
-        webhook_callbacks, "context_for_turn", lambda cb: f"last deploy used api_key={KEY}"
+    callback = webhook_callbacks.Callback(
+        id="ci", context_summary=f"last deploy used api_key={KEY}", registered_at=time.time()
     )
+    restored = webhook_callbacks.restored_context(callback).text
     seen: dict[str, str] = {}
 
     async def inner(state: Any, session_key: str, message: str, agent: Any) -> str:
@@ -543,7 +546,7 @@ def test_a_webhook_turn_reads_its_saved_context_back_masked(monkeypatch):
     async def go() -> None:
         await hook_handlers._hook_semaphore.acquire()
         await hook_handlers._run_hook_agent(
-            state, "hook:ci", f"build {TOKEN} finished", "CI", None, False, 30, callback=object()
+            state, "hook:ci", f"build {TOKEN} finished", "CI", None, False, 30, restored=restored
         )
 
     asyncio.run(go())

@@ -9,20 +9,27 @@ message came, a web watch's run which items appeared, a webhook's run what was d
 
 :func:`describe` reads the event the dispatch is about to hand the action and says what happened,
 in core's own words around the event's own data. Everything that came from outside (a path, a
-file name, a message, its sender, a page's items, a request body) sits inside an untrusted-content
-fence, and what was fenced where it arrived (an inbox message, a web watch's items, a webhook's
-body) keeps its fence. It also names the files the run is about (:attr:`FireFacts.files`), which
-the agent's file tools may read for this run: the file that arrived is what the run is for.
+file name, a message, its sender, its attachments, a page's items, a request body, what a run
+said it produced) goes through the door every text from outside takes into a prompt
+(``outside_text.admit``): the injection screen reads it, and it sits inside an untrusted-content
+fence, where what was fenced where it arrived (an inbox message, a web watch's items, a webhook's
+body) keeps its fence. Text the screen refuses is kept as nothing, and the fire does not run
+(:attr:`FireFacts.refused`). It also names the files the run is about (:attr:`FireFacts.files`),
+which the agent's file tools may read for this run: the file that arrived is what the run is for.
 
 A fire nothing but its schedule or the owner started (``clock``, ``manual``, a Run now) has
 nothing to add: its instruction is the whole of it.
+
+:func:`hand_on` is the one door a stored trigger's fire hands its action what started it by: its
+payload's words, the ``$CONTEXT`` line an event fire carries, and these facts, each through
+``outside_text`` (``gateway._fire_store_trigger``, the dispatch every fire runs through).
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -37,25 +44,38 @@ MAX_FILES = 10
 
 @dataclass(frozen=True)
 class FireFacts:
-    """What one fire tells its run: ``text`` (empty when there is nothing to say), and ``files``,
-    the files the run is about, which its file tools may read."""
+    """What one fire tells its run: ``text`` (empty when there is nothing to say), ``files``, the
+    files the run is about, which its file tools may read, and ``refused``, the groups the
+    injection screen refused any of its words from outside for (the fire then does not run)."""
 
     text: str = ""
     files: tuple[str, ...] = ()
+    refused: tuple[str, ...] = ()
 
 
-def _fenced(text: str, *, trigger_id: str, kind: str, source_id: str = "") -> str:
-    from personalclaw.security import fence_untrusted, is_fenced
+class _Outside:
+    """The words from outside one fire's facts quote, each through ``outside_text.admit`` with the
+    trigger as their source, and the groups the screen refused any of them for."""
 
-    if is_fenced(text):
-        return text
-    return fence_untrusted(
-        text,
-        source=f"trigger:{trigger_id}",
-        source_type=kind,
-        source_id=source_id,
-        transformation_path="fire:facts",
-    )
+    def __init__(self, trigger_id: str) -> None:
+        self.trigger_id = trigger_id
+        self.refused: set[str] = set()
+
+    def __call__(
+        self, text: str, *, kind: str, source_id: str = "", fenced_where_it_arrived: bool = False
+    ) -> str:
+        from personalclaw.outside_text import admit
+
+        admitted = admit(
+            text,
+            source=f"trigger:{self.trigger_id}",
+            source_type=kind,
+            source_id=source_id,
+            transformation_path="fire:facts",
+            fenced_where_it_arrived=fenced_where_it_arrived,
+        )
+        self.refused.update(admitted.refused)
+        return admitted.text
 
 
 def _paths(payload: dict[str, Any], key: str) -> list[str]:
@@ -63,7 +83,7 @@ def _paths(payload: dict[str, Any], key: str) -> list[str]:
     return [str(p) for p in value if isinstance(p, str) and p] if isinstance(value, list) else []
 
 
-def _file_facts(trigger_id: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+def _file_facts(outside: _Outside, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
     """``(lines, files)`` for a file fire: each file that changed, fenced, and the ones it may
     read (those still there)."""
     changes = [
@@ -77,7 +97,7 @@ def _file_facts(trigger_id: str, payload: dict[str, Any]) -> tuple[list[str], li
     lines = ["A file it watches changed:" if one else f"{len(changes)} files it watches changed:"]
     for path, what in changes[:MAX_FILES]:
         facts = f"path: {path}\nname: {os.path.basename(path)}"
-        lines.append(f"{what.capitalize()}:\n{_fenced(facts, trigger_id=trigger_id, kind='file')}")
+        lines.append(f"{what.capitalize()}:\n{outside(facts, kind='file')}")
     if len(changes) > MAX_FILES or payload.get("truncated"):
         lines.append("More files changed than are listed here.")
     readable = [p for p, what in changes if what != "removed"][:MAX_FILES]
@@ -102,7 +122,7 @@ def _inbox_row(key: str) -> Any:
         return None
 
 
-async def _event_facts(trigger_id: str, payload: dict[str, Any]) -> list[str]:
+async def _event_facts(outside: _Outside, payload: dict[str, Any]) -> list[str]:
     from personalclaw.event_triggers import SOURCE_INBOX
 
     source = str(payload.get("source") or "")
@@ -115,44 +135,43 @@ async def _event_facts(trigger_id: str, payload: dict[str, Any]) -> list[str]:
         sender = f"from: {meta.get('sender_name') or ''} <{meta.get('sender') or ''}>"
         lines = [
             "A message arrived in the Inbox. Who sent it, and what it says:",
-            _fenced(
-                f"{sender}\naddress: {meta.get('address') or ''}",
-                trigger_id=trigger_id,
-                kind="inbox",
-                source_id=key,
-            ),
+            outside(f"{sender}\naddress: {meta.get('address') or ''}", kind="inbox", source_id=key),
         ]
         if value:
-            lines.append(value)
+            # Fenced once already, where the event was matched (`event_triggers.fire_payload`).
+            lines.append(outside(value, kind="inbox", source_id=key, fenced_where_it_arrived=True))
         row = _inbox_row(key)
         if row is not None and row.attachments:
             from personalclaw import attachments
 
             count = len(row.attachments)
             lines.append(f"It came with {count} attachment{'s' if count != 1 else ''}:")
-            lines.append(await attachments.reading(key, row.attachments, source="inbox"))
+            read = await attachments.reading(key, row.attachments, source="inbox")
+            outside.refused.update(read.refused)
+            lines.append(read.text)
         return lines
     lines = [f"An event arrived ({source}, {event_type}). What it names, and what it says:"]
     if key:
-        lines.append(_fenced(f"key: {key}", trigger_id=trigger_id, kind="event", source_id=key))
+        lines.append(outside(f"key: {key}", kind="event", source_id=key))
     if value:
-        lines.append(value)
+        lines.append(outside(value, kind="event", source_id=key, fenced_where_it_arrived=True))
     return lines
 
 
-def _web_watch_facts(trigger_id: str, payload: dict[str, Any]) -> list[str]:
+def _web_watch_facts(outside: _Outside, payload: dict[str, Any]) -> list[str]:
     items = [str(i) for i in payload.get("new_items") or [] if str(i).strip()]
     lines = [
         "New items appeared on the page it watches:",
-        _fenced(f"page: {payload.get('url') or ''}", trigger_id=trigger_id, kind="web_watch"),
+        outside(f"page: {payload.get('url') or ''}", kind="web_watch"),
     ]
-    lines.extend(_fenced(item, trigger_id=trigger_id, kind="web_watch") for item in items)
+    # Each item was fenced where the page was read (`web_poll.poll_one`).
+    lines.extend(outside(item, kind="web_watch", fenced_where_it_arrived=True) for item in items)
     return lines
 
 
-def _run_facts(event: dict[str, Any]) -> list[str]:
+def _run_facts(outside: _Outside, event: dict[str, Any]) -> list[str]:
     """What a fire after a workflow run is told: which run ended, how, and what it said it produced
-    (from outside, so fenced with the rest)."""
+    (from outside, so through the door with the rest)."""
     from personalclaw.workflows.models import RunStatus, run_ending
 
     run_id = str(event.get("source_run_id") or "")
@@ -167,32 +186,40 @@ def _run_facts(event: dict[str, Any]) -> list[str]:
     ]
     summary = str(event.get("summary") or "").strip()
     if summary:
-        lines += ["What the run said it produced:", summary]
+        lines += [
+            "What the run said it produced:",
+            outside(summary, kind="run_completed", source_id=run_id),
+        ]
     return lines
 
 
 async def describe(trigger: Any, payload: dict[str, Any] | None) -> FireFacts:
     """What starting *trigger*'s action with *payload* tells its run (see the module docstring).
 
-    *payload* is the event as the dispatch received it, before its per-key fence. Never raises:
-    a fire whose facts cannot be read runs on its instruction alone, and that is logged."""
+    *payload* is the event as the dispatch received it, before its per-key fence. A word from
+    outside the screen refuses leaves no text, only the groups it refused it for
+    (:attr:`FireFacts.refused`). Never raises: a fire whose facts cannot be read runs on its
+    instruction alone, and that is logged."""
     event = dict(payload or {})
     kind = str(getattr(trigger, "kind", "") or "")
     trigger_id = str(getattr(trigger, "id", "") or "")
     if event.get("manual"):
         return FireFacts()
+    outside = _Outside(trigger_id)
     try:
         files: list[str] = []
         if kind == "file":
-            lines, files = _file_facts(trigger_id, event)
+            lines, files = _file_facts(outside, event)
         elif kind == "event":
-            lines = await _event_facts(trigger_id, event)
+            lines = await _event_facts(outside, event)
         elif kind == "web_watch":
-            lines = _web_watch_facts(trigger_id, event)
+            lines = _web_watch_facts(outside, event)
         elif kind == "webhook" and str(event.get("body") or "").strip():
-            lines = ["A webhook delivered this:", str(event["body"])]
+            # Fenced once already, where the request came in (`inbound.framing.fence_payload`).
+            body = outside(str(event["body"]), kind="webhook", fenced_where_it_arrived=True)
+            lines = ["A webhook delivered this:", body]
         elif kind == "run_completed" and event.get("source_run_id"):
-            lines = _run_facts(event)
+            lines = _run_facts(outside, event)
         elif kind == "run_completed" and event.get("source_trigger_id"):
             lines = [
                 f"The automation {event['source_trigger_id']} finished; this one runs after it."
@@ -203,7 +230,10 @@ async def describe(trigger: Any, payload: dict[str, Any] | None) -> FireFacts:
             return FireFacts()
     except Exception:  # noqa: BLE001 - the run still happens, on its instruction alone
         logger.warning("could not say what started %s's run", trigger_id, exc_info=True)
-        return FireFacts()
+        # A word the screen refused before the failure still refuses the fire.
+        return FireFacts(refused=tuple(sorted(outside.refused)))
+    if outside.refused:
+        return FireFacts(refused=tuple(sorted(outside.refused)))
     if not lines:
         return FireFacts()
     from personalclaw.security import strip_role_tokens
@@ -216,3 +246,47 @@ async def describe(trigger: Any, payload: dict[str, Any] | None) -> FireFacts:
     )
     text = "\n".join([FACTS_OPEN, *lines, carry, FACTS_CLOSE])
     return FireFacts(text=text, files=tuple(files))
+
+
+@dataclass(frozen=True)
+class HandedOn:
+    """What a stored trigger's fire hands its action (:func:`hand_on`): its payload with its words
+    fenced, its ``$CONTEXT`` line, and what started it (:class:`FireFacts`), or ``refused``, the
+    groups the injection screen refused any of their words for, and nothing else."""
+
+    payload: dict[str, Any] = field(default_factory=dict)
+    context: str = ""
+    facts: FireFacts = field(default_factory=FireFacts)
+    refused: tuple[str, ...] = ()
+
+
+async def hand_on(trigger: Any, payload: dict[str, Any] | None, *, context: str = "") -> HandedOn:
+    """What *trigger*'s fire hands its action of what started it: the one door a fire's words from
+    outside take on their way to the action (``gateway._fire_store_trigger``, which every fire
+    runs through: a clock's, a file's, a watched page's, an event's, a chained one, a webhook's
+    request and a view's render).
+
+    Three things cross it, each through ``outside_text``: the payload's words
+    (``outside_text.admit_payload`` under the trigger's kind), the ``$CONTEXT`` line an event's
+    fire carries, and what started the run (:func:`describe`, read from the payload as it
+    arrived). Text fenced where it arrived keeps its fence. When the screen refuses any of their
+    words the fire hands on nothing, and its dispatch records it as ``blocked_injection``.
+    """
+    from personalclaw.outside_text import admit, admit_payload
+
+    kind = str(getattr(trigger, "kind", "") or "")
+    trigger_id = str(getattr(trigger, "id", "") or "")
+    facts = await describe(trigger, payload)
+    handed = admit_payload(payload, kind=kind, trigger_id=trigger_id)
+    line = admit(
+        context,
+        source=f"trigger:{trigger_id}",
+        source_type=kind or "trigger",
+        source_id=trigger_id,
+        transformation_path="fire:context",
+        fenced_where_it_arrived=True,
+    )
+    refused = {*facts.refused, *handed.refused, *line.refused}
+    if refused:
+        return HandedOn(refused=tuple(sorted(refused)))
+    return HandedOn(payload=handed.payload, context=line.text, facts=facts)

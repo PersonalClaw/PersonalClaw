@@ -909,20 +909,28 @@ def build_cancelled_turn_preamble(
     user_text = redact_for_model((recent[user_idx].get("content") or "").strip())
     if len(user_text) > user_cap:
         user_text = user_text[:user_cap] + "… [truncated]"
-    # A request someone other than the owner sent is handed back as theirs, its fence whole.
-    from personalclaw.turn_source import asked_by, theirs
+    # A request someone other than the owner sent is handed back as theirs, its fence whole, and
+    # a row of words taken in from outside through the door every such text takes (`model_text`).
+    from personalclaw.turn_source import asked_by, model_text, theirs
 
     if asked_by(recent[user_idx]):
         user_text = theirs(recent[user_idx], user_text)
     assistant_parts: list[str] = []
     for i in range(user_idx + 1, boundary):
         if recent[i].get("role") == "assistant":
-            t = (recent[i].get("content") or "").strip()
+            t = model_text(recent[i], (recent[i].get("content") or "").strip())
             if t:
                 assistant_parts.append(t)
     assistant_text = redact_for_model("\n".join(assistant_parts))
     if len(assistant_text) > assist_cap:
-        assistant_text = assistant_text[:assist_cap] + "… [truncated]"
+        from personalclaw.outside_text import ends_inside_a_fence
+        from personalclaw.security import UNTRUSTED_CLOSE
+
+        assistant_text = assistant_text[:assist_cap]
+        if ends_inside_a_fence(assistant_text):
+            # A cut inside a fence would leave everything after it reading as fenced.
+            assistant_text += f"\n{UNTRUSTED_CLOSE}"
+        assistant_text += "… [truncated]"
     # The preamble lives in the prompt system (bundled ``cancelled-turn-preamble``
     # snippet); its conditional includes the partial assistant response when present.
     from personalclaw.prompt_providers.runtime import render_snippet_block
@@ -2040,7 +2048,8 @@ class ContextBuilder:
                         compressible=False,
                     )
 
-        # Channel history — inject on every message for group channel context
+        # Channel history — inject on every message for group channel context. Each participant's
+        # messages arrive screened and fenced with their source (`ChannelHistory.context_for`).
         ch_ctx: str | None = None
         if channel_id and self.channel_history:
             ch_ctx = self.channel_history.context_for(channel_id, thread_ts=thread_ts) or None
@@ -2054,15 +2063,29 @@ class ContextBuilder:
             # The thread-context block (both the with-parent-text and bare-metadata
             # variants) lives in the prompt system as the ``channel-thread-context``
             # snippet; its conditional selects the variant by thread_parent_text.
+            from personalclaw.outside_text import admit, withheld
             from personalclaw.prompt_providers.runtime import render_snippet_block
 
+            # What was posted is the channel's, whoever posted it: through the door every text
+            # from outside takes into a prompt, screened and fenced with the thread as its source.
+            parent = admit(
+                thread_parent_text or "",
+                source=f"channel:{channel_id}:thread:{thread_ts}",
+                source_type="channel_thread",
+                source_id=thread_ts,
+                transformation_path="thread_parent",
+            )
             parts.add(
                 render_snippet_block(
                     "channel-thread-context",
                     {
                         "channel_id": channel_id,
                         "thread_ts": thread_ts,
-                        "thread_parent_text": thread_parent_text or "",
+                        "thread_parent_text": (
+                            withheld("What was posted", parent.refused)
+                            if parent.refused
+                            else parent.text
+                        ),
                     },
                 )
                 + "\n\n",

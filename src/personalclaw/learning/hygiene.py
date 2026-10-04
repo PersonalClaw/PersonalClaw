@@ -128,7 +128,7 @@ class HygieneVerdict:
 #: passed straight through a literal match.
 #:
 #: Imported from ``security`` rather than compiled again here: the same mistake
-#: recurred in ``triggers.screen.fence_payload``, which needed the identical predicate to
+#: recurred where a fire's payload is fenced, which needed the identical predicate to
 #: avoid double-wrapping an origin-fenced payload. Two copies of a pattern that exists to
 #: catch a fail-open bug is two places to forget it.
 _OPEN_TAG_RE = _SECURITY_OPEN_TAG_RE

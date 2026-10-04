@@ -911,7 +911,12 @@ remain in core — is covered in [provider-boundary.md](provider-boundary.md).
   (`upload_voice_to_channel`).
 - `channel_history.py` keeps a rolling per-channel message window
   (`observe_max_messages` / `observe_ttl_hours` — generic top-level config
-  keys).
+  keys). What it puts into a prompt is what the channel's people wrote, so each
+  participant's run of messages goes through `outside_text.admit`: screened,
+  and fenced with the channel and the sender's id as its source; one the screen
+  refuses is a line saying it was withheld. The post that started a thread,
+  which a channel hands `ContextBuilder.build_message`, goes through the same
+  door.
 
 ## Related docs
 

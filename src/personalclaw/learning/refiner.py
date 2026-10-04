@@ -344,25 +344,31 @@ def fenced_evidence(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Screened events with their untrusted text FENCED, for the model-bound prompt.
 
     The other half of the split. `screen_evidence` produces clustering input (statistics, no model);
-    this produces prompt input, where `fence_untrusted` is what makes the text DATA rather than
-    instructions.
+    this produces prompt input, through the door every text from outside takes into a prompt
+    (`outside_text.admit`): each field is read by the injection screen and fenced, which is what
+    makes the text DATA rather than instructions. An event the screen refuses any field of drops,
+    as `screen_evidence` drops it.
 
     Fences every surviving field, not only the flagged ones: a ledger error message is untrusted
-    text
-    by definition, and fencing only the suspicious ones would mean the screen's MISSES arrive as
-    instructions — the composition rule S69 established at the trigger boundary.
+    text by definition, and fencing only the suspicious ones would mean the screen's MISSES arrive
+    as instructions — the rule every trigger's fire keeps.
     """
-    from personalclaw.security import fence_untrusted
+    from personalclaw.outside_text import admit
 
-    safe, _verdicts = screen_evidence(events)
     out: list[dict[str, Any]] = []
-    for event in safe:
+    for event in events or []:
+        if not isinstance(event, dict):
+            continue
         fenced = dict(event)
+        refused = False
         for field_name in UNTRUSTED_EVIDENCE_FIELDS:
             value = fenced.get(field_name)
             if isinstance(value, str) and value.strip():
-                fenced[field_name] = fence_untrusted(value, source="run-ledger")
-        out.append(fenced)
+                admitted = admit(value, source="run-ledger")
+                refused = refused or bool(admitted.refused)
+                fenced[field_name] = admitted.text
+        if not refused:
+            out.append(fenced)
     return out
 
 

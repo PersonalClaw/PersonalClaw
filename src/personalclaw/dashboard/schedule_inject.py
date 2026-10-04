@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw import session_keys
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.turn_source import FROM_OUTSIDE
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -90,9 +91,26 @@ def inject_schedule_result_to_session(
             hydrate_session_from_history(session, msgs or [])
 
     if result_text:
+        # What the run produced came from its action, a program or a page as much as an agent,
+        # and no model of this chat wrote it. The chat shows it as it is, and it records where it
+        # came from (`turn_source.FROM_OUTSIDE`), so every model it is handed to reads it
+        # through the injection screen, fenced as data with the run as its source, never as an
+        # answer of its own (`turn_source.model_text`).
         context = f"# Cron Job Result: {_redact(job.name)}\n\n{_redact(result_text)}"
         if not any(m.get("content") == context for m in session.messages):
-            session.append("assistant", context, "msg msg-a")
+            session.append(
+                "assistant",
+                context,
+                "msg msg-a",
+                meta={
+                    FROM_OUTSIDE: {
+                        "what": f"The result of the scheduled run of “{_redact(job.name)}”",
+                        "source": f"trigger:{job.id}",
+                        "source_type": "schedule_result",
+                        "source_id": job.id,
+                    }
+                },
+            )
 
     state.push_sessions_update()
     return session

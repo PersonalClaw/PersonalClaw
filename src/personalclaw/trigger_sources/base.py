@@ -28,8 +28,9 @@ Two consequences, both deliberate:
 **Fencing happens at INGESTION, at origin.** :func:`personalclaw.trigger_sources.emit` fences the
 payload text with rich provenance (``source_type=app:<name>``, ``source_id=<event>``,
 ``transformation_path=app-source:emit``) before it ever reaches the bus, following the
-``web_watch`` precedent. Downstream fencing is idempotent via ``security.is_fenced``, so
-the origin's richer provenance survives rather than being re-wrapped with a coarser one.
+``web_watch`` precedent. The fire's door downstream keeps a fence that holds all of the text
+(``outside_text.is_whole_fence``) and screens it there, so the origin's richer provenance
+survives rather than being re-wrapped with a coarser one.
 
 An app implements :class:`TriggerSourceProvider`, imports it from
 ``personalclaw.sdk.trigger_source`` (never from this module directly), and registers through the

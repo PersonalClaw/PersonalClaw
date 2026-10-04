@@ -86,7 +86,14 @@ relative to `PersonalClaw/src/personalclaw/`.
   fence) and runs it through the one store dispatch
   (`gateway._fire_store_trigger`) — injection screen, fence, denylist, rung
   ladder, run record, delivery — so an event fire leaves a history row like
-  any other. `gates.max_fires` switches the trigger off once spent ("alert me
+  any other. What any fire hands its action of what started it leaves through
+  one door (`triggers/fire_facts.hand_on`, over `outside_text.admit`): the
+  payload's words (`screen.prose_keys` for its kind), the `$CONTEXT` line an
+  event's fire carries, and the account of what started the run (a file's
+  path, a message's sender and attachments, a page's items, a webhook's body,
+  what a workflow run said it produced) are read by the injection screen and
+  reach the action fenced with the trigger as their source; one the screen
+  refuses leaves a `blocked_injection` row and runs nothing. `gates.max_fires` switches the trigger off once spent ("alert me
   the NEXT time X"); `gates.debounce_secs` (5 s unless set) collapses a burst,
   and at most 30 event fires a minute run across all event triggers. A process
   with no gateway — the CLI, or the `mcp-core` server an agent's memory tools
@@ -178,8 +185,9 @@ relative to `PersonalClaw/src/personalclaw/`.
   grants nothing. A lifecycle trigger carries the same grant and meets the same
   rule when it fires (`hooks.run_script_hook`); on the gating seam an ungranted
   one blocks the tool call it was asked about rather than letting it through.
-  What its event carried leaves the gateway as a stored trigger's payload does
-  (`hooks.hand_on`): the words (the prompt a turn answers, the agent's reply,
+  What its event carried leaves the gateway as a stored trigger's payload does,
+  through the same door (`hooks.hand_on`, over `outside_text.admit`): the words
+  (the prompt a turn answers, the agent's reply,
   an error's message, a task's title, a tool's result) go through the injection
   screen and reach the action fenced as data with the trigger as their source,
   while names (a session's key, ids, the tool an approval is about) and the call
@@ -232,8 +240,13 @@ relative to `PersonalClaw/src/personalclaw/`.
   switched off, listed on the Triggers page as a **Callback**, and allowed by
   switching it on, which asks first and names the context the page read (its
   seal), so a callback registered again with other context waits again. A post
-  naming a callback the owner has not allowed answers `403 not_allowed`; a
-  session key nobody registered is the owner's own integration. One registered
+  naming a callback the owner has not allowed answers `403 not_allowed`. The
+  context the turn starts from is read back through the door every text from
+  outside takes into a prompt (`webhook_callbacks.restored_context`): masked,
+  screened and fenced as data with the callback as its source, so a post whose
+  saved context the screen refuses answers `409 callback_context_refused` and
+  starts nothing. A session key nobody registered is the owner's own
+  integration. One registered
   in a turn someone other than the owner asked for records who did
   (`lasting_work.ASKED_BY`), its Allow says so, and its turn runs as its own work,
   held to them: what it would change of her memory waits for her word

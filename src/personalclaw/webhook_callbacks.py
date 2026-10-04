@@ -25,10 +25,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from personalclaw import lasting_work
 from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.owner_grants import GrantBook
+
+if TYPE_CHECKING:
+    from personalclaw.outside_text import Admitted
 
 logger = logging.getLogger(__name__)
 
@@ -212,17 +216,36 @@ def consent(callback: Callback) -> str:
 CONSENT_TITLE = "Allow this callback to run?"
 
 
-def context_for_turn(callback: Callback, *, now: float | None = None) -> str:
-    """The saved context a callback's turn starts from, by how old it is.
+def restored_context(callback: Callback, *, now: float | None = None) -> Admitted:
+    """The saved context a callback's turn starts from, as its model is handed it, by how old it is.
 
     Under an hour it is used as written; up to a day it is marked as possibly outdated; after that
-    it is too stale to steer a turn and is left out.
+    it is too stale to steer a turn and is left out. The agent wrote it in an earlier turn from
+    what that turn read, so it is text from outside by the time it comes back: masked of any
+    secret it holds, then through the door every such text takes into a prompt
+    (``outside_text.admit``), read by the injection screen and fenced as data with the callback
+    as its source. The note on its age is PersonalClaw's own and stays outside the fence. One the
+    screen refuses comes back as nothing, with the groups it was refused for, and its turn does
+    not start (``dashboard.handlers.hooks.api_hooks_agent``).
     """
+    from personalclaw.outside_text import Admitted, admit
+    from personalclaw.security import redact_for_model
+
     if not callback.context_summary or not callback.registered_at:
-        return ""
+        return Admitted()
     age_hours = ((now if now is not None else time.time()) - callback.registered_at) / 3600
     if age_hours > 24:
-        return ""
-    if age_hours > 1:
-        return f"[Context from {age_hours:.0f}h ago — may be outdated]\n{callback.context_summary}"
-    return callback.context_summary
+        return Admitted()
+    admitted = admit(
+        redact_for_model(callback.context_summary),
+        source=f"callback:{callback.id}",
+        source_type="callback_context",
+        source_id=callback.id,
+        transformation_path="restore",
+    )
+    if admitted.refused or age_hours <= 1:
+        return admitted
+    return Admitted(
+        text=f"[Context from {age_hours:.0f}h ago — may be outdated]\n{admitted.text}",
+        flagged=admitted.flagged,
+    )

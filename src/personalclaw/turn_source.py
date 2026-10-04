@@ -48,6 +48,14 @@ SOURCE_FIELDS = ("source_thread", "source_user", "source_channel")
 #: row records no source of its own (:func:`shared_source`), so this is what says whose they were.
 QUEUED_FROM = "queued_from"
 
+#: The ``meta`` key of a row whose words PersonalClaw took in from outside as they came, which no
+#: model of the conversation wrote: a scheduled run's result opened as a chat
+#: (``dashboard.schedule_inject``). It holds what a model is told they are and where they came
+#: from (``what``, and the fence's ``source``, ``source_type`` and ``source_id``), and every model
+#: is handed them through the door every text from outside takes into a prompt
+#: (:func:`model_text`). The row keeps its words as a person reads them.
+FROM_OUTSIDE = "from_outside"
+
 #: How a model is told a user line someone other than the owner sent is not hers, ahead of the
 #: line, fenced (:func:`theirs`): memory consolidation and every history of the conversation a
 #: model is handed show such a line this way.
@@ -139,13 +147,54 @@ def _queued(row: object) -> list[dict[str, str]] | None:
 
 def provenance(row: object) -> dict[str, Any]:
     """What *row* records of where it came from, for a copy of it that keeps its role and text: its
-    source (:func:`source_of`) and, for a row queued messages from different places run as, theirs.
-    A reader the copy reaches tells whose words it holds as it would from the row itself."""
+    source (:func:`source_of`), for a row queued messages from different places run as, theirs,
+    and for a row of words taken in from outside, that (:data:`FROM_OUTSIDE`). A reader the copy
+    reaches tells whose words it holds as it would from the row itself."""
     kept: dict[str, Any] = source_of(row)
+    meta: dict[str, Any] = {}
     queued = _queued(row)
     if queued is not None:
-        kept["meta"] = {QUEUED_FROM: queued}
+        meta[QUEUED_FROM] = queued
+    outside = _from_outside(row)
+    if outside is not None:
+        meta[FROM_OUTSIDE] = outside
+    if meta:
+        kept["meta"] = meta
     return kept
+
+
+def _from_outside(row: object) -> dict[str, str] | None:
+    """What a row of words taken in from outside records of them (:data:`FROM_OUTSIDE`), or
+    ``None`` for any other row."""
+    meta = row.get("meta") if isinstance(row, Mapping) else None
+    taken = meta.get(FROM_OUTSIDE) if isinstance(meta, Mapping) else None
+    if not isinstance(taken, Mapping):
+        return None
+    return {key: value for key, value in taken.items() if isinstance(value, str)}
+
+
+def model_text(row: Mapping[str, Any], text: str | None = None) -> str:
+    """*text* (the row's own by default) as a model may be handed it in any history of the
+    conversation: as it is, except a row of words taken in from outside (:data:`FROM_OUTSIDE`),
+    which goes through the door every such text takes into a prompt (``outside_text.admit``),
+    screened and fenced with the source it records; one the screen refuses is a sentence saying
+    what was withheld, never its words."""
+    said = str(row.get("content", "")) if text is None else text
+    outside = _from_outside(row)
+    if outside is None:
+        return said
+    from personalclaw.outside_text import admit, withheld
+
+    admitted = admit(
+        said,
+        source=outside.get("source") or "outside",
+        source_type=outside.get("source_type", ""),
+        source_id=outside.get("source_id", ""),
+        transformation_path="history",
+    )
+    if admitted.refused:
+        return withheld(outside.get("what") or "Text from outside", admitted.refused)
+    return admitted.text
 
 
 def asked_by(row: object) -> dict[str, str]:
@@ -182,11 +231,12 @@ def fence_source(source: Mapping[str, str]) -> str:
 
 def theirs(row: object, text: str | None = None) -> str:
     """*row*, a user line the owner did not send (:func:`asked_by`), as a model is shown it:
-    labelled as not the user's words, then *text* (the row's own by default) whole and fenced as
-    its sender's. A row the owner's queued message and someone else's were run as together is
-    labelled as only partly hers. Memory consolidation and every history a model is handed read
-    such a line so."""
-    from personalclaw.security import fence_untrusted
+    labelled as not the user's words, then *text* (the row's own by default) whole, through the
+    door every text from outside takes into a prompt (``outside_text.admit``): screened, and fenced
+    as its sender's. One the screen refuses is a sentence saying it was withheld, never its words.
+    A row the owner's queued message and someone else's were run as together is labelled as only
+    partly hers. Memory consolidation and every history a model is handed read such a line so."""
+    from personalclaw.outside_text import admit, withheld
 
     said = str(row.get("content") or "") if text is None and isinstance(row, Mapping) else text
     queued = _queued(row) or []
@@ -195,16 +245,24 @@ def theirs(row: object, text: str | None = None) -> str:
         if any(map(sent_by_owner, queued)) and not all(map(sent_by_owner, queued))
         else NOT_THE_USERS_WORDS
     )
-    return f"{label}: {fence_untrusted(said or '', source=fence_source(asked_by(row)))}"
+    sender = fence_source(asked_by(row))
+    admitted = admit(said or "", source=sender)
+    if admitted.refused:
+        # Named by the ids the source records: a display name is the sender's own text.
+        return f"{label}: {withheld(f'A message from {sender}', admitted.refused)}"
+    return f"{label}: {admitted.text}"
 
 
 def turn_line(row: Mapping[str, Any], text: str | None = None) -> str:
     """One turn of a conversation as a model reads it in a history of it: its role and *text* (the
     row's own by default), ``User: …``, ``Assistant: …``, ``Summary: …``, except that a user line
-    someone other than the owner asked for reads as :func:`theirs` shows it. The history a fresh
-    runtime is given back, a compressed one, and the summary background compression keeps read
-    each turn through this."""
+    someone other than the owner asked for reads as :func:`theirs` shows it, and a row of words
+    taken in from outside as :func:`model_text` hands it on. The history a fresh runtime is given
+    back, a compressed one, and the summary background compression keeps read each turn through
+    this."""
     said = str(row.get("content", "")) if text is None else text
+    if _from_outside(row) is not None:
+        return f"{str(row.get('role', '')).title()}: {model_text(row, said)}"
     if row.get("role") == "user" and asked_by(row):
         return theirs(row, said)
     return f"{str(row.get('role', '')).title()}: {said}"

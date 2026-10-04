@@ -284,10 +284,11 @@ def test_a_payload_fenced_at_origin_is_NOT_DOUBLE_WRAPPED(_source, _store, monke
     """🔴 Idempotence, driven — the failure this repo has hit twice.
 
     Every event fire is fenced at origin (`event_triggers.fire_payload`) and again by the store
-    dispatch's `screen.fence_payload`. An app payload arrives ALREADY fenced, so a naive second wrap
-    escapes the inner markers and the origin's attributes reach the model as literal text — losing
-    exactly the provenance the outer fence was adding. Checked via `security.is_fenced` semantics
-    (an ATTRIBUTED fence), never `UNTRUSTED_OPEN in text`, which misses them and fails OPEN.
+    dispatch's door (`fire_facts.hand_on`). An app payload arrives ALREADY fenced, so a naive
+    second wrap escapes the inner markers and the origin's attributes reach the model as literal
+    text — losing exactly the provenance the outer fence was adding. Checked via
+    `security.is_fenced` semantics (an ATTRIBUTED fence), never `UNTRUSTED_OPEN in text`, which
+    misses them and fails OPEN.
     """
     _store.upsert(_app_trigger())
     calls: list = []
@@ -306,8 +307,13 @@ def test_a_payload_fenced_at_origin_is_NOT_DOUBLE_WRAPPED(_source, _store, monke
     assert value.count("<untrusted_content") == 1, f"double-fenced: {value!r}"
     assert "&lt;/untrusted_content&gt;" not in value
     assert "app-source:emit" in value, "the origin's provenance was replaced by the coarser one"
-    # The context line is model-bound too, and gets the same treatment.
-    assert calls[0].context.count("<untrusted_content") == 1
+    # The context line is model-bound too, and gets the same treatment: every word of it in a
+    # fence (the key in the event's own, beside the origin's), nothing re-wrapped into literal text.
+    from personalclaw.outside_text import is_whole_fence
+
+    context = calls[0].context
+    assert is_whole_fence(context) and "&lt;untrusted_content" not in context, context
+    assert "app-source:emit" in context, "the origin's provenance was replaced in the context"
 
 
 def test_an_injection_payload_from_an_app_NEVER_REACHES_THE_PROVIDER(_source, _store, monkeypatch):

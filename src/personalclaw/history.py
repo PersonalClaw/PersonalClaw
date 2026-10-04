@@ -48,7 +48,7 @@ from personalclaw.security import (
 )
 from personalclaw.sel import sel
 from personalclaw.skills import AutoSkillProvenance
-from personalclaw.turn_source import arrived_on, provenance, sent_by_owner, theirs
+from personalclaw.turn_source import arrived_on, model_text, provenance, sent_by_owner, theirs
 
 
 def config_dir() -> Path:
@@ -1299,7 +1299,8 @@ def consolidation_line(m: dict) -> str:
     stamp = f"[{str(m.get('ts', '?'))[:16]}]"
     tools = f" [tools: {', '.join(m['tools'])}]" if m.get("tools") else ""
     if m.get("role") != "user":
-        return f"{stamp} {str(m.get('role', '')).upper()}{tools}: {m.get('content', '')}"
+        # A row of words taken in from outside is handed on through the door (`model_text`).
+        return f"{stamp} {str(m.get('role', '')).upper()}{tools}: {model_text(m)}"
     if not sent_by_owner(m):
         return f"{stamp} {theirs(m)}"
     raw_meta = m.get("meta")

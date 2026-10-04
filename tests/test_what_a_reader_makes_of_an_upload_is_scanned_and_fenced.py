@@ -556,7 +556,7 @@ async def test_an_inbox_attachment_whose_text_fails_the_scan_is_withheld_and_sai
         [Attachment(name="plans.docx", mimetype="application/msword", data=_docx(OVERRIDE_LIST))],
     )
 
-    said = await attachments.reading("mail_abc_1", records, source="inbox")
+    said = (await attachments.reading("mail_abc_1", records, source="inbox")).text
 
     assert "Weekend plans" not in said
     assert "its text failed the content safety scan" in said, said

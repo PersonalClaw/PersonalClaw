@@ -522,7 +522,14 @@ async def test_a_callbacks_turn_runs_as_asked_for_by_whoever_registered_it(monke
         callback = webhook_callbacks.get(callback_id)
         await hooks._hook_semaphore.acquire()
         await hooks._run_hook_agent(
-            state, callback.session_key, "Ana replied yes.", "RSVP", None, False, 60, callback
+            state,
+            callback.session_key,
+            "Ana replied yes.",
+            "RSVP",
+            None,
+            False,
+            60,
+            webhook_callbacks.restored_context(callback).text,
         )
 
     assert seen == {"hook:dinner:rsvp": _colleague(), "hook:train:delay": {}}

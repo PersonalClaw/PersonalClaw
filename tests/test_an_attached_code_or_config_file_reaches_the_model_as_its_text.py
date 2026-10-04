@@ -263,7 +263,7 @@ async def test_a_code_file_attached_to_an_inbox_message_reaches_the_agent_as_its
         [Attachment(name=name, mimetype=mimetypes.guess_type(name)[0] or "", data=text.encode())],
     )
 
-    said = await attachments.reading("mail_abc_1", records, source="inbox")
+    said = (await attachments.reading("mail_abc_1", records, source="inbox")).text
 
     assert "its name, its type and its text" in said, said
     assert line in said and line not in outside_fences(said), said
@@ -285,7 +285,7 @@ async def test_an_inbox_code_attachment_whose_text_fails_the_scan_is_withheld_an
         ],
     )
 
-    said = await attachments.reading("mail_abc_2", records, source="inbox")
+    said = (await attachments.reading("mail_abc_2", records, source="inbox")).text
 
     assert "Shopping list" not in said
     assert "its text failed the content safety scan" in said, said

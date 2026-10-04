@@ -230,7 +230,7 @@ def test_an_agent_reads_an_attachments_text_fenced_with_its_name(tmp_path):
             ]
         ),
     )
-    said = asyncio.run(attachments.reading(item.id, item.attachments, source="inbox"))
+    said = asyncio.run(attachments.reading(item.id, item.attachments, source="inbox")).text
 
     first, second = said.split("\n\nAttachment 2")
     fence = first.split("\n", 1)[1]

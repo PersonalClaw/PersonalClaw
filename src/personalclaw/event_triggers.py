@@ -310,12 +310,15 @@ def _truncate_fenced(value: str, limit: int) -> str:
 
     Cutting a fenced span can remove its closing marker, and an UNTERMINATED fence is worse than a
     truncated one: everything the model reads after it falls outside the fence. So the close is
-    re-appended when the cut removed it.
+    re-appended when the cut ends inside a span (``outside_text.ends_inside_a_fence``). Text that
+    is several fences holds a close of an earlier one, so finding a close in the cut was not
+    enough: a cut inside the last one left it open.
     """
+    from personalclaw.outside_text import ends_inside_a_fence
     from personalclaw.security import UNTRUSTED_CLOSE
 
     cut = value[:limit]
-    return cut if UNTRUSTED_CLOSE in cut else f"{cut}\n{UNTRUSTED_CLOSE}"
+    return f"{cut}\n{UNTRUSTED_CLOSE}" if ends_inside_a_fence(cut) else cut
 
 
 def fire_payload(trigger_id: str, event: BusEvent) -> tuple[dict[str, Any], str]:
@@ -325,24 +328,41 @@ def fire_payload(trigger_id: str, event: BusEvent) -> tuple[dict[str, Any], str]
     app's text are all untrusted by definition. At origin because provenance is three claims (§7/R4
     rule c — S127): the CLASS of origin, WHICH one, and HOW it got here. "an event said this" and
     "THIS memory key said it, truncated to 2000 chars" differ, and only the second lets a reader
-    tell whether the text the model acted on is the text that arrived. The store dispatch's own
-    ``screen.fence_payload`` is idempotent, so it leaves this richer fence alone — the precedent
-    ``web_watch`` items and app events already set. Measured before relying on it: the injection
-    screen returns the same verdict on the fenced text as on the raw text for every payload in the
-    shipped corpus (78 of 78), so screening after the fence loses nothing.
+    tell whether the text the model acted on is the text that arrived. The store dispatch's door
+    (``fire_facts.hand_on``) keeps a fence that holds all of a value, so it leaves this richer
+    fence alone — the precedent ``web_watch`` items and app events already set — and screens it
+    there. Measured before relying on it: the injection screen returns the same verdict on the
+    fenced text as on the raw text for every payload in the shipped corpus (78 of 78), so
+    screening after the fence loses nothing.
 
     Text already fenced at origin (an app event, fenced by ``trigger_sources.emit`` with the app's
     own provenance) is truncated but NOT re-wrapped: re-wrapping escapes the inner markers, so the
-    origin's attributes would read to the model as literal text.
+    origin's attributes would read to the model as literal text. Only a value that is fenced
+    whole is (``outside_text.is_whole_fence``): one that merely holds a marker, as text quoting
+    the fence does, is fenced like any other, or its words around the marker would reach the
+    action unfenced.
 
-    ``context`` is the ``$CONTEXT`` line a template renders: ``<key>: <fenced 200-char excerpt>``.
+    ``context`` is the ``$CONTEXT`` line a template renders: ``<key>: <200-char excerpt>``, every
+    word of it fenced: one fence around both when the value arrived raw, and the key in a fence of
+    the event's own beside the origin's fence when it did not. Both are screened at the dispatch
+    before an action is handed them (``fire_facts.hand_on``), which keeps a line fenced whole.
     """
-    from personalclaw.security import fence_untrusted, is_fenced
+    from personalclaw.outside_text import is_whole_fence
+    from personalclaw.security import fence_untrusted
 
     value = event.value or ""
-    if is_fenced(value):
+    if is_whole_fence(value):
         fenced = _truncate_fenced(value, 2000)
-        excerpt = _truncate_fenced(value, 200)
+        context = _truncate_fenced(value, 200)
+        if event.key.strip():
+            key = fence_untrusted(
+                f"{event.key}:",
+                source=f"trigger:{trigger_id}",
+                source_type="event",
+                source_id=event.key,
+                transformation_path="key",
+            )
+            context = f"{key} {context}"
     else:
         fenced = fence_untrusted(
             value[:2000],
@@ -351,8 +371,8 @@ def fire_payload(trigger_id: str, event: BusEvent) -> tuple[dict[str, Any], str]
             source_id=event.key,
             transformation_path="truncate:2000",
         )
-        excerpt = fence_untrusted(
-            value[:200],
+        context = fence_untrusted(
+            f"{event.key}: {value[:200]}",
             source=f"trigger:{trigger_id}",
             source_type="event",
             source_id=event.key,
@@ -367,7 +387,7 @@ def fire_payload(trigger_id: str, event: BusEvent) -> tuple[dict[str, Any], str]
     }
     if event.meta:
         payload["meta"] = dict(event.meta)
-    return payload, f"{event.key}: {excerpt}"
+    return payload, context
 
 
 # ── the bus ──

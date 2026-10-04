@@ -1209,6 +1209,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # ── calling back an agent's callback (dashboard/handlers/hooks.py — POST /api/hooks/agent) ──
     # 403: the callback the agent registered waits for its owner's Allow on the Triggers page.
     "not_allowed": "This callback has not been allowed to run; its owner allows it.",
+    # 409: the injection screen refused the context the agent saved for this callback, so its
+    # turn did not start; the message names the pattern class, never the words.
+    "callback_context_refused": (
+        "The injection screen refused the context this callback saved, so its turn did not start."
+    ),
     # ── binding a use case's models (dashboard/handlers/model_registry.py —
     #    PUT /api/models/active/{use_case}) ──
     # 400: an entry of the chain names no model ("" or "provider:"); the message names it.

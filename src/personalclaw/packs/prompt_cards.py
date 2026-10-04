@@ -4,11 +4,12 @@ The viral "life OS prompt card" genre is a wall of markdown someone pasted from 
 It is genuinely useful and it is genuinely attacker-controlled, so this module is built around
 three refusals:
 
-1. **The card is FENCED before any model sees it.** :func:`personalclaw.security.fence_untrusted`
-   wraps it as DATA with an attributed provenance tag, and role/control tokens inside it are
-   neutralised. The check for "is it already fenced" uses ``security.is_fenced`` rather than a
-   substring test, because the substring form misses every attributed fence — which is the
-   fail-open direction.
+1. **The card is SCREENED and FENCED before any model sees it.** It goes through the door every
+   text from outside takes into a prompt (``outside_text.admit``): the injection screen reads it,
+   and it is wrapped as DATA with an attributed provenance tag, its role/control tokens
+   neutralised. A card the screen refuses is not imported, and the answer names the pattern class
+   it matched. A card that is already one fence, whole, keeps it; one that only quotes a marker is
+   fenced like any other, since keeping it would hand the model its words outside any fence.
 2. **The output is TYPED, never free-form.** The model's answer must parse as a dict and must
    map onto exactly one of :class:`PromptTemplate` / a ``WorkflowDef`` spec /
    :class:`AgentDefinition`. Anything else is refused. The card's own text never becomes an
@@ -77,20 +78,27 @@ add capabilities it does not describe. If the card fits no target, emit {"target
 
 
 def _fence(card: str) -> str:
-    """The security control: wrap the card as attributed untrusted DATA.
+    """The security control: the card as attributed untrusted DATA, through the door every text
+    from outside takes into a prompt (``outside_text.admit``).
 
-    ``is_fenced`` (not ``UNTRUSTED_OPEN in card``) decides whether a fence is already present,
-    so an attributed fence is recognised and the card is not double-wrapped."""
-    from personalclaw.security import fence_untrusted, is_fenced
+    Raises :class:`PromptCardError` when the injection screen refuses it, naming the pattern
+    class and never the words. A card that is one fence, whole, is not double-wrapped."""
+    from personalclaw.outside_text import admit
 
-    if is_fenced(card):
-        return card
-    return fence_untrusted(
+    admitted = admit(
         card,
         source="pasted prompt card",
         source_type="paste",
         transformation_path="prompt_card_import",
+        fenced_where_it_arrived=True,
     )
+    if admitted.refused:
+        raise PromptCardError(
+            f"the injection screen refused the card ({', '.join(admitted.refused)}), so nothing "
+            "was imported: part of it reads as an instruction to the model that converts it. Take "
+            "that part out and paste the card again"
+        )
+    return admitted.text
 
 
 async def convert_card(card: str) -> dict[str, Any]:

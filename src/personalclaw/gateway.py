@@ -1494,63 +1494,37 @@ class GatewayOrchestrator:
             self._push_trigger_refresh()
             return
 
-        # 🔴 THE INJECTION SCREEN, on the payload that actually carries untrusted text (§7/R4 rule a
-        # — S134). `FireContext.payload_text` defaulted to "" and `service.tick` never set
-        # it, so `evaluate`'s `if ctx.payload_text:` was permanently false — the
-        # screen had NEVER run
-        # on a real fire, while every ledger row listed `screen` among the gates
-        # PASSED. And the kinds
-        # that DO carry third-party prose (web_watch items, file changes) never reach that walk at
-        # all: they are dispatched straight here.
-        #
-        # Screened HERE rather than by threading a payload back into `tick`, because this is the one
-        # place every polled payload passes through on its way to a provider — the same reasoning
-        # S122 used for chaining. A blocked payload is NEVER auto-retried (`blocked_injection` is
-        # terminal by design), which is also why `payload_text_for` reads an allowlist of prose-
-        # carrying keys instead of screening ids and URLs that would produce false blocks.
+        # 🔴 THE INJECTION SCREEN AND THE FENCE, on everything from outside this fire hands its
+        # action: its payload's words, the `$CONTEXT` line an event's fire carries, and what the
+        # run is told started it. They leave the gateway through one door
+        # (`fire_facts.hand_on`, over `outside_text.admit`): read by the screen BEFORE any token is
+        # spent, then fenced as data with the trigger as their source, CLEAN text too, since a
+        # clean verdict means "no known pattern", not "trustworthy". This is the one place every
+        # fire passes on its way to a provider, a webhook's request and a view's render included.
+        # A blocked payload is NEVER auto-retried (`blocked_injection` is terminal by design),
+        # which is why the payload is read by an allowlist of the keys that carry words
+        # (`screen.prose_keys`) rather than ids and URLs that would produce false blocks. What
+        # the run is told started it is read from the event as it arrived, before the per-key
+        # fence would leave nothing to name a file by.
         from personalclaw.triggers import fire_facts
-        from personalclaw.triggers import screen as screen_mod
-        from personalclaw.triggers.screen import payload_text_for
-        from personalclaw.triggers.screen import screen as screen_text
 
-        # What the run is told started it, read from the event as it arrived: the per-key fence
-        # below would leave nothing to name a file by.
-        facts = await fire_facts.describe(trigger, payload)
-        untrusted = payload_text_for(payload, kind=str(getattr(trigger, "kind", "") or ""))
-        if untrusted:
-            verdict = screen_text(untrusted)
-            if getattr(verdict, "verdict", "") == "blocked":
-                groups = ", ".join(getattr(verdict, "groups", ()) or ()) or "injection"
-                logger.warning(
-                    "trigger %s: payload blocked by the injection screen (%s); not retried",
-                    trigger.id,
-                    groups,
-                )
-                # 🔴 A TYPED LEDGER ROW, not just a log line (§7 crit 8). S134 wired the
-                # screen here and recorded the row as still owed: this path is not a `tick` fire,
-                # so nothing wrote one. A refusal only a log knows about is a silent drop by
-                # criterion 8's own definition — the user sees an automation that stopped, with the
-                # reason in a file they will not read. And `blocked_injection` NEVER auto-retries,
-                # so this row is the only record that will ever exist for this fire.
-                await self._record_blocked_fire(trigger, groups)
-                self._push_trigger_refresh()
-                return
-            # 🔴 FENCE-AND-PROCEED, which nothing actually did (§7/R4 rule c).
-            # `Verdict.SUSPICIOUS` exists precisely so a payload can be fenced and still run —
-            # `screen_to_outcome` maps it to `ran` on the stated grounds that "the payload is FENCED
-            # and the run proceeds". Only `web_watch` fenced (at origin), so a
-            # `persona_hijack` payload from webhook/event/file reached the provider VERBATIM.
-            #
-            # Fenced for CLEAN too, not only suspicious: the screen is a pattern matcher and its
-            # clean verdict means "no known pattern", not "trustworthy". This text still crossed the
-            # trust boundary, and every other ingestion seam in the codebase fences it
-            # unconditionally (`web/fetch`, `inbox_service`, `bindings`; a data-event fire arrives
-            # here already fenced at origin by `event_triggers.fire_payload`). Fencing
-            # only what a matcher flagged would make the guarantee depend on the corpus being
-            # complete, which is the one thing a pattern corpus never is.
-            payload = screen_mod.fence_payload(
-                payload, kind=str(getattr(trigger, "kind", "") or ""), trigger_id=trigger.id
+        fired = await fire_facts.hand_on(trigger, payload, context=context)
+        if fired.refused:
+            groups = ", ".join(fired.refused)
+            logger.warning(
+                "trigger %s: payload blocked by the injection screen (%s); not retried",
+                trigger.id,
+                groups,
             )
+            # 🔴 A TYPED HISTORY ROW, not just a log line. A refusal only a log knows about is a
+            # silent drop: the user sees an automation that stopped, with the reason in a file they
+            # will not read. And `blocked_injection` NEVER auto-retries, so this row is the only
+            # record that will ever exist for this fire.
+            await self._record_blocked_fire(trigger, groups)
+            self._push_trigger_refresh()
+            return
+        payload, context, facts = fired.payload, fired.context, fired.facts
+
         # 🔴 RESOLVE `{{secret:KEY}}` HERE, at dispatch (§7 item 6 / decision 11). Workflows
         # have carried this form since WF2-R14 and three surfaces tell the author to use it, but a
         # TRIGGER action passed the literal placeholder to the provider — measured: a bash command
