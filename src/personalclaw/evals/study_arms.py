@@ -640,7 +640,7 @@ async def arm_bodies_for_study(reg: StudyRegistration) -> tuple[str, str]:
     proposal_id = str(reg.subject.get("diff_proposal_id") or "")
     if not workflow_name:
         raise StudyArmError(f"study {reg.study_id} names no template to measure")
-    spec = await _live_spec(workflow_name)
+    spec = await live_spec(workflow_name)
     if spec is None:
         raise StudyArmError(f"no workflow definition named {workflow_name!r}")
     ops = _proposal_ops(proposal_id)
@@ -652,8 +652,11 @@ async def arm_bodies_for_study(reg: StudyRegistration) -> tuple[str, str]:
     return arm_bodies_for_ops(spec, ops)
 
 
-async def _live_spec(workflow_name: str) -> dict | None:
+async def live_spec(workflow_name: str) -> dict | None:
     """The stored spec for a template, across every registered def provider.
+
+    What a template study's arms and an optimize-harness candidate are built from
+    (``evals.candidate_score``), so both read a definition the same way.
 
     Registers the native and bundled providers first, idempotently. Without this the CLI
     surface is INERT and says so in the wrong words: nothing registers a workflow def

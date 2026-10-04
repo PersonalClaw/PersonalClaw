@@ -1,7 +1,7 @@
 {
   "name": "optimize-harness",
   "version": 1,
-  "description": "Run a budgeted hill-climbing search over one of PClaw's own artifacts — a template, a skill, an SOP — and file the winner as a proposal. Candidates live in a throwaway sandbox; the live artifact is never written to, and a candidate that touches it is dead regardless of its score.",
+  "description": "Run a budgeted hill-climbing search over one of PClaw's own templates and file the winner as a proposal. Each candidate is scored against the template's own finished runs; the live template is never written to, a candidate that touches it is dead whatever it scores, and the search stops before it would spend past its dollar budget.",
   "source": "bundled",
   "provenance": "user",
   "tags": [
@@ -13,7 +13,7 @@
     "target_template": {
       "type": "string",
       "required": true,
-      "help": "The PClaw template being optimized — also the results.tsv subject its best-ever score is read back under."
+      "help": "The PClaw template being optimized. Its finished runs (at least three) are what every candidate is scored against, and it is the results.tsv subject its best-ever score is read back under."
     },
     "live_target": {
       "type": "string",
@@ -28,31 +28,31 @@
     "budget_usd": {
       "type": "number",
       "required": true,
-      "help": "The hard dollar ceiling (guardrails SpendMeter). There is no default: an unbudgeted search over model calls has no ceiling at all."
+      "help": "The hard dollar ceiling. The search measures what its own model calls cost, and stops before its next cycle or scoring would pass this. There is no default: an unbudgeted search over model calls has no ceiling at all."
     },
     "suite_threshold": {
       "type": "number",
       "required": false,
       "default": 0.8,
-      "help": "Half one of the dual gate: the harvested regression suite's pass floor. A candidate below it is discarded even when it beats the best-ever."
+      "help": "Half one of the dual gate: the share of the target's runs a candidate must pass, as the eval judge scores them. A candidate below it is discarded even when it beats the best score so far."
     },
     "hypothesis_abandon_after": {
       "type": "number",
       "required": false,
       "default": 3,
-      "help": "Halt after this many consecutive attempts at the SAME fix — at that point the diagnosis is wrong, not the execution."
+      "help": "Halt after this many attempts at the SAME fix that the gate did not admit — at that point the diagnosis is wrong, not the execution."
     },
     "no_improvement_halt": {
       "type": "number",
       "required": false,
       "default": 5,
-      "help": "Halt after this many consecutive iterations whose best score never rose above the window's opening value."
+      "help": "Halt after this many candidates in a row that did not raise the best score."
     },
     "max_iterations": {
       "type": "number",
       "required": false,
       "default": 12,
-      "help": "The iteration floor under the other three halts — reached only when none of them fires first."
+      "help": "How many candidates the search tries at most, up to 50 — reached only when none of the other halts fires first."
     }
   },
   "runtime_hints": {
@@ -91,13 +91,13 @@
       "improve the harness"
     ],
     "example_outputs": [
-      "one template-diff proposal that cleared both the suite threshold and the best-ever score, plus a ledger of every candidate including the discards",
-      "no proposal and a named halt reason, when nothing beat the incumbent"
+      "one template-diff proposal that cleared both the suite threshold and the best score so far, with the score measured on the template's own runs, plus a ledger of every candidate including the discards",
+      "no proposal and a sentence naming why the search stopped — its budget, its candidate limit or a plateau — when nothing beat the incumbent"
     ],
     "shapes": [
       "triage"
     ],
-    "when_not_to_use": "not for editing an artifact directly — this only ever proposes, and it costs a model call per candidate. Reach for `refine-template` when one look at a template's run ledger is enough."
+    "when_not_to_use": "not for editing an artifact directly — this only ever proposes, and every candidate costs model calls: one to propose it and two for each recorded run it is scored against. Reach for `refine-template` when one look at a template's run ledger is enough."
   },
   "root": {
     "kind": "sequence",
@@ -132,7 +132,7 @@
         "config": {
           "mode": "until",
           "condition": "{{last.output.halt | default(false)}}",
-          "max_iterations": 12,
+          "max_iterations": 50,
           "timeout_stall_secs": 1800
         },
         "body": {
@@ -165,10 +165,9 @@
                   "{{inputs.sandbox}}"
                 ],
                 "write_scope_mode": "reject",
-                "prompt": "You are running ONE iteration of a budgeted search over a PClaw artifact. You may only READ and PROPOSE. Your tool set enforces that; do not fight it.\n\nThe artifact under optimization:\n{{inputs.target_template}}\n\nThe LIVE copy, which is frozen:\n{{inputs.live_target}}\n\nYour sandbox, where the adjudicator keeps the search's ledger:\n{{inputs.sandbox}}\n\nWhat the preflight measured, including the score you have to beat:\n{{nodes.preflight.output}}\n\nWhat previous iterations of this search already tried, oldest first: each candidate's ledger row with its raw diff beside it, and an empty list on the first iteration. Read the diffs, not just the rows: the point of keeping them is that the raw prior attempt tells you more than a summary of it.\n{{nodes.experience.output.candidates}}\n\nMethod, in order:\n  1. Call `refiner_evidence` for the target. Work from its ranked failure clusters, not from a hunch.\n  2. Check the candidates above. A fix whose fingerprint is already there and already failed is not a candidate — repeating it is how a search burns its budget confirming a wrong diagnosis.\n  3. Propose ONE candidate edit as typed ops (`update_node` / `insert` / `delete` / `move` / `set_input`). You may NOT touch the artifact's id, name, triggers, or surfacing metadata — those decide WHEN it runs and are frozen.\n  4. Put the candidate's diff in `diff_text`: the adjudicator writes it into the sandbox's ledger. Your tools read and propose, and write nothing: a write anywhere, above all into {{inputs.live_target}}, is a scope violation the adjudicator kills whatever it scored.\n  5. Score the candidate against the target's harvested suite, from the evidence: you cannot run the suite, so say in `rationale` what the number rests on. A score you inflated wins this iteration and loses the search.\n  6. Give the fix a stable `fix_fingerprint`: the same string for the same DIAGNOSIS, even when you word the edit differently. That is what lets the search abandon a wrong hypothesis instead of rewording it forever.\n\nReturn JSON: {\"fix_fingerprint\": string, \"score\": number, \"diff_text\": string, \"rationale\": string, \"ops\": array}",
+                "prompt": "You are running ONE iteration of a budgeted search over a PClaw artifact. You may only READ and PROPOSE. Your tool set enforces that; do not fight it.\n\nThe artifact under optimization:\n{{inputs.target_template}}\n\nThe LIVE copy, which is frozen:\n{{inputs.live_target}}\n\nYour sandbox, where the search keeps its ledger:\n{{inputs.sandbox}}\n\nWhat the preflight measured, including the best score a candidate has to beat and the recorded runs every candidate is scored against:\n{{nodes.preflight.output}}\n\nWhat previous iterations of this search already tried, oldest first: each candidate's ledger row with its raw diff beside it and the score the search measured for it, and an empty list on the first iteration. Read the diffs, not just the rows: the point of keeping them is that the raw prior attempt tells you more than a summary of it.\n{{nodes.experience.output.candidates}}\n\nMethod, in order:\n  1. Call `refiner_evidence` for the target. Work from its ranked failure clusters, not from a hunch.\n  2. Check the candidates above. A fix whose fingerprint is already there and was not admitted is not a candidate — repeating it is how a search burns its budget confirming a wrong diagnosis.\n  3. Propose ONE candidate edit as typed ops (`update_node` / `insert` / `delete` / `move` / `set_input`). You may NOT touch the artifact's id, name, triggers, or surfacing metadata — those decide WHEN it runs and are frozen.\n  4. Put the candidate's diff in `diff_text`: the search keeps it in its ledger. Your tools read and propose, and write nothing: a write anywhere, above all into {{inputs.live_target}}, is a scope violation that makes the candidate dead whatever it would score.\n  5. Do not score the candidate. The next step measures it: the candidate template is run against the target's own recorded runs and the eval judge scores each answer. Say in `rationale` what the edit should change and why.\n  6. Give the fix a stable `fix_fingerprint`: the same string for the same DIAGNOSIS, even when you word the edit differently. That is what lets the search abandon a wrong hypothesis instead of rewording it forever.\n\nReturn JSON: {\"fix_fingerprint\": string, \"diff_text\": string, \"rationale\": string, \"ops\": array}",
                 "schema": {
                   "fix_fingerprint": "string",
-                  "score": "number",
                   "diff_text": "string",
                   "rationale": "string",
                   "ops": "array"
@@ -203,8 +202,24 @@
             },
             {
               "kind": "action",
+              "id": "score",
+              "label": "Score the candidate against the target's own runs",
+              "config": {
+                "provider": "optimize-score",
+                "on_error": "fail_run",
+                "with": {
+                  "target": "{{inputs.target_template}}",
+                  "sandbox": "{{inputs.sandbox}}",
+                  "budget_usd": "{{inputs.budget_usd}}",
+                  "ops": "{{nodes.propose.output.ops}}",
+                  "diff_text": "{{nodes.propose.output.diff_text}}"
+                }
+              }
+            },
+            {
+              "kind": "action",
               "id": "adjudicate",
-              "label": "The dual gate, then the halts",
+              "label": "The dual gate against the best score so far, then the halts",
               "config": {
                 "provider": "bash",
                 "payload": {
@@ -214,10 +229,11 @@
                   "PC_OPT_SUITE_THRESHOLD": "{{inputs.suite_threshold}}",
                   "PC_OPT_BEST_EVER": "{{nodes.preflight.output.best_ever}}",
                   "PC_OPT_ROWS_CONSIDERED": "{{nodes.preflight.output.rows_considered}}",
-                  "PC_OPT_SCORE": "{{nodes.propose.output.score}}",
+                  "PC_OPT_SCORE_RECORD": "{{nodes.score.output | json}}",
                   "PC_OPT_FIX_FINGERPRINT": "{{nodes.propose.output.fix_fingerprint}}",
                   "PC_OPT_DIFF_TEXT": "{{nodes.propose.output.diff_text}}",
                   "PC_OPT_OPS": "{{nodes.propose.output.ops | json}}",
+                  "PC_OPT_RATIONALE": "{{nodes.propose.output.rationale}}",
                   "PC_OPT_BUDGET_USD": "{{inputs.budget_usd}}",
                   "PC_OPT_ABANDON_AFTER": "{{inputs.hypothesis_abandon_after}}",
                   "PC_OPT_NO_IMPROVEMENT_HALT": "{{inputs.no_improvement_halt}}",
@@ -234,34 +250,21 @@
       },
       {
         "kind": "action",
-        "id": "ledger",
-        "label": "The search's ledger, and its winner",
+        "id": "file",
+        "label": "File the winner as a proposal a human installs",
         "config": {
           "provider": "bash",
           "payload": {
-            "PC_OPT_SANDBOX": "{{inputs.sandbox}}"
+            "PC_OPT_SUBJECT": "{{inputs.target_template}}",
+            "PC_OPT_SANDBOX": "{{inputs.sandbox}}",
+            "PC_OPT_SUITE_THRESHOLD": "{{inputs.suite_threshold}}",
+            "PC_OPT_BEST_EVER": "{{nodes.preflight.output.best_ever}}",
+            "PC_OPT_HALT": "{{nodes.search.output.halt}}",
+            "PC_OPT_HALT_DETAIL": "{{nodes.search.output.halt_detail}}"
           },
           "with": {
-            "command": "personalclaw optimize-harness experience </dev/null",
+            "command": "personalclaw optimize-harness file </dev/null",
             "timeout": 120
-          }
-        }
-      },
-      {
-        "kind": "stage",
-        "id": "file-proposal",
-        "label": "The winner becomes a proposal a human installs",
-        "config": {
-          "agent": "personalclaw-template-refiner",
-          "model_tier": "reasoning",
-          "tools_posture": "verify",
-          "prompt": "The search has halted. File its winner — if it has one — as a proposal, and nothing else.\n\nWhy it stopped: {{nodes.search.output.halt}}\nIts last adjudication: that candidate was `{{nodes.search.output.outcome}}`, the best score the search reached is {{nodes.search.output.best_so_far}}, and the gate every candidate was held to is {{nodes.search.output.gate}}\n\nThe winner, the ledger's last `admitted` candidate with the ops it is filed with, or null when nothing was admitted:\n{{nodes.ledger.output.winner}}\n\nEvery candidate the search tried, the discards included:\n{{nodes.ledger.output.candidates}}\n\nDo exactly one of these:\n  * If there is a winner, call `propose_template_diff` for {{inputs.target_template}} with ITS ops, a rationale that cites the score it reached and both halves of the gate it cleared (the suite threshold AND the best-ever), and the halt reason. You are filing a proposal for a person to read and install — you are NOT applying it, and you have no tool that could.\n  * If the winner is null, propose NOTHING and say so. A search that found no improvement has produced a result, not a failure; inventing a proposal to have something to show is the one outcome worse than an empty one.\n\nNever file a candidate whose outcome was `scope_violation`. It touched the frozen region, which makes it dead regardless of what it scored.\n\nReturn JSON: {\"proposed\": boolean, \"halt_reason\": string, \"winner_score\": number, \"rationale\": string, \"proposal_id\": string}",
-          "schema": {
-            "proposed": "boolean",
-            "halt_reason": "string",
-            "winner_score": "number",
-            "rationale": "string",
-            "proposal_id": "string"
           }
         }
       }

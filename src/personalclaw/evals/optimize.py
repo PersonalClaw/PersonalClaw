@@ -3,9 +3,10 @@
 The proactive half of the eval substrate: a hill-climbing search that tries to improve one
 of PClaw's *own* artifacts — a workflow template's prompt blocks, a skill body, an SOP —
 and hands the winner to a human as a proposal. The bundled ``optimize-harness`` template is
-the declarative packaging; this module is the machinery its nodes call.
+the declarative packaging; this module is the machinery its steps call, and :func:`run_search`
+is the same search driven in one process, through the same functions.
 
-Four properties make the difference between a search and a liability, and each is a
+Five properties make the difference between a search and a liability, and each is a
 mechanism here rather than a promise in a prompt:
 
 * **Nothing live mutates.** Candidates are written into a throwaway sandbox and only ever
@@ -20,23 +21,32 @@ mechanism here rather than a promise in a prompt:
   its ``.pclaw-lock.json`` — is a violation even when it is also inside an allowed root.
   Frozen wins over allowed, because "allowed" is a scoping default and "frozen" is a
   decision.
-* **The gate is DUAL.** :class:`DualGate` admits a candidate only when it clears BOTH the
-  harvested-suite threshold AND the monotonic best-ever score read from ``results.tsv``.
-  Either half alone is decoration: the threshold alone re-admits a candidate that already
-  lost to a better one, and best-ever alone admits a candidate that beats a bad incumbent
-  while still failing the suite. The best-ever floor is captured ONCE, before the search
-  starts (:func:`capture_best_ever`) — a floor recomputed from the rows the search is
-  writing would be pinned by the value it is meant to pin, and would rise to whatever the
-  last candidate scored.
-* **The search halts.** Three declared conditions, three call sites in :func:`run_search`:
-  ``hypothesis_abandon_after`` (the same fix attempted N× — the diagnosis is wrong),
-  ``no_improvement_halt`` (N consecutive iterations that did not improve on the best score
-  at the start of the window), and ``budget_usd`` (the guardrails :class:`SpendMeter`
-  ceiling). A fourth, ``max_iterations``, is the trivial floor under all three.
+* **A score is measured, never claimed.** Every candidate is scored by the product's own
+  evaluation of it against the target's own runs (:mod:`personalclaw.evals.candidate_score`).
+  The proposer proposes; nothing it says about its own candidate is read as a score.
+* **The gate is DUAL, and its bar rises.** :class:`DualGate` admits a candidate only when it
+  clears BOTH the harvested-suite threshold AND the best score so far. Either half alone is
+  decoration: the threshold alone re-admits a candidate that already lost to a better one, and
+  the best score alone admits a candidate that beats a bad incumbent while still failing the
+  suite. The best score starts at the best-ever floor read from ``results.tsv`` ONCE, before
+  the search starts (:func:`capture_best_ever`) — a floor re-read from the rows the search is
+  writing would be pinned by the value it is meant to pin — and rises with every candidate the
+  search admits, so a later candidate that scores below an earlier winner is not admitted and
+  cannot become the winner.
+* **The search halts, and holds its budget.** Four declared conditions, decided after each
+  candidate by one function for both drivers (:func:`halt_for`): ``hypothesis_abandon_after``
+  (the same fix tried N times without the gate admitting it — the diagnosis is wrong),
+  ``no_improvement_halt`` (N candidates in a row that did not raise the best score),
+  ``max_iterations``, and ``budget_usd``. The budget is held to what the search actually spent,
+  measured from its own model calls (a template run's usage-ledger rows,
+  :func:`personalclaw.workflows.ownership.run_spend`; the in-process driver's call log), and
+  :func:`budget_stop` is asked before every cycle and before every scoring: the search stops
+  when the next one would pass the budget, and says so. Each scoring call is held to what is
+  left too (:func:`held_to`), so the model-call guard refuses a call that would pass it.
 
 The stop-condition arithmetic is deliberately the SAME shape as
 :mod:`personalclaw.loop.tick`'s ``hypothesis_exhausted`` / ``no_progress`` detectors —
-identical fixes in a window, and a progress window whose max never rises above its first
+identical failed fixes in a window, and a progress window whose max never rises above its first
 mark. Two dialects of "it stopped improving" would be one more than this codebase can
 afford; the subjects differ (loop cycles there, search candidates here) but the rule does
 not.
@@ -44,18 +54,22 @@ not.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import os
 import sys
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Iterator, Sequence
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.guardrails.budgets import Budget, BudgetVerdict, SpendMeter
+from personalclaw.evals import candidate_score
+from personalclaw.evals.candidate_score import CandidateScore, CannotScore, unmeasured
+from personalclaw.guardrails.calls import DONE, CallLog, capture_model_calls
 from personalclaw.workflows import scope as scope_mod
 
 logger = logging.getLogger(__name__)
@@ -81,6 +95,13 @@ DEFAULT_HYPOTHESIS_ABANDON_AFTER = 3
 DEFAULT_NO_IMPROVEMENT_HALT = 5
 DEFAULT_MAX_ITERATIONS = 12
 
+#: The most candidates one search may try, whatever its ``max_iterations`` asks for. The bundled
+#: template's loop is capped at exactly this (the engine bounds a loop only by a literal cap:
+#: ``template_lint``'s ``WFL_TANGLED_LOOP``), and the search halts itself at its own
+#: ``max_iterations`` before the loop's cap is reached, so a larger request is refused at preflight
+#: rather than cut short by the loop and handed to a person with its winner unfiled.
+ITERATION_CEILING = 50
+
 
 class HaltReason(str, Enum):
     """Why a search stopped. Closed, and every member is reachable from :func:`run_search`.
@@ -90,11 +111,13 @@ class HaltReason(str, Enum):
     only interesting column is.
     """
 
-    #: The same fix attempted ``hypothesis_abandon_after`` times — the diagnosis is wrong.
+    #: The same fix tried ``hypothesis_abandon_after`` times without being admitted — the
+    #: diagnosis is wrong.
     HYPOTHESIS_ABANDONED = "hypothesis_abandoned"
-    #: ``no_improvement_halt`` consecutive iterations without improving on the best score.
+    #: ``no_improvement_halt`` consecutive candidates without raising the best score.
     NO_IMPROVEMENT = "no_improvement_halt"
-    #: The ``budget_usd`` ceiling bit (guardrails :class:`SpendMeter`).
+    #: What the search spent reached ``budget_usd``, its next cycle or scoring would pass it, or
+    #: part of its spend had no price and so could not be held to it (:func:`budget_stop`).
     BUDGET_EXHAUSTED = "budget_usd"
     #: ``max_iterations`` reached with the other three still quiet.
     ITERATIONS_EXHAUSTED = "iterations_exhausted"
@@ -109,17 +132,25 @@ class CandidateOutcome(str, Enum):
     ADMITTED = "admitted"
     SCOPE_VIOLATION = "scope_violation"
     NO_CHANGE = "no_change"
+    #: The scorer did not measure it: its edit did not apply, too few runs could be judged, or the
+    #: budget stopped the scoring. The row's ``note`` says which.
+    NOT_SCORED = "not_scored"
     BELOW_SUITE_THRESHOLD = "below_suite_threshold"
     NOT_BEST_EVER = "not_best_ever"
 
 
-#: The outcomes a candidate reaches WITHOUT the scorer ever running on it: a scope violation is
-#: dead regardless of score and an empty candidate inherits the incumbent rather than
-#: being re-evaluated. Closed, and every :class:`CandidateOutcome` member sits on exactly one
-#: side of it (railed in ``tests/test_evals_optimize.py``) — a sixth outcome added without being
-#: classified would default to "scored" and publish its ``0.0`` as a measurement.
+#: The outcomes a candidate reaches WITHOUT a measurement: a scope violation is dead regardless
+#: of score, an empty candidate inherits the incumbent rather than being re-evaluated, and a
+#: candidate the scorer could not measure has no score at all. Closed, and every
+#: :class:`CandidateOutcome` member sits on exactly one side of it (railed in
+#: ``tests/test_evals_optimize.py``) — an outcome added without being classified would default to
+#: "scored" and publish its ``0.0`` as a measurement.
 UNSCORED_OUTCOMES: frozenset[str] = frozenset(
-    {CandidateOutcome.SCOPE_VIOLATION.value, CandidateOutcome.NO_CHANGE.value}
+    {
+        CandidateOutcome.SCOPE_VIOLATION.value,
+        CandidateOutcome.NO_CHANGE.value,
+        CandidateOutcome.NOT_SCORED.value,
+    }
 )
 
 #: The three states a score column can be in, and the whole reason they are NAMED rather than
@@ -155,7 +186,8 @@ class LiveMutationError(RuntimeError):
 
 class OptimizeRefusedError(ValueError):
     """A search was asked for that cannot be run honestly (no budget, sandbox inside the
-    frozen region, an empty suite). Refusing before the first model call is the point."""
+    frozen region, a target no candidate of which can be scored). Refusing before the first
+    model call is the point."""
 
 
 @dataclass(frozen=True)
@@ -164,7 +196,8 @@ class StopConditions:
 
     An unbudgeted search is the failure mode this whole section exists to prevent, so
     ``budget_usd <= 0`` is a refusal (:meth:`validate`) rather than "unlimited" — which is
-    what a 0 means everywhere else in :class:`Budget` and exactly why it is checked here.
+    what a 0 means everywhere else in :class:`~personalclaw.guardrails.budgets.Budget` and
+    exactly why it is checked here.
     """
 
     budget_usd: float = 0.0
@@ -201,11 +234,11 @@ class StopConditions:
                 "an unbudgeted search over model calls has no ceiling at all, and 0 means "
                 "UNLIMITED to the guardrails Budget it would be handed"
             )
-
-    def budget(self) -> Budget:
-        """The guardrails ceiling this envelope maps to (dollars only — the token ceiling
-        belongs to whatever runs the model calls, not to the search that counts them)."""
-        return Budget(max_dollars=self.budget_usd)
+        if self.max_iterations > ITERATION_CEILING:
+            raise OptimizeRefusedError(
+                f"optimize-harness tries at most {ITERATION_CEILING} candidates, and "
+                f"`max_iterations` asks for {self.max_iterations}"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -229,6 +262,16 @@ def _as_float(raw: Any) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _maybe_float(raw: Any) -> float | None:
+    """A recorded amount, or ``None`` when none was recorded: an absent cost is not a free one."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 # ── the frozen region + the scope check ──────────────────────────────────────
@@ -306,6 +349,11 @@ def scope_check(
 #: driver keeps its witness in memory; the template's bash nodes cannot, and a guarantee that
 #: only holds inside one process is not the guarantee.
 WITNESS_FILE = "witness.json"
+
+#: What ``preflight`` measured for the steps after it: the runs every candidate is scored
+#: against, and what the run had spent when the search started. Kept in the sandbox for the same
+#: reason the witness is: the steps that read it run in later processes.
+PREFLIGHT_FILE = "preflight.json"
 
 
 def content_digest(roots: Sequence[str | os.PathLike[str]]) -> dict[str, str]:
@@ -429,7 +477,8 @@ def capture_best_ever(subject: str, *, rows: Sequence[dict] | None = None) -> Be
     per-iteration: the search appends its own rows to the same ledger, so a re-read would
     fold the candidate being scored into the floor that is supposed to pin it, and the
     "monotonic best-ever" half of the gate would degrade to "beat yourself", which every
-    candidate does.
+    candidate does. What rises during the search is the bar above the floor
+    (:meth:`DualGate.bar`), and it rises only with the candidates the gate admits.
     """
     if rows is None:
         from personalclaw.evals import store
@@ -458,22 +507,38 @@ class DualGate:
 
     #: Half A — the harvested regression suite's pass threshold (LEARN-R2's GateOK floor).
     suite_threshold: float
-    #: Half B — the monotonic best-ever from ``results.tsv``, frozen at capture time.
+    #: Where half B's bar starts: the monotonic best-ever from ``results.tsv``, frozen at capture.
     best_ever: BestEver
 
     def clears_suite_threshold(self, score: float) -> bool:
         """At-or-above the suite floor. Inclusive: the threshold IS the passing mark."""
         return score >= self.suite_threshold
 
-    def beats_best_ever(self, score: float) -> bool:
-        """STRICTLY above the best-ever. Ties lose — hill-climbing on equal scores is how
-        a search spends a budget wandering a plateau and calls the last step a win."""
-        return score > self.best_ever.value
+    def bar(self, rows: Sequence[LedgerRow]) -> float:
+        """Half B's bar after *rows*: the best-ever floor, raised by every candidate admitted.
 
-    def decide(self, score: float) -> CandidateOutcome:
+        Read from the rows themselves rather than carried in a variable, so both drivers — one
+        process holding the rows, and the template's steps each reading them back from the
+        sandbox — compute the same bar from the same ledger.
+        """
+        admitted = [r.score for r in rows if r.outcome == CandidateOutcome.ADMITTED.value]
+        return max([self.best_ever.value, *admitted])
+
+    def beats(self, score: float, best_so_far: float) -> bool:
+        """STRICTLY above the best so far. Ties lose — hill-climbing on equal scores is how
+        a search spends a budget wandering a plateau and calls the last step a win."""
+        return score > best_so_far
+
+    def decide(self, score: float, *, best_so_far: float) -> CandidateOutcome:
+        """The verdict on a candidate that scored *score* when the bar was *best_so_far*.
+
+        Required, with no default: a caller that forgot the bar would compare every candidate
+        with the floor the search started from, and admit a later candidate that lost to an
+        earlier winner.
+        """
         if not self.clears_suite_threshold(score):
             return CandidateOutcome.BELOW_SUITE_THRESHOLD
-        if not self.beats_best_ever(score):
+        if not self.beats(score, best_so_far):
             return CandidateOutcome.NOT_BEST_EVER
         return CandidateOutcome.ADMITTED
 
@@ -525,6 +590,14 @@ class LedgerRow:
     #: The candidate's typed edit, as the proposer gave it: what a winner is FILED with
     #: (``propose_template_diff``), so the row of an admitted candidate carries it.
     ops: list[dict[str, Any]] = field(default_factory=list)
+    #: Why the proposer made the edit, in its words: what a filed winner's rationale opens with.
+    rationale: str = ""
+    #: What the search had spent when this candidate's cycle ended, measured from its own model
+    #: calls. The difference between two rows is what one cycle cost (:func:`search_spend`).
+    spent_usd: float | None = None
+    #: What scoring this candidate cost, ``None`` when nothing was spent scoring it or part of
+    #: what was spent had no price.
+    score_usd: float | None = None
 
     @property
     def scored(self) -> bool:
@@ -556,6 +629,9 @@ class LedgerRow:
             "scope": dict(self.scope),
             "note": self.note,
             "ops": [dict(op) for op in self.ops],
+            "rationale": self.rationale,
+            "spent_usd": self.spent_usd,
+            "score_usd": self.score_usd,
         }
 
     @classmethod
@@ -565,7 +641,8 @@ class LedgerRow:
         :func:`_cmd_adjudicate` rewrites the whole index from the rows it reads back, so a field
         this dropped would be gone from the ledger after the next iteration. ``score`` is read
         through :func:`_as_float`, and the rendered ``None`` of an unscored row comes back
-        ``0.0``; :attr:`scored` reads ``outcome``, so the row still renders unscored.
+        ``0.0``; :attr:`scored` reads ``outcome``, so the row still renders unscored. The two
+        amounts keep ``None``: an amount nobody recorded must not come back as a free one.
         """
         scope = raw.get("scope")
         return cls(
@@ -577,6 +654,9 @@ class LedgerRow:
             scope=dict(scope) if isinstance(scope, dict) else {},
             note=str(raw.get("note") or ""),
             ops=_ops(raw.get("ops")),
+            rationale=str(raw.get("rationale") or ""),
+            spent_usd=_maybe_float(raw.get("spent_usd")),
+            score_usd=_maybe_float(raw.get("score_usd")),
         )
 
 
@@ -591,13 +671,21 @@ def _ops(raw: Any) -> list[dict[str, Any]]:
     return [dict(op) for op in raw if isinstance(op, dict)] if isinstance(raw, list) else []
 
 
+def _winner(rows: Sequence[LedgerRow]) -> LedgerRow | None:
+    """The search's winner: its last ADMITTED candidate, which the rising bar makes its best."""
+    admitted = [r for r in rows if r.outcome == CandidateOutcome.ADMITTED.value]
+    return admitted[-1] if admitted else None
+
+
 @dataclass
 class SearchOutcome:
     """What a completed search hands back. ``winner`` is ``None`` when nothing was admitted.
 
     ``needs_from_human`` is populated for exactly the halts §8.2 says deserve one — a search
-    that abandoned its hypothesis or ran out of improvement has learned something a person
-    should read, whereas one that simply exhausted its iteration count has not.
+    that abandoned its hypothesis, ran out of improvement or reached its budget has learned
+    something a person should read, whereas one that simply exhausted its iteration count has
+    not. ``summary`` is the sentence the search ends with, for every halt: why it stopped and
+    what it kept.
     """
 
     halt_reason: HaltReason
@@ -608,6 +696,12 @@ class SearchOutcome:
     rows: list[LedgerRow] = field(default_factory=list)
     gate: dict[str, Any] = field(default_factory=dict)
     needs_from_human: str = ""
+    summary: str = ""
+    #: What the search spent, measured from its own model calls; ``None`` when part of it had no
+    #: price.
+    spent_usd: float | None = None
+    #: The runs the candidates were scored against: the evidence a filed winner names.
+    evidence_runs: tuple[str, ...] = ()
 
     @property
     def admitted(self) -> bool:
@@ -637,6 +731,7 @@ class SearchOutcome:
         return {
             "halt_reason": self.halt_reason.value,
             "halt_detail": self.halt_detail,
+            "summary": self.summary,
             "iterations": self.iterations,
             "admitted": self.admitted,
             "winner_score": self.winner_score,
@@ -645,25 +740,187 @@ class SearchOutcome:
             "candidates": len(self.rows),
             "scored_candidates": self.scored_candidates,
             "unscored_candidates": len(self.rows) - self.scored_candidates,
+            "spent_usd": self.spent_usd,
+            "evidence_runs": list(self.evidence_runs),
             "rows": [r.to_dict() for r in self.rows],
             "gate": dict(self.gate),
             "needs_from_human": self.needs_from_human,
         }
 
 
-# ── the halt detectors (one call site each in run_search) ─────────────────────
+# ── what the search spent, and the one budget check ──────────────────────────
+
+#: What a budget check is asked before: the next cycle of the search, or the next scoring of a
+#: candidate. A cycle's first costly step is its proposal, so the check before a cycle is the
+#: check before its proposal too.
+BEFORE_CYCLE = "cycle"
+BEFORE_SCORING = "scoring"
+
+#: Two amounts closer than this are one amount (charges round to 6 places).
+_EPSILON = 1e-9
 
 
-def hypothesis_abandoned(fingerprints: Sequence[str], window: int) -> bool:
-    """The same fix attempted ``window`` times in a row.
+@dataclass(frozen=True)
+class Spend:
+    """What a search has spent, measured from the model calls it made, and what its steps cost.
 
-    Same arithmetic as ``loop.tick``'s ``hypothesis_exhausted``: a full window of identical
-    fingerprints. Deliberately not "N attempts total" — a proposer that alternates two fixes
-    is exploring, and abandoning it would be abandoning the search, not the hypothesis.
+    ``priced`` is ``False`` when some of those calls had no price: ``dollars`` is then a floor,
+    and a dollar budget cannot be held to it (:func:`budget_stop`).
     """
-    if window <= 0 or len(fingerprints) < window:
+
+    dollars: float
+    priced: bool = True
+    #: What each finished cycle of the search cost, oldest first.
+    cycles: tuple[float, ...] = ()
+    #: What scoring each candidate cost, oldest first, for the scorings that were priced.
+    scorings: tuple[float, ...] = ()
+
+
+def search_spend(dollars: float, priced: bool, rows: Sequence[LedgerRow], *, start: float) -> Spend:
+    """The search's :class:`Spend`: *dollars* measured now, and its steps' costs from *rows*.
+
+    A cycle's cost is the difference between what the search had spent when two consecutive
+    cycles ended (each row's ``spent_usd``; *start* before the first), so it holds everything the
+    cycle spent, its proposal and its scoring alike, as the measurement saw it.
+    """
+    marks = [float(start), *(r.spent_usd for r in rows if r.spent_usd is not None)]
+    cycles = tuple(max(0.0, round(b - a, 6)) for a, b in zip(marks, marks[1:]))
+    scorings = tuple(float(r.score_usd) for r in rows if r.score_usd is not None)
+    return Spend(dollars=float(dollars), priced=bool(priced), cycles=cycles, scorings=scorings)
+
+
+def _money(value: float) -> str:
+    """Dollars as a person reads them: to the cent, or to four figures below a cent."""
+    amount = float(value)
+    return f"${amount:.2f}" if amount >= 0.01 or amount == 0 else f"${amount:.4g}"
+
+
+def budget_stop(spend: Spend, budget_usd: float, *, before: str) -> str:
+    """Why the search stops before its next cycle or scoring, as a clause; ``""`` to go on.
+
+    THE budget check, for both drivers and at every point the search is asked to spend: before
+    each cycle (*before* ``BEFORE_CYCLE``) and before each scoring (``BEFORE_SCORING``). It stops
+    the search when:
+
+    * part of what it spent had no price: the dollars it counted are a floor, and a budget held
+      to a floor holds nothing (the guard refuses such a call for the same reason);
+    * what it spent has reached the budget;
+    * the next cycle or scoring would pass it: what was spent, plus the most one of them has cost
+      so far, is more than the budget. Before the first of each there is no such measurement, and
+      a scoring is then held call by call instead (:func:`held_to`).
+    """
+    budget = float(budget_usd)
+    spent = _money(spend.dollars)
+    if not spend.priced:
+        return (
+            f"some of its model calls had no price, so the {spent} it could count is only part "
+            f"of what it spent, and its {_money(budget)} budget cannot be held to it"
+        )
+    if spend.dollars >= budget - _EPSILON:
+        return f"it has spent {spent} of its {_money(budget)} budget"
+    costs = spend.cycles if before == BEFORE_CYCLE else spend.scorings
+    if costs:
+        most = max(costs)
+        if spend.dollars + most > budget + _EPSILON:
+            step = "a cycle of the search" if before == BEFORE_CYCLE else "scoring a candidate"
+            return (
+                f"it has spent {spent} of its {_money(budget)} budget, and {step} has cost up to "
+                f"{_money(most)}, so another would pass it"
+            )
+    return ""
+
+
+def _held_within(budget_usd: float, spent: float, outer: Any, used: Any) -> Any:
+    """The search's ceiling held inside an enclosing one, *outer*, of which *used* is spent: in
+    each dimension, the tighter of the two. A dimension with no room left is held at the least
+    amount there is rather than at 0, which a :class:`~personalclaw.guardrails.budgets.Budget`
+    reads as unlimited."""
+    from personalclaw.guardrails.budgets import Budget
+
+    dollars = float(budget_usd)
+    if outer.max_dollars > 0:
+        dollars = min(dollars, spent + max(0.0, float(outer.max_dollars) - float(used.dollars)))
+    tokens = 0
+    if outer.max_tokens > 0:
+        # The search's own account counts no tokens before the block, so its room is all of it.
+        tokens = max(1, int(outer.max_tokens) - int(used.tokens))
+    return Budget(max_tokens=tokens, max_dollars=max(dollars, _EPSILON))
+
+
+@contextlib.contextmanager
+def held_to(key: str, budget_usd: float, spent_usd: float) -> Iterator[None]:
+    """Hold every model call made inside the block to what is left of the search's budget.
+
+    The model-call guard admits each call against the ambient run's ceiling before the call is
+    made (``guardrails.model_call.admit_call``) and charges it to the ambient run's key after.
+    Binding the search's ``budget_usd`` there, with what the search had already spent charged to a
+    fresh account under *key*, makes the guard refuse the call that would pass the budget — even
+    on a search's first scoring, which no earlier scoring can project (:func:`budget_stop`). The
+    account is dropped on the way out: what the search spent is read from its own ledger, never
+    from this in-process counter.
+
+    A ceiling the block is already inside still holds. A search an automation started is held to
+    that automation's per-run ceiling, under the automation's own key: the calls in the block are
+    held to the tighter of the two (:func:`_held_within`), and what they cost is charged to the
+    enclosing account as the block ends, so its total counts them as the guard would have.
+    """
+    from personalclaw.guardrails.budgets import (
+        Budget,
+        current_run_budget,
+        current_run_key,
+        get_meter,
+        reset_current_run_budget,
+        reset_current_run_key,
+        set_current_run_budget,
+        set_current_run_key,
+    )
+
+    meter = get_meter()
+    spent = max(0.0, float(spent_usd))
+    outer_key = current_run_key()
+    ceiling = (
+        _held_within(budget_usd, spent, current_run_budget(), meter.run_totals(outer_key))
+        if outer_key
+        else Budget(max_dollars=float(budget_usd))
+    )
+    meter.end_run(key)
+    meter.charge_run(key, 0, spent)
+    key_token = set_current_run_key(key)
+    budget_token = set_current_run_budget(ceiling)
+    try:
+        yield
+    finally:
+        reset_current_run_budget(budget_token)
+        reset_current_run_key(key_token)
+        inside = meter.run_totals(key)
+        meter.end_run(key)
+        if outer_key:
+            meter.charge_run(outer_key, inside.tokens, max(0.0, inside.dollars - spent))
+
+
+# ── the halt detectors, and the one decision both drivers take ───────────────
+
+
+def hypothesis_abandoned(attempts: Sequence[tuple[str, bool]], window: int) -> bool:
+    """The same fix tried ``window`` times without the gate admitting it.
+
+    ``attempts`` is ``(fix_fingerprint, admitted)`` for each candidate, oldest first. The same
+    arithmetic as ``loop.tick``'s ``hypothesis_exhausted``, applied the same way: a fix counts
+    only when its attempt FAILED (``record_failure``), an admitted candidate clears the streak
+    (``reset_after_success``), and an attempt that names no fix adds nothing. A fix the gate
+    admitted raised the best score, so trying it again is the search climbing, not a wrong
+    diagnosis. A full window of one fix fires; a proposer alternating two fixes is exploring,
+    and abandoning it would be abandoning the search, not the hypothesis.
+    """
+    streak: list[str] = []
+    for fingerprint, admitted in attempts:
+        if admitted:
+            streak = []
+        elif fingerprint:
+            streak.append(fingerprint)
+    if window <= 0 or len(streak) < window:
         return False
-    return len(set(fingerprints[-window:])) == 1
+    return len(set(streak[-window:])) == 1
 
 
 def no_improvement(marks: Sequence[float], window: int) -> bool:
@@ -680,10 +937,168 @@ def no_improvement(marks: Sequence[float], window: int) -> bool:
     return max(recent) <= recent[0]
 
 
-def budget_exhausted(meter: SpendMeter, run_key: str, stops: StopConditions) -> tuple[bool, str]:
-    """Whether the ``budget_usd`` ceiling has bitten for this search's run scope."""
-    verdict, reason = meter.check_run(run_key, stops.budget())
-    return verdict is BudgetVerdict.EXCEEDED, reason
+def halt_for(
+    rows: Sequence[LedgerRow],
+    stops: StopConditions,
+    spend: Spend,
+    *,
+    scorer_stopped: str = "",
+) -> tuple[HaltReason | None, str]:
+    """Whether the search stops after its latest candidate, and why: ``(reason, clause)``.
+
+    ONE decision for both drivers — :func:`run_search` after each candidate, and the template's
+    ``adjudicate`` step after each cycle — so a halt cannot fire in one and not the other. In
+    order: the budget stopped this candidate's scoring (*scorer_stopped*, the clause it stopped
+    with); the hypothesis is abandoned; the best score has stopped rising; the candidates
+    ``max_iterations`` allows are tried; the next cycle would pass the budget, which is the check
+    before every cycle after the first.
+    """
+    if scorer_stopped:
+        return HaltReason.BUDGET_EXHAUSTED, scorer_stopped
+    window = stops.hypothesis_abandon_after
+    attempts = [(r.fix_fingerprint, r.outcome == CandidateOutcome.ADMITTED.value) for r in rows]
+    if hypothesis_abandoned(attempts, window):
+        return HaltReason.HYPOTHESIS_ABANDONED, (
+            f"its last {window} attempts at a fix all tried the same one "
+            f"({rows[-1].fix_fingerprint}) and the gate admitted none of them, so the diagnosis "
+            "behind it is wrong"
+        )
+    marks = [r.best_so_far for r in rows]
+    if no_improvement(marks, stops.no_improvement_halt):
+        return HaltReason.NO_IMPROVEMENT, (
+            f"the best score stayed at {marks[-1]:.2f} across its last "
+            f"{stops.no_improvement_halt} candidates"
+        )
+    if len(rows) >= stops.max_iterations:
+        return HaltReason.ITERATIONS_EXHAUSTED, (
+            f"it tried {len(rows)} candidates, the most its max_iterations allows"
+        )
+    clause = budget_stop(spend, stops.budget_usd, before=BEFORE_CYCLE)
+    if clause:
+        return HaltReason.BUDGET_EXHAUSTED, clause
+    return None, ""
+
+
+def kept_clause(rows: Sequence[LedgerRow]) -> str:
+    """What the search kept, as a sentence: its winner and that winner's score, or nothing."""
+    winner = _winner(rows)
+    if winner is None:
+        return "It kept no candidate: the gate admitted none of them."
+    return f"It kept candidate {winner.iteration}, which scored {winner.score:.2f}."
+
+
+def search_summary(halt: HaltReason, detail: str, rows: Sequence[LedgerRow]) -> str:
+    """The sentence a search ends with: why it stopped, and what it kept."""
+    lead = (
+        "The search stopped at its budget"
+        if halt is HaltReason.BUDGET_EXHAUSTED
+        else "The search stopped"
+    )
+    return f"{lead}: {detail}. {kept_clause(rows)}"
+
+
+def _needs_from_human(halt: HaltReason, summary: str) -> str:
+    """§8.2's structured ``needs_from_human`` note — for the halts that earned one.
+
+    ``ITERATIONS_EXHAUSTED`` and ``PROPOSER_EXHAUSTED`` do not: the first means the envelope
+    was too small and the second means there was nothing to try, and neither is a question
+    only a person can answer. Filing one for every halt would make the queue unreadable,
+    which is the same as not filing them.
+    """
+    earned = {
+        HaltReason.HYPOTHESIS_ABANDONED,
+        HaltReason.NO_IMPROVEMENT,
+        HaltReason.BUDGET_EXHAUSTED,
+    }
+    return summary if halt in earned else ""
+
+
+# ── a candidate's row, from what its scoring measured ────────────────────────
+
+
+def _score_note(result: CandidateScore) -> str:
+    """What the scoring measured, as the row's note: how many runs passed of those judged."""
+    note = f"the judge passed {result.passed} of the {result.judged} runs it could score"
+    if result.rejected:
+        note += f"; {result.rejected} could not be scored"
+    return note
+
+
+def scored_row(
+    gate: DualGate,
+    rows: Sequence[LedgerRow],
+    candidate: Candidate,
+    result: CandidateScore,
+    *,
+    scope: dict[str, Any],
+) -> LedgerRow:
+    """The ledger row for a candidate the scorer was run on, measured against the bar *rows* set.
+
+    ``score_usd`` is what the scoring spent when it made a call at all: a scoring the budget
+    refused before its first call spent nothing, and is no measurement of what a scoring costs.
+    """
+    bar = gate.bar(rows)
+    spent_scoring = result.judged + result.rejected > 0 or bool(result.spent_usd)
+    base = LedgerRow(
+        iteration=candidate.iteration,
+        outcome=CandidateOutcome.NOT_SCORED.value,
+        score=0.0,
+        fix_fingerprint=candidate.fix_fingerprint,
+        best_so_far=bar,
+        scope=scope,
+        note=result.reason or "the scorer recorded no measurement for this candidate",
+        ops=[dict(op) for op in candidate.ops],
+        rationale=candidate.rationale,
+        score_usd=result.spent_usd if spent_scoring else None,
+    )
+    if result.score is None:
+        return base
+    outcome = gate.decide(result.score, best_so_far=bar)
+    admitted = outcome is CandidateOutcome.ADMITTED
+    return replace(
+        base,
+        outcome=outcome.value,
+        score=result.score,
+        best_so_far=result.score if admitted else bar,
+        note=_score_note(result),
+    )
+
+
+#: What a violation's and an empty edit's rows say. One wording for both drivers.
+SCOPE_VIOLATION_NOTE = "frozen-region touch or write outside allowed_write_paths"
+NO_CHANGE_NOTE = "empty candidate — inherited the incumbent score unscored"
+
+
+def violation_row(
+    gate: DualGate, rows: Sequence[LedgerRow], candidate: Candidate, *, scope: dict[str, Any]
+) -> LedgerRow:
+    """The row of a candidate that touched the frozen region or wrote outside its sandbox: dead
+    regardless of score, so it reaches no scorer, scores nothing and does not move the bar."""
+    return LedgerRow(
+        iteration=candidate.iteration,
+        outcome=CandidateOutcome.SCOPE_VIOLATION.value,
+        score=0.0,
+        fix_fingerprint=candidate.fix_fingerprint,
+        best_so_far=gate.bar(rows),
+        scope=scope,
+        note=SCOPE_VIOLATION_NOTE,
+        ops=[dict(op) for op in candidate.ops],
+        rationale=candidate.rationale,
+    )
+
+
+def no_change_row(
+    gate: DualGate, rows: Sequence[LedgerRow], candidate: Candidate, *, scope: dict[str, Any]
+) -> LedgerRow:
+    """The row of an empty candidate: it reaches no scorer and inherits the incumbent's score
+    (§8.1), so it does not move the bar either."""
+    bar = gate.bar(rows)
+    return replace(
+        violation_row(gate, rows, candidate, scope=scope),
+        outcome=CandidateOutcome.NO_CHANGE.value,
+        score=bar,
+        note=NO_CHANGE_NOTE,
+    )
 
 
 # ── the search ───────────────────────────────────────────────────────────────
@@ -691,24 +1106,54 @@ def budget_exhausted(meter: SpendMeter, run_key: str, stops: StopConditions) -> 
 #: A proposer is handed the iteration number and the experience index, and returns the next
 #: candidate or ``None`` when it has nothing left. It NEVER receives a writable handle to
 #: the live artifact — the sandbox path is all it gets.
-Proposer = Callable[[int, Path, list[dict[str, Any]]], Candidate | None]
+Proposer = Callable[[int, Path, list[dict[str, Any]]], Awaitable[Candidate | None]]
 
-#: A scorer is handed the candidate and its sandbox, and returns (score, checks). It is the
-#: only step allowed to spend model calls, which is why it is also the step that charges the
-#: meter.
-Scorer = Callable[[Candidate, Path], tuple[float, dict[str, Any]]]
+#: A scorer is handed the candidate and its sandbox folder and returns what it measured. The
+#: product's own (:func:`product_scorer`) is the default; it is the step that spends the most,
+#: which is why the search checks its budget before every scoring and holds its calls to it.
+Scorer = Callable[[Candidate, Path], Awaitable[CandidateScore]]
 
 
-def run_search(
+def product_scorer(subject: str, cases: Sequence[dict[str, Any]]) -> Scorer:
+    """The product's evaluation of a candidate (:func:`candidate_score.score_candidate`), as a
+    :data:`Scorer`: the same one the bundled template's scoring step runs, booking its calls to
+    the search."""
+    from personalclaw.usage_ledger import Attribution
+
+    usage = Attribution(source="eval", session_key=f"{SEARCH_KIND}:{subject}")
+    suite = list(cases)
+
+    async def score(candidate: Candidate, cand_dir: Path) -> CandidateScore:
+        return await candidate_score.score_candidate(
+            subject=subject, ops=list(candidate.ops), cases=suite, usage=usage
+        )
+
+    return score
+
+
+def _call_spend(calls: CallLog) -> tuple[float, bool]:
+    """What the calls in *calls* cost: the dollars the priced ones did, and whether all were."""
+    return float(calls.floor_cost_usd or 0.0), calls.cost_usd is not None
+
+
+def _cost_since(calls: CallLog, mark: int) -> float | None:
+    """What the calls made after the first *mark* cost, ``None`` when part of it is unknown."""
+    later = calls.calls[mark:]
+    if any(c.state != DONE or not c.priced for c in later):
+        return None
+    return round(sum(c.cost_usd for c in later), 6)
+
+
+async def run_search(
     *,
     subject: str,
     live_target: str | os.PathLike[str],
     sandbox: str | os.PathLike[str],
     propose: Proposer,
-    score: Scorer,
     suite_threshold: float,
     stops: StopConditions,
-    meter: SpendMeter | None = None,
+    score: Scorer | None = None,
+    cases: Sequence[dict[str, Any]] | None = None,
     best_ever: BestEver | None = None,
     witness_extra: Sequence[str | os.PathLike[str]] = (),
 ) -> SearchOutcome:
@@ -720,9 +1165,16 @@ def run_search(
     for. A search that scored first and scope-checked afterwards would have the same verdicts
     and a much larger bill.
 
-    Raises :class:`OptimizeRefusedError` when the envelope is unbudgeted or the sandbox sits
+    *score* defaults to the product's own (:func:`product_scorer`) over *cases*, which default
+    to the target's own runs (:func:`candidate_score.load_cases`); a target none of whose
+    candidates could be scored is refused before anything runs. What the search spent is
+    measured from every guarded model call made inside it — its proposer's and its scorer's —
+    and held to ``stops.budget_usd`` by the same checks the template's steps make.
+
+    Raises :class:`OptimizeRefusedError` when the envelope is unbudgeted, the sandbox sits
     inside the frozen region (which would make every candidate a violation, or worse, make
-    the frozen region writable). Raises :class:`LiveMutationError` if the live artifact moved.
+    the frozen region writable), or no scorer can run. Raises :class:`LiveMutationError` if the
+    live artifact moved.
     """
     stops.validate()
     frozen = frozen_roots(live_target)
@@ -732,160 +1184,122 @@ def run_search(
             f"the search sandbox {sandbox_path} is inside the frozen region "
             f"({', '.join(frozen)}) — candidates would be written over the live artifact"
         )
+    suite = list(cases or ())
+    if score is None:
+        try:
+            suite = suite or candidate_score.load_cases(subject)
+        except CannotScore as exc:
+            raise OptimizeRefusedError(str(exc)) from exc
+        score = product_scorer(subject, suite)
     sandbox_path.mkdir(parents=True, exist_ok=True)
     allowed = [str(sandbox_path)]
     watch = sorted({*allowed, *frozen})
 
-    meter = meter or SpendMeter()
-    run_key = f"{SEARCH_KIND}:{subject}"
     gate = DualGate(
         suite_threshold=suite_threshold,
         best_ever=best_ever if best_ever is not None else capture_best_ever(subject),
     )
-    witness = LiveWitness.capture([*frozen, *witness_extra])
+    # The witness hashes every file it watches, so it runs off the event loop, as whole-file
+    # work must (`tests/test_event_loop_whole_file_census.py`).
+    witness = await asyncio.to_thread(LiveWitness.capture, [*frozen, *witness_extra])
+    key = f"{SEARCH_KIND}:{subject}"
 
     rows: list[LedgerRow] = []
-    fingerprints: list[str] = []
-    marks: list[float] = []
-    best = gate.best_ever.value
-    winner: Candidate | None = None
-    winner_score = 0.0
-    halt = HaltReason.ITERATIONS_EXHAUSTED
-    detail = f"{stops.max_iterations} iterations without a halt condition firing"
-
+    halt: HaltReason | None = None
+    detail = ""
     iteration = 0
-    while iteration < stops.max_iterations:
-        # ── halt call site 1: budget_usd ────────────────────────────────────
-        spent, reason = budget_exhausted(meter, run_key, stops)
-        if spent:
-            halt, detail = HaltReason.BUDGET_EXHAUSTED, reason
-            break
+    with capture_model_calls() as calls:
 
-        iteration += 1
-        experience = read_experience(sandbox_path)
-        # The snapshot BRACKETS the proposer, not just the candidate write. The proposer is
-        # what a real search hands an agent, so it is the step that can escape its scope; a
-        # diff taken after it returned would observe only this function's own writes and
-        # report every escape as clean.
-        before = scope_mod.snapshot(watch)
-        candidate = propose(iteration, sandbox_path, experience)
-        if candidate is None:
-            halt = HaltReason.PROPOSER_EXHAUSTED
-            detail = f"the proposer had no candidate at iteration {iteration}"
-            iteration -= 1
-            break
+        def spent() -> Spend:
+            dollars, priced = _call_spend(calls)
+            return search_spend(dollars, priced, rows, start=0.0)
 
-        cand_dir = sandbox_path / f"candidate-{iteration:03d}"
-        cand_dir.mkdir(parents=True, exist_ok=True)
-        (cand_dir / "candidate.diff").write_text(candidate.diff_text, encoding="utf-8")
-        after = scope_mod.snapshot(watch)
-        scope_report = scope_check(before, after, allowed=allowed, frozen=frozen)
+        # The check before the first cycle, as the template's preflight makes it.
+        opening = budget_stop(spent(), stops.budget_usd, before=BEFORE_CYCLE)
+        if opening:
+            halt, detail = HaltReason.BUDGET_EXHAUSTED, opening
+        while halt is None:
+            iteration += 1
+            experience = read_experience(sandbox_path)
+            # The snapshot BRACKETS the proposer, not just the candidate write. The proposer is
+            # what a real search hands an agent, so it is the step that can escape its scope; a
+            # diff taken after it returned would observe only this function's own writes and
+            # report every escape as clean.
+            before = scope_mod.snapshot(watch)
+            candidate = await propose(iteration, sandbox_path, experience)
+            if candidate is None:
+                halt = HaltReason.PROPOSER_EXHAUSTED
+                detail = f"the proposer had no candidate at iteration {iteration}"
+                iteration -= 1
+                break
 
-        if scope_report.violation:
-            # Terminal for the candidate, and unscored: the "dead regardless of score".
-            # It still costs an iteration and still counts as non-improving, because a
-            # proposer that keeps escaping its scope must be allowed to exhaust the halts.
-            rows.append(
-                LedgerRow(
-                    iteration=iteration,
-                    outcome=CandidateOutcome.SCOPE_VIOLATION.value,
-                    score=0.0,
-                    fix_fingerprint=candidate.fix_fingerprint,
-                    best_so_far=best,
-                    scope=scope_report.to_dict(),
-                    note="frozen-region touch or write outside allowed_write_paths",
-                    ops=[dict(op) for op in candidate.ops],
-                )
-            )
-        elif candidate.no_change:
-            # Cheap validation, before any LLM spend: an empty candidate inherits the
-            # incumbent score rather than being re-evaluated.
-            rows.append(
-                LedgerRow(
-                    iteration=iteration,
-                    outcome=CandidateOutcome.NO_CHANGE.value,
-                    score=best,
-                    fix_fingerprint=candidate.fix_fingerprint,
-                    best_so_far=best,
-                    scope=scope_report.to_dict(),
-                    note="empty candidate — inherited the incumbent score unscored",
-                    ops=[dict(op) for op in candidate.ops],
-                )
-            )
-        else:
-            value, checks = score(candidate, cand_dir)
-            gate_outcome = gate.decide(value)
-            if gate_outcome is CandidateOutcome.ADMITTED:
-                winner, winner_score, best = candidate, value, value
-            rows.append(
-                LedgerRow(
-                    iteration=iteration,
-                    outcome=gate_outcome.value,
-                    score=value,
-                    fix_fingerprint=candidate.fix_fingerprint,
-                    best_so_far=best,
-                    scope=scope_report.to_dict(),
-                    note=json.dumps(checks, sort_keys=True, default=str)[:400],
-                    ops=[dict(op) for op in candidate.ops],
-                )
-            )
+            cand_dir = sandbox_path / f"candidate-{iteration:03d}"
+            cand_dir.mkdir(parents=True, exist_ok=True)
+            (cand_dir / "candidate.diff").write_text(candidate.diff_text, encoding="utf-8")
+            after = scope_mod.snapshot(watch)
+            scope_report = scope_check(before, after, allowed=allowed, frozen=frozen)
 
-        fingerprints.append(candidate.fix_fingerprint)
-        marks.append(best)
-        write_experience(sandbox_path, rows, candidate=candidate, iteration=iteration)
+            stopped = ""
+            if scope_report.violation:
+                # Terminal for the candidate, and unscored: the "dead regardless of score".
+                # It still costs an iteration and still counts as non-improving, because a
+                # proposer that keeps escaping its scope must be allowed to exhaust the halts.
+                row = violation_row(gate, rows, candidate, scope=scope_report.to_dict())
+            elif candidate.no_change:
+                # Cheap validation, before any LLM spend: an empty candidate inherits the
+                # incumbent score rather than being re-evaluated.
+                row = no_change_row(gate, rows, candidate, scope=scope_report.to_dict())
+            else:
+                now = spent()
+                refusal = budget_stop(now, stops.budget_usd, before=BEFORE_SCORING)
+                if refusal:
+                    result = unmeasured(refusal, cases=len(suite), budget_stopped=True)
+                else:
+                    mark = len(calls.calls)
+                    with held_to(key, stops.budget_usd, now.dollars):
+                        result = await score(candidate, cand_dir)
+                    result = replace(result, spent_usd=_cost_since(calls, mark))
+                if result.budget_stopped:
+                    stopped = result.reason
+                row = scored_row(gate, rows, candidate, result, scope=scope_report.to_dict())
 
-        # ── halt call site 2: hypothesis_abandon_after ──────────────────────
-        if hypothesis_abandoned(fingerprints, stops.hypothesis_abandon_after):
-            halt = HaltReason.HYPOTHESIS_ABANDONED
-            detail = (
-                f"the same fix ({candidate.fix_fingerprint}) failed "
-                f"{stops.hypothesis_abandon_after}× — the diagnosis is wrong"
-            )
-            break
+            row.spent_usd = _call_spend(calls)[0]
+            rows.append(row)
+            write_experience(sandbox_path, rows, candidate=candidate, iteration=iteration)
+            halt, detail = halt_for(rows, stops, spent(), scorer_stopped=stopped)
+        dollars, priced = _call_spend(calls)
 
-        # ── halt call site 3: no_improvement_halt ──────────────────────────
-        if no_improvement(marks, stops.no_improvement_halt):
-            halt = HaltReason.NO_IMPROVEMENT
-            detail = (
-                f"{stops.no_improvement_halt} iterations without improving on "
-                f"{marks[-stops.no_improvement_halt]}"
-            )
-            break
-
-    witness.assert_unchanged(context=f"subject={subject}")
+    await asyncio.to_thread(witness.assert_unchanged, context=f"subject={subject}")
+    assert halt is not None  # the loop above ends only on a halt
+    winner_row = _winner(rows)
+    summary = search_summary(halt, detail, rows)
     outcome = SearchOutcome(
         halt_reason=halt,
         halt_detail=detail,
         iterations=iteration,
-        winner=winner,
-        winner_score=winner_score,
+        winner=(
+            Candidate(
+                iteration=winner_row.iteration,
+                fix_fingerprint=winner_row.fix_fingerprint,
+                ops=tuple(winner_row.ops),
+                rationale=winner_row.rationale,
+            )
+            if winner_row is not None
+            else None
+        ),
+        winner_score=winner_row.score if winner_row is not None else 0.0,
         rows=rows,
         gate=gate.to_dict(),
-        needs_from_human=_needs_from_human(halt, detail, winner is not None),
+        needs_from_human=_needs_from_human(halt, summary),
+        summary=summary,
+        spent_usd=dollars if priced else None,
+        evidence_runs=tuple(candidate_score.case_run_ids(suite)),
     )
     atomic_write(
         sandbox_path / "search.json",
         json.dumps(outcome.to_dict(), indent=2, sort_keys=True, default=str),
     )
     return outcome
-
-
-def _needs_from_human(halt: HaltReason, detail: str, admitted: bool) -> str:
-    """§8.2's structured ``needs_from_human`` note — for the halts that earned one.
-
-    ``ITERATIONS_EXHAUSTED`` and ``PROPOSER_EXHAUSTED`` do not: the first means the envelope
-    was too small and the second means there was nothing to try, and neither is a question
-    only a person can answer. Filing one for every halt would make the queue unreadable,
-    which is the same as not filing them.
-    """
-    if halt is HaltReason.HYPOTHESIS_ABANDONED:
-        return f"The search kept re-attempting one fix and it kept failing ({detail}). "
-    if halt is HaltReason.NO_IMPROVEMENT:
-        return f"The search plateaued ({detail}). "
-    if halt is HaltReason.BUDGET_EXHAUSTED:
-        kept = "a winner was already found" if admitted else "no winner was found"
-        return f"The search hit its dollar ceiling before halting on its own — {kept}. "
-    return ""
 
 
 # ── the experience directory ─────────────────────────────────────────────────
@@ -924,47 +1338,97 @@ def read_experience(sandbox: str | os.PathLike[str]) -> list[dict[str, Any]]:
     return payload if isinstance(payload, list) else []
 
 
+def _ledger_rows(sandbox: str | os.PathLike[str]) -> list[LedgerRow]:
+    return [LedgerRow.from_dict(r) for r in read_experience(sandbox) if isinstance(r, dict)]
+
+
 # ── the winner becomes a PROPOSAL ────────────────────────────────────────────
 
 
-def propose_winner(outcome: SearchOutcome, *, workflow_name: str) -> dict[str, Any]:
-    """File the winning candidate as a template-diff PROPOSAL. Applies NOTHING.
+def file_winner(
+    subject: str,
+    rows: Sequence[LedgerRow],
+    *,
+    halt: HaltReason,
+    detail: str,
+    gate: dict[str, Any],
+    evidence_runs: Sequence[str],
+) -> dict[str, Any]:
+    """File the search's winner as a template-diff PROPOSAL. Applies NOTHING.
+
+    ONE filing for both drivers (:func:`propose_winner` for :func:`run_search`, the template's
+    ``file`` step), and no model is asked to do it: the winner, its ops, what it scored and why
+    the search stopped are all in the ledger, so filing costs nothing and happens whatever the
+    budget left, and what the proposal says about its score is the measurement rather than
+    anybody's account of it.
 
     Routed through ``learning.refiner_tools.file_template_diff`` rather than through a
     second filing path of this module's own: that function already runs the frozen-field +
     legal-op gate and already enqueues into the one human-gated queue, and a search that
-    filed its winner some other way would be a second way to install a template.
+    filed its winner some other way would be a second way to install a template. The runs the
+    candidates were scored against are the proposal's evidence.
 
     A search that admitted nothing files nothing — ``{"filed": False}`` with the halt
     reason, because "the search ran and found no improvement" is a result, not a failure to
-    report.
+    report. ``summary`` says, in every case, why the search stopped, what it kept and what
+    became of it.
     """
-    if outcome.winner is None:
+    summary = search_summary(halt, detail, rows)
+    winner = _winner(rows)
+    if winner is None:
         return {
             "filed": False,
-            "rejected": [f"no candidate was admitted (halted: {outcome.halt_reason.value})"],
-            "halt_reason": outcome.halt_reason.value,
+            "rejected": [f"no candidate was admitted (halted: {halt.value})"],
+            "halt_reason": halt.value,
+            "summary": f"{summary} Nothing was filed.",
         }
     from personalclaw.learning import refiner_tools
 
-    result = refiner_tools.file_template_diff(
-        workflow_name,
-        ops=[dict(op) for op in outcome.winner.ops],
-        rationale=(
-            f"{outcome.winner.rationale}\n\n"
-            f"Found by an optimize-harness search over {outcome.iterations} candidates "
-            f"(halted: {outcome.halt_reason.value} — {outcome.halt_detail}). "
-            f"Score {outcome.winner_score} cleared BOTH the suite threshold "
-            f"{outcome.gate.get('suite_threshold')} and the best-ever "
-            f"{outcome.gate.get('best_ever')}."
-        ).strip(),
-        run_ids=[],
-        predicted_fixes=[outcome.winner.fix_fingerprint],
+    before = [r for r in rows if r.iteration < winner.iteration]
+    bar = max(
+        [_as_float(gate.get("best_ever"))]
+        + [r.score for r in before if r.outcome == CandidateOutcome.ADMITTED.value]
     )
-    return {**result, "halt_reason": outcome.halt_reason.value}
+    measured = (
+        f"Found by an optimize-harness search over {len(rows)} candidates. Candidate "
+        f"{winner.iteration} scored {winner.score:.2f} against {subject}'s own runs "
+        f"({winner.note}), clearing BOTH the suite threshold "
+        f"{_as_float(gate.get('suite_threshold')):g} and the best score before it, {bar:g}. "
+        f"{summary}"
+    )
+    result = refiner_tools.file_template_diff(
+        subject,
+        ops=[dict(op) for op in winner.ops],
+        rationale=f"{winner.rationale}\n\n{measured}".strip(),
+        run_ids=list(evidence_runs),
+        predicted_fixes=[winner.fix_fingerprint] if winner.fix_fingerprint else [],
+    )
+    if result.get("filed"):
+        became = (
+            f" It filed candidate {winner.iteration} as proposal {result.get('proposal_id')} "
+            "for you to review; nothing was installed."
+        )
+    else:
+        why = "; ".join(str(r) for r in (result.get("rejected") or [])) or str(
+            result.get("verdict") or "the proposal queue did not take it"
+        )
+        became = f" Filing candidate {winner.iteration} was refused: {why}."
+    return {**result, "halt_reason": halt.value, "summary": f"{summary}{became}"}
 
 
-# ── the entry point the bundled template's bash nodes call ────────────────────
+def propose_winner(outcome: SearchOutcome, *, workflow_name: str) -> dict[str, Any]:
+    """File an in-process search's winner (:func:`file_winner`). Applies NOTHING."""
+    return file_winner(
+        workflow_name,
+        outcome.rows,
+        halt=outcome.halt_reason,
+        detail=outcome.halt_detail,
+        gate=outcome.gate,
+        evidence_runs=outcome.evidence_runs,
+    )
+
+
+# ── the entry points the bundled template's steps call ───────────────────────
 
 #: Env key → payload field, for the bundled template's ``bash`` nodes. CLOSED, and the
 #: template is asserted against it (``tests/test_evals_optimize.py``): a ``PC_OPT_*`` key the
@@ -974,17 +1438,23 @@ def propose_winner(outcome: SearchOutcome, *, workflow_name: str) -> dict[str, A
 #: Env rather than string-templating the command, for the reason ``bash_provider`` documents
 #: at length: a payload VALUE interpolated into a command line is code. Read through
 #: ``os.environ`` it is data.
+#:
+#: There is no score key: a candidate's score reaches ``adjudicate`` only as the scoring step's
+#: whole recorded output (``PC_OPT_SCORE_RECORD``), never as a number a proposer could write.
 ENV_PAYLOAD_KEYS: dict[str, str] = {
     "PC_OPT_SUBJECT": "subject",
     "PC_OPT_LIVE_TARGET": "live_target",
     "PC_OPT_SANDBOX": "sandbox",
     "PC_OPT_SUITE_THRESHOLD": "suite_threshold",
-    "PC_OPT_SCORE": "score",
     "PC_OPT_BEST_EVER": "best_ever",
     "PC_OPT_ROWS_CONSIDERED": "rows_considered",
+    "PC_OPT_SCORE_RECORD": "score_record",
     "PC_OPT_FIX_FINGERPRINT": "fix_fingerprint",
     "PC_OPT_DIFF_TEXT": "diff_text",
     "PC_OPT_OPS": "ops",
+    "PC_OPT_RATIONALE": "rationale",
+    "PC_OPT_HALT": "halt",
+    "PC_OPT_HALT_DETAIL": "halt_detail",
 }
 
 #: The same, for the fields that nest under ``stops`` — the three declared halt conditions
@@ -996,17 +1466,15 @@ ENV_STOP_KEYS: dict[str, str] = {
     "PC_OPT_MAX_ITERATIONS": "max_iterations",
 }
 
-#: Comma-separated env values that become lists. Both are windows the halt detectors read,
-#: so an empty string must become ``[]`` and not ``[""]`` — a one-element window of the empty
-#: string would make ``hypothesis_abandoned`` fire on the first iteration.
-ENV_LIST_KEYS: dict[str, str] = {
-    "PC_OPT_FIX_FINGERPRINTS": "fix_fingerprints",
-    "PC_OPT_MARKS": "marks",
-}
+#: The run a step belongs to, as the engine hands it to every action step
+#: (``workflows.engine.dispatch_action`` puts ``run_id`` in the payload, and the bash action
+#: makes each payload key a variable). Read from the engine rather than set by the template: the
+#: search's spend is that run's, and a template cannot forget to name it.
+RUN_ID_ENV = "run_id"
 
 
 def payload_from_env(env: dict[str, str] | None = None) -> dict[str, Any]:
-    """Build a subcommand payload out of the ``PC_OPT_*`` environment.
+    """Build a subcommand payload out of the ``PC_OPT_*`` environment and the step's run.
 
     The alternative to stdin, and the one the bundled template uses: it keeps the template's
     bash command a single readable line instead of a shell-quoted JSON literal, which is the
@@ -1020,30 +1488,91 @@ def payload_from_env(env: dict[str, str] | None = None) -> dict[str, Any]:
     stops = {name: src[key] for key, name in ENV_STOP_KEYS.items() if key in src}
     if stops:
         payload["stops"] = stops
-    for key, field_name in ENV_LIST_KEYS.items():
-        raw = str(src.get(key) or "").strip()
-        payload[field_name] = [part for part in (p.strip() for p in raw.split(",")) if part]
+    if src.get(RUN_ID_ENV):
+        payload["run_id"] = src[RUN_ID_ENV]
     return payload
 
 
+def _run_id(payload: dict[str, Any], step: str) -> str:
+    """The run the step belongs to. Required: the search's spend is measured from that run's
+    own model calls, and a step that cannot say whose they are cannot hold a budget."""
+    run_id = str(payload.get("run_id") or "").strip()
+    if not run_id:
+        raise OptimizeRefusedError(
+            f"{step} needs the run it belongs to: the search's spend is measured from that run's "
+            "own model calls"
+        )
+    return run_id
+
+
+def _run_spend(run_id: str) -> tuple[float, bool]:
+    """What the run's model calls have cost so far, from the usage ledger, and whether all of
+    them were priced (:func:`personalclaw.workflows.ownership.run_spend`)."""
+    from personalclaw.workflows import ownership
+
+    totals = ownership.run_spend(run_id)
+    # To the micro-dollar, as every charge is: the ledger's sum of its rows carries float noise
+    # (0.7000000000000001) that would otherwise reach the run's output.
+    return round(float(totals.get("cost_usd") or 0.0), 6), bool(totals.get("priced", True))
+
+
+def _preflight_record(sandbox: str) -> dict[str, Any]:
+    """What ``preflight`` measured, read back from the sandbox. Refused when absent: every step
+    after it scores against the runs it chose and budgets from the spend it recorded."""
+    path = Path(sandbox) / PREFLIGHT_FILE
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        record = None
+    if not isinstance(record, dict):
+        raise OptimizeRefusedError(
+            f"no {PREFLIGHT_FILE} in {sandbox} — run the `preflight` subcommand first; the search "
+            "scores every candidate against the runs it chose"
+        )
+    return record
+
+
 def _cmd_preflight(payload: dict[str, Any]) -> dict[str, Any]:
-    """Refuse-or-report BEFORE the first model call: the envelope, the floor, the sandbox.
+    """Refuse-or-report BEFORE the first model call: the envelope, the scorer, the floor, the
+    sandbox, the spend.
 
     Everything expensive about a search is downstream of this, so everything that can make
     the search dishonest is checked here — an unbudgeted envelope, a sandbox inside the
-    frozen region, a floor read from a ledger nobody has written to yet.
+    frozen region, a target none of whose candidates could be scored (no definition, too few
+    runs that ended), a run that has already spent its budget. Nothing is written until all of
+    them pass.
     """
     stops = StopConditions.from_config(payload.get("stops"))
     stops.validate()
     subject = str(payload.get("subject") or "")
+    run_id = _run_id(payload, "preflight")
     frozen = frozen_roots(str(payload.get("live_target") or ""))
     sandbox = Path(scope_mod.normalize(str(payload.get("sandbox") or ".")))
     if scope_mod.in_scope(str(sandbox), frozen):
         raise OptimizeRefusedError(f"sandbox {sandbox} is inside the frozen region")
+    try:
+        asyncio.run(candidate_score.live_definition(subject))
+        cases = candidate_score.load_cases(subject)
+    except CannotScore as exc:
+        raise OptimizeRefusedError(str(exc)) from exc
+    dollars, priced = _run_spend(run_id)
+    spend = Spend(dollars=dollars, priced=priced)
+    opening = budget_stop(spend, stops.budget_usd, before=BEFORE_CYCLE)
+    if opening:
+        raise OptimizeRefusedError(f"optimize-harness will not start: {opening}")
     best = capture_best_ever(subject)
     sandbox.mkdir(parents=True, exist_ok=True)
     witness = LiveWitness.capture(frozen)
     witness.persist(sandbox)
+    atomic_write(
+        sandbox / PREFLIGHT_FILE,
+        json.dumps(
+            {"subject": subject, "spent_usd": dollars, "cases": cases},
+            indent=2,
+            sort_keys=True,
+            default=str,
+        ),
+    )
     return {
         "ok": True,
         "subject": subject,
@@ -1051,6 +1580,9 @@ def _cmd_preflight(payload: dict[str, Any]) -> dict[str, Any]:
         "frozen_roots": frozen,
         "sandbox": str(sandbox),
         "witnessed_files": len(witness.files),
+        "cases": len(cases),
+        "case_runs": candidate_score.case_run_ids(cases),
+        "spent_usd": dollars,
         **best.to_dict(),
     }
 
@@ -1092,20 +1624,97 @@ def _cmd_scope_check(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _record(raw: Any) -> dict[str, Any]:
+    """The scoring step's recorded output, from a dict or the JSON text of one; ``{}`` else."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            return {}
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+async def score_step(payload: dict[str, Any]) -> dict[str, Any]:
+    """The template's scoring step: measure this cycle's candidate, within the budget.
+
+    Run IN the gateway by the ``optimize-score`` action, not in a child process, so the step's
+    model calls are the engine's to measure: they are booked to the step on the run's own ledger
+    and in the usage ledger under the run, which is where the search's spend is read back from
+    (:func:`personalclaw.workflows.ownership.run_spend`).
+
+    In MetaHarness's order, cheapest first: a candidate that touched the frozen region is dead and
+    is not paid for; an empty edit inherits the incumbent; the budget is checked
+    (:func:`budget_stop`, before a scoring) and a scoring that would pass it does not start; then
+    the product's own scorer runs (:func:`candidate_score.score_candidate`), each of its calls
+    held to what is left (:func:`held_to`). The answer is the measurement, which
+    :func:`_cmd_adjudicate` reads as the candidate's only score.
+    """
+    from personalclaw.usage_ledger import Attribution
+    from personalclaw.workflows import ownership
+
+    sandbox = str(payload.get("sandbox") or "")
+    if not sandbox:
+        raise OptimizeRefusedError("the scoring step needs a `sandbox` — it holds the search")
+    run_id = _run_id(payload, "the scoring step")
+    subject = str(payload.get("target") or payload.get("subject") or "")
+    stops = StopConditions.from_config({"budget_usd": payload.get("budget_usd")})
+    stops.validate()
+    # Off the event loop: the frozen-region check hashes the files the witness watches, and this
+    # step runs in the gateway.
+    touched = await asyncio.to_thread(_frozen_touched, sandbox)
+    record = _preflight_record(sandbox)
+    rows = _ledger_rows(sandbox)
+    cases = [c for c in (record.get("cases") or []) if isinstance(c, dict)]
+    ops = _ops(payload.get("ops"))
+    iteration = len(rows) + 1
+
+    def answer(result: CandidateScore, **extra: Any) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "iteration": iteration,
+            "score_state": SCORE_SCORED if result.scored else SCORE_UNSCORED,
+            **result.to_dict(),
+            **extra,
+        }
+
+    if touched:
+        reason = "it touched the frozen region, which makes it dead whatever it would score"
+        return answer(unmeasured(reason, cases=len(cases)), frozen_touched=touched)
+    if not ops and not str(payload.get("diff_text") or "").strip():
+        return answer(unmeasured(NO_CHANGE_NOTE, cases=len(cases)), no_change=True)
+    dollars, priced = _run_spend(run_id)
+    now = search_spend(dollars, priced, rows, start=_as_float(record.get("spent_usd")))
+    refusal = budget_stop(now, stops.budget_usd, before=BEFORE_SCORING)
+    if refusal:
+        return answer(unmeasured(refusal, cases=len(cases), budget_stopped=True))
+    node_id = str(payload.get("node_id") or "score")
+    usage = Attribution(source="eval", session_key=ownership.owned_key(run_id, node_id))
+    with held_to(f"{SEARCH_KIND}:{run_id}", stops.budget_usd, now.dollars):
+        result = await candidate_score.score_candidate(
+            subject=subject, ops=ops, cases=cases, usage=usage
+        )
+    return answer(result)
+
+
 def _cmd_adjudicate(payload: dict[str, Any]) -> dict[str, Any]:
     """One iteration's verdict: frozen-region check, then the dual gate, then the halts.
 
     Split out from :func:`run_search` so the template's per-iteration bash node consults the
-    SAME predicates the in-process driver does. Two implementations of "did this candidate
-    win" is the shape this program keeps having to delete.
+    SAME predicates the in-process driver does (:func:`scored_row`, :func:`halt_for`). Two
+    implementations of "did this candidate win" is the shape this program keeps having to
+    delete.
 
-    The halt windows are read from the sandbox's own ``.experience`` index rather than passed
-    in, so the accumulated history is the search's persisted ledger and not a model's memory
-    of it — a proposer that forgot to carry its window forward would otherwise disable both
-    halts by omission. Explicit ``fix_fingerprints``/``marks`` in the payload still win, which
-    is what makes the detectors unit-testable without a sandbox.
+    The candidate's score is the scoring step's recorded measurement (``score_record``) and
+    nothing else: there is no score field a proposer's answer could fill. The halt windows and
+    the bar are read from the sandbox's own ``.experience`` index rather than passed in, so the
+    accumulated history is the search's persisted ledger and not a model's memory of it, and
+    what the search spent is read from the run's own model calls.
     """
     stops = StopConditions.from_config(payload.get("stops"))
+    sandbox = str(payload.get("sandbox") or "")
+    if not sandbox:
+        raise OptimizeRefusedError("adjudicate needs a `sandbox` — it holds the search's ledger")
+    run_id = _run_id(payload, "adjudicate")
     gate = DualGate(
         suite_threshold=_as_float(payload.get("suite_threshold")),
         best_ever=BestEver(
@@ -1114,88 +1723,58 @@ def _cmd_adjudicate(payload: dict[str, Any]) -> dict[str, Any]:
             subject=str(payload.get("subject") or ""),
         ),
     )
-    score_value = _as_float(payload.get("score"))
-    fingerprint = str(payload.get("fix_fingerprint") or "")
-    sandbox = str(payload.get("sandbox") or "")
-
     # The frozen-region half, re-checked here as well as in `scope-check`: the gate that
     # refuses on it is a template node, and a template node can be deleted. A candidate that
     # touched the frozen region must lose on the score path too, not only on the gate path.
-    frozen_touched = _frozen_touched(sandbox) if sandbox else []
-
-    prior = read_experience(sandbox) if sandbox else []
-    if frozen_touched:
-        outcome = CandidateOutcome.SCOPE_VIOLATION
-    else:
-        outcome = gate.decide(score_value)
-    best_so_far = max(
-        [gate.best_ever.value, *(_as_float(r.get("best_so_far")) for r in prior)]
-        + ([score_value] if outcome is CandidateOutcome.ADMITTED else [])
+    frozen_touched = _frozen_touched(sandbox)
+    record = _preflight_record(sandbox)
+    prior = _ledger_rows(sandbox)
+    measured = _record(payload.get("score_record"))
+    ops = _ops(payload.get("ops"))
+    candidate = Candidate(
+        iteration=len(prior) + 1,
+        fix_fingerprint=str(payload.get("fix_fingerprint") or ""),
+        diff_text=str(payload.get("diff_text") or ""),
+        ops=tuple(ops),
+        rationale=str(payload.get("rationale") or ""),
     )
+    scope = {"frozen_touched": frozen_touched}
+    result = CandidateScore.from_dict(measured)
+    if frozen_touched:
+        row = violation_row(gate, prior, candidate, scope=scope)
+    elif measured.get("no_change") is True:
+        row = no_change_row(gate, prior, candidate, scope=scope)
+    else:
+        row = scored_row(gate, prior, candidate, result, scope=scope)
 
-    fingerprints = [str(f) for f in (payload.get("fix_fingerprints") or [])] or [
-        *(str(r.get("fix_fingerprint") or "") for r in prior),
-        fingerprint,
-    ]
-    marks = [_as_float(m) for m in (payload.get("marks") or [])] or [
-        *(_as_float(r.get("best_so_far")) for r in prior),
-        best_so_far,
-    ]
-
-    # The iteration floor halts here too, as it ends `run_search`: the template's loop stops on
-    # this verdict, and a loop that ran out of cycles with no halt said is handed to a person
-    # instead of ending, so its winner was never filed.
-    iteration = len(prior) + 1
-    halt = ""
-    if hypothesis_abandoned(fingerprints, stops.hypothesis_abandon_after):
-        halt = HaltReason.HYPOTHESIS_ABANDONED.value
-    elif no_improvement(marks, stops.no_improvement_halt):
-        halt = HaltReason.NO_IMPROVEMENT.value
-    elif iteration >= stops.max_iterations:
-        halt = HaltReason.ITERATIONS_EXHAUSTED.value
-
-    if sandbox:
-        ops = _ops(payload.get("ops"))
-        write_experience(
-            Path(sandbox),
-            [
-                *(LedgerRow.from_dict(r) for r in prior),
-                LedgerRow(
-                    iteration=iteration,
-                    outcome=outcome.value,
-                    score=score_value,
-                    fix_fingerprint=fingerprint,
-                    best_so_far=best_so_far,
-                    scope={"frozen_touched": frozen_touched},
-                    ops=ops,
-                ),
-            ],
-            candidate=Candidate(
-                iteration=iteration,
-                fix_fingerprint=fingerprint,
-                diff_text=str(payload.get("diff_text") or ""),
-                ops=tuple(ops),
-            ),
-            iteration=iteration,
-        )
+    dollars, priced = _run_spend(run_id)
+    row.spent_usd = dollars
+    rows = [*prior, row]
+    write_experience(Path(sandbox), rows, candidate=candidate, iteration=candidate.iteration)
+    spend = search_spend(dollars, priced, rows, start=_as_float(record.get("spent_usd")))
+    stopped = result.reason if result.budget_stopped and not frozen_touched else ""
+    halt, detail = halt_for(rows, stops, spend, scorer_stopped=stopped)
 
     # The same rendering the ledger row carries, on the per-iteration verdict too: this dict is
-    # what the template's report node reads as `{{nodes.search.output}}`, so echoing the payload's
-    # `score` back beside a `scope_violation` would hand a person a number for a candidate that
-    # was never scored.
-    scored = outcome.value not in UNSCORED_OUTCOMES
+    # what the template's later steps read as `{{nodes.search.output}}`, so echoing a number back
+    # beside a `scope_violation` would hand a person a score for a candidate never scored.
+    scored = row.scored
     return {
         "ok": True,
-        "outcome": outcome.value,
-        "score": score_value if scored else None,
+        "iteration": candidate.iteration,
+        "outcome": row.outcome,
+        "score": row.score if scored else None,
         "score_state": SCORE_SCORED if scored else SCORE_UNSCORED,
-        "admitted": outcome is CandidateOutcome.ADMITTED,
-        "clears_suite_threshold": gate.clears_suite_threshold(score_value),
-        "beats_best_ever": gate.beats_best_ever(score_value),
+        "note": row.note,
+        "admitted": row.outcome == CandidateOutcome.ADMITTED.value,
+        "clears_suite_threshold": scored and gate.clears_suite_threshold(row.score),
         "frozen_touched": frozen_touched,
-        "best_so_far": best_so_far,
-        "halt": halt,
-        "continue": not halt,
+        "best_so_far": row.best_so_far,
+        "spent_usd": dollars if priced else None,
+        "halt": halt.value if halt is not None else "",
+        "halt_detail": detail,
+        "summary": search_summary(halt, detail, rows) if halt is not None else "",
+        "continue": halt is None,
         "gate": gate.to_dict(),
     }
 
@@ -1209,12 +1788,12 @@ EXPERIENCE_TOTAL_DIFF_CHARS = 24000
 
 
 def _cmd_experience(payload: dict[str, Any]) -> dict[str, Any]:
-    """The search's own ledger as the template's model steps read it.
+    """The search's own ledger as the template's model step reads it.
 
     ``candidates`` is every candidate so far, oldest first, each ledger row with its raw diff
     beside it; ``winner`` is the last ADMITTED one, the candidate the in-process search ends with
     too (:func:`run_search`), with the typed ops it is filed with, or ``None`` when nothing was
-    admitted. A step of its own because the model steps cannot open these files: the template
+    admitted. A step of its own because the model step cannot open these files: the template
     refiner holds only its evidence and proposal tools (``TEMPLATE_REFINER_TOOLS``), so a prompt
     that told it to read ``.experience/index.json`` asked for a read it is refused. The candidates
     carry no ops (the diff says the same), which keeps the answer small enough to stay a value a
@@ -1243,14 +1822,49 @@ def _cmd_experience(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "candidates": candidates, "winner": winner}
 
 
+def _cmd_file(payload: dict[str, Any]) -> dict[str, Any]:
+    """The template's last step: file the search's winner, and say how the search ended.
+
+    The halt and its clause are the search loop's own last verdict (``PC_OPT_HALT``,
+    ``PC_OPT_HALT_DETAIL``); the winner and the evidence are read from the sandbox
+    (:func:`file_winner`).
+    """
+    sandbox = str(payload.get("sandbox") or "")
+    if not sandbox:
+        raise OptimizeRefusedError("file needs a `sandbox` — it holds the search's ledger")
+    try:
+        halt = HaltReason(str(payload.get("halt") or ""))
+    except ValueError as exc:
+        raise OptimizeRefusedError(
+            "file needs the reason the search stopped — it reads the search's last verdict"
+        ) from exc
+    record = _preflight_record(sandbox)
+    cases = [c for c in (record.get("cases") or []) if isinstance(c, dict)]
+    gate = {
+        "suite_threshold": _as_float(payload.get("suite_threshold")),
+        "best_ever": _as_float(payload.get("best_ever")),
+    }
+    filed = file_winner(
+        str(payload.get("subject") or record.get("subject") or ""),
+        _ledger_rows(sandbox),
+        halt=halt,
+        detail=str(payload.get("halt_detail") or ""),
+        gate=gate,
+        evidence_runs=candidate_score.case_run_ids(cases),
+    )
+    return {"ok": True, **filed}
+
+
 #: The subcommand table. The bundled ``optimize-harness`` template names these in its bash
 #: nodes, so ``tests/test_evals_optimize.py`` asserts the template's names against THIS
-#: dict — a renamed subcommand fails the template, not just this module.
+#: dict — a renamed subcommand fails the template, not just this module. The scoring step is
+#: not here: it runs in the gateway (:func:`score_step`, the ``optimize-score`` action).
 COMMANDS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "preflight": _cmd_preflight,
     "scope-check": _cmd_scope_check,
     "adjudicate": _cmd_adjudicate,
     "experience": _cmd_experience,
+    "file": _cmd_file,
 }
 
 

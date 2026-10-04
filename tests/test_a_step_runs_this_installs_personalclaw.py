@@ -150,7 +150,7 @@ def test_this_installs_cli_answers_an_unknown_step_in_json(isolated_install) -> 
     assert done.returncode == 2, (done.stdout, done.stderr)
     answer = json.loads(done.stdout)
     assert answer["ok"] is False
-    assert answer["commands"] == ["adjudicate", "experience", "preflight", "scope-check"]
+    assert answer["commands"] == ["adjudicate", "experience", "file", "preflight", "scope-check"]
 
 
 def test_the_optimize_module_is_not_a_second_entry_point() -> None:
@@ -182,22 +182,29 @@ def test_reading_the_results_ledger_makes_no_folder(isolated_install) -> None:
     assert not (isolated_install / "evals").exists()
 
 
-def test_a_step_that_cannot_write_answers_in_json(tmp_path, capsys) -> None:
+def test_a_step_that_cannot_write_answers_in_json(tmp_path, monkeypatch, capsys) -> None:
     """🔴 Red before: a step whose sandbox could not be made raised a traceback, which leaves the
     node's output empty, where every other reason it stops comes back as JSON."""
     import io
 
     from personalclaw.evals import optimize
+    from tests.test_optimize_harness_runs_to_its_proposal import TARGET, _seed_target_runs
 
+    home = tmp_path / "pc-home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    # A target the search could score, so the preflight reaches the sandbox it cannot make.
+    _seed_target_runs()
     live = tmp_path / "live"
     live.mkdir()
     (live / "workflow.json").write_text("{}", encoding="utf-8")
     not_a_folder = tmp_path / "a-file"
     not_a_folder.write_text("", encoding="utf-8")
     payload = {
-        "subject": "s",
+        "subject": TARGET,
         "live_target": str(live),
         "sandbox": str(not_a_folder / "sandbox"),
+        "run_id": "run-1",
         "stops": {"budget_usd": "1"},
     }
 
@@ -210,21 +217,19 @@ def test_a_step_that_cannot_write_answers_in_json(tmp_path, capsys) -> None:
 
 # ── the template's own steps, run by the engine ──────────────────────────────
 
-#: What the template's two model steps answer, in the shapes their prompts ask for.
+#: What the template's model step answers, in the shape its prompt asks for.
 MODEL_ANSWERS: dict[str, dict[str, Any]] = {
     "propose": {
-        "fix_fingerprint": "name-the-audit-criteria",
-        "score": 0.9,
+        "fix_fingerprint": "name-the-handoff-criteria",
         "diff_text": "--- a/workflow.json\n+++ b/workflow.json\n",
-        "rationale": "the audit prompt never says what a pass is",
-        "ops": [{"op": "update_node", "id": "audit"}],
-    },
-    "file-proposal": {
-        "proposed": False,
-        "halt_reason": "hypothesis_abandoned",
-        "winner_score": 0.9,
-        "rationale": "the stand-in files nothing",
-        "proposal_id": "",
+        "rationale": "the handoff never says what it checks the work against",
+        "ops": [
+            {
+                "op": "update_node",
+                "node_id": "handoff",
+                "fields": {"prompt": "Summarize the work for review. PASSES=3"},
+            }
+        ],
     },
 }
 
@@ -259,18 +264,27 @@ def anyio_backend() -> str:
 
 @pytest.mark.anyio
 async def test_the_optimize_harness_template_runs_its_steps_in_an_isolated_install(
-    isolated_install, tmp_path
+    isolated_install, tmp_path, monkeypatch
 ) -> None:
     """🔴 Red before: the first step ran ``python3``, which has no PersonalClaw, and the run
-    failed there. Now every step runs, through the real bash action, and the search ends."""
+    failed there. Now every step runs, through the real bash action, and the search ends.
+
+    The target has the finished runs a candidate is scored against, and the scoring step's
+    model is a priced stand-in, as the template's own end-to-end test sets them up."""
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
     from personalclaw.evals import optimize
     from personalclaw.workflows import store
     from personalclaw.workflows.bundled_defs import bundled_root
     from personalclaw.workflows.controller import EngineServices, RunController
     from personalclaw.workflows.models import RunStatus, WorkflowRun, spec_path, walk
+    from tests.test_optimize_harness_runs_to_its_proposal import (
+        _bind_scripted_eval,
+        _seed_target_runs,
+    )
 
     _ensure_default_providers_registered()
+    _bind_scripted_eval(monkeypatch)
+    _seed_target_runs()
     live = tmp_path / "live" / "code-project"
     live.mkdir(parents=True)
     (live / "workflow.json").write_text(json.dumps({"name": "code-project"}), encoding="utf-8")
@@ -288,7 +302,7 @@ async def test_the_optimize_harness_template_runs_its_steps_in_an_isolated_insta
         "suite_threshold": 0.8,
         "hypothesis_abandon_after": 1,
         "no_improvement_halt": 5,
-        "max_iterations": 12,
+        "max_iterations": 1,
     }
     run = store.create(
         WorkflowRun(id="", workflow_name=spec["name"], mode="background", inputs=inputs)
@@ -313,19 +327,21 @@ async def test_the_optimize_harness_template_runs_its_steps_in_an_isolated_insta
         if nodes[spec_path(path)].kind.value == "action"
     }
     assert controller.run.status == RunStatus.COMPLETE, (controller.run.error_message, steps)
-    assert set(steps) == {"preflight", "experience", "scope_check", "adjudicate", "ledger"}
-    preflight, experience, scope_check, adjudicate, ledger = (
-        steps[n] for n in ("preflight", "experience", "scope_check", "adjudicate", "ledger")
-    )
+    names = ("preflight", "experience", "scope_check", "score", "adjudicate", "file")
+    assert set(steps) == set(names)
+    preflight, experience, scope_check, score, adjudicate, filed = (steps[n] for n in names)
     assert preflight[0] == "done" and preflight[1]["ok"] is True, preflight
     assert preflight[1]["witnessed_files"] == 2 and preflight[1]["rows_considered"] == 0
+    assert preflight[1]["cases"] == 3, preflight
     assert experience[0] == "done" and experience[1]["candidates"] == [], experience
     assert scope_check[0] == "done" and scope_check[1]["outcome"] == "clean", scope_check
+    assert score[0] == "done" and score[1]["score"] == 1.0, score
     assert adjudicate[0] == "done", adjudicate
     assert (
-        adjudicate[1]["outcome"] == "admitted" and adjudicate[1]["halt"] == "hypothesis_abandoned"
+        adjudicate[1]["outcome"] == "admitted" and adjudicate[1]["halt"] == "iterations_exhausted"
     )
-    assert ledger[0] == "done" and ledger[1]["winner"]["ops"] == MODEL_ANSWERS["propose"]["ops"]
+    assert filed[0] == "done" and filed[1]["filed"] is True, filed
     index = json.loads((sandbox / optimize.EXPERIENCE_DIR / "index.json").read_text())
     assert [(row["iteration"], row["outcome"]) for row in index] == [(1, "admitted")]
+    assert index[0]["ops"] == MODEL_ANSWERS["propose"]["ops"]
     assert {p.name: p.read_bytes() for p in live.iterdir()} == before, "the live artifact changed"

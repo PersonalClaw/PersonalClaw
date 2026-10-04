@@ -1056,6 +1056,9 @@ ALLOWED_HOOK_PROVIDERS = frozenset(
         # catalog and this mirror moving together is that test's whole premise.
         "best-of-n",
         "check-work",
+        # The bundled `optimize-harness` template's scoring step, registered in
+        # `action_providers.registry` in the SAME commit as this line, for the rule stated above.
+        "optimize-score",
         # EXTERNAL-ACCESS §5 (outbound half): sends ONE A2A task to an external agent.
         # Unlike every name above it, the provider behind this one is NOT in core's registry —
         # it is delivered by the `a2a-action` first-party app, exactly as `webhook` is. So the

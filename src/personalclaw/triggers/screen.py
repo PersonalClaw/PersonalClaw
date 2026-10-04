@@ -547,6 +547,10 @@ WRITE_CAPABLE_PROVIDERS: frozenset[str] = frozenset(
         # multiply model spend by up to 5 without an explicit opt-in is the same unattended-spend
         # shape that puts `triage-digest` on this side — and the spend alone earns the opt-in.
         "best-of-n",
+        # The optimize-harness scoring step spends two model calls per recorded run it scores a
+        # candidate against. It writes nothing, but unattended model spend earns the opt-in, as
+        # it does for `best-of-n` directly above.
+        "optimize-score",
         # The second-opinion handoff spawns a cataloged runner (or a subagent) one-shot
         # with write access to a real workspace — the strictest side of this table is the only
         # honest one for it. Note the disk re-diff that gates ACCEPTANCE is not a substitute for

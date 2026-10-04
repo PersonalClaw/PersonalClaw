@@ -29,8 +29,8 @@ inherits `UNREADABLE`, which suppresses what `TEMPORARY` does. The cost of a wro
 memory write is a lost note, and the cost of a wrongly-permitted one is a memory the user believed
 was never recorded.
 
-Pure functions over keys and run records, but for `inherit_mode`, which asks that reader; the caller
-marks the registry.
+Pure functions over keys and run records, but for `inherit_mode`, which asks that reader (the caller
+marks the registry), and `run_spend`, which reads the usage ledger for the keys this module mints.
 """
 
 from __future__ import annotations
@@ -184,6 +184,28 @@ def parse_owned(session_key: str) -> tuple[str, str] | None:
 
 def is_owned(session_key: str) -> bool:
     return parse_owned(session_key) is not None
+
+
+def run_spend(run_id: str) -> dict[str, Any]:
+    """What one run's model calls cost, read from the per-call usage ledger.
+
+    Here because this module mints every key a run's model calls are booked under: a stage's turns
+    under its session's `workflow:<run>:<step>` key (`subagent._record_subagent_usage` books them to
+    the spawn's parent, which is that key), and a step that calls a model in the gateway under the
+    key it books its calls to. So the run's spend is the spend booked against those keys, and the
+    ledger's own `priced` says when part of it had no price: the figure is then a floor, and a
+    caller holding the run to a dollar budget must read it as not countable rather than as cheap.
+    The usage ledger's aggregate shape (`usage_ledger.totals`).
+    """
+    from personalclaw import usage_ledger
+
+    run = _safe(run_id)
+
+    def mine(key: str) -> bool:
+        owned = parse_owned(key)
+        return owned is not None and owned[0] == run
+
+    return usage_ledger.totals(key_filter=mine)
 
 
 def sel_source(session_key: str) -> str:

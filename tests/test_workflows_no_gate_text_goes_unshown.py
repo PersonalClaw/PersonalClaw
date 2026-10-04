@@ -308,15 +308,16 @@ def _optimize(outcome: str) -> dict[str, Any]:
         "optimize-harness",
         {
             "preflight": {"ok": True, "best_ever": 0.5, "rows_considered": 3},
-            "propose": {"fix_fingerprint": "f1", "score": 0.9, "diff_text": "", "ops": []},
+            "propose": {"fix_fingerprint": "f1", "diff_text": "", "ops": []},
             "scope_check": {
                 "ok": True,
                 "outcome": outcome,
                 "clean": outcome != "scope_violation",
                 "frozen_touched": [".pclaw-lock.json"] if outcome == "scope_violation" else [],
             },
+            "score": {"ok": True, "score": None, "no_change": True},
             "adjudicate": {"halt": True, "admitted": False},
-            "file-proposal": {"proposed": False},
+            "file": {"filed": False},
         },
     )
 
@@ -327,7 +328,7 @@ async def test_optimize_harness_refuses_a_frozen_region_touch_and_says_why() -> 
     c = await _run(_optimize("scope_violation"))
     started = _started(c.run.id)
     assert "verify_scope" in started, "positive control: the check ran"
-    assert started.isdisjoint({"adjudicate", "file-proposal"}), "a dead candidate was carried on"
+    assert started.isdisjoint({"score", "adjudicate", "file"}), "a dead candidate was carried on"
     assert c.run.status == RunStatus.FAILED
     assert c.run.error_message == (
         "“Frozen region untouched” failed: the candidate wrote into the frozen region (the live "
@@ -337,7 +338,7 @@ async def test_optimize_harness_refuses_a_frozen_region_touch_and_says_why() -> 
 
 
 async def test_optimize_harness_carries_a_clean_candidate_on() -> None:
-    """CONTROL: a candidate that left the frozen region alone is adjudicated and filed."""
+    """CONTROL: a candidate that left the frozen region alone is scored, adjudicated and filed."""
     c = await _run(_optimize("clean"))
     assert c.run.status == RunStatus.COMPLETE, c.run.error_message
-    assert {"adjudicate", "file-proposal"} <= _started(c.run.id)
+    assert {"score", "adjudicate", "file"} <= _started(c.run.id)

@@ -101,6 +101,7 @@ RESOLVED_DIRECTLY: dict[tuple[str, str], str] = {
     ),
     _SAMPLING_JUDGE: _A_JUDGE,
     ("learning/replay.py", "replay_proposal.judge_factory.<lambda>"): _A_JUDGE,
+    ("evals/candidate_score.py", "_judge_factory.<lambda>"): _A_JUDGE,
 }
 
 #: Sites that name the agent they start and are not that agent's own work, by (file, function),

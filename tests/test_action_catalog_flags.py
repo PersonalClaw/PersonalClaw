@@ -26,9 +26,10 @@ from personalclaw.triggers.models import ZERO_TOKEN_PROVIDERS
 
 SELF_QA = {"selfqa-triage", "selfqa-file-finding", "selfqa-evidence", "selfqa-commit-watch"}
 
-#: Every internal action: the Self-QA steps, and the HEARTBEAT.md queue's pass, whose one trigger
-#: (`system:heartbeat-tasks`) is written by its reconciler, like the Self-QA loop's.
-INTERNAL = SELF_QA | {"heartbeat-tasks"}
+#: Every internal action: the Self-QA steps, the HEARTBEAT.md queue's pass, whose one trigger
+#: (`system:heartbeat-tasks`) is written by its reconciler, like the Self-QA loop's, and the
+#: optimize-harness search's scoring step, configured by its template from the search's own sandbox.
+INTERNAL = SELF_QA | {"heartbeat-tasks", "optimize-score"}
 
 
 def _catalog() -> dict[str, dict]:

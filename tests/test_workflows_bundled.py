@@ -593,7 +593,7 @@ def test_every_shipped_read_names_a_step_a_run_can_read() -> None:
     assert {
         ("design-project", "judge", "refine"),
         ("goal-pursuit-open-ended", "deliverable", "work"),
-        ("optimize-harness", "file-proposal", "search"),
+        ("optimize-harness", "file", "search"),
     } <= loop_reads, loop_reads
 
 

@@ -420,6 +420,9 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
     # `acted`, `help` and `unreadable` are `proactive.answer.Answered(outcome=…)`: what an answer to
     # the Morning triage digest came to, which the reply route turns into its wire answer and a
     # channel into the sentence it says back. The answer's audit row is `triage_reply`, `success`.
+    # `scope_violation` and `not_scored` are an optimize-harness candidate's row in its search's
+    # own ledger (`evals.optimize.LedgerRow`): a candidate dead for touching the frozen region, and
+    # one its scorer could not measure. No audit row carries either.
     "not an audit record at all — an internal ledger row, or a function's return-value "
     "discriminator, whose field is also called `outcome` and which the deliberately tree-wide "
     "scan therefore also sees. Recorded rather than excluded, because narrowing the scan is "
@@ -428,6 +431,7 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
         "counted_complete",
         "help",
         "max_iterations",
+        "not_scored",
         "scope_violation",
         "truncated",
         "unreadable",

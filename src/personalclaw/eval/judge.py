@@ -34,8 +34,13 @@ class LLMJudge:
         provider_factory: Any,
         prompt_template: str | None = None,
         pass_threshold: float = 3.0,
+        usage: Any = None,
     ):
         self._factory = provider_factory
+        # Whose spend the verdicts are (an ``Attribution``): eval spend under ``eval_judge`` unless
+        # the caller says the judging is its own work, as an optimize-harness search does, whose
+        # budget is read from the spend booked to its run.
+        self._usage = usage
         # The default judge prompt lives in the prompt system (bundled ``eval-judge``,
         # bindable in Settings → Prompts). A caller may still pass an explicit
         # ``prompt_template`` (a .format string with {scenario_description}/{criteria}/
@@ -89,7 +94,9 @@ class LLMJudge:
         from personalclaw.llm_helpers import parse_llm_json
         from personalclaw.usage_ledger import Attribution, recorder
 
-        record = recorder(self._provider, Attribution(source="eval", session_key="eval_judge"))
+        record = recorder(
+            self._provider, self._usage or Attribution(source="eval", session_key="eval_judge")
+        )
         chunks: list[str] = []
         async with closing_stream(self._provider.stream(prompt)) as events:
             async for event in events:

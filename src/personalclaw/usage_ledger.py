@@ -439,12 +439,20 @@ def _session_matches(key: str, session_key: str, session_prefix: str) -> bool:
 
 
 def _row_selected(
-    row: dict, since: str, until: str, session_key: str, session_prefix: str = ""
+    row: dict,
+    since: str,
+    until: str,
+    session_key: str,
+    session_prefix: str = "",
+    key_filter: Callable[[str], bool] | None = None,
 ) -> bool:
     """Whether a ledger row is in the query window AND (if given) its session."""
     if not _in_window(str(row.get("ts", "")), since, until):
         return False
-    return _session_matches(str(row.get("session_key", "")), session_key, session_prefix)
+    key = str(row.get("session_key", ""))
+    if key_filter is not None and not key_filter(key):
+        return False
+    return _session_matches(key, session_key, session_prefix)
 
 
 def rollup(
@@ -495,14 +503,22 @@ def models_used(*, since: str = "") -> list[tuple[str, str]]:
 
 
 def totals(
-    *, since: str = "", until: str = "", session_key: str = "", session_prefix: str = ""
+    *,
+    since: str = "",
+    until: str = "",
+    session_key: str = "",
+    session_prefix: str = "",
+    key_filter: Callable[[str], bool] | None = None,
 ) -> dict:
     """Grand total over the window — the same agg shape, ungrouped. ``session_key``
     (when given) restricts to one session, answering "what did this chat cost?".
     ``session_prefix`` widens that to a session and its separator-delimited children,
-    answering "what did this loop cost?" for a loop that fanned out into task workers."""
+    answering "what did this loop cost?" for a loop that fanned out into task workers.
+    ``key_filter`` keeps only the rows whose session key it accepts, for an owner of a key shape
+    the prefix rule does not fit: a workflow run books its steps under
+    ``workflow:<run>:<step>`` (``workflows.ownership.run_spend``)."""
     agg = _blank_agg()
     for row in _iter_rows():
-        if _row_selected(row, since, until, session_key, session_prefix):
+        if _row_selected(row, since, until, session_key, session_prefix, key_filter):
             _fold(agg, row)
     return agg

@@ -263,9 +263,16 @@ substitution. A program the command starts (`env`, `nohup`, `xargs`, another
 `sh -c`) looks the name up on `PATH` like any other, and `command personalclaw` asks
 `PATH` on purpose. The bundled `optimize-harness` template's bash steps run
 `personalclaw optimize-harness <step>`, a CLI command its help does not list. Its
-`experience` step hands the template's model steps the search's own ledger (every
+`experience` step hands the template's proposer the search's own ledger (every
 candidate so far with its raw diff, and the winner with its ops), since the template
-refiner's tools read evidence and file proposals and cannot open a file.
+refiner's tools read evidence and file proposals and cannot open a file. Its scoring
+step is the one that calls models, so it is an action that runs in the gateway
+(`optimize-score`, `evals.optimize.score_step`) rather than a command: a model call a
+`bash` step's command makes is booked to neither the step nor the run, and the search
+holds its `budget_usd` to what the run's own calls cost
+(`workflows.ownership.run_spend`), checked before every cycle and every scoring
+(`evals.optimize.budget_stop`). Its `file` step files the winner from the ledger, with
+the runs it was scored on as the proposal's evidence, and asks no model.
 Nothing the package ships runs PersonalClaw through an interpreter found on `PATH`
 (`tests/test_bare_interpreter_census.py`).
 

@@ -412,6 +412,20 @@ def _ensure_default_providers_registered() -> None:
         from personalclaw.action_providers.best_of_n_provider import BestOfNActionProvider
 
         register_action_provider(BestOfNActionProvider())
+    if "optimize-score" not in _providers:
+        # The bundled `optimize-harness` search's scoring step: the product's own evaluation of
+        # one candidate against the target's recorded runs. A step in the gateway rather than a
+        # bash step, so the engine measures its model calls and books them to the run, which is
+        # where the search's budget is read back from. Registered unconditionally for the reason
+        # `best-of-n` records directly above, and its spend is governed the same way: every call
+        # rides the model-call guard, held to the search's budget. Added to ALLOWED_HOOK_PROVIDERS,
+        # to `triggers/screen.py`'s write-capable set and to `guardrails/rungs.py`'s action table
+        # in the SAME commit.
+        from personalclaw.action_providers.optimize_score_provider import (
+            OptimizeScoreActionProvider,
+        )
+
+        register_action_provider(OptimizeScoreActionProvider())
     if "check-work" not in _providers:
         # The engine-native verification node — a thin wrapper
         # over the `check_work.derive_and_run` core the bundled skill and the SDLC

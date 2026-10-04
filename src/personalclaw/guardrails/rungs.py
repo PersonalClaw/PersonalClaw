@@ -253,6 +253,18 @@ _PROVIDER_SPECS: tuple[ActionTypeSpec, ...] = (
         ceiling=RUNG_AUTONOMOUS,
         providers=("best-of-n",),
     ),
+    # The optimize-harness search's scoring step. Its own key rather than best-of-N's: it scores
+    # one candidate template against the target's recorded runs, a different governed behavior
+    # from sampling an answer, though like it the step spawns no turn, writes no store and files
+    # no row, and its whole hazard is SPEND, held where spend is evaluated: every call rides the
+    # model-call guard under the search's budget, and the write-capable fence in
+    # `triggers/screen.py` is where an unattended trigger opts in.
+    ActionTypeSpec(
+        key="action.optimize_score",
+        floor=RUNG_AUTONOMOUS,
+        ceiling=RUNG_AUTONOMOUS,
+        providers=("optimize-score",),
+    ),
     # Its own key rather than sharing `action.create_task`'s: its
     # effect is registering an Artifact and — on a confirmed failure — opening a LOCAL git branch
     # (never pushed), which is a different governed behavior from filing a task row. Both effects

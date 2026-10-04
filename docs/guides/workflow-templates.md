@@ -242,6 +242,45 @@ cannot continue is refused, as is a subworkflow node that does. It is read once,
 when the run starts, so an edit of a run that would change it is refused too.
 `deep-research` is the worked example.
 
+## A search held to a budget: `optimize-harness`
+
+The bundled `optimize-harness` template is the worked example of a loop that spends
+money on purpose. It proposes an edit to one of your templates, measures it, keeps it
+only if it is better, and files the best as a proposal in **Proposals** for you to
+review. It installs nothing.
+
+- **Its budget is what its model calls cost.** `budget_usd` is required. Before every
+  cycle, and before every scoring, the search reads what the run's own model calls have
+  cost so far (the usage rows booked to the run) and stops when the next cycle or
+  scoring would pass the budget. It ends with a sentence saying so and what it kept:
+  "The search stopped at its budget: it has spent $0.80 of its $1.00 budget, and a
+  cycle of the search has cost up to $0.40, so another would pass it. It kept candidate
+  2, which scored 0.67." A model with no price stops it too, because spend it cannot
+  price is spend it cannot hold: give the model a price in Settings → Usage → Model
+  prices, $0 for one that costs nothing.
+- **A score is measured, never claimed.** The scoring step runs the candidate against
+  the target's own runs that finished, the newest five: the candidate's prompts are
+  answered for each run's recorded inputs and the eval judge decides each answer. A
+  case whose answer or verdict could not be had is left out rather than scored 0, and
+  a score rests on at least three judged runs. Nothing the proposer says about its own
+  candidate is read as a score.
+- **A candidate is kept only when it beats the best so far.** It must clear
+  `suite_threshold` and score above the best so far, which rises with every candidate
+  kept, so a later, worse candidate never replaces a better one.
+- **It halts on what it was told.** `max_iterations` (12 unless you say, up to 50),
+  `no_improvement_halt` (that many candidates without a better score) and
+  `hypothesis_abandon_after` (the same fix tried that many times without being kept),
+  besides the budget.
+- **It refuses before it spends.** The preflight refuses a run with no budget, a
+  `max_iterations` above 50, a sandbox inside the template it is improving, and a
+  target with fewer than three finished runs to score against, saying which.
+
+The scoring step is an action that runs in the gateway (`optimize-score`) rather
+than a command in a `bash` step, and that is the general rule for any step whose
+spend a template must hold to a budget: a model step's calls, and those of an action
+that runs in the gateway, are booked to the run and shown on its page, while a model
+call made by a command that a `bash` step runs is not.
+
 ## Concurrency
 
 `max_concurrency` on a `foreach` caps how many *items* are in flight. Set it when
