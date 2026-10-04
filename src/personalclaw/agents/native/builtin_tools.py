@@ -1579,22 +1579,22 @@ class NativeBuiltinToolProvider(ToolProvider):
                     )
                 ],
             )
-        # What runs as the owner, and what they allowed (`owner_only`): refused here in words, and
-        # fenced by the sandbox `_t_bash` runs it in, which refuses the write whatever this reading
-        # misses.
+        # What runs as the owner, and what they allowed (`owner_only`): refused here in words. The
+        # sandbox `_t_bash` runs it in fences the home's as well, and on macOS the owner's own git
+        # settings and shell startup files, whatever this reading misses; a repository's git
+        # settings and hooks are held by this reading alone, since git writes them itself in a
+        # shell's ordinary work.
         from personalclaw import owner_only, sandbox
         from personalclaw.task_modes import is_read_only_bash
 
         named = owner_only.named_in(command, cwd=self._cwd)
-        if named and not is_read_only_bash(command):
+        if named is not None and not is_read_only_bash(command):
             return _refused_by(
                 "bash",
                 "owner_only",
                 security.redact_known_values(owner_only.refusal(named), handed),
-                security.redact_known_values(named, handed),
-                [
-                    "Leave PersonalClaw's own config, hooks, agent files and grants to the owner. Tell them what you would change and why."  # noqa: E501
-                ],
+                security.redact_known_values(named.word, handed),
+                [owner_only.hint(named.kind)],
             )
 
         # 3. a SYSTEM-SCHEDULER write — offer the substrate instead (§7 criterion 12).

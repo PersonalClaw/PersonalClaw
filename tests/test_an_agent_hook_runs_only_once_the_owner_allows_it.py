@@ -49,6 +49,20 @@ def home(tmp_path, monkeypatch):
     return pc
 
 
+@pytest.fixture
+def repo(home, monkeypatch):
+    """A repository in the home's workspace, laid out as git lays one out, and the owner's own
+    shell startup file in her home folder (``HOME`` points there, as her shell reads ``~``)."""
+    root = home / "workspace" / "site"
+    for folder in (root / ".git" / "hooks", root / ".git" / "objects", root / ".git" / "refs"):
+        folder.mkdir(parents=True)
+    (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (root / ".git" / "config").write_text("[core]\n")
+    (home.parent / ".zshrc").write_text("export EDITOR=vi\n")
+    monkeypatch.setenv("HOME", str(home.parent))
+    return root
+
+
 def _script(path: Path, body: str = "echo ran\n") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\n" + body)
@@ -305,14 +319,21 @@ def test_the_fence_holds_where_no_reading_of_the_command_can_see_the_path(home):
         "Write {home}/config.json",
         "Running: cp evil.json {home}/agents/personalclaw.json",
         "Edit {home}/grants/agent_hooks.json",
+        "Write {repo}/.git/hooks/pre-commit",
+        "Running: printf x > {repo}/.git/config",
+        "Edit {repo}/.gitmodules",
+        "Running: git -C {repo} config core.hooksPath .githooks",
+        "Write {user}/.zshrc",
+        "Running: printf x >> {user}/.gitconfig",
     ],
 )
-def test_a_tool_call_naming_one_is_refused_before_any_approval(home, title):
+def test_a_tool_call_naming_one_is_refused_before_any_approval(home, repo, title):
     """🔴 Red on main: the screen every approval path consults — the chat's card, an auto-approve
-    pattern, an unattended default — let these through to be approved."""
+    pattern, an unattended default — let these through to be approved. A repository's git
+    settings and hooks, the owner's own git settings and her shell's startup files too."""
     from personalclaw.hooks import HookManager
 
-    result = HookManager().on_tool_call(title.format(home=home))
+    result = HookManager().on_tool_call(title.format(home=home, repo=repo, user=home.parent))
 
     assert result.action == "deny" and "an agent may not change it" in result.reason
 
@@ -325,27 +346,41 @@ def test_a_tool_call_naming_one_is_refused_before_any_approval(home, title):
         "cp evil.json {home}/agen*/personalclaw.json",
         "node -e \"require('fs')"
         ".writeFileSync(process.env.PERSONALCLAW_HOME+'/config.json','{{}}')\"",
+        "sh -c 'cd {repo}/.git && echo x > hooks/post-checkout'",
+        "(cd {repo} && printf x > .gitmodules)",
+        "cp evil {repo}/.gi*/config",
+        "ln -s /tmp/x {repo}/.GIT/HOOKS/pre-push",
+        "cd {repo}/src/../.git/hooks && chmod +x pre-commit",
+        "git config --global core.fsmonitor true",
+        "node -e \"require('fs').appendFileSync(process.env.HOME+'/.zshrc','x')\"",
     ],
 )
-def test_the_screen_reads_a_command_the_way_its_shell_would(home, command):
+def test_the_screen_reads_a_command_the_way_its_shell_would(home, repo, command):
     """🔴 Red on main: a `cd` the chain split does not see (inside `sh -c`, a subshell), a glob,
     and a one-liner's spelled-out home all named nothing to this screen. It now reads a command
-    with the credential screen's reading (`command_paths.named_paths`)."""
+    with the credential screen's reading (`command_paths.named_paths`), and with the files the
+    reading of the command establishes it writes (`command_effects`: a `git config` that sets a
+    value writes git's settings). A link, a `..`, a case the disk does not tell apart: one file."""
     from personalclaw.hooks import HookManager
 
     (home / "agents").mkdir()
-    result = HookManager().on_tool_call("Running: " + command.format(home=home))
+    result = HookManager().on_tool_call("Running: " + command.format(home=home, repo=repo))
 
     assert result.action == "deny" and "an agent may not change it" in result.reason
 
 
-def test_a_read_of_one_is_left_to_the_read_rules(home):
-    """The floor: reading is not what this guards."""
+def test_a_read_of_one_is_left_to_the_read_rules(home, repo):
+    """The floor: reading is not what this guards, and neither is running a startup file in the
+    agent's own shell, which changes nothing in it."""
     from personalclaw.hooks import HookManager
 
     manager = HookManager()
     assert manager.on_tool_call(f"Reading {home}/config.json").action != "deny"
     assert manager.on_tool_call(f"Running: cat {home}/config.json").action != "deny"
+    assert manager.on_tool_call(f"Reading {repo}/.git/config").action != "deny"
+    assert manager.on_tool_call(f"Running: cat {repo}/.git/config").action != "deny"
+    assert manager.on_tool_call("Running: git config --get core.bare").action != "deny"
+    assert manager.on_tool_call("Running: source ~/.zshrc && nvm use 20").action != "deny"
 
 
 def test_a_root_that_contains_the_home_does_not_reach_into_it(home, monkeypatch):

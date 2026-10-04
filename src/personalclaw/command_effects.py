@@ -1393,10 +1393,107 @@ def _git_submodule(args: list[Word]) -> CommandEffects:
     return _UNREAD
 
 
+#: ``git config``'s actions and subcommands that set, unset, rename, remove or edit a setting.
+_GIT_CONFIG_WRITES = frozenset(
+    {
+        "--add",
+        "--replace-all",
+        "--unset",
+        "--unset-all",
+        "--rename-section",
+        "--remove-section",
+        "-e",
+        "--edit",
+        "set",
+        "unset",
+        "rename-section",
+        "remove-section",
+        "edit",
+    }
+)
+#: Its actions and subcommands that get or list settings, and its help.
+_GIT_CONFIG_READS = frozenset(
+    {
+        "--get",
+        "--get-all",
+        "--get-regexp",
+        "--get-urlmatch",
+        "--get-color",
+        "--get-colorbool",
+        "-l",
+        "--list",
+        "-h",
+        "--help",
+        "get",
+        "list",
+    }
+)
+#: Its newer subcommands (``git config set core.editor vi``), whose options follow them.
+_GIT_CONFIG_SUBCOMMANDS = frozenset(
+    {"list", "get", "set", "unset", "rename-section", "remove-section", "edit"}
+)
+#: The settings each scope writes, as the command would name them: the repository's by default.
+_GIT_CONFIG_SCOPES = {
+    "--global": "~/.gitconfig",
+    "--system": "/etc/gitconfig",
+    "--worktree": ".git/config.worktree",
+    "--local": ".git/config",
+}
+#: Its options that take the next word as their value (or one written after ``=``).
+_GIT_CONFIG_VALUED = _longs("file blob type default comment value url")
+
+
+def _git_config_scan(args: Sequence[Word]) -> _Scan:
+    """*args* read as ``git config`` reads them: its options come before the first operand, and a
+    word after that is an operand however it starts (``git config core.abbrev -1`` sets ``-1``)."""
+    return _scan(
+        args,
+        valued="f",
+        long_valued=_GIT_CONFIG_VALUED,
+        unknown_short_is_flag=True,
+        stop_at_operand=True,
+    )
+
+
+def _git_config(args: list[Word]) -> CommandEffects:
+    """``git config``: a form that sets, unsets, renames, removes or edits a setting writes the
+    settings it names, ``--file``'s or else its scope's (the repository's ``.git/config`` by
+    default, ``--global``'s ``~/.gitconfig``), and ``--edit`` runs an editor too. A form that gets
+    or lists one writes nothing. Neither is a read-only form: what git does with a setting is
+    whatever it names."""
+    scan = _git_config_scan(args)
+    if scan.operands and scan.operands[0].text in _GIT_CONFIG_SUBCOMMANDS:
+        after = _git_config_scan(scan.operands[1:])
+        values = {
+            option: [*scan.values.get(option, []), *after.values.get(option, [])]
+            for option in {*scan.values, *after.values}
+        }
+        scan = _Scan(
+            [scan.operands[0], *after.operands],
+            values,
+            scan.seen | after.seen,
+            scan.unknown or after.unknown,
+        )
+    words = scan.seen | {word.text for word in scan.operands[:1]}
+    writes = bool(words & _GIT_CONFIG_WRITES)
+    if not writes and (words & _GIT_CONFIG_READS or len(scan.operands) < 2):
+        return _UNREAD  # a name alone gets its value
+    named = _value_words(scan, ("-f", "--file"))
+    if named:
+        effects = _target_of(named[-1])
+    elif "--blob" in scan.seen:
+        return _UNREAD  # settings read from an object, which git writes nothing to
+    else:
+        scope = next((scope for scope in _GIT_CONFIG_SCOPES if scope in scan.seen), "--local")
+        effects = _writes_to(_GIT_CONFIG_SCOPES[scope])
+    return effects | _UNREAD if words & {"-e", "--edit", "edit"} else effects
+
+
 _GIT_DESCRIBED_READS: dict[str, _Read] = {
     **{sub: _git_remote_op(sub) for sub in ("clone", "fetch", "pull", "push", "ls-remote")},
     "init": _git_init,
     "submodule": _git_submodule,
+    "config": _git_config,
 }
 
 

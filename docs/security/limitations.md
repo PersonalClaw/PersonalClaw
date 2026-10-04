@@ -754,7 +754,8 @@ program are outside what a setting can reach:
 **What limits it today:** a driver runs with the child environment, so none of the gateway's
 secrets reach it. A git host lets that account run git's own commands and nothing else.
 
-**What this means for you:** an agent's shell can define a driver in the workspace's repository,
+**What this means for you:** an agent's shell that gets past the screen of git's settings (§22: a
+script, or a program that writes them itself) can define a driver in the workspace's repository,
 and the program it names runs when PersonalClaw's git next touches a file it is assigned to. A
 key that signs in to a machine where it has a full shell account can run more than git there.
 
@@ -1159,6 +1160,78 @@ between the two, and the write or the read would follow it.
 restore, the import or the export runs is not. Stop the gateway, and with it the apps' backends and
 the agent's commands, before a replace restore, as the restore asks you to.
 
+## 22. What git and your shell run as you: refused on every write path, fenced only in part
+
+Your own git and your own shell run what some files hold, as you and outside any sandbox: a
+repository's git settings and hook scripts (`.git/config`, `.git/hooks/`, `.gitmodules` and the
+rest), your own git settings (`~/.gitconfig`), and your shell's startup files (`~/.zshrc`,
+`~/.bashrc`, `~/.profile` and the rest:
+[security.md](../architecture/security.md#what-runs-as-the-owner-is-owner-only-owner_onlypy) lists
+them). An agent changes none of them on the paths PersonalClaw runs for it, in any approval mode,
+Trust, YOLO and a standing grant included, and it is told why in the words its refusal of
+PersonalClaw's own files uses:
+
+- `write_file` and `edit_file` refuse the change before you are asked, wherever their folders reach
+  one: a repository in the workspace, or your home folder when an allowed working directory covers
+  it.
+- An agent CLI's own write, edit or patch that it asks about first is refused where it asks, read on
+  the files the call names, a patch's changes included.
+- A file-backed artifact cannot point at one, so no save of it writes one, and an automation cannot
+  name one as a file it changes.
+- The agent's shell refuses a command that names one and does more than read it, and a `git config`
+  that sets, unsets or edits a setting at any scope (`git -c name=value`, which sets one for a
+  single command, still runs). Reading them, and running a startup file in the agent's own shell
+  (`source ~/.zshrc`), run as before.
+
+What the OS sandbox holds of them, in its `auto` mode:
+
+- **macOS** denies writes to your own git settings and your shell's startup files in your home
+  folder (`~/.gitconfig`, `~/.zshrc` and the rest), whatever the command says. One that is a link
+  into a dotfiles folder is held at both its names, and that folder cannot be moved aside.
+- **Linux** holds none of them: holding a file in your home folder would mean making the whole
+  folder read-only to the agent's shell.
+- **Neither** fences a repository's settings and hooks, nor the settings kept in `~/.config`
+  (`~/.config/git/config`, fish's): git writes a repository's itself in the agent's ordinary work
+  (`git init`, `git clone`, `git remote add`, `git push -u`, a branch that tracks another), and a
+  kernel rule cannot tell that from a planted setting; and holding `~/.config` would mean refusing
+  to make it where a program's first run needs it.
+
+With the sandbox off, or on a system that offers none, the screen alone holds the shell.
+
+What the screen does not see:
+
+- **git's own commands that record a setting as part of their work**: `git remote add`,
+  `git push -u`, `git submodule add`, a branch that tracks another, and `git clone` or `git init`
+  making a new repository's.
+- **A program that changes them itself**: a script, an installer that adds its line to your
+  startup files (a language toolchain's, a version manager's), or a hook manager's install step
+  (`pre-commit install`, a package's install script that sets `core.hooksPath`).
+- **A path built while the command runs**, as §13 says of credentials.
+- **A repository an agent makes.** A folder it turns into one, with `git init`, a clone, a `.git`
+  it writes where there was none or the files of a bare repository, holds what the agent wrote,
+  and git reads it like any other. So does a git folder put in place of a repository's own after
+  deleting it.
+- **A file they read in turn**: a file your git settings include (`include.path`), a hooks folder
+  inside the project that `core.hooksPath` names (`.husky/`, `.githooks/`), a hook manager's own
+  settings (`.pre-commit-config.yaml`), a plugin your shell's startup file sources, and the startup
+  files of a shell not listed there.
+- **An agent CLI's tools that do not ask first** (§1, §11).
+
+Editor and task-runner settings in a repository are not in the rule: `.vscode/settings.json` and
+`.vscode/tasks.json`, `.idea/`, a `Makefile`, `package.json` scripts, a `justfile` or
+`Taskfile.yml`, `.envrc`, `.mise.toml` and the like. They are the project's own files, which you ask
+an agent to change and which show in `git status` when the repository tracks them, and the tools
+that run commands from them either ask you first (an editor's trust prompt for a folder and its
+automatic tasks, `direnv allow`, `mise trust`) or run them when you run that tool.
+
+**What this means for you:** an agent's shell in a Trust or YOLO chat can still change these files
+through git itself, a program or a script, and on Linux nothing under the screen stops it. Before
+you run git in a repository an agent worked in unattended or with Trust or YOLO, look at what it
+changed: `git config --list --show-origin --show-scope` and a listing of `.git/hooks` read them
+without running anything. Set `safe.bareRepository` to `explicit` in your own git settings, so a
+folder that only looks like a bare repository is not read as one, and treat a repository an agent
+made, or one someone else prepared, as one a stranger sent you.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -1186,7 +1259,9 @@ chat and to one person's turns, and a vault that reads back no edit made by such
 the same record on every door that hands words to lasting work, and a Mode only you may loosen on
 work someone else asked for, for #20; writing each file a restore, an import or a sync brings,
 and reading each file an export sends, through folders opened without following a link, from the
-home down, for #21). This page will
+home down, for #21; a fence that holds a repository's git settings and hook scripts against the
+agent's shell while git's own commands still record what they must, and one that holds your own
+files on Linux, for #22). This page will
 shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

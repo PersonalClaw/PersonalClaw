@@ -16,8 +16,9 @@ action runs, so the owner's Allow covers it and says so in words (:func:`sentenc
 again (``triggers.grants.narrow``).
 
 A path is refused when it is saved (:func:`problem`) if a write there could reach what says what
-runs as the owner: PersonalClaw's own home (its workspace excepted), a credential location, a
-secret file, the filesystem root or the home folder itself.
+runs as the owner: PersonalClaw's own home (its workspace excepted), git's own settings and hook
+scripts and the owner's shell startup files (``owner_only``), a credential location, a secret
+file, the filesystem root or the home folder itself.
 
 **Not on an agent CLI.** An agent CLI changes files with its own tools: PersonalClaw neither runs
 them nor sees what they write, only the CLI's own description of an edit it asks about, and some
@@ -33,8 +34,17 @@ import os
 from collections.abc import Iterable
 from typing import Any
 
+from personalclaw import owner_only
+
 #: The most files one automation may name.
 MAX_ENTRIES = 10
+
+#: What the owner is told a path is when it holds what runs as her outside PersonalClaw's home
+#: (``owner_only``'s kinds), as the automation's save refuses it.
+_RUNS_AS_YOU = {
+    owner_only.GIT: "where git keeps what it reads and runs as you",
+    owner_only.SHELL: "where your shell keeps what it runs as you each time it starts",
+}
 
 #: The native file tools that change a file, the only calls a write scope admits. An agent CLI's
 #: own tools declare nothing core can hold to a path, so a scope admits none of them.
@@ -64,7 +74,6 @@ def problem(writes: Any) -> str:
         return f"an automation may name at most {MAX_ENTRIES} files it changes"
     from personalclaw.config.loader import default_workspace_dir, resolve_config_dir
     from personalclaw.file_roots import Admission, control_character_in
-    from personalclaw.owner_only import is_owner_only
     from personalclaw.security import is_sensitive_path
 
     home = os.path.realpath(str(resolve_config_dir()))
@@ -81,8 +90,11 @@ def problem(writes: Any) -> str:
         in_workspace = bool(workspace) and (
             real == workspace or real.startswith(workspace + os.sep)
         )
-        if (in_home and not in_workspace) or is_owner_only(real):
+        kind = owner_only.kind_of(entry)
+        if (in_home and not in_workspace) or kind == owner_only.HOME:
             return f"{entry} is inside PersonalClaw's own files, which no automation may change"
+        if kind:
+            return f"{entry} is {_RUNS_AS_YOU[kind]}, which no automation may change"
         if is_sensitive_path(real) or Admission([os.path.dirname(real)])(real) is None:
             return f"{entry} is a protected location, which no automation may change"
     return ""

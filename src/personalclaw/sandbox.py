@@ -9,11 +9,16 @@ other SSH files (keys, config, etc.), using platform-native isolation:
   The child retains the real UID so all toolchains work normally.
 - **macOS**: ``sandbox-exec`` with a Seatbelt profile that denies reads
 
-Both also keep what runs as the owner (``owner_only``) unwritable at every level, and, for a
-command started for work that may change none of your memory (an Incognito or Temporary chat's,
-an app's not given your memory, a turn someone other than you asked for), the memory folders too
-(:func:`_memory_fence`), which a command started for work that may read none of your memory (a
-Temporary chat's, an app's not given your memory) cannot read either (:func:`_memory_hidden`).
+Both also keep the home's owner-only paths (``owner_only``: what runs as the owner, and what
+they allowed) unwritable at every level, and, for a command started for work that may change none
+of your memory (an Incognito or Temporary chat's, an app's not given your memory, a turn someone
+other than you asked for), the memory folders too (:func:`_memory_fence`), which a command started
+for work that may read none of your memory (a Temporary chat's, an app's not given your memory)
+cannot read either (:func:`_memory_hidden`). The macOS profile also keeps the owner's own git
+settings and shell startup files in her home folder unwritable (:func:`_owners_own_fence`); on
+Linux only the screen holds those, since holding them would make her whole home folder read-only.
+Neither fences a repository's git settings and hook scripts, which ``owner_only`` lists too: git
+writes those itself in a shell's ordinary work.
 
 A command a run starts is also held to the run's egress tier here (:func:`wrap_argv`): when the
 tier takes its network away, the Linux child gets a network namespace of its own with nothing in
@@ -1103,8 +1108,8 @@ def main():
                 with open(os.path.join(SSH_DIR, "known_hosts"), "wb") as fh:
                     fh.write(kh_data)
 
-        # What runs as the owner, and what they allowed (`owner_only`), fenced by the home's own
-        # entries rather than by whichever files are there when the shell starts. A bind on one
+        # The home's owner-only paths (`owner_only`), fenced by the home's own entries rather
+        # than by whichever files are there when the shell starts. A bind on one
         # file holds that inode: it cannot hold a name that does not exist yet, and the kernel
         # dissolves it the moment the owner's side replaces the file (every config save writes
         # a new file and renames it over the old one). So the home is bound onto itself and made
@@ -1320,13 +1325,21 @@ def _build_seatbelt_profile(sandbox_level: str = "strict", *, network: bool = Tr
         )
         rules.append(f'(deny file-write* (subpath "{ssh_escaped}"))')
 
-    # What runs as the owner, and what they allowed (`owner_only`): never written from in here, at
-    # any level. The kernel refuses the write whatever the command says, which is what no reading
+    # The home's owner-only paths (`owner_only`): never written from in here, at any level. The
+    # kernel refuses the write whatever the command says, which is what no reading
     # of its text can promise. Both spellings of each path, because the home can sit behind a
     # symlink (`/tmp` → `/private/tmp`) and the profile matches the path the write names.
     for target, is_dir in _owner_only_targets():
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-write* ({"subpath" if is_dir else "literal"} "{escaped}"))')
+    # The owner's own files that make her tools run commands as her (`owner_only.owners_own`: her
+    # git settings, her shells' startup files), at any level, and each folder that could move
+    # one aside (`_owners_own_fence`). A repository's own settings and hooks are not here: git
+    # writes those itself in the agent's ordinary work, and this rule could not tell the two.
+    own_files, own_folders = _owners_own_fence()
+    for target in [*own_files, *own_folders]:
+        escaped = target.replace('"', '\\"')
+        rules.append(f'(deny file-write* (literal "{escaped}"))')
     # Long-term memory, never written from in here by a command started for work that may change
     # none of it (`_memory_fence`), nor read by one started for work that may read none of it
     # (`_memory_hidden`), at any level. The folder that holds the memory folders keeps its own
@@ -1381,26 +1394,58 @@ def _pinned_dirs(*, realpath_only: bool, include_home: bool) -> list[str]:
     spellings = {home}
     if not realpath_only:
         spellings.add(os.path.abspath(str(owner_only_paths()[0].parent)))
-    uid = os.getuid()
     out: list[str] = []
     for spelling in sorted(spellings):
-        current = spelling
         if include_home:
-            out.append(current)
-        while True:
-            parent = os.path.dirname(current)
-            if parent == current:
-                break
-            try:
-                renameable = os.stat(parent).st_uid == uid or os.access(parent, os.W_OK)
-            except OSError:
-                renameable = False
-            if renameable:
-                out.append(current)
-            current = parent
+            out.append(spelling)
+        out.extend(_renameable_from(spelling))
     ordered = list(dict.fromkeys(p for p in out if include_home or p not in spellings))
     # Outermost first, so a folder is bound before anything inside it.
     return sorted(ordered, key=lambda p: p.count(os.sep))
+
+
+def _renameable_from(folder: str) -> list[str]:
+    """*folder* and each folder above it that the owner could rename: one whose parent they own
+    or may write. A path rule names a path, so such a folder could be moved aside, edited there
+    and moved back past every rule that names something inside it."""
+    uid = os.getuid()
+    out: list[str] = []
+    current = folder
+    while True:
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        try:
+            renameable = os.stat(parent).st_uid == uid or os.access(parent, os.W_OK)
+        except OSError:
+            renameable = False
+        if renameable:
+            out.append(current)
+        current = parent
+    return out
+
+
+def _owners_own_fence() -> tuple[list[str], list[str]]:
+    """What the macOS profile holds of the owner's own files that make her tools run commands
+    (``owner_only.owners_own``: her git settings and her shells' startup files): each one in her
+    home folder itself, in every spelling a write can name it by (as her tools name it, and the
+    real file a link there leads to, as a dotfiles folder's), and every folder above those she
+    could rename, so none can be moved aside, edited and moved back.
+
+    The ones deeper down (``git/config`` and fish's, in ``~/.config``) are left to the screen:
+    holding them would mean refusing to make ``~/.config`` where it is missing, which many programs
+    do on their first run."""
+    from personalclaw.owner_only import owners_own
+
+    home = os.path.abspath(str(Path.home()))
+    files: list[str] = []
+    for path, is_dir, _kind in owners_own():
+        named = os.path.abspath(path)
+        if not is_dir and os.path.dirname(named) == home:
+            files.extend((named, os.path.realpath(named)))
+    files = list(dict.fromkeys(files))
+    folders = [folder for target in files for folder in _renameable_from(os.path.dirname(target))]
+    return files, list(dict.fromkeys(folders))
 
 
 def _memory_fence(*, realpath_only: bool) -> list[str]:
@@ -1443,8 +1488,9 @@ def _memory_folders(*, realpath_only: bool) -> list[str]:
 
 
 def _owner_only_targets() -> list[tuple[str, bool]]:
-    """Every owner-only path (`owner_only`) as ``(path, is_dir)``, in each spelling it can be
-    written by — its absolute and its real path — for the sandbox to deny writes to."""
+    """Every one of the home's owner-only paths (`owner_only`) as ``(path, is_dir)``, in each
+    spelling it can be written by — its absolute and its real path — for the sandbox to deny writes
+    to."""
     from personalclaw.owner_only import OWNER_ONLY_DIRS, owner_only_paths
 
     out: list[tuple[str, bool]] = []

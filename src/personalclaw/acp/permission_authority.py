@@ -233,7 +233,15 @@ def screen_tool_call(
     than you asked for), and a read too in work that may read none of it (a Temporary chat's, an
     app's not given your memory), in the refusal's own words and under its code. An agent CLI's
     own file and shell tools reach the memory folders past every check of PersonalClaw's own tools.
+
+    So is a call that would change what runs as the owner (``owner_only``), whatever would approve
+    it: one whose title or command names such a path (the hook chain's own reading) or whose input
+    names one (``owner_only.named_by_call``: its files, a patch's changes included). An agent CLI's
+    own write, edit and patch tools reach a repository's ``.git/config`` and ``.git/hooks/``, and
+    the owner's shell startup files, past every check of PersonalClaw's file tools, and the owner's
+    own git and shell run what those hold.
     """
+    from personalclaw import owner_only
     from personalclaw.file_scope import memory_named_by_call
     from personalclaw.hooks import TOOL_DENY, ToolHookResult, live_hook_manager
 
@@ -249,6 +257,13 @@ def screen_tool_call(
         named, refused = held
         return ToolHookResult.refuse(
             f"{refused} {refused.hint}", control=refused.control, rule=named
+        )
+    changes = owner_only.named_by_call(title, tool_input, command, cwd=cwd)
+    if changes is not None:
+        return ToolHookResult.refuse(
+            f"{owner_only.refusal(changes)} {owner_only.hint(changes.kind)}",
+            control="owner_only",
+            rule=changes.word,
         )
     return chain.on_tool_call(title, cwd=cwd)
 

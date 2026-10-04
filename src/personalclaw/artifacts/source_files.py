@@ -8,7 +8,9 @@ the explorer's roots plus each loop's own folder. An unbound loop keeps its deli
 folder, and its completion graduates the file as a live pointer
 (``loop/watchdog._register_deliverable_artifact``). The home itself is never one of these places:
 ``config.json`` and ``mcp.json`` are plain files there, and writing one would bypass every refusal
-the config and MCP routes make (#3675).
+the config and MCP routes make (#3675). Nor is anything else in them that runs as the owner
+(``owner_only``: a repository's ``.git/config``, ``.git/hooks/`` and ``.gitmodules``, her shell's
+startup files): an agent's save of the artifact would write what her own git or shell runs.
 
 An app's request gets the explorer's roots alone. A loop's folder holds the brief its worker reads
 every cycle, and steering a loop is the owner's.
@@ -24,7 +26,7 @@ import logging
 import os
 from collections.abc import Sequence
 
-from personalclaw import file_roots
+from personalclaw import file_roots, owner_only
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,10 @@ def admitted(raw: str, roots: Sequence[str] | None = None) -> str | None:
     """
     if not raw or not os.path.isabs(raw):
         return None
-    return file_roots.admit(raw, places() if roots is None else roots)
+    canonical = file_roots.admit(raw, places() if roots is None else roots)
+    if canonical is None or owner_only.is_owner_only(raw):
+        return None
+    return canonical
 
 
 def admit(raw: str) -> str:
@@ -81,10 +86,12 @@ def admit(raw: str) -> str:
     if request_app():
         raise ValueError(
             "An app can point an artifact only at a file in the folders the file explorer shows "
-            f"it, and at no credential file in them — not {raw}"
+            "it, and at no credential file, git setting, hook script or shell startup file in "
+            f"them — not {raw}"
         )
     raise ValueError(
         f"{raw} can't be an artifact's source. An artifact's source is the full path of a file "
         "in your workspace, the outbox, uploads, screenshots, or a project's or loop's folder, "
-        "and never a credential or secret file."
+        "and never a credential or secret file, git's own settings or hook scripts, or your "
+        "shell's startup files."
     )

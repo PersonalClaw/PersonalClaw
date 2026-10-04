@@ -59,6 +59,14 @@ folders out of their listings, the shell refuses a command that names a path the
 keeps the folders unreadable. The gate an agent CLI's own file and shell tools ask before a call
 runs holds both, whatever would approve the call (:func:`memory_named_by_call`).
 
+**What git or the owner's shell runs as her is not changed here.** A change to git's own settings
+and hook scripts (a repository's ``.git/config`` and ``.git/hooks/``, its ``.gitmodules``, her
+``~/.gitconfig``) or to her shell's startup files (``~/.zshrc``, ``~/.bashrc``, ``~/.profile``,
+where an allowed working directory covers her home folder), and the rest ``owner_only`` lists, is
+refused in every place, before anyone is asked, in the words the shell's refusal of them uses: her
+own git and shell read them and run what they name. Reading them, and changing every other file of
+a repository (``.gitignore``, ``.gitattributes``), is as anywhere.
+
 Inside every place the checks the Files view makes still hold (``file_roots.Admission``):
 symlinks and ``..`` are resolved first, so a link or a climb out of a place reaches nothing it
 does not already reach; no credential location or secret file; and nothing in PersonalClaw's own
@@ -353,7 +361,8 @@ class FileScope:
         named = os.path.expanduser(raw) if raw == "~" or raw.startswith("~/") else raw
         if not os.path.isabs(named) and not self.base:
             raise OutOfScope(f"path {raw!r} is relative, and this session has no folder")
-        real = os.path.realpath(os.path.join(self.base, named))
+        spelled = os.path.join(self.base, named)
+        real = os.path.realpath(spelled)
         places = self._containing(real, change)
         if not places:
             raise self._outside(raw, real, change)
@@ -366,6 +375,8 @@ class FileScope:
             raise OutOfScope(
                 f"path {raw!r} is a credential or secret file, which this tool does not reach"
             )
+        if change and (owner_only := _owner_only(raw, spelled, self._home)) is not None:
+            raise owner_only
         store = self.own_store(real)
         if store is not None:
             raise OutOfScope(*_store_refusal(f"path {raw!r}", store))
@@ -437,6 +448,22 @@ class FileScope:
         if self.base and _inside(text, self.base) and text != self.base:
             return os.path.relpath(text, self.base)
         return from_home(text)
+
+
+def _owner_only(raw: str, spelled: str, home: str) -> OutOfScope | None:
+    """Why a change to the path *raw* names (*spelled*, as it is written from the session's
+    folder) is refused for what it is, or ``None``: what runs as the owner (``owner_only``), which
+    inside a place is git's own settings and hook scripts or the owner's shell startup files.
+    Refused in the words the shell's refusal of it uses, under its control, so the call's audit
+    row names it."""
+    from personalclaw import owner_only
+
+    kind = owner_only.kind_of(spelled, home)
+    if not kind:
+        return None
+    return OutOfScope(
+        owner_only.refusal(owner_only.Named(raw, kind)), owner_only.hint(kind), control="owner_only"
+    )
 
 
 #: The files SQLite keeps beside a database, which hold its pages too.
@@ -707,6 +734,17 @@ _FILE_KEYS = (
     "new_path",
 )
 
+#: The keys an agent CLI's patch lists the changes it makes under: a mapping from each file's path
+#: to its change, or a list of changes, each naming its file.
+_PATCH_KEYS = ("changes", "file_changes", "fileChanges")
+
+#: The keys a change in a patch names a file by: the file it changes, and the one it moves it to.
+_PATCH_FILE_KEYS = frozenset({"path", "move_path", "movePath"})
+
+#: How much of a patch's changes is read for the files they name, so a call cannot make its own
+#: screen slow; a patch past it is read no further.
+_MAX_PATCH_NODES = 4096
+
 
 def memory_named_by_call(
     title: str, tool_input: Any, command: str, *, cwd: str | os.PathLike[str] | None = None
@@ -717,38 +755,61 @@ def memory_named_by_call(
 
     An agent CLI brings file and shell tools of its own, which PersonalClaw's file tools' checks
     never see: the gate the CLI asks before a call runs (``acp.permission_authority.
-    screen_tool_call``) has only the call's title and input. A call that runs a command (*command*,
-    or a title in the ``Running: `` form) is read as the shell's is (:func:`memory_named_in`); any
-    other is read for the paths its title names, its own description of what it does. Both are read
-    for the paths under the keys the input names a file by (:data:`_FILE_KEYS`), from *cwd* (the
-    workspace in the home when ``None``). A call reads only when its command only reads, or when
-    its title is the form the gate takes a read in (``Reading ``, as the deny-list reads one).
-    Deny-only, so reading more can only refuse more.
+    screen_tool_call``) has only the call's title and input, read for the paths they name
+    (:func:`call_paths`). Deny-only, so reading more can only refuse more.
 
     A call to one of PersonalClaw's own tools (``acp.mcp_servers.names_core_tool``) is left to
     that tool: it changes memory only through the stores, which refuse the change for such work,
     and it holds back from what it reads what the file tools hold back (:func:`held_from_reads`)."""
     from personalclaw.acp.mcp_servers import names_core_tool
-    from personalclaw.command_paths import named_paths
-    from personalclaw.task_modes import is_read_only_bash
 
     if names_core_tool(title, tool_input):
         return None
+    named, reads = call_paths(title, tool_input, command, cwd=cwd)
+    return memory_screen(named, reads=reads)
+
+
+def call_paths(
+    title: str, tool_input: Any, command: str, *, cwd: str | os.PathLike[str] | None = None
+) -> tuple[list[tuple[str, str]], bool]:
+    """The paths a call put to an approval gate names, each as written and as the path it names,
+    and whether the call only reads them: the one reading of an agent CLI's call, which the memory
+    screen and the owner-only one (``owner_only.named_by_call``) both ask.
+
+    A call that runs a command (*command*, or a title in the ``Running: `` form) is read as the
+    shell's is (``command_paths.named_paths``); any other is read for the paths its title names,
+    its own description of what it does. Both are read for the files the input names
+    (:func:`files_named_by`), from *cwd* (the workspace in the home when ``None``), and judged
+    by :func:`call_reads`."""
+    from personalclaw.command_paths import named_paths
+
+    run = _command_run(title, command)
+    named = [(word, str(path)) for word, path in named_paths(run or str(title or ""), cwd=cwd)]
+    named.extend(files_named_by(tool_input, cwd=cwd))
+    return named, call_reads(title, command)
+
+
+def _command_run(title: str, command: str) -> str:
+    """The command a call runs: *command*, or a title in the ``Running: `` form; ``""`` for none."""
     shown = str(title or "")
-    run = command or (shown.removeprefix("Running: ") if shown.startswith("Running: ") else "")
-    named = [(word, str(path)) for word, path in named_paths(run or shown, cwd=cwd)]
-    named.extend(_files_in_input(tool_input, cwd=cwd))
-    return memory_screen(
-        named, reads=is_read_only_bash(run) if run else shown.startswith("Reading ")
-    )
+    return command or (shown.removeprefix("Running: ") if shown.startswith("Running: ") else "")
 
 
-def _files_in_input(
-    tool_input: Any, *, cwd: str | os.PathLike[str] | None
-) -> list[tuple[str, str]]:
-    """The files a call's input names under :data:`_FILE_KEYS`, each as written and as the path it
-    names: a relative one from *cwd*, the workspace in the home when ``None``. The input is the
-    parsed arguments, or their JSON text, as an agent CLI's permission request carries them."""
+def call_reads(title: str, command: str) -> bool:
+    """Whether a call put to an approval gate only reads: its command (*command*, or a title in the
+    ``Running: `` form) only reads (``task_modes.is_read_only_bash``), or, running none, its title
+    is the form the gate takes a read in (``Reading ``, as the deny-list reads one)."""
+    from personalclaw.task_modes import is_read_only_bash
+
+    run = _command_run(title, command)
+    return is_read_only_bash(run) if run else str(title or "").startswith("Reading ")
+
+
+def files_named_by(tool_input: Any, *, cwd: str | os.PathLike[str] | None) -> list[tuple[str, str]]:
+    """The files a call's input names, each as written and as the path it names: a relative one
+    from *cwd*, the workspace in the home when ``None``. Those under :data:`_FILE_KEYS`, and every
+    file a patch's changes name (:func:`_patched`). The input is the parsed arguments, or their
+    JSON text, as an agent CLI's permission request carries them."""
     args = tool_input
     if isinstance(args, str):
         try:
@@ -760,12 +821,34 @@ def _files_in_input(
     from personalclaw.config.loader import memory_root
 
     base = Path(cwd) if cwd is not None else memory_root()
+    written = [args.get(key) for key in _FILE_KEYS]
+    for key in _PATCH_KEYS:
+        written.extend(_patched(args.get(key)))
     named: list[tuple[str, str]] = []
-    for key in _FILE_KEYS:
-        value = args.get(key)
+    for value in written:
         if isinstance(value, str) and value.strip():
             path = Path(os.path.expanduser(value.strip()))
             named.append((value, str(path if path.is_absolute() else base / path)))
+    return named
+
+
+def _patched(changes: Any) -> list[str]:
+    """The files a patch's *changes* name: each key of a mapping from a file's path to its change,
+    and every file a change names by :data:`_PATCH_FILE_KEYS` (the file a change in a list makes,
+    the one a change moves its file to), however deep in the change it is."""
+    named = [key for key in changes if isinstance(key, str)] if isinstance(changes, Mapping) else []
+    stack, read = [changes], 0
+    while stack and read < _MAX_PATCH_NODES:
+        node = stack.pop()
+        read += 1
+        if isinstance(node, Mapping):
+            for key, value in node.items():
+                if key in _PATCH_FILE_KEYS and isinstance(value, str):
+                    named.append(value)
+                elif isinstance(value, (Mapping, list)):
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
     return named
 
 

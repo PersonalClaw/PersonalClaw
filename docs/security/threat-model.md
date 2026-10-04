@@ -41,6 +41,14 @@ crossing is gated so the agent cannot act outside the owner's chosen posture:
   Defence in depth: [limitations §13](limitations.md#13-the-agents-shell-is-screened-not-fenced-from-your-credential-files).
 - **OS child sandbox** (`sandbox.py`) with a credential-env denylist so secrets
   never reach a sandboxed child.
+- **What runs as the owner** (`owner_only.py`): PersonalClaw's own files in its home, git's
+  own settings and hook scripts (a repository's `.git/config`, `.git/hooks/`, `.gitmodules`, and
+  the owner's `~/.gitconfig`) and the owner's shell startup files (`~/.zshrc`, `~/.bashrc`,
+  `~/.profile` and the rest). No approval mode, Trust, YOLO or standing grant lets an agent
+  change one: the file tools, an agent CLI's own write, edit and patch, file-backed artifacts and
+  automations refuse it, and the shell's screen refuses a command that names one or a
+  `git config` that sets a value. Fenced by the OS sandbox only in part:
+  [limitations §22](limitations.md#22-what-git-and-your-shell-run-as-you-refused-on-every-write-path-fenced-only-in-part).
 - **Trust/YOLO state** (`trust_mode.py`): one process-global auto-approve state,
   config-permanent or TTL'd, with `on_disable` callbacks.
 

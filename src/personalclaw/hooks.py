@@ -559,16 +559,22 @@ class HookManager:
                 return ToolHookResult.deny(reason)
 
         # What runs as the owner, and what they allowed (always enforced): a call that names one of
-        # those paths — an edit, a write, a shell command that is not a pure read — does not run,
-        # whoever would approve it (`owner_only`). Before every approval path: a card, an
-        # auto-approve pattern and an unattended default alike. Reads stay the read rules' business.
+        # those paths — PersonalClaw's own in its home, git's own settings and hook scripts, the
+        # owner's shell startup files — as an edit, a write, or a shell command that is not a pure
+        # read, does not run, whoever would approve it (`owner_only`). Before every approval path:
+        # a card, an auto-approve pattern and an unattended default alike. Reads stay the read
+        # rules' business.
         if not tool_name.startswith("Reading "):
-            from personalclaw.owner_only import named_in, refusal
+            from personalclaw.owner_only import hint, named_in, refusal
             from personalclaw.task_modes import is_read_only_bash
 
             named = named_in(normalized, cwd=cwd)
-            if named and not (tool_name.startswith("Running: ") and is_read_only_bash(normalized)):
-                return ToolHookResult.deny(refusal(named))
+            if named is not None and not (
+                tool_name.startswith("Running: ") and is_read_only_bash(normalized)
+            ):
+                return ToolHookResult.refuse(
+                    f"{refusal(named)} {hint(named.kind)}", control="owner_only", rule=named.word
+                )
 
         # Built-in security deny list (always enforced)
         reason = is_denied(normalized, self._config.auto_deny_tools) or is_denied(

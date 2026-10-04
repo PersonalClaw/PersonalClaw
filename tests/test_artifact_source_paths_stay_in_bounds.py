@@ -176,6 +176,59 @@ async def test_the_homes_own_settings_file_is_refused(places, provider):
     assert config.read_text() == before
 
 
+def _repository(ws: Path) -> Path:
+    """A repository in the workspace, laid out as git lays one out (no git is run to make it)."""
+    repo = ws / "site"
+    for folder in (repo / ".git" / "hooks", repo / ".git" / "objects", repo / ".git" / "refs"):
+        folder.mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (repo / ".git" / "config").write_text(ORIGINAL)
+    (repo / ".git" / "hooks" / "pre-commit").write_text(ORIGINAL)
+    (repo / ".gitmodules").write_text(ORIGINAL)
+    (repo / ".gitignore").write_text(ORIGINAL)
+    return repo
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", [".git/config", ".git/hooks/pre-commit", ".gitmodules"])
+async def test_gits_own_settings_and_hooks_are_refused(places, provider, target):
+    """🔴 Before: a pointer at a repository's git settings or hook script in the workspace was
+    taken, and every save of the artifact then wrote what the owner's own git runs."""
+    _home, ws, _outside = places
+    file = _repository(ws) / target
+    status, body = await _post(str(file))
+    _refused(status, body, str(file))
+    assert "git's own settings or hook scripts" in body["error"]
+    assert file.read_text() == ORIGINAL
+    assert provider.list() == []
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_file_of_a_repository_is_a_live_pointer(places, provider):
+    """The control: the repository's own files, its ignore rules among them, are sources."""
+    _home, ws, _outside = places
+    ignore = _repository(ws) / ".gitignore"
+    status, body = await _post(str(ignore))
+    assert status == 201, body
+    assert ignore.read_text() == POSTED
+
+
+def test_a_pointer_at_gits_settings_recorded_before_neither_reads_nor_writes_them(places, provider):
+    """A pointer recorded before the rule held git's files reads its own copy and writes nothing
+    there, however the save is made."""
+    _home, ws, _outside = places
+    config = _repository(ws) / ".git" / "config"
+    art = provider.create(name="Doc", content="saved copy", kind="markdown")
+    meta_path = provider.root / art.slug / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta["source_path"] = str(config)
+    meta_path.write_text(json.dumps(meta))
+
+    assert provider.get(art.slug).content == "saved copy"
+    provider.update(art.slug, content=POSTED, snapshot=True)
+    assert config.read_text() == ORIGINAL
+
+
 @pytest.mark.asyncio
 async def test_a_path_that_does_not_exist_yet_is_refused(places, provider):
     """A pointer is a live read, so one taken now reads whatever file appears there later."""

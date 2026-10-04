@@ -587,13 +587,14 @@ credential paths (`~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.azure`, `~/.dock
 `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`, and the credential store's `.env` in the home in
 use and the default one, plus `~/.ssh` in `strict`; the single files only in `cc` and `strict`,
 `_hidden_files`); the Linux path is equivalent (bind-mount empty dirs over those paths). It raises the
-cost of credential theft. The one place it confines writes is the home's owner-only paths (below);
-it does not stop an agent from doing anything else.
+cost of credential theft. The places it confines writes are the home's owner-only paths and, on
+macOS, the owner's own git settings and shell startup files (below); it does not stop an agent from
+doing anything else.
 
 | It **does** | It does **not** |
 |---|---|
-| Hide credential dirs/files from the agent child (macOS Seatbelt deny-reads; Linux bind-mounts) | Confine filesystem **writes** (except `~/.ssh` on macOS `strict`, and the owner-only paths) |
-| Refuse writes to the owner-only paths at every level (macOS deny-writes; Linux holds the home's entries — below) | |
+| Hide credential dirs/files from the agent child (macOS Seatbelt deny-reads; Linux bind-mounts) | Confine filesystem **writes** (except `~/.ssh` on macOS `strict`, the home's owner-only paths, and on macOS the owner's own git settings and shell startup files) |
+| Refuse writes to the home's owner-only paths at every level (macOS deny-writes; Linux holds the home's entries — below), and on macOS to the owner's own git settings and shell startup files | Fence a repository's git settings and hook scripts (screened instead — below) |
 | Scrub credential env vars from the child, every mode | Restrict **network / egress** from the child |
 | Deny `~/.ssh` writes (macOS `strict` only) | Limit processes, CPU, or memory (no rlimits) |
 | Path-allowlist a subagent's cwd (advisory — the prompt tells the agent its scope) | Provide a filesystem **jail** or a real execution boundary |
@@ -635,6 +636,48 @@ wrote, `owner_grants.py`). An agent writes none of them, at three layers that ea
 - **The roots**: no file root reaches into the home except a root that is itself inside it
   (`file_roots.within`), so the file explorer, file-backed artifacts, apps and the native file
   tools never name them however a workspace or a loop is bound.
+
+Git's own settings and hook scripts, and the owner's shell startup files, are owner-only too: her
+own git and her own shell run what they hold, outside any sandbox.
+
+- **Git's.** In a repository's git folder (one named `.git`, a submodule's and a linked worktree's
+  folders inside it, or any folder git takes for one, as it takes a bare repository: it holds `HEAD`
+  and `objects`, or `HEAD` and `commondir`): its settings `config`, a linked worktree's
+  `config.worktree`, `commondir` (where a linked worktree's settings and hooks are), the `hooks/`
+  folder, and the steps of a rebase in progress (`rebase-merge/git-rebase-todo`). In a working tree:
+  `.gitmodules`, and the `.git` file a linked worktree or a submodule keeps in place of the folder.
+  And the owner's own git settings, `~/.gitconfig` and `git/config` in `$XDG_CONFIG_HOME`, and the
+  machine's (an `etc/gitconfig`). Names are compared regardless of case, as a case-insensitive disk
+  opens them. The rest of a repository stays the agent's: `.gitignore`, `.gitattributes`,
+  `.git/info/exclude` and every file of the project.
+- **The shell's.** The startup files of sh, bash, zsh, ksh and the csh family in her home folder
+  (`.profile`, `.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`, `.bash_aliases`,
+  `.zshenv`, `.zprofile`, `.zshrc`, `.zlogin`, `.zlogout`, `.kshrc`, `.mkshrc`, `.cshrc`, `.tcshrc`,
+  `.login`, `.logout`), zsh's in `$ZDOTDIR` as well, and fish's `config.fish`, `conf.d/` and
+  `functions/` in `$XDG_CONFIG_HOME/fish`.
+
+Every path an agent writes by refuses a change to one, before anyone is asked and whatever the
+chat's Trust, YOLO or a standing grant would answer, in the words the home's refusal uses: the
+native file tools wherever a place reaches one (`file_scope.FileScope.resolve`: a repository in the
+workspace, the owner's home folder when an allowed working directory covers it); an agent CLI's own
+write, edit and patch where it asks (`acp.permission_authority.screen_tool_call` reads the files the
+call's input names, a patch's changes included); a file-backed artifact, which never points at one
+(`artifacts/source_files.py`), so no save of it writes one; an automation's files to change
+(`write_scope.problem`); and the agent's shell, whose screen refuses a command that names one and
+does more than read it, and a `git config` that sets, unsets or edits a setting at any scope
+(`command_effects` reads which settings it writes). Reading them is untouched, and so is running a
+startup file in the agent's own shell (`source ~/.zshrc`).
+
+The fence holds less of them. The macOS profile denies writes to the owner's own git settings and
+shell startup files that sit in her home folder, at every level, in both spellings of a link into a
+dotfiles folder, and pins that folder so it cannot be moved aside; the ones deeper in `~/.config`
+are held by the screen alone, since holding them would mean refusing to make `~/.config` where a
+program's first run needs it. The Linux launcher holds none of the owner's own files: it could
+only by making her whole home folder read-only. And neither platform fences a repository's: git
+writes those itself in the agent's ordinary work (`git init`, `git clone`, `git remote add`,
+`git push -u`), and a kernel rule cannot tell that from a planted setting.
+[Limitations §22](../security/limitations.md#22-what-git-and-your-shell-run-as-you-refused-on-every-write-path-fenced-only-in-part)
+says what that leaves.
 
 The owner is untouched: their own editor, and the gateway writing for the owner's surfaces. And
 because a fence is not consent, the agent CLI's hooks also run only once the owner allowed them
@@ -719,10 +762,12 @@ nothing; the PersonalClaw home reached only through a place inside it (`file_roo
 place that contains the home (a worker in `~`) says nothing about a path in it, so the skills
 library's rule is all a session working there reads of the library; no
 protected credential location (`~/.ssh`, `~/.aws`, the keychain, the home's own `.env`, `auth/`,
-`governance/`); and no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
-or `*.secret` file, nor any alias of one. A path that starts with `~/` names the owner's home, as
-the owner writes it, and meets every one of these checks as any absolute path does (`~name` stays
-a plain name). The home is the one the gateway runs with (`HOME`, as its shell reads `~`), and a
+`governance/`); no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
+or `*.secret` file, nor any alias of one; and no change to what git or the owner's shell runs as
+her (`owner_only`: a repository's `.git/config` and `.git/hooks/`, its `.gitmodules`, her
+`~/.gitconfig`, her `~/.zshrc` and the rest above). A path that starts with `~/` names the
+owner's home, as the owner writes it, and meets every one of these checks as any absolute path
+does (`~name` stays a plain name). The home is the one the gateway runs with (`HOME`, as its shell reads `~`), and a
 path the tools show in it is written from `~` (`home_paths.from_home`: a search hit, a place in the
 `[file places]` note, a note's file), as is every path in the home the request names; a path
 outside the home is shown in full. The request says once what `~` is, and asks the agent to name a

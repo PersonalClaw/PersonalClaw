@@ -93,6 +93,8 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("security.py", "system_subtrees"): "a guard: the running account's own home is exempt",
     ("sandbox.py", "_build_launcher_script"): "the OS sandbox profile confines the home",
     ("sandbox.py", "_build_seatbelt_profile"): "the OS sandbox profile confines the home",
+    ("sandbox.py", "_owners_own_fence"): "the OS sandbox profile denies writes to what runs as her",
+    ("owner_only.py", "owners_own"): "a guard: knows what under HOME runs as the owner, to refuse",
     ("sandbox_providers/lima.py", "_host_mount"): "the sandbox VM's host mount, a sandbox setting",
     ("loop/validation.py", "workspace_write_target_errors"): "a guard: HOME is no workspace",
     ("write_scope.py", "problem"): "a guard: the home folder itself is no file a job changes",

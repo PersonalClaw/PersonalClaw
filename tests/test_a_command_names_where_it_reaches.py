@@ -165,6 +165,21 @@ def test_a_command_that_establishes_no_network_claims_none(command):
         ("export OUT=1; echo hi > out.txt", ["out.txt"], False),
         ("PYTHONPATH=src python build.py > out.txt", ["out.txt"], False),
         ("GIT_AUTHOR_NAME=Alex git commit -m m", ["."], False),
+        # `git config` writes the settings it names: its scope's, or `--file`'s.
+        ("git config core.hooksPath .githooks", [".git/config"], False),
+        ("git config core.abbrev -1", [".git/config"], False),
+        ("git config --unset core.pager", [".git/config"], False),
+        ("git config --global user.name Alex", ["~/.gitconfig"], False),
+        ("git config set --global core.editor vi", ["~/.gitconfig"], False),
+        ("git config set --worktree core.sparseCheckout true", [".git/config.worktree"], False),
+        ("git -C /srv/repo config core.fsmonitor false", ["/srv/repo/.git/config"], False),
+        (
+            "cd /srv/repo && git config user.email alex@example.com",
+            ["/srv/repo/.git/config"],
+            False,
+        ),
+        ("git config -f .gitmodules submodule.theme.url ../theme", [".gitmodules"], False),
+        ("git config --file=site.ini site.title Notes", ["site.ini"], False),
     ],
 )
 def test_a_write_names_its_paths(command, targets, unnamed):
@@ -205,6 +220,26 @@ def test_output_thrown_away_is_no_file_written(command):
     ],
 )
 def test_reading_more_never_makes_a_command_a_read(command):
+    assert is_read_only_bash(command) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git config --get user.name",
+        "git config core.editor",
+        "git config --list --show-origin",
+        "git config -l",
+        "git config get core.editor",
+        "git config list",
+        "git config --global --get-regexp alias",
+    ],
+)
+def test_a_git_config_that_gets_or_lists_writes_nothing(command):
+    """A form that gets or lists a setting writes no file, and it stays no read-only form: what
+    git does with a setting is whatever the setting names."""
+    effects = command_effects(command)
+    assert effects.writes is False and not effects.targets
     assert is_read_only_bash(command) is False
 
 
