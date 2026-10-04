@@ -590,8 +590,11 @@ async def test_an_automation_reads_the_global_secret_and_refuses_a_projects_stor
 
     await _store()
 
-    resolved = trigger_secrets.resolve_for(object(), {"command": "echo {{secret:GARDEN_TOKEN}}"})
+    resolved, filled = trigger_secrets.resolve_for(
+        object(), {"command": "echo {{secret:GARDEN_TOKEN}}"}
+    )
     assert resolved == {"command": f"echo {GLOBAL_VALUE}"}
+    assert filled == (GLOBAL_VALUE,), "the values filled in, which the dispatch masks"
 
     with pytest.raises(trigger_secrets.UnresolvedSecret) as refused:
         trigger_secrets.resolve_for(

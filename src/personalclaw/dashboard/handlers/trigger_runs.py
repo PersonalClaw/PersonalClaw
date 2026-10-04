@@ -603,6 +603,7 @@ async def _dispatch_store_action(
 
     from personalclaw.action_providers import ActionContext, get_action_provider
     from personalclaw.action_providers.registry import _ensure_default_providers_registered
+    from personalclaw.filled_secrets import handed, masked, masked_answer
     from personalclaw.triggers import cannot_run, grants
     from personalclaw.triggers import secrets as trigger_secrets
 
@@ -627,10 +628,11 @@ async def _dispatch_store_action(
         return False, refusal
     # `{{secret:KEY}}` filled here as a fire fills it (`secrets.resolve_for`): this path handed the
     # provider the placeholder itself, so a Run now sent `{{secret:KEY}}` where the fire sent the
-    # value, and a secret that is not stored is refused as the fire refuses it.
+    # value, and a secret that is not stored is refused as the fire refuses it. What the action
+    # answers, or raises, is masked of each value filled in before it is recorded, told or answered.
     written = action.get("config") or {}
     try:
-        config = trigger_secrets.resolve_for(provider, written)
+        config, filled = trigger_secrets.resolve_for(provider, written)
     except trigger_secrets.UnresolvedSecret as exc:
         return await _refused(trigger, cannot_run.missing_secret(exc), state=state)
     # 🔴 RECORD THE RUN (#308). #702 made this path resolve and dispatch the nested action, but it
@@ -696,7 +698,8 @@ async def _dispatch_store_action(
         # `bash` Run now was cut off at 30s where its scheduled fire had 300s. And the same egress
         # tier: what the action reaches is held to the identity a fire of this trigger runs under,
         # since a Run now, a webhook's fire and a view's refresh are runs of the automation too.
-        with egress_held_to(unattended_dispatch_key(f"trigger:{trigger_id}")):
+        # And what it writes itself as it runs is masked of each value filled in, as a fire's is.
+        with egress_held_to(unattended_dispatch_key(f"trigger:{trigger_id}")), handed(filled):
             result = await provider.execute(config, ctx, timeout=action_timeout(provider_name))
     except asyncio.CancelledError:
         # A stop or a restart cut it off. A cancellation is not an `Exception`, so the branch below
@@ -704,12 +707,14 @@ async def _dispatch_store_action(
         _record_stopped_run(trigger_id, started=started)
         raise
     except Exception as exc:  # noqa: BLE001 - a failed manual run is RECORDED, not raised (#308)
-        await _record_hand_run(trigger, started=started, exc=exc, state=state)
-        delivery.report_run(state, trigger, ok=False, error=f"{type(exc).__name__}: {exc}")
-        return False, f"failed: {type(exc).__name__}: {exc}"
+        said = masked(f"{type(exc).__name__}: {exc}", filled)
+        await _record_hand_run(trigger, started=started, exc=exc, error=said, state=state)
+        delivery.report_run(state, trigger, ok=False, error=said)
+        return False, f"failed: {said}"
     finally:
         if claimed is not None:
             _give_back_claim(trigger_id, holder=holder, root=claimed)
+    result = masked_answer(result, filled)
     await _record_hand_run(trigger, started=started, result=result, late=late, state=state)
     from personalclaw.schedule_history import failure_for_result, summary_for_result
 
@@ -843,12 +848,14 @@ async def _record_hand_run(
     started: float,
     result: Any = None,
     exc: BaseException | None = None,
+    error: str = "",
     late: str = "",
     state: Any = None,
 ) -> None:
     """Record a run by hand through the one recorder, in the home the handlers read: their trigger
-    store and run history (`triggers._trigger_store`, `triggers._runs_store`). Never raises, as the
-    recorder does not: losing a run record is recoverable, losing the response is not."""
+    store and run history (`triggers._trigger_store`, `triggers._runs_store`). *error* is what the
+    row says of *exc*. Never raises, as the recorder does not: losing a run record is recoverable,
+    losing the response is not."""
     from personalclaw.dashboard.handlers.triggers import _runs_store, _trigger_store
     from personalclaw.triggers.run_record import record_run
 
@@ -862,6 +869,7 @@ async def _record_hand_run(
         started_at=started,
         result=result,
         exc=exc,
+        error=error,
         late=late,
         by_hand=True,
         store=store,

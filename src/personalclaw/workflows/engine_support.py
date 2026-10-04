@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
+from personalclaw import filled_secrets
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.failure_taxonomy import binding_failure
 from personalclaw.workflows.models import Failure, Node, NodeKind
@@ -71,6 +73,31 @@ def resolve_config(node: Node, ctx: BindingContext) -> tuple[dict[str, Any], Fai
         return resolved, None
     except BindingError as exc:
         return {}, binding_failure(exc)
+
+
+#: What a step's result says that its run keeps and shows: its output, its reason and the prompt
+#: it was given; and in its failure (``Failure``), the cause, the remedy and the suggestion.
+_STEP_TEXT = ("output", "degraded_reason", "resolved_prompt")
+_FAILURE_TEXT = ("cause_plain", "remediation", "suggestion")
+
+
+def masked(result: Any, ctx: BindingContext) -> Any:
+    """*result*, what a step's dispatcher returned (``engine.NodeResult``), with every secret value
+    its bindings filled in (``BindingContext.filled``) masked out of what its run keeps and shows:
+    its output, its reason, its failure and the question it asks (``filled_secrets``). A command
+    the step ran, or the text it built, can hold what it was handed; the run's record must not."""
+    filled = ctx.filled
+    if not filled:
+        return result
+    shown = filled_secrets.masked_fields(result, _STEP_TEXT, filled)
+    failure = getattr(shown, "failure", None)
+    if failure is not None:
+        told = filled_secrets.masked_fields(failure, _FAILURE_TEXT, filled)
+        shown = shown if told is failure else replace(shown, failure=told)
+    ask = getattr(shown, "ask", None)
+    if isinstance(ask, dict) and "prompt" in ask:
+        shown = replace(shown, ask={**ask, "prompt": filled_secrets.masked(ask["prompt"], filled)})
+    return shown
 
 
 def journalled_prompt(wire: Any, composed: str) -> dict[str, Any]:

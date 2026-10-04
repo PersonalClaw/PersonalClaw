@@ -1310,21 +1310,24 @@ def mask_child_output(
     PersonalClaw writes that output into, the gateway log or an error a caller logs and shows,
     outlives the run and is read by people and by tools. So the output is:
 
-    * masked the way every view masks it (:func:`redact_for_display`), BEFORE it is cut, so a
-      credential that straddles the cut is masked whole instead of leaving half of it behind;
+    * masked the way every view masks it (:func:`redact_for_display`), and of each value the work
+      running here was handed (``filled_secrets.masked_here``), BEFORE it is cut, so a credential
+      that straddles the cut is masked whole instead of leaving half of it behind;
     * cut to *limit* characters (none are cut when it is ``None``): the start, or the end when
       *tail* is set, which is where a failing installer or git prints its reason;
     * written with every control character as a visible escape (``\\x1b``). With *one_line*, the
       default, a line break is one too (``\\n``), so a child cannot start a line that reads as a
       record of the log's own. ``one_line=False`` keeps line breaks, for an error a person reads.
     """
+    from personalclaw.filled_secrets import masked_here
+
     if output is None:
         return ""
     if isinstance(output, (bytes, bytearray)):
         text = bytes(output).decode("utf-8", "replace")
     else:
         text = str(output)
-    text = redact_for_display(text.strip())
+    text = redact_for_display(masked_here(text.strip()))
     if limit is not None and len(text) > limit:
         text = text[-limit:] if tail else text[:limit]
     if one_line:
@@ -1341,9 +1344,10 @@ class MaskingFormatter(logging.Formatter):
     stream a service manager keeps (launchd's log files, the systemd journal), and the Logs
     page's buffer and live stream. The record is masked after it is formatted, so a credential
     is masked wherever it sits: in the message, an argument, an exception's text or a traceback
-    line. A call site that writes what a child printed still passes it through
-    :func:`mask_child_output`, which also keeps it on one line; this is the floor under every
-    record, not a replacement for that.
+    line; and so is each value the work it is written in was handed, which no shape finds
+    (``filled_secrets.masked_here``). A call site that writes what a child printed still passes
+    it through :func:`mask_child_output`, which also keeps it on one line; this is the floor under
+    every record, not a replacement for that.
 
     A record it cannot mask (the masker raised, or the record's arguments do not fit its message)
     is written as its time, level and logger with its words withheld. It is never written as it
@@ -1354,7 +1358,9 @@ class MaskingFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         try:
-            return redact_for_display(super().format(record))
+            from personalclaw.filled_secrets import masked_here
+
+            return redact_for_display(masked_here(super().format(record)))
         except Exception as exc:  # noqa: BLE001 - a record it cannot mask is withheld
             return self._withheld(record, exc)
 
@@ -1411,28 +1417,29 @@ class MaskedRotatingFileHandler(WithholdingHandler, logging.handlers.RotatingFil
 #: text as a shape-found credential's mask, so the inverses and the model read it the same way.
 _KNOWN_VALUE_MASK = "[REDACTED: credential]"
 
-#: Shorter values are not masked by value: `1`, `true` or a region name would mask every
-#: occurrence of an ordinary word. A secret that short is not one a mask can protect.
-_KNOWN_VALUE_MIN_LEN = 8
+#: A value only GUESSED to be a credential, from the name of the variable that holds it, is masked
+#: from this length: `none`, `1` or `true` in a variable named like one would mask an ordinary word
+#: everywhere. A value KNOWN to be one is masked whatever its length (:func:`redact_known_values`).
+GUESSED_VALUE_MIN_LEN = 8
 
 
 def redact_known_values(text: str, values: Iterable[str]) -> str:
     """*text* with every occurrence of each of *values* replaced by a credential mask.
 
-    For the tool that itself handed those values out: a command it ran with a resolved
+    For the code that itself handed those values out: a command it ran with a resolved
     ``{{secret:KEY}}`` or a credential in its environment. The shape-based mask cannot see a
-    password like ``correct-horse-battery``, and this tool knows it exactly. Longest first, so a
-    value that contains another is replaced whole.
+    password like ``correct-horse-battery``, and this code knows it exactly. Every value however
+    short, as written and as a JSON string writes it, longest first so a value that contains
+    another is replaced whole; a mask already in *text* stays as it is, so a second pass changes
+    nothing. A caller that only guesses a value is a credential holds it to
+    :data:`GUESSED_VALUE_MIN_LEN` first.
     """
-    wanted = sorted(
-        {v for v in values if isinstance(v, str) and len(v) >= _KNOWN_VALUE_MIN_LEN},
-        key=len,
-        reverse=True,
-    )
-    if not text or not wanted:
+    known = {v for v in values if isinstance(v, str) and v}
+    if not text or not known:
         return text
-    pattern = re.compile("|".join(re.escape(v) for v in wanted))
-    return pattern.sub(_KNOWN_VALUE_MASK, text)
+    forms = known | {json.dumps(v, ensure_ascii=a)[1:-1] for v in known for a in (True, False)}
+    wanted = [_KNOWN_VALUE_MASK, *sorted(forms, key=len, reverse=True)]
+    return re.compile("|".join(map(re.escape, wanted))).sub(_KNOWN_VALUE_MASK, text)
 
 
 def redact_values_for_display(value: Any) -> Any:

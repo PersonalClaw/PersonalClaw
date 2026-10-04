@@ -22,8 +22,11 @@ was given. Now the run is handed the reference, and this module is the rest of t
   written it, so the step is refused instead (:func:`handed_on`).
 
 Records written before this rule hold the value. :func:`redact_home` finds a stored secret's value
-in a run's inputs, ledger, state and prompts, and in the automations' history, and writes the
-secret's reference in its place.
+in a run's inputs, ledger, state, prompts and step outputs, and in the automations' history and
+last errors, and writes the secret's reference in its place. A step that filled a reference in
+could print the value too, so a run whose definition names a secret has its ledger, state and
+outputs looked through as well: what a step returns is masked of each value it was handed now
+(``engine_support.masked``), as what an automation's action answers is (``filled_secrets``).
 """
 
 from __future__ import annotations
@@ -45,8 +48,9 @@ logger = logging.getLogger(__name__)
 #: its value refers to.
 EXTRA_KEY = "secret_inputs"
 
-#: A stored value shorter than this is not looked for in a record: `1`, `true` or a region name
-#: would match ordinary words (the floor ``security.redact_known_values`` keeps too).
+#: A stored value shorter than this is not looked for in a record written before: `1`, `true` or a
+#: region name would rewrite ordinary words in old records for good. What a run prints now is masked
+#: however short the value (``security.redact_known_values``).
 _MIN_VALUE_LEN = 8
 
 
@@ -287,32 +291,28 @@ def _rewrite_file(path: Path, known: list[tuple[str, str]]) -> bool:
 
 
 def _run_files(run_id: str) -> list[Path]:
-    """The records of a run a handed value reached: its ledger, its state and its prompts."""
+    """The records of a run a value it was handed can have reached: its ledger, its state, the
+    prompts its steps were given and what its steps returned."""
     from personalclaw.workflows import store
 
     folder = store.run_dir(run_id)
     files = [folder / name for name in ("journal.jsonl", "events.jsonl", "state.json")]
-    for path in sorted((folder / "outputs").glob("*.json")):
-        try:
-            if str(json.loads(path.read_text(encoding="utf-8")).get("node_path", "")).endswith(
-                "::prompt"
-            ):
-                files.append(path)
-        except (OSError, ValueError, AttributeError):
-            continue
+    files += sorted((folder / "outputs").glob("*.json"))
     return [path for path in files if path.is_file()]
 
 
 def redact_home() -> list[str]:
     """Take every stored secret's value out of the run records of this home, writing the secret's
-    reference in its place; return what it rewrote (a run's id, or ``history``).
+    reference in its place; return what it rewrote (a run's id, ``history`` or ``triggers``).
 
     A run's inputs that held a value are recorded as handed the reference (:func:`stamp`), so a
-    fork fills it where a step uses it, as the run itself did. Its ledger, state and prompts are
-    rewritten first and its row last, so a pass that stops part way is finished by the next: a run
-    is found by its row. The automations' history is rewritten under its own lock. Run at the
-    gateway's start, before any run is driven, and idempotent: a second pass finds nothing. Never
-    raises — a record it cannot rewrite is left as it was and logged."""
+    fork fills it where a step uses it, as the run itself did. Its ledger, state, prompts and step
+    outputs are rewritten first and its row last, so a pass that stops part way is finished by the
+    next: a run is found by its row. A run whose definition names a secret has its records
+    rewritten where a step printed a value it was handed, its row left as it is. The automations'
+    history, and each automation's last error, are rewritten under their stores' own locks. Run at
+    the gateway's start, before any run is driven, and idempotent: a second pass finds nothing.
+    Never raises — a record it cannot rewrite is left as it was and logged."""
     try:
         stored = _stored_values()
     except Exception:  # noqa: BLE001 - an unreadable store leaves the records as they are
@@ -330,6 +330,11 @@ def redact_home() -> list[str]:
             changed.append("history")
     except Exception:  # noqa: BLE001 - the gateway starts whatever this finds
         logger.warning("could not take secrets' values out of the run history", exc_info=True)
+    try:
+        if _redact_triggers(_for_project(stored, "")):
+            changed.append("triggers")
+    except Exception:  # noqa: BLE001 - the gateway starts whatever this finds
+        logger.warning("could not take secrets' values out of the automations", exc_info=True)
     return changed
 
 
@@ -337,11 +342,15 @@ def _redact_runs(stored: list[tuple[str, str, str]]) -> list[str]:
     from personalclaw.workflows import store
 
     rewritten = []
+    printed = []
     for run in store.all_runs():
         known = _for_project(stored, run.project_id)
         names: set[str] = set()
         inputs = _replaced(dict(run.inputs), known, names)
         if not names:
+            # A step its definition names a secret in may have printed the value it was handed.
+            if references_in(store.read_spec(run.id) or {}) and _rewrite_run(run.id, known):
+                printed.append(run.id)
             continue
         for path in _run_files(run.id):
             _rewrite_file(path, known)
@@ -355,7 +364,37 @@ def _redact_runs(stored: list[tuple[str, str, str]]) -> list[str]:
             run.id,
             ", ".join(names_held),
         )
-    return [run.id for run, _names in rewritten]
+    for run_id in printed:
+        logger.warning(
+            "run %s kept what a step printed of a secret; it keeps the reference", run_id
+        )
+    return [run.id for run, _names in rewritten] + printed
+
+
+def _rewrite_run(run_id: str, known: list[tuple[str, str]]) -> bool:
+    """Rewrite every record of run *run_id* that holds one of the *known* values; whether any
+    did."""
+    return any([_rewrite_file(path, known) for path in _run_files(run_id)])
+
+
+def _redact_triggers(known: list[tuple[str, str]]) -> bool:
+    """Rewrite each automation's last error that holds one of the *known* values, written from a
+    run as its history row was: in the trigger store, under its lock (``record_files.rewrite``).
+    Whether any was."""
+    from personalclaw import record_files
+    from personalclaw.config.loader import config_dir
+    from personalclaw.triggers.store import STORE_FILENAME
+
+    def _change(doc: Any) -> Any:
+        rows = doc.get("triggers") if isinstance(doc, dict) else doc
+        changed = False
+        for row in rows if isinstance(rows, list) else []:
+            said = row.get("last_error_summary") if isinstance(row, dict) else None
+            if isinstance(said, str) and (kept := _replaced(said, known, set())) != said:
+                row["last_error_summary"], changed = kept, True
+        return doc if changed else None
+
+    return bool(known) and record_files.rewrite(config_dir() / STORE_FILENAME, _change)
 
 
 def _redact_history(known: list[tuple[str, str]]) -> bool:

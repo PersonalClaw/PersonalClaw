@@ -47,7 +47,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw import approval_answer, review_triage
+from personalclaw import approval_answer, filled_secrets, review_triage
 from personalclaw.approval_answer import Principal
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.guardrails.calls import CallLog, capture_model_calls
@@ -1501,8 +1501,10 @@ class RunController:
 
         now = time.time()
         # The task COPIES the context at creation, so a log bound around `create_task` is the
-        # dispatch's own: every guarded model call it makes, however deep, is recorded there.
-        with capture_model_calls() as calls:
+        # dispatch's own: every guarded model call it makes, however deep, is recorded there. So
+        # are the values its bindings fill in: what the step writes itself as it runs (an audit
+        # row, a log line) is masked of each one (`filled_secrets.handed`).
+        with capture_model_calls() as calls, filled_secrets.handed(ctx.filled):
             task = asyncio.create_task(step_dispatch.execute(self, item, ctx))
         self._inflight[item.path] = _InFlight(
             task=task, ready=item, started=now, last_progress=now, cache_key=key, calls=calls

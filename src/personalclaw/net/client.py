@@ -64,8 +64,10 @@ def audit(
 ) -> None:
     """Emit a SEL audit event for an egress allow/deny (best-effort), named for the *door* that
     asked the guard: ``net.fetch`` for this module's own requests, ``web.render`` for the
-    headless render's pre-flight."""
+    headless render's pre-flight. The URL is masked of each value the work asking was handed
+    (``filled_secrets.masked_here``) before it is cut: a request's key can ride in its query."""
     try:
+        from personalclaw.filled_secrets import masked_here
         from personalclaw.sel import sel
 
         sel().log_api_access(
@@ -73,7 +75,7 @@ def audit(
             operation="egress_fetch",
             outcome=outcome,
             source="net",
-            resources=url[:200],
+            resources=masked_here(url)[:200],
             error=reason[:200],
         )
     except Exception:

@@ -1429,6 +1429,7 @@ class GatewayOrchestrator:
         """
         from personalclaw.action_providers import ActionContext
         from personalclaw.action_providers.registry import _ensure_default_providers_registered
+        from personalclaw.filled_secrets import handed, masked, masked_answer
         from personalclaw.triggers import cannot_run
         from personalclaw.triggers import secrets as _trigger_secrets
 
@@ -1534,16 +1535,14 @@ class GatewayOrchestrator:
         #
         # At DISPATCH, never at save: the stored config keeps the placeholder, so the secret is not
         # on disk. An unresolved key REFUSES rather than substituting "" — an empty Authorization
-        # header produces a remote 401 nobody can trace back to a missing credential.
-        #
-        # Except in an action that IS a model turn, whose references stay names for its agent's
-        # tools to fill: `secrets.resolve_for` keeps that rule for both dispatches.
-        #
+        # header produces a remote 401 nobody can trace back to a missing credential. A model
+        # turn's references stay names for its agent's tools to fill (`secrets.resolve_for`, for
+        # both dispatches), and what the action answers is masked of each value filled in.
         # The refusal is a refused run naming the secret, never its value (`triggers.cannot_run`):
         # it used to be a log line, so the automation read healthy and never ran.
         written = config
         try:
-            config = _trigger_secrets.resolve_for(provider, config)
+            config, filled = _trigger_secrets.resolve_for(provider, config)
         except _trigger_secrets.UnresolvedSecret as exc:
             await self._refuse_unrunnable(trigger, cannot_run.missing_secret(exc))
             return
@@ -1767,10 +1766,11 @@ class GatewayOrchestrator:
                 # What the action reaches is held to the egress tier of the identity both gates
                 # above judged it under. Nothing else names the fire's run to the guard: without
                 # this, a ceiling that gives no run on this machine any network let a fire's
-                # webhook or fetch go out.
-                with egress_held_to(dispatch_key):
+                # webhook or fetch go out. What it writes itself as it runs (an audit row, a log
+                # line) is masked of each value filled in (`filled_secrets.handed`).
+                with egress_held_to(dispatch_key), handed(filled):
                     result = await provider.execute(config, ctx, timeout=timeout)
-                running = False
+                running, result = False, masked_answer(result, filled)
             finally:
                 reset_current_run_budget(budget_token)
                 reset_current_run_key(run_token)
@@ -1842,19 +1842,20 @@ class GatewayOrchestrator:
                 self._record_stopped_fire(trigger, started_at=fire_started)
             raise
         except Exception as exc:  # noqa: BLE001 - a failed fire is logged, never crashes the loop
-            # A provider that RAISES (rather than returning a failed
-            # result) is wrapped in the shared WHAT/WHY/FIX envelope here — the same wrap the
-            # hook seam (`hooks.py`) applies — so an app-contributed provider surfaces a coded,
-            # actionable failure on this (busiest, unattended: clock/file/webhook/chained/event)
-            # dispatch path instead of a bare
-            # ``TypeName: msg``. Retiring `_run_action_job` dropped this wrap the way it
-            # dropped the denylist: the successor seam inherited neither. Built ONCE and
-            # threaded into BOTH sinks — the persisted run record / `last_error_summary`, and the
-            # delivered notification — so the one envelope is the source of both, not two copies.
+            # A provider that RAISES (rather than returning a failed result) is wrapped in the
+            # shared WHAT/WHY/FIX envelope here — the same wrap the hook seam (`hooks.py`) applies —
+            # so an app-contributed provider surfaces a coded, actionable failure on this (busiest,
+            # unattended: clock/file/webhook/chained/event) dispatch path instead of a bare
+            # ``TypeName: msg``. Retiring `_run_action_job` dropped this wrap the way it dropped the
+            # denylist: the successor seam inherited neither. Built ONCE, masked of what was filled
+            # in (as its traceback in the log is), it feeds BOTH sinks: the run record and the note.
+            from traceback import format_exc
+
             from personalclaw.action_providers import provider_failure
 
-            logger.warning("trigger %s: action failed", trigger.id, exc_info=True)
-            rendered = provider_failure(provider_name, exc).render()
+            trace = masked(format_exc(), filled)
+            logger.warning("trigger %s: action failed\n%s", trigger.id, trace)
+            rendered = masked(provider_failure(provider_name, exc).render(), filled)
             from personalclaw.triggers import run_record
 
             await run_record.record_run(

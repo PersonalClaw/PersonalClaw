@@ -29,7 +29,8 @@ project's runs alone (a workflow run an automation starts in a project reads it 
   `curl -H "Authorization: Bearer "` — a request that fails somewhere remote with a 401 the user
   cannot trace back to a missing credential. Refusing names the key.
 * **Resolved values NEVER travel back.** The resolved dict is handed to the provider and dropped;
-  nothing writes it, and `redact_credentials` still guards the output path.
+  nothing writes it. What the action answers is masked of every value filled in before anything
+  keeps or shows it (`filled_secrets.masked_answer`): a command can print what it was handed.
 * **An action that starts a workflow run is handed its references unfilled.** Its config is the
   run's inputs, which the run's record keeps, so filling them here wrote the value into the run,
   its ledger and the run list (`resolve_for`). The run fills them where a step uses them.
@@ -128,9 +129,14 @@ def resolve(config: Any, *, resolver: Callable[[str], str] | None = None) -> Any
     `resolver` is injected so a test never touches real credentials — the same seam the workflow
     engine uses, and the reason this module's tests need no credential store.
     """
+    return _resolved(config, resolver)[0]
+
+
+def _resolved(config: Any, resolver: Callable[[str], str] | None) -> tuple[Any, tuple[str, ...]]:
+    """:func:`resolve`'s answer, and the values it filled in."""
     keys = references(config)
     if not keys:
-        return config
+        return config, ()
 
     from personalclaw.llm.credentials import name_refusal
 
@@ -164,15 +170,16 @@ def resolve(config: Any, *, resolver: Callable[[str], str] | None = None) -> Any
             return tuple(_sub(v) for v in node)
         return node
 
-    return _sub(config)
+    return _sub(config), tuple(values.values())
 
 
-def resolve_for(provider: Any, config: Any) -> Any:
+def resolve_for(provider: Any, config: Any) -> tuple[Any, tuple[str, ...]]:
     """*config* as the action *provider* is handed it, by either dispatch (a fire, and a run by
-    hand or from outside): every `{{secret:KEY}}` filled (:func:`resolve`, which raises
-    `UnresolvedSecret`), except in an action that IS a model turn
+    hand or from outside), and the values filled into it: every `{{secret:KEY}}` filled
+    (:func:`resolve`, which raises `UnresolvedSecret`), except in an action that IS a model turn
     (`ActionProvider.hands_config_to_a_model`) or that starts a workflow run with its config
-    (`ActionProvider.hands_config_to_a_run`).
+    (`ActionProvider.hands_config_to_a_run`). The dispatch masks those values out of what the
+    action answers before anything keeps or shows it (`filled_secrets.masked_answer`).
 
     A model turn's config is what an agent's model is handed, so a reference there stays the name
     and the agent's tools fill it when they run; resolved here, it would put the value in the
@@ -181,12 +188,12 @@ def resolve_for(provider: Any, config: Any) -> Any:
     value. The second is checked all the same, against the secrets that run reads (:func:`check`),
     so a fire whose run could not read one is refused as any other such fire is."""
     if getattr(provider, "hands_config_to_a_model", False):
-        return config
+        return config, ()
     if getattr(provider, "hands_config_to_a_run", False):
         project = config.get("project_id", "") if isinstance(config, dict) else ""
         check(references(config), project_id=str(project or ""))
-        return config
-    return resolve(config)
+        return config, ()
+    return _resolved(config, None)
 
 
 def handed(provider: Any, config: Any) -> tuple[str, ...]:

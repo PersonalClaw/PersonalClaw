@@ -335,7 +335,10 @@ the call's own audit row; each with a warning in the gateway log. Each quotes th
 command as it was written. A dispatch that fills each `{{secret:NAME}}` in before asking (a
 trigger's fire and its run by hand or from outside, a workflow step, the bash tool) is judged on
 the value it filled in and quoted with the reference left a reference (`check_action`'s
-`written`), so a secret's value is in no refusal, record or log. Wherever the work is recorded,
+`written`), so a secret's value is in no refusal, record or log. A refusal the work makes itself as
+it runs (a bash action whose sandbox cannot start, a workflow check the shell denylist refuses)
+quotes the command as it would have run, each value its dispatch filled in masked, as every record
+that work writes is (`filled_secrets.handed`). Wherever the work is recorded,
 it says the same words, the rule's code and its sentence (`DenyDecision.refusal`): a trigger's
 history row (`skipped_gate` for its own fire, `refused` for a run by hand or from outside, whose
 owner is told once), a workflow step, which fails `permission` and is named in the run's ending,

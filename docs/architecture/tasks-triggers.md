@@ -127,7 +127,10 @@ relative to `PersonalClaw/src/personalclaw/`.
   owner allows it; an unattended refusal is a `skipped_gate` row in the
   trigger's Runs history. Both also resolve what the trigger runs, the
   provider before the grant and its `{{secret:…}}` references after it
-  (`secrets.resolve_for`) — except an action that starts a workflow run
+  (`secrets.resolve_for`), and mask each value filled in out of what the
+  action answers or raises before it is recorded, told or answered
+  (`filled_secrets.masked_answer`), and out of the audit rows and log lines it
+  writes itself as it runs (`filled_secrets.handed`) — except an action that starts a workflow run
   (`ActionProvider.hands_config_to_a_run`), whose references are checked
   against the secrets that run reads and handed on unfilled, named in
   `ActionContext.secret_references`, so the run's record never holds a value —

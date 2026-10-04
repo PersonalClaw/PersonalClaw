@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw import filled_secrets
 from personalclaw.guardrails.wire import capture_wire_prompt
 from personalclaw.safety_flags import strict_bool, yes_or_no
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
@@ -1311,7 +1312,7 @@ async def dispatch_action(
         raise
     except Exception as exc:
         return NodeResult(state=InstanceState.FAILED, failure=classify_exception(exc))
-
+    result = filled_secrets.masked_answer(result, ctx.filled)  # masked before any of it is read
     output: Any = _action_output(result)
     contract = (node.config or {}).get("output_contract")
     if isinstance(contract, dict) and getattr(result, "success", False):
@@ -2559,6 +2560,7 @@ async def dispatch(
         answer=answer,
         approved_start=approved_start,
     )
+    result = engine_support.masked(result, ctx)  # before anything below keeps or publishes it
     # What the node's own work returned, BEFORE the seams below add keys to it: the only value the
     # declared-schema gate may compare. The judge contract writes every key a judge schema
     # declares whatever the model said, so the final output cannot tell "the model answered in the

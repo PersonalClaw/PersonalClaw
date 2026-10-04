@@ -12,8 +12,9 @@ what the app's panel and the Doctor show for a process that is not running.
 A child's output is not PersonalClaw's own text, so each line is:
 
 * masked the way the log masks what a child prints (``security.mask_child_output``), and also
-  by value, for every credential in the environment the child was started with: a backend's
-  proxy secret has no shape a mask could recognise;
+  by value, for every credential in the environment the child was started with (of eight
+  characters or more: a name only suggests a credential): a backend's proxy secret has no shape
+  a mask could recognise;
 * one line, its control characters written as visible escapes, so a child cannot print a line
   that reads as one of the log's own records;
 * bounded: a line longer than :data:`LINE_MAX_CHARS` is cut, saying so; and the log takes a burst
@@ -42,7 +43,11 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from personalclaw.security import mask_child_output, redact_known_values
+from personalclaw.security import (
+    GUESSED_VALUE_MIN_LEN,
+    mask_child_output,
+    redact_known_values,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +99,17 @@ _monotonic = time.monotonic
 
 def _credential_values(env: Mapping[str, str] | None) -> tuple[str, ...]:
     """The values of *env* whose names say they are credentials (the one hint list,
-    ``workflows.secrets.matches_secret_hint``): what a child was handed and may print."""
+    ``workflows.secrets.matches_secret_hint``): what a child was handed and may print. A name is a
+    guess, so a value shorter than ``security.GUESSED_VALUE_MIN_LEN`` is a setting, not masked."""
     if not env:
         return ()
     from personalclaw.workflows.secrets import matches_secret_hint
 
-    return tuple(value for name, value in env.items() if value and matches_secret_hint(name))
+    return tuple(
+        value
+        for name, value in env.items()
+        if len(value or "") >= GUESSED_VALUE_MIN_LEN and matches_secret_hint(name)
+    )
 
 
 def mask_line(text: str, secrets: Iterable[str] = ()) -> str:

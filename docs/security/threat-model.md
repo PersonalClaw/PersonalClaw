@@ -415,7 +415,11 @@ Data leaving the running system:
   the owner stored in Settings → Secrets as the command runs — the call's project's own secret
   first, then the global one (`llm.credentials.resolve_secret`; never the gateway's environment,
   never a setting's own key, never a project's secret by its stored key) — and masks every value
-  it handed the command out of what the command prints (`redact_known_values`). Text handed to a model keeps the reference as the name: a
+  it handed the command out of what the command prints (`redact_known_values`), however short. An
+  automation's action and a workflow step mask each value their dispatch filled in out of what they
+  return the same way, before a run history, a step's output or ledger, a note or Run now's answer
+  keeps or shows it, and out of the audit rows and log lines the work writes as it runs
+  (`filled_secrets`). Text handed to a model keeps the reference as the name: a
   trigger whose action is a model turn (`ActionProvider.hands_config_to_a_model`) and a workflow's
   stage, infer and visualize steps do not fill it in, so the agent's tools do. A workflow run is
   handed a reference in its inputs as the reference, by an automation's Run workflow action and by

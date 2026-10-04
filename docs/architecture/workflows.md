@@ -422,6 +422,24 @@ starts works for the run's project the same way: the engine sets `ActionContext.
 from the run's record, never from the step's config, and the provider starts its agent with it
 (`SubagentManager.spawn(project_id=…)`), so that agent's session is the project's.
 
+**What a step returns is masked of every value its bindings filled in.** A command, a script or
+any action a step ran with a filled value can print it, return it or fail with it, and a
+transform's text can hold it; the bindings keep each value they fill on the step's context
+(`BindingContext.filled`), and the dispatch masks every one of them as `[REDACTED: credential]` in
+the step's output, its failure, its reason and the question it asks (`engine_support.masked`)
+before the run keeps, publishes or shows any of it. An action's answer is masked as text before
+the step reads it as JSON or cuts it (`filled_secrets.masked_answer`), so a printed number or a
+value at the cut is masked too. The rule is the one PersonalClaw's `bash` tool applies to what its
+commands print (`security.redact_known_values`): every value however short, as written and as a
+JSON string writes it, never one the command changed on the way. What the step's work writes
+itself as it runs is masked of the same values: the controller holds them in the context of the
+step's task (`filled_secrets.handed`), so the audit row of a command refused before it ran or of a
+request, and a log line such as a check's that could not run, are masked by the writers those
+records pass (`security.mask_child_output`, `security.MaskingFormatter`, `net.client.audit`). A
+later step reads the mask, so a step that sends a secret names it itself rather than reading it
+from a step before. A run recorded before this rule whose definition names a secret has the values
+its steps printed rewritten to the reference when the gateway starts (`input_secrets.redact_home`).
+
 **A run is handed a secret's reference, never its value** (`workflows/input_secrets.py`). An
 automation's Run workflow action (a fire or Run now), a step that starts a run with that action
 (`ActionProvider.hands_config_to_a_run`) and a `subworkflow` step hand the run they start its
@@ -440,8 +458,9 @@ another step or an input refers to a secret it hands on, the run could not tell 
 reference its author wrote, so the step is refused (`input_secrets.handed_on`). A record written
 before this rule that holds a stored secret's value is rewritten when the gateway starts, before any
 run is driven (`input_secrets.redact_home`): the run's inputs, ledger, state and prompts, and the
-automations' run history, hold the reference instead, and the run database is rebuilt so no old
-copy of a row is left in its file. A snapshot taken before keeps what it was taken with.
+automations' run history and last errors, hold the reference instead, and the run database is
+rebuilt so no old copy of a row is left in its file. A snapshot taken before keeps what it was
+taken with.
 
 Each secret a step uses goes on the run's record as a `secret_read` ledger row: the secret's
 name and where it came from (this project's secrets, the global ones, or the gateway's

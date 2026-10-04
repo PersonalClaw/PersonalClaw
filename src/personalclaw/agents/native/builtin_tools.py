@@ -358,9 +358,12 @@ def _environment_credentials() -> list[str]:
     store's values are never read for this. The command itself gets only the child allowlist
     (``sandbox.build_child_env``): a credential reaches its environment only when the owner passes
     it through by name (``sandbox.env_passthrough``). Masking every one the gateway holds, not
-    only those, also covers a value the command reached another way.
+    only those, also covers a value the command reached another way. A stored one is a secret
+    whatever its length; one only the hint list names is a guess, held to the guess's floor
+    (``security.GUESSED_VALUE_MIN_LEN``).
     """
     from personalclaw.config.credentials import credential_names
+    from personalclaw.security import GUESSED_VALUE_MIN_LEN
     from personalclaw.workflows.secrets import matches_secret_hint
 
     try:
@@ -370,7 +373,8 @@ def _environment_credentials() -> list[str]:
     return [
         value
         for name, value in os.environ.items()
-        if value and (name in stored or matches_secret_hint(name))
+        if value
+        and (name in stored or (len(value) >= GUESSED_VALUE_MIN_LEN and matches_secret_hint(name)))
     ]
 
 

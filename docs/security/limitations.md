@@ -496,6 +496,17 @@ A secret still appears in plaintext in these places:
   minutes at the default 15-minute window, and within twice the window when you set it longer.
   Git Sync and Rsync Sync keep every copy they are sent, and the service a synced folder goes
   through, or a bucket with versioning on, may keep a removed file in its own history.
+- **What work a secret was filled into did with it.** What an automation's action or a workflow
+  step prints, returns or fails with is masked of each `{{secret:NAME}}` value filled into it,
+  however short, before its run history, its step's output and ledger, the note that reports it
+  or Run now's answer keeps or shows it, and so is what the work writes itself as it runs: the
+  `command_refused` row of a command refused before it ran, the `egress_fetch` row of a request,
+  and the gateway log (`filled_secrets`). A value the work changed on the way (encoded, cut short,
+  split across lines) is not recognised, and what the work does with a value is its own: a file it
+  writes, a message it sends or a request it makes carries what it put there. Records written
+  before this was masked are rewritten when the gateway starts, for a value of eight characters
+  or more: a run's when its definition names a secret, and every automation's history and last
+  error. A note, an audit row or a log line written before keeps what it said.
 - **Claude Code's own config.** Putting an MCP server into Claude Code's scope
   (`POST /api/mcp/apply` with `ccGlobal`) writes it into Claude Code's `.claude.json` (in your
   home directory, or in `$CLAUDE_CONFIG_DIR` when that is set) with its values, because Claude
@@ -673,8 +684,13 @@ views show, and it has these edges:
 - **It finds a secret by its shape or its field's name.** A provider key, a token, a URL's login
   or a webhook is masked wherever it appears; a password written into a note as a plain word, or a
   code in a sentence, reaches the model as written. The one exception is `bash`: it masks every
-  value it handed the command it ran, whatever its shape, the credentials in its environment and the
-  `{{secret:NAME}}` values it filled in.
+  value it handed the command it ran, whatever its shape: each `{{secret:NAME}}` value it filled
+  in, however short, and the credentials the gateway's environment holds, one you stored in
+  Settings → Secrets whatever its length and one only its variable's name calls a credential from
+  eight characters, since a value that short there (`none`, `1`) is a setting more often than a
+  secret. It masks a value as written and as a JSON string writes it, not one the command changed
+  (encoded, cut short, split), and a short value masks every place its text appears, ordinary
+  words included.
 - **An ACP agent CLI's own tools are outside it.** Claude Code's `Read` or `Bash`, and any other
   CLI's own file and shell tools, read inside the CLI and send what they read to that CLI's
   provider without passing PersonalClaw. Only PersonalClaw's own tools, which the CLI reaches over

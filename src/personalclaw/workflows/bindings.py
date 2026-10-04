@@ -28,7 +28,7 @@ import inspect
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.workflows.models import NO_OUTPUT_KINDS, NodeKind
@@ -109,6 +109,10 @@ class BindingContext:
     #: Resolver for `{{secret:KEY}}`. Injected so nothing here reads the credential
     #: store directly — that also keeps secrets out of unit tests by default.
     secret_resolver: Any = None
+    #: Every secret's value `secret_resolver` filled in while the step's bindings resolved: what
+    #: the step was handed and may print, return or fail with, so its dispatch masks each of them
+    #: out of what it returns before the run keeps it (`engine_support.masked`).
+    filled: list[str] = field(default_factory=list)
     #: The inputs the run was handed a `{{secret:KEY}}` reference in, by name, with the secrets
     #: each refers to (`input_secrets.of_run`). A read of one of them has those references filled
     #: by `secret_resolver`, as one written in the step itself is; a reference in any other input
@@ -831,7 +835,9 @@ def _secret(key: str, ctx: BindingContext, expr: str) -> Any:
 
     "" is how the run's resolver answers for a key neither its project nor the global secrets
     hold (`node_bindings._secrets_for`). Substituted, a request carrying it fails at the receiver
-    with nothing naming the key, so the trigger path refuses it too."""
+    with nothing naming the key, so the trigger path refuses it too. A value it fills in goes on
+    `ctx.filled`; a resolver that keeps the reference (for a model, or a run it starts) fills
+    nothing."""
     value = ctx.secret_resolver(key)
     if value is None or value == "":
         raise BindingError(
@@ -840,6 +846,8 @@ def _secret(key: str, ctx: BindingContext, expr: str) -> Any:
             f"store {key!r} in Settings → Secrets, then fork this run to try again",
             caller_supplied=True,
         )
+    if value != "{{secret:" + key + "}}":
+        ctx.filled.append(str(value))
     return value
 
 
