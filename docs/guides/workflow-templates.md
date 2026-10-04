@@ -76,6 +76,15 @@ config; it then reports its own required field missing for a value that is
 visibly present in the spec, every downstream binding fails, and the run dies
 reporting "deadlocked". Validation refuses the shape now so that cannot happen.
 
+**A step's `payload` carries its own inputs, never whose work it is.** Each key
+reaches the provider as written (a `bash` step reads them as its environment), and
+the engine adds the step's identity from the run that executes it: `run_id`,
+`node_id`, `instance_path`, `project_id`, `workspace` and `idempotency_key`.
+Providers attribute and confine their work by those (`artifact_inspect` reads
+only its own run's artifacts), so a template cannot set them: saving one that
+writes any of them is refused with `WF_PAYLOAD_RUN_IDENTITY`, naming the key, and
+so is starting a run of one that reached you another way.
+
 A step that runs PersonalClaw itself says `personalclaw <command>`, never
 `python3 -m personalclaw…`. In a `bash` step that name is this install's own
 program, wherever it is installed, while the `python3` on `PATH` has no PersonalClaw

@@ -416,8 +416,8 @@ async def test_an_agent_a_step_starts_works_for_the_runs_project(
 ):
     """An Invoke Agent or Run Prompt step starts its agent for the run's project, so PersonalClaw's
     bash tool there reads the project's secrets, and the run's record says so. The project is the
-    run's own (``ActionContext.project_id``): a step's payload naming another project changes
-    nothing."""
+    run's own (``ActionContext.project_id``); a template whose step payload names one is refused
+    before its run starts (``tests/test_a_steps_identity_comes_from_its_run.py``)."""
     import importlib
     from types import SimpleNamespace
 
@@ -429,11 +429,7 @@ async def test_an_agent_a_step_starts_works_for_the_runs_project(
     subagents = _Subagents()
     monkeypatch.setattr(module, "get_action_services", lambda: SimpleNamespace(subagents=subagents))
     await _store()
-    step = {
-        "provider": provider_name,
-        "with": _AGENT_STEPS[provider_name],
-        "payload": {"project_id": OTHER},
-    }
+    step = {"provider": provider_name, "with": _AGENT_STEPS[provider_name]}
 
     status, controller, _ = await _run(
         _spec(step), project_id=project_id, provider=module.create_provider()

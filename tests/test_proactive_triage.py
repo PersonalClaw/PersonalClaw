@@ -1129,7 +1129,7 @@ class TestTheProviderDrivesTheRealPipelineEndToEnd:
 
         result = await TriageDigestActionProvider().execute(
             {"filter_rules": [{"source": "inbox", "rule": "skip dependabot"}]},
-            ActionContext(event="clock", payload={"run_id": "run-pa2", "trigger_id": "trig-pa2"}),
+            ActionContext(event="clock", payload={"run_id": "run-pa2"}, trigger_id="trig-pa2"),
         )
 
         # The run succeeded and spent exactly what the pipeline promises: ONE gate call, ONE

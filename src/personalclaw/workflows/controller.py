@@ -582,9 +582,10 @@ class RunController:
                     await self._honor_cancel()
                 return
             if not await self._prepare():
-                # The run was refused before any node ran (a fatal `workspace:` declaration or a
-                # contended named workspace). `_prepare` already wrote the terminal status through
-                # `_finish`, so scheduling anything now would run nodes for a failed run.
+                # The run was refused before any node ran (a step that writes its own identity, a
+                # fatal `workspace:` declaration or a contended named workspace). `_prepare` already
+                # wrote the terminal status through `_finish`, so scheduling anything now would run
+                # nodes for a failed run.
                 return
             while True:
                 async with self._lock:
@@ -647,10 +648,10 @@ class RunController:
     async def _prepare(self) -> bool:
         """Pre-flight: pre-charge the budget from the ledger, stamp start, journal it.
 
-        Returns False when the run was REFUSED before any node ran — today only a fatal
-        `workspace:` declaration does that, and `run_start.provision_workspace` has already written
-        the terminal status. The tick loop stops rather than scheduling into a workspace that could
-        not be honored.
+        Returns False when the run was REFUSED before any node ran — a step that writes its own
+        identity (`run_start.admit_step_identities`) or a fatal `workspace:` declaration
+        (`run_start.provision_workspace`), each of which has already written the terminal status.
+        The tick loop stops rather than scheduling steps the run could not honor.
         """
         resumed = bool(self.run.started_at)
         totals = journal_mod.run_totals(self.run.id)
@@ -693,6 +694,8 @@ class RunController:
             origin_harness=self.run.origin_harness,
         )
         run_start.enforce_inherited_mode(self)
+        if not resumed and not await run_start.admit_step_identities(self):
+            return False
         provisioned = await run_start.provision_workspace(self)
         run_start.bind_project_context_cwd(self)
         if provisioned:
@@ -1759,7 +1762,8 @@ class RunController:
             if ask is not None:
                 inst.state = InstanceState.WAITING
                 inst.completed_at = None
-                ask.setdefault("node_id", item.node.id)
+                # Which step asks is the engine's to say, whatever the provider's answer named.
+                ask["node_id"] = item.node.id
                 inst.ask = dict(ask)
                 self.run.attention = ask
                 self._publish(

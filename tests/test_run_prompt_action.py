@@ -219,11 +219,13 @@ def test_session_opt_in_pins_parent_session(monkeypatch):
         )
 
     asyncio.run(go())
-    # Explicit session opt-in wins over the trigger payload's session_key.
+    # The session the config pins, whatever the payload carries.
     assert spawn_sink.get("parent_session_key") == "cron:pinned"
 
 
-def test_default_session_is_trigger_payload(monkeypatch):
+def test_a_payload_never_picks_the_session_its_agent_works_in(monkeypatch):
+    """With no session pinned, the agent gets a fresh one. A `session_key` in the payload is event
+    data (or a workflow step's own), and a chat named there would lend the agent its Trust."""
     import personalclaw.action_providers.run_prompt_provider as mod
 
     monkeypatch.setattr(mod, "render_saved_prompt", lambda pid, v: "body")
@@ -234,7 +236,7 @@ def test_default_session_is_trigger_payload(monkeypatch):
         await RunPromptActionProvider().execute({"prompt_id": "p"}, _ctx())
 
     asyncio.run(go())
-    assert spawn_sink.get("parent_session_key") == "cron:x"
+    assert spawn_sink["parent_session_key"] == ""
 
 
 def test_services_unavailable_is_error(monkeypatch):

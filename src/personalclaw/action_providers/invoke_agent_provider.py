@@ -205,9 +205,11 @@ class InvokeAgentActionProvider(ActionProvider):
         # run-prompt builds its run from too): the run is built from the same mapping the Allow's
         # sentence is, and a working folder the owner has not trusted holds it to reading.
         policy = fire_policy(self.name, action_config)
+        # No parent session: the agent's work is its trigger's (or its step's run's), never a
+        # session a payload names, since a payload is event data or a template's own, and a chat
+        # named there would lend the agent that chat's Trust and post its results into it.
         return subagents.spawn(
             task=task,
-            parent_session_key=str((ctx.payload or {}).get("session_key", "") or ""),
             agent=agent,
             cwd=cwd,
             max_turns=max_turns,

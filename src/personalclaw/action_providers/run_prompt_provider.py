@@ -246,11 +246,10 @@ class RunPromptActionProvider(ActionProvider):
             max_turns = int(action_config.get("max_turns", 0) or 0)
         except (ValueError, TypeError):
             max_turns = 0
-        # Continuity: a pinned session accrues state across fires; the default is
-        # a fresh ephemeral subagent session per fire (mirrors cron invoke-agent).
-        parent_key = str(action_config.get("session") or "").strip() or str(
-            (ctx.payload or {}).get("session_key", "") or ""
-        )
+        # Continuity: a session the config pins accrues state across fires; the default is a fresh
+        # ephemeral subagent session per fire. Never one a payload names: a payload is event data
+        # or a template's own, and a chat named there would lend the agent that chat's Trust.
+        parent_key = str(action_config.get("session") or "").strip()
 
         dry_run = bool(action_config.get("dry_run", False))
 

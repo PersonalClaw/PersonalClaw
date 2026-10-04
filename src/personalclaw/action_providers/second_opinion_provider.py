@@ -22,6 +22,7 @@ mismatch that makes a trigger validate, save, and then fail at fire time.
         "origin_runner": "gemini-cli",                # required — the exclusion key
         "ask": "…",                  # optional; defaults to "smallest change that unblocks"
         "workspace": "/abs/path",    # optional; defaults to the payload's workspace
+        "session_key": "...",        # optional; the stalled session, named in the audit rows
         "sandbox": "none",           # the stalled run's sandbox class — the proposer inherits it
         "attempts": ["verbatim error output …"],
         "files_touched": ["src/app.py"],
@@ -102,9 +103,9 @@ class SecondOpinionActionProvider(ActionProvider):
         workspace = str(
             action_config.get("workspace") or payload.get("workspace") or payload.get("cwd") or ""
         ).strip()
-        session_key = str(
-            action_config.get("session_key") or payload.get("session_key") or ""
-        ).strip()
+        # The stalled session is its caller's to name, in the config. Never the payload's: a
+        # payload is event data or a template's own, and the audit rows name this session.
+        session_key = str(action_config.get("session_key") or "").strip()
         try:
             timeout_secs = float(action_config.get("timeout_secs") or _DEFAULT_TIMEOUT_SECS)
         except (TypeError, ValueError):

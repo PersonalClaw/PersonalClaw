@@ -442,6 +442,11 @@ def _validate_shape(
                     path,
                     SEVERITY_WARNING,
                 )
+        written = run_identity_in_payload(cfg)
+        if written:
+            _add(
+                res, "WF_PAYLOAD_RUN_IDENTITY", f"This step {run_identity_sentence(written)}", path
+            )
 
     elif kind == NodeKind.WAIT:
         seal = cfg.get("seal")
@@ -515,6 +520,33 @@ def _validate_shape(
             base = ref.split("@", 1)[0]
             if not valid_name(base):
                 _add(res, "WF_BAD_REF", f"subworkflow ref {ref!r} is not a valid name", path)
+
+
+def run_identity_in_payload(config: dict[str, Any]) -> list[str]:
+    """The keys an action step's `payload` writes, as authored, that say whose work the step is
+    (`engine.RUN_IDENTITY_KEYS`). Only the engine sets those, from the run executing the step, so
+    a template that writes one is refused rather than quietly overridden: its author learns the
+    value was never theirs. A payload bound whole (`"{{nodes.x.output}}"`) names no keys here, and
+    the engine sets the run's over whatever it resolves to."""
+    from personalclaw.workflows.engine import RUN_IDENTITY_KEYS
+
+    payload = config.get("payload")
+    return [key for key in RUN_IDENTITY_KEYS if isinstance(payload, dict) and key in payload]
+
+
+def run_identity_sentence(keys: list[str]) -> str:
+    """What a step whose payload writes *keys* is told, after its subject: at save, "This step …",
+    and at run start, the step by name (`run_start.admit_step_identities`)."""
+    names = [f"`{key}`" for key in keys]
+    named = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    that, says, it = (
+        ("that key", "it says", "it") if len(names) == 1 else ("those keys", "they say", "them")
+    )
+    return (
+        f"sets {named} in its payload. The engine sets {that} from the run that executes the "
+        f"step, since {says} whose work the step is, so a template cannot: remove {it} from the "
+        "step's payload"
+    )
 
 
 def _validate_supervisor(res: ValidationResult, path: str, raw: Any) -> None:

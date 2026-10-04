@@ -349,7 +349,9 @@ def _auto_stage(action_config: dict[str, Any], ctx: ActionContext, cfg: Any) -> 
     from personalclaw.proactive.autoexec import auto_execute, default_budget_check
 
     run_id = str(ctx.payload.get("run_id", "") or "")
-    trigger_id = str(ctx.payload.get("trigger_id", "") or "")
+    # The trigger whose fire this is, as its dispatch says (`ActionContext.trigger_id`), never the
+    # payload's: a workflow step's payload is its template's, and could name another automation.
+    trigger_id = ctx.trigger_id
     # A digest fire has no chat session by definition, so it gets the sessionless unattended
     # identity — the same one the gateway's store-trigger seam uses. Threading it is what lets the
     # run's `SafetyProfile.denylist_extra` layer onto the operator denylist instead of being
@@ -451,7 +453,7 @@ class TriageDigestActionProvider(ActionProvider):
             # when a caller fires the provider outside a run — the delivery then falls back to
             # the trigger link rather than pointing at a run that does not exist.
             run_id=str(ctx.payload.get("run_id", "") or ""),
-            trigger_id=str(ctx.payload.get("trigger_id", "") or ""),
+            trigger_id=ctx.trigger_id,
             # Passed unconditionally, not behind `auto_execute_enabled`: the switch is
             # enforced INSIDE the stage, where a refusal produces a reason per proposal
             # (`auto_execute_disabled`) that the digest and the ledger can both show. Gating the

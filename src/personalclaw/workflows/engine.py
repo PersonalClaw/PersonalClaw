@@ -90,6 +90,25 @@ MAX_WF_DEPTH = 3
 WF_DEPTH_KEY = "__wf_depth"
 _COMMITS_EFFECTS_ATTR = "__personalclaw_commits_effects__"
 
+#: The keys of an action step's payload that say whose work the step is. Only the engine sets
+#: them: `dispatch_action` writes each from the run executing the step, over anything the step's
+#: own payload carried by that name, so neither a template nor a value bound into it stands in for
+#: the run's. Providers attribute and confine what they do by them: the run (`artifact_inspect`
+#: reads only its `artifacts/`), the step's node and instance (`knowledge-persist`'s source; a
+#: ledger row shows in the step's slice only under its instance path, as a `foreach` body shares
+#: one node id), the run's project (what a written item is filed under) and folder (what
+#: `selfqa-evidence` seals), and the attempt's key, so a receiver can dedupe a retry. A template
+#: that writes one is refused where it is validated (`validator.run_identity_in_payload`); any
+#: other key is the step's own input.
+RUN_IDENTITY_KEYS: tuple[str, ...] = (
+    "run_id",
+    "node_id",
+    "instance_path",
+    "project_id",
+    "workspace",
+    "idempotency_key",
+)
+
 
 def _commits_effects(dispatcher: Any) -> Any:
     """Mark a dispatcher whose node may commit effects through tools.
@@ -1239,39 +1258,21 @@ async def dispatch_action(
 
     picked = "with" if cfg.get("with") else "config"
     action_config = dict(cfg.get(picked) or {})
-    payload = dict(cfg.get("payload") or {})
-    # Run/node provenance in the payload, so a provider can attribute what it wrote without
-    # the template having to restate ids it cannot know. `knowledge-persist` auto-fills
-    # `source_ref` from these, and `artifact_inspect` needs the run id to locate the
-    # run-local `artifacts/` dir a `{{nodes.x.artifact}}` ref points into — without them a
-    # persisted item is unattributed and an offloaded artifact is unreachable.
-    payload.setdefault("node_id", getattr(node, "id", "") or "")
-    if run_id:
-        payload.setdefault("run_id", run_id)
-    # The INSTANCE path, not just the node id. A provider that writes a ledger row must stamp the
-    # engine's own instance key (`root.children[0]`, `root.body#2`) or the row lands outside every
-    # per-node slice: `service.inspect_node` filters the run's ledger by `instance_path == target`,
-    # so a row stamped with a bare node id is written, readable through the ledger reader, and
-    # invisible in the runs surface. `node_id` cannot substitute — a `foreach` body shares one id
-    # across every item, and attributing an item's row to all of them is the same loss in reverse.
-    if instance_path:
-        payload.setdefault("instance_path", instance_path)
-    # The owning project: `knowledge-persist` files what it writes
-    # under this container, so the project's brief + Knowledge view can find it and another
-    # project cannot see a private item. Absent for a project-less run, which simply leaves
-    # the written item unscoped — global, as it was before.
-    if project_id:
-        payload.setdefault("project_id", project_id)
-    # The run workspace, for a provider that reads or writes the run's own files. The artifact
-    # gate at this same dispatch seam already receives `cwd`; an action that PRODUCES those
-    # artifacts (selfqa-evidence seals a bundle out of the workspace the execute stage filled)
-    # needs the same path, and resolving it from `run_id` would couple a provider to the run store
-    # for a value the engine is already holding.
-    if cwd:
-        payload.setdefault("workspace", cwd)
-    # The effect's identity: a retry carries its attempt's key, so a receiver can dedupe.
-    if idempotency_key:
-        payload.setdefault("idempotency_key", idempotency_key)
+    # Whose work this is (`RUN_IDENTITY_KEYS`), from the run alone and set after the step's own
+    # payload, so a key it carried by one of those names, written or bound, never reaches the
+    # provider. The node id always; each other only when the run has one (no project, none named).
+    stamped = {
+        "run_id": run_id,
+        "node_id": node.id or "",
+        "instance_path": instance_path,
+        "project_id": project_id,
+        "workspace": cwd,
+        "idempotency_key": idempotency_key,
+    }
+    payload = {
+        k: v for k, v in dict(cfg.get("payload") or {}).items() if k not in RUN_IDENTITY_KEYS
+    }
+    payload.update((key, value) for key, value in stamped.items() if value or key == "node_id")
     context = ActionContext(
         event="workflow_node",
         context=str(cfg.get("context", "") or ""),

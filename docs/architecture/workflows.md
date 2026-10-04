@@ -276,6 +276,26 @@ the runs it was scored on as the proposal's evidence, and asks no model.
 Nothing the package ships runs PersonalClaw through an interpreter found on `PATH`
 (`tests/test_bare_interpreter_census.py`).
 
+**A step's identity comes from its run, and only from its run.** `engine.dispatch_action`
+writes the keys of an action step's payload that say whose work the step is
+(`engine.RUN_IDENTITY_KEYS`: the run, the step's node id and instance path, the run's
+project and folder, the attempt's idempotency key) from the run executing it, after the
+step's own payload is built, over any value the template wrote or a binding resolved under
+those names. Providers attribute and confine their work by them: `artifact_inspect` reads
+only the run's own `artifacts/`, `knowledge-persist` files under the run's project, a
+ledger row shows in the step's slice under its instance path. A template that writes one is
+refused rather than quietly overridden, so its author learns the value was never theirs:
+validation answers `WF_PAYLOAD_RUN_IDENTITY` naming the key (saving, a dry run, an edit to
+a running run), and a run of a definition that reached it another way (an app's, one saved
+before the rule, one edited on disk) ends failed at its first start, before any step runs,
+with the same words (`run_start.admit_step_identities`). Every other payload key is the
+step's own input and reaches its provider as written. No action takes a session or a
+trigger from the payload either: an agent `invoke-agent` or `run-prompt` starts gets no
+session from it (a chat named there would lend the agent that chat's Trust), a
+`second-opinion` handoff's audit rows name only the session its config gives, and the triage
+digest is the work of the trigger its dispatch names (`ActionContext.trigger_id`), which a
+workflow step has none of.
+
 **An `action` step asks the action denylist before its provider runs, as a trigger's
 fire does** (`guardrails.denylist.enforce_action`, from `engine.dispatch_action`). A run
 is unattended work whoever started it: each step is dispatched with nobody approving

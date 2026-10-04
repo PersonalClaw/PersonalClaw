@@ -73,7 +73,7 @@ from __future__ import annotations
 # contract that silently stopped existing, and that is what direction 2 catches.
 WF_ERROR_CODES: dict[str, str] = {
     # ── workflows/validator.py — template-author authoring errors ──────────
-    # The 65 codes a workflow-template author can hit while validating a spec. Every one
+    # The codes a workflow-template author can hit while validating a spec. Every one
     # is produced by `_add(res, code, message, path, severity)`, so the message quoted in
     # each meaning below is that call's second argument.
     "WF_NOT_AN_OBJECT": "The spec is not a JSON object, so nothing about it can be validated.",
@@ -140,6 +140,12 @@ WF_ERROR_CODES: dict[str, str] = {
     "WF_ACTION_NO_ARGS": (
         "An action node declares no `config.with` at all — legitimate for a provider that "
         "needs no arguments, so this is a warning rather than a refusal."
+    ),
+    "WF_PAYLOAD_RUN_IDENTITY": (
+        "An action node's `payload` writes a key that says whose work the step is "
+        "(`engine.RUN_IDENTITY_KEYS`: the run, the step's node and instance, the run's project "
+        "and folder, the attempt's idempotency key), which only the engine sets, from the run "
+        "that executes the step; the message names the keys to remove."
     ),
     "WF_BAD_SEAL": (
         "A wait node's `seal` is not an object, or a buffer seal has neither a positive "

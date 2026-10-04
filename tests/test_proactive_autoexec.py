@@ -1333,7 +1333,8 @@ class TestTheCallSite:
             {"window_hours": 999999},
             ActionContext(
                 event="clock",
-                payload={"run_id": "r1", "instance_path": "root.children[0]", "trigger_id": "t1"},
+                payload={"run_id": "r1", "instance_path": "root.children[0]"},
+                trigger_id="t1",
             ),
         )
         assert result.success is True

@@ -1288,13 +1288,10 @@ async def _push_shared(
 def _run_source_ref(ctx: ActionContext) -> str:
     """Provenance the caller did not have to remember.
 
-    Read from `ctx.payload`, which is where the engine puts node identity — `ActionContext`
-    itself carries only `event`/`context`/`payload`, so reading attributes off it (as an
-    earlier version of this did) silently produced "workflow:unknown" for every item.
-
-    The run id is absent by design at this seam: `dispatch_action` does not receive the run.
-    A node-scoped ref still attributes the write to a specific template node, which is what
-    makes two sources distinguishable for mention counting.
+    Read from `ctx.payload`, where the engine puts whose work a step is, from the run executing
+    it and never from the template (`engine.RUN_IDENTITY_KEYS`). A step dispatched with no run
+    has its node id alone, which still attributes the write to a template node (what makes two
+    sources distinguishable for mention counting); a trigger's fire has neither.
     """
     payload = getattr(ctx, "payload", None) or {}
     run_id = str(payload.get("run_id", "") or "")

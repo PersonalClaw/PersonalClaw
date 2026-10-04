@@ -586,12 +586,37 @@ def test_a_fused_match_type_reports_its_strongest_tier():
 def test_the_engine_threads_node_identity_into_the_action_payload():
     """Without it every persisted item would be unattributed, and an unattributed knowledge
     item cannot be traced back to the run that made it."""
-    import inspect
+    from personalclaw.action_providers.base import ActionResult
+    from personalclaw.action_providers.knowledge_persist_provider import _run_source_ref
+    from personalclaw.workflows.bindings import BindingContext
+    from personalclaw.workflows.engine import dispatch_action
+    from personalclaw.workflows.models import Node
 
-    from personalclaw.workflows import engine
+    payloads: list[dict] = []
 
-    source = inspect.getsource(engine.dispatch_action)
-    assert 'payload.setdefault("node_id"' in source
+    class _Persist:
+        async def execute(self, action_config, ctx, timeout=30):
+            payloads.append(dict(ctx.payload))
+            return ActionResult(success=True, stdout="{}")
+
+    step = Node.from_dict(
+        {"kind": "action", "id": "persist", "config": {"provider": "knowledge-persist", "with": {}}}
+    )
+    asyncio.run(
+        dispatch_action(
+            step,
+            BindingContext(),
+            get_provider=lambda name: _Persist(),
+            run_id="run-own",
+            instance_path="root.children[0]",
+        )
+    )
+
+    assert payloads[0]["node_id"] == "persist"
+    assert payloads[0]["run_id"] == "run-own"
+    assert _run_source_ref(ActionContext(event="workflow_node", payload=payloads[0])) == (
+        "workflow:run-own:persist"
+    )
 
 
 def _open(home):
