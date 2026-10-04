@@ -263,7 +263,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
               initialVersion={initialVersion}
               onVersionChange={(v) => setVParam(v === null ? '' : String(v))}
               defaultDetailsOpen={initialVersion != null}
-              commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${active?.name ?? slug}` }) : undefined} />
+              commentTarget={navigate ? newSessionTarget(navigate, { title: `Comments: ${active?.name ?? slug}` }) : undefined} />
           </Morph>
           {iterateOpen && (
             <div className="flex min-h-0 shrink-0 basis-1/2 flex-col lg:w-[26rem] lg:basis-auto xl:w-[30rem]">

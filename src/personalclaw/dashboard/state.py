@@ -2210,7 +2210,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         project_id: str = "",
         created_by_app: str = "",
     ) -> _ChatSession:
-        """Return existing session or create a new one.
+        """Return existing session or create a new one. With no *name*, the new chat is given
+        one no chat has (:func:`~personalclaw.dashboard.chat_names.new_chat_name`).
 
         ``app`` is the origin tag (a hidden worker's, a channel's). ``created_by_app`` is the
         VERIFIED identity of the app whose request starts the conversation, which only a route
@@ -2226,12 +2227,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
                     f"Session {name!r} already exists with memory_mode={existing.memory_mode!r}"
                 )
             return existing
+        named = bool(name)
         if not name:
-            import time
+            from personalclaw.dashboard.chat_names import new_chat_name
 
-            self._session_counter += 1
-            ts = int(time.time())
-            name = f"chat-{self._session_counter}-{ts}"
+            name = new_chat_name(self)
         session = _ChatSession(
             name,
             agent=agent,
@@ -2241,10 +2241,17 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             memory_mode=memory_mode or "persistent",
             project_id=project_id,
         )
-        session._tab_id = uuid.uuid4().hex[:12]
         session._on_message = self._broadcast_chat_message
         session._channel_link_of = functools.partial(channel_links.chat_link, self, name)
-        persisted = self._persisted_meta(name)
+        # A new chat's name is one no chat has, so nothing kept is read for it: it is a new chat
+        # and takes on no other chat's record. A name the caller gives may be a kept chat's, and
+        # then the session is that chat's, with the creator and the tab id its record holds. The
+        # tab id is how a save tells the chat's own transcript from another chat's.
+        persisted = self._persisted_meta(name) if named else None
+        held_tab = persisted.get("tab_id") if persisted else None
+        session._tab_id = (
+            held_tab if isinstance(held_tab, str) and held_tab else uuid.uuid4().hex[:12]
+        )
         persisted_creator = _creating_app_of(persisted)
         session.created_by_app = (
             persisted_creator if persisted_creator is not None else created_by_app

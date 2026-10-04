@@ -14,6 +14,7 @@
  *  The mount site constructs the right `CommentTarget`; the surface + comment
  *  layer stay context-agnostic and just call `target.submit(...)`.
  */
+import { reportActionFailure } from '../../app/reportingWrite'
 import { api } from '../../lib/api'
 
 export interface CommentSubmission {
@@ -30,16 +31,23 @@ export interface CommentTarget {
   submit: (s: CommentSubmission) => void | Promise<void>
 }
 
-/** Files/Artifacts page: comments open a FRESH chat session to address them. */
+/** Files/Artifacts page: comments open a FRESH chat session to address them.
+ *
+ *  The chat is named by the gateway, as every new chat is, and TITLED after the document.
+ *  The title used to be sent as the chat's name, so a second comment on the same document
+ *  went into the first comment's chat rather than a new one. */
 export function newSessionTarget(
   navigate: (path: string) => void,
-  opts?: { name?: string },
+  opts?: { title?: string },
 ): CommentTarget {
   return {
     label: 'Send to a new chat',
     submit: async ({ message, docPaths }) => {
       try {
-        const session = await api.createChatSession({ name: opts?.name || 'Document comments' })
+        const session = await api.createChatSession()
+        // A title that does not land is said, and the comment still goes.
+        await api.renameSession(session.key, opts?.title || 'Document comments')
+          .catch(reportActionFailure('title the new chat after the document'))
         const meta = docPaths.length ? { files: docPaths } : undefined
         await api.sendChat(message, session.key, meta)
         navigate(`chat/${session.key}`)

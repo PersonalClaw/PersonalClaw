@@ -112,17 +112,15 @@ class _Gateway:
         return [(m["role"], m["content"]) for m in self.state._sessions[chat].messages]
 
 
-def _restart(home: Path, *, restore: bool) -> _Gateway:
-    """A new gateway over *home*. With *restore*, the start brings back the recent chats as a
-    gateway's start does; without, a chat lives only on disk (older than the start's window, or
-    ``restore_sessions`` off).
-
-    It starts in a later second than the gateway before it, as any real restart does: a new chat
-    is named by its number and its second, so one opened in the second the last run opened its
-    first would be given that chat's name."""
-    started = int(time.time())
-    while int(time.time()) == started:
-        time.sleep(0.02)
+def _restart(home: Path, *, restore: bool, a_second_later: bool = False) -> _Gateway:
+    """A new gateway over *home*, in the same second as the one before it if it is quick enough, or
+    with *a_second_later* in the next second, as a real restart always is. With *restore*, the
+    start brings back the recent chats as a gateway's start does; without, a chat lives only on
+    disk (older than the start's window, or ``restore_sessions`` off)."""
+    if a_second_later:
+        started = int(time.time())
+        while int(time.time()) == started:
+            time.sleep(0.02)
     gateway = _Gateway(home)
     if restore:
         restore_recent_sessions(gateway.state)
@@ -283,7 +281,10 @@ async def test_a_thread_whose_chat_was_deleted_starts_a_new_chat(tmp_path, resta
     gateway = first
     if restart:
         first.stop()
-        gateway = _restart(tmp_path, restore=True)
+        # A deleted chat leaves no transcript to say its name was given, so a new chat opened in
+        # the second the deleted one was opened in could be given its name again; no restart is
+        # that quick unless the clock is set back.
+        gateway = _restart(tmp_path, restore=True, a_second_later=True)
 
     reached = await gateway.message("Are you there?")
 

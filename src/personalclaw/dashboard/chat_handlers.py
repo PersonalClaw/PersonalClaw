@@ -1175,6 +1175,12 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
         memory_mode = body.get("memory_mode", "persistent")
         if memory_mode not in ("persistent", "incognito", "temporary"):
             return web.json_response({"error": "invalid memory_mode"}, status=400)
+        # A name that is a kept chat's opens that chat, as a name open here already does. A blank
+        # session minted for it replaced the kept transcript at the gateway's stop, or once it
+        # held more turns: `personalclaw run --session` on a gateway the run had started itself
+        # lost the earlier runs' conversation that way, and never continued it.
+        if name:
+            _rehydrate_session_from_history(state, name, include_archived=True)
         session = state.get_or_create_session(
             name,
             agent=agent,

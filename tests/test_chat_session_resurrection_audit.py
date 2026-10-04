@@ -94,8 +94,10 @@ _CREATES_BY_DESIGN: dict[str, str] = {
         "(no tombstone is kept), so refusing an unknown name would break creation "
         "outright. And the hazard the two guarded writers carry is *implicit* "
         "continuation — a send or a resume asserts 'this session exists, continue it' "
-        "— where an explicit create asserts the opposite. The dashboard never sends a "
-        "session KEY here (ChatPage's ensureSession omits `name` entirely)"
+        "— where an explicit create asserts the opposite. A name that IS a kept chat's "
+        "opens that chat (it is rehydrated first), so no blank session is minted over a "
+        "kept transcript. The dashboard never sends a session KEY here (ChatPage's "
+        "ensureSession and a document's comment chat both omit `name`)"
     ),
     # ── SERVER-derived key: the owning resource's identity IS the session name, so a
     #    miss means 'this resource has no session yet', never 'the client typed a key' ──

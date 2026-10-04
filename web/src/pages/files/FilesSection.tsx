@@ -416,7 +416,7 @@ export function FilesSection({ sub, navigate, query: routeQuery, setQuery }: Rou
                     entry={{ name: fileTabs.active.name, path: fileTabs.active.path, is_dir: false }} onSaved={refresh} onSaveAsArtifact={saveAsArtifact}
                     onDirtyChange={(d) => fileTabs.markDirty(fileTabs.activePath, d)} onMissing={(p) => { draftStore.delete(p); fileTabs.closeNow(p) }}
                     draftStore={draftStore}
-                    commentTarget={navigate ? newSessionTarget(navigate, { name: `Comments: ${fileTabs.active.name}` }) : undefined} />
+                    commentTarget={navigate ? newSessionTarget(navigate, { title: `Comments: ${fileTabs.active.name}` }) : undefined} />
                 )}
               </div>
             </div>

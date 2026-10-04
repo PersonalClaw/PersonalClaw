@@ -4,7 +4,6 @@ import json
 import logging
 import re
 import time
-import uuid
 
 from personalclaw.agent import agents_dir
 from personalclaw.atomic_write import atomic_write
@@ -234,6 +233,44 @@ def _persisted_message_count(state: DashboardState, history_key: str) -> int:
         return 0
 
 
+def _another_chats_transcript(
+    state: DashboardState, session: _ChatSession, history_key: str
+) -> bool:
+    """Whether the transcript under *history_key* is another chat's than *session*'s.
+
+    A transcript records the tab id of the chat it is: its first save writes the chat's own,
+    and a session minted for a kept chat (opened, restored, resumed) takes on the one its record
+    holds (``DashboardState.get_or_create_session``). A session whose tab id differs is another
+    chat that came to have the same name: two gateways on one home that opened a chat in the
+    same second before either saved, or a save still on its way for a chat deleted and then
+    named again. A transcript that records no tab id (an import, an older version) names no
+    chat, so the guards after this one decide its save as they always have.
+
+    An unreadable record answers ``False``, as the count guard does: a disk that misbehaves
+    never costs a live write, and a record nobody can read names no other chat.
+    """
+    log = state.conversation_log
+    if log is None:
+        return False
+    try:
+        held = log.get_metadata(history_key).get("tab_id")
+    except Exception:  # noqa: BLE001 — an unreadable record cannot name another chat
+        logger.warning("the record of %s could not be read before a save", history_key)
+        return False
+    own = getattr(session, "_tab_id", "")
+    if not (isinstance(held, str) and held and own) or held == own:
+        return False
+    logger.error(
+        "chat %s was not saved: the transcript kept as %s is another chat's (tab %s, this one"
+        " is %s), and it is kept as it is; this chat's turns are held in memory only",
+        session.key,
+        history_key,
+        held,
+        own,
+    )
+    return True
+
+
 def save_all_sessions_to_history(state: DashboardState) -> None:
     """Save all active sessions to history — the LAST save before the gateway stops.
 
@@ -436,12 +473,14 @@ def _rehydrate_session_from_history(
     gateway restart). Bulk startup restore still uses ``restore_recent_sessions``.
 
     *include_archived* loads a session whose metadata carries ``closed``. It exists for
-    exactly one caller — the ``POST /api/chat`` SEED, which has already asked
-    :func:`session_key_exists` "may I write this key?" and been told yes, because
-    "archival is not deletion" and an archived session stays WRITABLE. Writable but not
-    SEEDABLE is incoherent, and it is the incoherence that caused the data loss: the
-    seed returned ``None``, ``get_or_create_session`` minted a BLANK session for a key
-    holding a real transcript, and the save then wrote that blank buffer over it.
+    the writers that name a chat before they write to it: the ``POST /api/chat`` SEED,
+    which has already asked :func:`session_key_exists` "may I write this key?" and been
+    told yes, because "archival is not deletion" and an archived session stays WRITABLE;
+    ``POST /api/chat/sessions`` given the name of a kept chat; and the chat a Trust opens
+    for a conversation a channel runs itself. Writable but not SEEDABLE is incoherent,
+    and it is the incoherence that caused the data loss: the seed returned ``None``,
+    ``get_or_create_session`` minted a BLANK session for a key holding a real transcript,
+    and the save then wrote that blank buffer over it.
     Readers keep the default (``False``) — for them ``closed`` still means "not
     resident", which is what makes an archived chat absent from the UI.
     """
@@ -724,11 +763,6 @@ def restore_recent_sessions(
             from personalclaw.dashboard.side_state import SideState
 
             session._side = SideState.from_dict(_side_meta)
-        tab_id = meta.get("tab_id")
-        if not tab_id:
-            tab_id = uuid.uuid4().hex[:12]
-            state.conversation_log.update_metadata(key, {"tab_id": tab_id})
-        session._tab_id = tab_id
         _seed_transcript(state, session, key)
         restored += 1
         logger.info("Restored session %s (%s)", session_name, session.title)
@@ -767,6 +801,11 @@ def save_session_to_history(
     # dashboard form). Resolved BEFORE the overwrite guard below, because that guard's
     # whole job is to compare against the file this key names.
     history_key = persisted_history_key(state.conversation_log, session.key)
+    # 🔴 ANOTHER CHAT'S TRANSCRIPT IS NEVER WRITTEN, not its messages and not its record
+    # (the archive flag included), whatever `force` says: `force` vouches for this chat's own
+    # buffer, and says nothing about a transcript that is another chat's.
+    if _another_chats_transcript(state, session, history_key):
+        return
     # 🔴 THE OVERWRITE GUARD. This function does not append — it REWRITES the whole
     # transcript file from `msgs`. So it must not run when `msgs` holds less than the
     # file does, or the difference is destroyed.

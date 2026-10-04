@@ -277,6 +277,23 @@ chat, channel thread, loop worker, webhook, subagent).
 - **`resolve_history_key()`** resolves whether a bare key is a channel-thread
   key or lives in the `dashboard:` namespace *by asking the store* — core
   assumes no key shape and names no provider.
+- **A new chat's name is one no chat has, and a save never replaces another
+  chat's transcript.** A new chat is named `chat-<number>-<second>` in
+  `dashboard/chat_names.py`, the one place a new chat is named: every surface
+  that opens one (the dashboard, a Temporary or Incognito chat, a channel's new
+  thread, a fork, an investigation, a delivered result) asks
+  `get_or_create_session` for it with no name. The number carries on past the
+  highest one a kept chat has, and a name that a chat open here or a transcript
+  kept on disk (an archived one included) holds is stepped past, so neither a
+  restart in the same second nor a clock set back across one names a new chat
+  after a kept one. Names already given stay as they are. A transcript records
+  the `tab_id` of the chat it is; a session minted for a kept chat takes it on
+  (`get_or_create_session`), and `save_session_to_history` refuses, and logs, any
+  save, `force` included, whose session's tab id is not the one the transcript
+  records: two gateways on one home that opened a chat in the same second before
+  either saved, or a save still on its way for a chat deleted and named again.
+  `POST /api/chat/sessions` given a kept chat's name opens that chat, so
+  `personalclaw run --session` continues its conversation.
 - **`dashboard/chat_persistence.py`** — the dashboard-side persistence
   contract over the JSONL store (message append, metadata, variants).
   Model-to-provider matching is data-driven via
