@@ -690,7 +690,12 @@ def run_restore_drill() -> JobResult:
             if not files:
                 problems.append("archive extracted to nothing")
 
-            for db_path in scratch.rglob("*.db"):
+            # Each database the archive holds, and only those: a file SQLite reads as one, and a
+            # file where the manifest declares one. Read by its `.db` name, a user's own
+            # `notes.db` in the workspace failed every drill of the snapshot that carried it.
+            from personalclaw.durability.sqlite_files import databases_in
+
+            for db_path in databases_in(scratch):
                 checked_dbs += 1
                 try:
                     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)

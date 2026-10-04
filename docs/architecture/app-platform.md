@@ -114,8 +114,10 @@ backend**.
   one that changes none of it needs none.
 - **An update keeps the app's state** — what its folder holds that no bundle ships:
   `data/` (`sdk.util.app_data_dir`), copied into the new version before the swap so a
-  failed update gives the old version its data exactly as it left it, and `venv/`, the
-  Python environment a sidecar app's child runs in (`sdk.sidecar.sidecar_venv_dir`),
+  failed update gives the old version its data exactly as it left it (each database in it
+  through SQLite's backup API, as one file with no log beside it, since the old version's
+  backend may still be writing it; a keep-data uninstall copies `data/` the same way), and
+  `venv/`, the Python environment a sidecar app's child runs in (`sdk.sidecar.sidecar_venv_dir`),
   moved across by rename after the swap and before `onUpdate` runs, however large the
   engine in it. A failed update hands back exactly what it moved; a crash in between is
   finished by `recover_interrupted_updates` at the next start. Everything else in the
@@ -229,6 +231,19 @@ backend**.
   with its package receipt, and Install engine would then skip pip. The restore names each app
   it brought back whose engine is not installed here (`snapshot._engines_not_here`), and the
   app offers Install engine. A merge into a home that has the engine keeps it.
+- **Backups carry an app's databases whole.** A backend holds its database open in WAL mode,
+  so the `apps` inventory entry declares each app's databases as its partitions
+  (`apps/*/data/*.db`, and `apps/.*.data/*.db` where a keep-data uninstall parks them): a
+  snapshot and an export copy each through SQLite's backup API, never as the bytes of a file
+  being written, and the Doctor counts them declared. A merge restore and an import take an
+  app's database as they take the rest of its `data/`: whole where this home has none, and
+  where it has one, this home's stays as it is, since an app's tables are its own and core does
+  not merge them row by row. No restore puts a database's `-wal` or `-shm` into the home, and a
+  database comes in on its own: a log this home kept at its path with no database there, which
+  SQLite discards when it next opens that database, is removed first, since beside the
+  archive's copy SQLite would read the log's pages in place of the copy's
+  (`durability.sqlite_files`). A database elsewhere in an app's folder is copied through the
+  backup API too, and the Doctor names it as undeclared.
 
 ## Unload and load (`apps/app_runtime.py`)
 

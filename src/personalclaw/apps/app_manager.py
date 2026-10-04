@@ -64,6 +64,7 @@ from personalclaw.apps.manager import (
 )
 from personalclaw.apps.manifest import KEBAB_RE, AppManifest
 from personalclaw.atomic_write import atomic_write, ensure_home_for
+from personalclaw.durability import sqlite_files
 from personalclaw.security import mask_child_output
 from personalclaw.sel import sel
 from personalclaw.signing import SignatureInfo, SignatureState, verify_bundle
@@ -1371,12 +1372,23 @@ def _copy_live_tree(src: Path, dst: Path) -> None:
     ~/.ssh/id_ed25519``) would hand it the bytes of whatever the link names on its next
     update or keep-data uninstall. The user's data is carried forward exactly as it is.
 
+    Each database comes across as one consistent file, through SQLite's backup API and with no
+    log beside it (``durability.sqlite_files``): the app's backend holds it open in WAL mode and
+    writes while this runs, and a copy of its bytes took the database and its log each at its
+    own instant.
+
     Re-raises the last error once the attempts run out, so every caller's fail-closed
     branch stays exactly as loud as it was.
     """
     for attempt in range(_LIVE_COPY_ATTEMPTS):
         try:
-            shutil.copytree(src, dst, symlinks=True)
+            shutil.copytree(
+                src,
+                dst,
+                symlinks=True,
+                ignore=sqlite_files.sidecars_in,
+                copy_function=sqlite_files.copy_file,
+            )
             return
         except shutil.Error as exc:
             if attempt == _LIVE_COPY_ATTEMPTS - 1 or not _only_vanished_sources(exc):

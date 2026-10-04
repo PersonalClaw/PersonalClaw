@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from personalclaw.config import loader as config_loader
+from personalclaw.durability import sqlite_files
 from personalclaw.security import is_sensitive_path
 from personalclaw.snapshot import (
     _attach_merge_paths,
@@ -288,9 +289,30 @@ def _backup_sqlite(src: Path, dst_buffer: io.BytesIO) -> None:
         mem_conn.close()
 
 
-#: Database files never travel as a filesystem copy — see the tree walk in `create_export_zip`.
-_DB_SUFFIXES = frozenset({".db"})
-_DB_SIDECARS = ("-wal", "-shm")
+def _write_tree_file(zf: zipfile.ZipFile, fpath: Path, arcname: str) -> bool:
+    """Write one file of a folder the export walks, and say whether it went in: a database through
+    the backup API (one consistent copy, its log folded in), never a sidecar of one, and any other
+    file as it is (``durability.sqlite_files``). A file SQLite cannot read as a database leaves as
+    the file it is, the user's own bytes being all there is of it; a declared store the backup API
+    cannot read is left out instead, by the projection (`create_export_zip`).
+
+    🔴 The walk over the stores' folders used to leave out every `.db` file, so an installed app's
+    database, open in WAL mode while its backend ran, was in no export; and the walk over the
+    workspace copied a database of the user's own as bytes, its log beside it, each file at its
+    own instant."""
+    if sqlite_files.is_sidecar(fpath.parent, fpath.name):
+        return False
+    if sqlite_files.is_database(fpath):
+        buf = io.BytesIO()
+        try:
+            _backup_sqlite(fpath, buf)
+        except Exception:  # noqa: BLE001 — what SQLite cannot read leaves as the file it is
+            logger.warning("export: %s is no database SQLite can read; carried as a file", arcname)
+        else:
+            zf.writestr(arcname, buf.getvalue())
+            return True
+    zf.write(str(fpath), arcname)
+    return True
 
 
 def _is_derived_within(entry_path: str, rel_to_entry: str) -> bool:
@@ -518,8 +540,7 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
         projected_dbs = frozenset(db_names)
 
         def _is_projected_db(rel: str) -> bool:
-            """Whether ``rel`` is a declared database the backup API already owns, or one
-            of its ``-wal``/``-shm`` sidecars.
+            """Whether ``rel`` is a declared database the backup API already owns.
 
             🔴 WHY (DAS-10). Two write sites could emit the same declared database: the
             projection below (safe, WAL-checkpointed) and the `workspace` tree walk
@@ -532,18 +553,11 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
             declared it*. That inverts the projection's fail-closed intent: a store the
             export decided not to carry travelled regardless, as a validated member.
 
-            The inventory sweep further down already refuses raw database copies for
-            exactly this reason. It skips **every** `.db` in a tree; this predicate is
-            deliberately narrower — only the databases the projection owns — because
-            `workspace/` is the user's own directory and silently dropping an *undeclared*
-            sqlite file a user put there would trade one data defect for another.
+            Matched by path, never by name: `workspace/` is the user's own directory, and a
+            database a user put there leaves as the user's file it is, through the backup API
+            too (`_write_tree_file`, which also keeps every sidecar out).
             """
-            if rel in projected_dbs:
-                return True
-            return any(
-                rel.endswith(sidecar) and rel[: -len(sidecar)] in projected_dbs
-                for sidecar in _DB_SIDECARS
-            )
+            return rel in projected_dbs
 
         for db_name in db_names:
             if not _wanted(db_name):
@@ -606,8 +620,7 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
                     # store shipped anyway — see `_is_projected_db`.
                     if _is_projected_db(rel.as_posix()):
                         continue
-                    if fpath.is_file():
-                        zf.write(str(fpath), f"{prefix}/{rel}")
+                    if fpath.is_file() and _write_tree_file(zf, fpath, f"{prefix}/{rel}"):
                         count += 1
             dir_counts[dirname] = count
         contents_summary["workspace_files"] = dir_counts.get("workspace", 0)
@@ -652,12 +665,12 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
                     # filesystem copy of a WAL store captures the `.db` without its `-wal`.
                     # Measured on a store with 2000 committed rows and a 237 KB uncheckpointed WAL:
                     # the raw copy was not merely short, it was UNUSABLE ("no such table: runs").
-                    # The declared databases travel through `_backup_sqlite` below instead; this is
-                    # the same split the snapshot path makes with `_tree_ignore_dbs`.
-                    if fpath.suffix in _DB_SUFFIXES or fpath.name.endswith(_DB_SIDECARS):
+                    # The declared databases travel through `_backup_sqlite` above, and any other
+                    # (an installed app's own) through it here (`_write_tree_file`).
+                    if _is_projected_db(rel.as_posix()):
                         continue
-                    zf.write(str(fpath), f"{prefix}/{rel}")
-                    count += 1
+                    if _write_tree_file(zf, fpath, f"{prefix}/{rel}"):
+                        count += 1
                 if count:
                     extra_counts[entry] = count
         if extra_counts:
@@ -998,8 +1011,8 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # store is the failure mode the inventory's derived flag exists to prevent.
             if (snap / "memory.db").is_file():
                 if not (pc / "memory.db").is_file():
-                    shutil.copy2(str(snap / "memory.db"), str(pc / "memory.db"))
-                    items.append("memory (copied)")
+                    if sqlite_files.bring_in(snap / "memory.db", pc / "memory.db"):
+                        items.append("memory (copied)")
                 else:
                     _merge_memory(snap / "memory.db", pc / "memory.db", left_unchanged=left)
                     items.append(_merge_said("memory", "memory.db", left))
@@ -1019,9 +1032,7 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                     _merge_memory(snap / rel, pc / rel, left_unchanged=left, label=rel)
                     merged_projects += rel not in left
                 else:
-                    (pc / rel).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(str(snap / rel), str(pc / rel))
-                    copied_projects += 1
+                    copied_projects += sqlite_files.bring_in(snap / rel, pc / rel)
             if merged_projects:
                 items.append("project memories (merged)")
             elif copied_projects:
@@ -1050,13 +1061,12 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                         merged_logs += 1
                     else:
                         items.append(line)
+                elif not sqlite_files.bring_in(snap / rel, pc / rel):
+                    continue
+                elif rel in project_logs:
+                    copied_logs += 1
                 else:
-                    (pc / rel).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(str(snap / rel), str(pc / rel))
-                    if rel in project_logs:
-                        copied_logs += 1
-                    else:
-                        items.append(f"{what} (copied)")
+                    items.append(f"{what} (copied)")
             if merged_logs:
                 items.append("project learning logs (merged)")
             elif copied_logs:
@@ -1198,12 +1208,10 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                     if _copy_tree_no_overwrite(sp, dp, entry_path=entry):
                         imported_stores += 1
                 elif sp.is_file():
-                    if dp.exists():
+                    if sqlite_files.bring_in(sp, dp):
+                        imported_stores += 1
+                    else:
                         stores_kept.append(entry)
-                        continue
-                    dp.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(str(sp), str(dp))
-                    imported_stores += 1
             if imported_stores:
                 items.append(f"{_stores(imported_stores)} (merged)")
             if stores_kept:

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, TextIO
 
 from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes, private_file
+from personalclaw.durability import sqlite_files
 from personalclaw.sqlite_compat import sqlite3
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -187,34 +188,6 @@ def _partition_paths(root: Path, *, of: str = "") -> list[str]:
         return []
 
 
-def _safe_copy_db(src: Path, dst: Path) -> bool:
-    """Copy one sqlite file consistently via the backup API. False if it isn't a
-    readable database (caller falls back to a plain copy)."""
-    from contextlib import closing
-
-    try:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        with (
-            closing(sqlite3.connect(str(src))) as src_conn,
-            closing(sqlite3.connect(str(dst))) as dst_conn,
-        ):
-            src_conn.backup(dst_conn)
-        return True
-    except Exception as exc:  # noqa: BLE001
-        print(f"⚠️  sqlite backup failed for {src.name} ({exc}); falling back to a file copy")
-        return False
-
-
-def _tree_ignore_dbs(db_names: set[str]):
-    """A copytree `ignore` that skips database files, so a tree copy never
-    raw-copies a live DB — the safe backup-API pass handles those separately."""
-
-    def _ignore(directory: str, contents: list[str]) -> set[str]:
-        return {n for n in contents if n in db_names or n.endswith((".db-wal", ".db-shm"))}
-
-    return _ignore
-
-
 def _everything_paths(pc: Path) -> list[str]:
     """Home-relative paths the ``everything`` component adds (DURABILITY §1).
 
@@ -307,14 +280,18 @@ def _left_out_of_restore(entry_path: str, rel: str) -> bool:
 
 
 def _restore_ignore(entry_path: str, root: Path):
-    """A copytree ``ignore`` that skips what :func:`_left_out_of_restore` leaves out."""
+    """A copytree ``ignore`` that skips what :func:`_left_out_of_restore` leaves out, and every
+    sidecar of a database, which no restore puts into the home (``durability.sqlite_files``)."""
     leaves = bool(_derived_within(entry_path))
 
     def _ignore(directory: str, contents: list[str]) -> set[str]:
+        skipped = sqlite_files.sidecars_in(directory, contents)
         if not leaves:
-            return set()
+            return skipped
         base = Path(directory).relative_to(root)
-        return {n for n in contents if _left_out_of_restore(entry_path, (base / n).as_posix())}
+        return skipped | {
+            n for n in contents if _left_out_of_restore(entry_path, (base / n).as_posix())
+        }
 
     return _ignore
 
@@ -606,7 +583,9 @@ def _copytree_safe(src: Path, dst: Path, **kwargs) -> None:
 def _copy_tree_no_overwrite(src: Path, dst: Path, *, entry_path: str = "") -> int:
     """Copy what ``dst`` lacks, and return how many files that was. Given the inventory
     ``entry_path`` it copies, leaves out what a restore never plants
-    (:func:`_left_out_of_restore`)."""
+    (:func:`_left_out_of_restore`). A database is taken whole, as any other file is, and on its
+    own; a sidecar never comes in, so no log lands beside a database it was not written with
+    (``sqlite_files.bring_in``)."""
     leaves = bool(entry_path) and bool(_derived_within(entry_path))
     copied = 0
     for item in src.rglob("*"):
@@ -618,9 +597,7 @@ def _copy_tree_no_overwrite(src: Path, dst: Path, *, entry_path: str = "") -> in
         target = dst / rel
         if item.is_dir():
             target.mkdir(parents=True, exist_ok=True)
-        elif item.is_file() and not target.exists():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(item), str(target))
+        elif item.is_file() and sqlite_files.bring_in(item, target):
             copied += 1
     return copied
 
@@ -711,77 +688,61 @@ def snapshot_main(
         for d in ("workspace", "skills"):
             (stage / d).mkdir(parents=True, exist_ok=True)
 
-        # Core files
+        # The core files, then every DECLARED database: each store's own path and each of its
+        # partitions (`StateEntry.partitions`: a memory partition's databases, an installed app's).
+        # Each is copied once, a database through the sqlite backup API (`sqlite_files.copy_file`).
+        # `captured` names them by their path in the home, and the folder copies below leave out
+        # exactly those paths, never a file merely NAMED like one (a `runs.db` of the user's own in
+        # the workspace is not the run ledger), and copy any other database they meet through the
+        # backup API too. Leaving them out by name dropped the user's files, and so did the folder
+        # pass's copying of a declared database again, as bytes, over the consistent copy: with a
+        # reader holding the log, that copy of `learning.db` had not even its tables.
+        captured: set[str] = set()
         for files in CORE_FILES.values():
             for f in files:
-                src = pc / f
-                if src.is_file():
-                    if os.path.islink(src):
-                        print(f"⚠️  Skipping symlinked core file: {src}")
-                        continue
-                    if f.endswith(".db"):
-                        from contextlib import closing
-
-                        with (
-                            closing(sqlite3.connect(str(src))) as src_conn,
-                            closing(sqlite3.connect(str(stage / f))) as dst_conn,
-                        ):
-                            src_conn.backup(dst_conn)
-                    else:
-                        shutil.copy2(str(src), str(stage / f))
-
-        # Every DECLARED database, copied consistently via the sqlite backup API.
-        # This runs BEFORE the tree copies (which skip *.db, see _tree_ignore_dbs)
-        # so a live database is never captured as a raw file. Fixes the
-        # knowledge.db / lexicon.db / loops.db raw-copy hazard.
-        _db_paths = _declared_db_paths()
-        _db_names = {PurePosixPath(p).name for p in _db_paths}
-        for _db in _db_paths:
+                if (pc / f).is_file() and os.path.islink(pc / f):
+                    print(f"⚠️  Skipping symlinked core file: {pc / f}")
+                elif (pc / f).is_file():
+                    sqlite_files.copy_file(pc / f, stage / f)
+                    captured.add(f)
+        for _db in [*_declared_db_paths(), *_partition_paths(pc)]:
             _src_db = pc / _db
-            if not _src_db.is_file() or os.path.islink(_src_db):
-                continue
-            if not _safe_copy_db(_src_db, stage / _db):
-                (stage / _db).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(_src_db), str(stage / _db))
+            if _db not in captured and _src_db.is_file() and not os.path.islink(_src_db):
+                sqlite_files.copy_file(_src_db, stage / _db)
+                captured.add(_db)
+        _db_ignore = sqlite_files.tree_ignore(pc, captured)
+        _copy = sqlite_files.copy_file
 
-        # Workspace (exclude hygiene_data, insert_facts*.py, and any database —
-        # those were staged above through the backup API).
+        # Workspace, without hygiene_data and insert_facts*.py.
         if (pc / "workspace").is_dir():
             _pattern_ignore = shutil.ignore_patterns("hygiene_data", "insert_facts*.py")
 
             def _ws_ignore(directory: str, contents: list[str]) -> set[str]:
-                return set(_pattern_ignore(directory, contents)) | _tree_ignore_dbs(_db_names)(
-                    directory, contents
-                )
+                return set(_pattern_ignore(directory, contents)) | _db_ignore(directory, contents)
 
             _copytree_safe(
                 pc / "workspace",
                 stage / "workspace",
                 dirs_exist_ok=True,
                 ignore=_ws_ignore,
+                copy_function=_copy,
             )
 
         # Skills
         if (pc / "skills").is_dir():
-            _copytree_safe(pc / "skills", stage / "skills", dirs_exist_ok=True)
-
-        # Every store partition (`StateEntry.partitions` — each memory partition's own memory
-        # database), through the backup API like the store it partitions. The tree copies above
-        # skip every database, and no other pass named these, so a project's memories were in no
-        # snapshot at all.
-        for part in _partition_paths(pc):
-            if os.path.islink(pc / part):
-                continue
-            if not _safe_copy_db(pc / part, stage / part):
-                (stage / part).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(pc / part), str(stage / part))
+            _copytree_safe(
+                pc / "skills",
+                stage / "skills",
+                dirs_exist_ok=True,
+                ignore=_db_ignore,
+                copy_function=_copy,
+            )
 
         # THE GAP CLOSURE (DURABILITY §1): every remaining inventory entry. Before
         # this, tasks/, projects/, loop/, artifacts/, prompts/, workflows/,
         # agents/, apps/ and entity_settings/ were in NEITHER the snapshot nor the
         # export — a "full backup" that silently dropped a user's whole task board.
         # Driven off the inventory so a store added later is captured by default.
-        staged_extra: list[str] = []
         # What a running Temporary chat keeps (its transcript, working folder and attached files)
         # stays out: the chat is forgotten when its session ends, and a snapshot would outlive it.
         from personalclaw.chat_traces import kept_by_temporary_chats
@@ -789,6 +750,8 @@ def snapshot_main(
         _temporary = kept_by_temporary_chats(pc)
         for rel in _everything_paths(pc):
             src = pc / rel
+            if rel in captured:
+                continue
             if os.path.islink(src):
                 print(f"⚠️  Skipping symlinked state path: {rel}")
                 continue
@@ -805,18 +768,14 @@ def snapshot_main(
                         if _temporary
                         else set()
                     )
-                    return (
-                        set(_tree_ignore_dbs(_db_names)(directory, contents))
-                        | _d(directory, contents)
-                        | held
-                    )
+                    return _db_ignore(directory, contents) | _d(directory, contents) | held
 
-                _copytree_safe(src, stage / rel, dirs_exist_ok=True, ignore=_ignore)
-                staged_extra.append(rel)
+                _copytree_safe(
+                    src, stage / rel, dirs_exist_ok=True, ignore=_ignore, copy_function=_copy
+                )
             elif src.is_file():
                 (stage / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(src), str(stage / rel))
-                staged_extra.append(rel)
+                _copy(src, stage / rel)
 
         # Manifest
         ws_files = sum(1 for _ in (stage / "workspace").rglob("*") if _.is_file())
@@ -960,7 +919,7 @@ def _sqlite_row_total(db: Path) -> int:
     🔴 ``immutable=1``, NOT just ``mode=ro``. Opening a WAL-mode database read-only makes
     SQLite CREATE its ``-shm``/``-wal`` sidecars, and this runs against the STAGED tree
     just before it is tarred — so counting rows put WAL sidecars into the archive that
-    `_tree_ignore_dbs` exists to keep out. Caught by
+    the folder copies keep out (``sqlite_files.tree_ignore``). Caught by
     `test_wal_sidecars_never_ride_along`, not by reading the code. ``immutable=1`` is
     correct here (and only here): the staged file came through the backup API, so it is
     fully checkpointed and has no WAL to miss.
@@ -1690,11 +1649,11 @@ def _merge_run_history(
 
 def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str) -> None:
     for f in CORE_FILES.get(component, ()):
-        if (pc / f).is_file():
-            if os.path.islink(pc / f):
-                print(f"⚠️  Skipping symlinked core file during backup: {pc / f}")
-                continue
-            shutil.move(str(pc / f), str(backup / f))
+        if (pc / f).is_file() and os.path.islink(pc / f):
+            print(f"⚠️  Skipping symlinked core file during backup: {pc / f}")
+            continue
+        # A database goes aside with the log beside it, so the snapshot's copy never opens with it.
+        sqlite_files.move_aside(pc / f, backup / f)
         if (snap / f).is_file():
             if os.path.islink(snap / f):
                 print(f"⚠️  Skipping symlinked file from snapshot: {snap / f}")
@@ -1729,27 +1688,17 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
             _backup_and_copy(pc, backup, snap, comp)
             print(f"  ✅ {comp}")
 
-    if _want(components, "workspace"):
-        d = pc / "workspace"
-        if d.is_dir():
-            _copytree_safe(d, backup / "workspace", dirs_exist_ok=True)
-        sd = snap / "workspace"
-        if sd.is_dir():
-            if d.is_dir():
-                shutil.rmtree(str(d))
-            _copytree_safe(sd, d)
-        print("  ✅ workspace")
-
-    if _want(components, "skills"):
-        sk = pc / "skills"
-        if sk.is_dir():
-            _copytree_safe(sk, backup / "skills", dirs_exist_ok=True)
-        snap_sk = snap / "skills"
-        if snap_sk.is_dir():
-            if sk.is_dir():
-                shutil.rmtree(str(sk))
-            _copytree_safe(snap_sk, sk)
-        print("  ✅ skills")
+    # The workspace and the skills are set aside as they are, moved and never copied, as every
+    # other store is below: a copy took each database in them as bytes, its log at another
+    # instant, while anything still had it open, and left out every link in them, which the
+    # removal of the folder then deleted.
+    for tree in ("workspace", "skills"):
+        if not _want(components, tree):
+            continue
+        if (snap / tree).is_dir():
+            sqlite_files.move_aside(pc / tree, backup / tree)
+            _copytree_safe(snap / tree, pc / tree, ignore=sqlite_files.sidecars_in)
+        print(f"  ✅ {tree}")
 
     # 🔴 Every remaining inventory entry — see `_extra_restore_paths`. Replace mode moves
     # the live copy into the pre-restore backup FIRST, so the destructive half stays recoverable
@@ -1771,9 +1720,7 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
             if any(rel.startswith(f"{done}/") for done in restored):
                 continue
             src, live = snap / rel, pc / rel
-            if live.exists() and not live.is_symlink():
-                (backup / rel).parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(live), str(backup / rel))
+            sqlite_files.move_aside(live, backup / rel)
             if src.is_dir():
                 _copytree_safe(src, live, ignore=_restore_ignore(rel, src))
             elif src.is_file():
@@ -2052,7 +1999,10 @@ def merge_plan(snap: Path, pc: Path, components: list[str] | None) -> list[dict]
                 by_rule=by_rule,
             )
             continue
-        _add(path, strategy, "per-file union" if entry and entry.kind else "")
+        detail = "per-file union" if entry and entry.kind else ""
+        if entry is not None and entry.kind == inv.KIND_TREE and entry.partitions:
+            detail += "; a database whole, and this home's kept where it has one"
+        _add(path, strategy, detail)
     return rows
 
 
@@ -2147,10 +2097,12 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
 
     if _want(components, "memory") and (snap / "memory.db").is_file():
         if not (pc / "memory.db").is_file():
-            shutil.copy2(str(snap / "memory.db"), str(pc / "memory.db"))
-            if (snap / "memory_index.db").is_file():
-                shutil.copy2(str(snap / "memory_index.db"), str(pc / "memory_index.db"))
-            print("  Memory: copied (no existing memory.db)")
+            if not sqlite_files.bring_in(snap / "memory.db", pc / "memory.db"):
+                left.append("memory.db")  # a link or a folder is at its path: left as it is
+            elif (snap / "memory_index.db").is_file():
+                sqlite_files.bring_in(snap / "memory_index.db", pc / "memory_index.db")
+            if "memory.db" not in left:
+                print("  Memory: copied (no existing memory.db)")
         else:
             _merge_memory(snap / "memory.db", pc / "memory.db", left_unchanged=left)
         if "memory.db" not in left:
@@ -2319,13 +2271,11 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
                 said = _merge_records(snap, pc, rel)
                 if said:
                     print(f"  {said}")
-            elif src.is_file() and not dst.exists():
+            elif src.is_file() and sqlite_files.bring_in(src, dst):
                 # A file the live home does not have. An EXISTING file is left alone: merge
                 # mode's contract is that local state wins, and these entries have no
                 # field-level merge executor yet (their declared strategies are the 13 the
                 # queue tracks) — so copy-if-missing is the honest half, not a silent overwrite.
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(src), str(dst))
                 restored.append(rel)
         if restored:
             print(f"  Stores: recovered {len(restored)} ({', '.join(sorted(restored)[:6])}…)")

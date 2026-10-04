@@ -1260,24 +1260,29 @@ async def _probe_state_inventory(ctx: DoctorContext) -> ProbeResult:
             remedy=_CHECK_CRASHED_REMEDY,
         )
 
-    gaps = ev["unclaimed_count"] + ev["undeclared_db_count"]
-    if not gaps:
+    unclaimed, undeclared = ev["unclaimed_count"], ev["undeclared_db_count"]
+    if not unclaimed + undeclared:
         return ProbeResult(ok=True, detail=f"all {ev['claimed']} state paths claimed", evidence=ev)
+    # Each kind of gap says what is true of it. An unclaimed path is in no snapshot. A database no
+    # store declares is copied whole by every snapshot that carries its folder
+    # (`durability.sqlite_files`): said to be "in NO snapshot" too, the row told a user their own
+    # `runs.db` in the workspace was missing from the snapshots that carried it.
+    found = []
+    if unclaimed:
+        paths = "paths are" if unclaimed != 1 else "path is"
+        found.append(f"{unclaimed} unclaimed {paths} in NO snapshot")
+    if undeclared:
+        found.append(f"{undeclared} database{'s' if undeclared != 1 else ''} no store declares")
     return ProbeResult(
         ok=False,
-        detail=(
-            f"{ev['unclaimed_count']} unclaimed "
-            f"path{'s' if ev['unclaimed_count'] != 1 else ''} and "
-            f"{ev['undeclared_db_count']} undeclared "
-            f"database{'s' if ev['undeclared_db_count'] != 1 else ''} — "
-            f"{'these are' if gaps != 1 else 'this is'} in NO snapshot"
-        ),
+        detail=", and ".join(found),
         evidence=ev,
         remedy=(
-            "No automatic fix — a snapshot leaves out any path the state manifest does not "
-            "claim, and claiming one ships with a release. The files are still on disk: copy the "
-            "paths listed in this row's details somewhere safe before you restore a snapshot, "
-            "and report them so the manifest claims them."
+            "No automatic fix — claiming a path or a database is a change to the state manifest, "
+            "which ships with a release. A snapshot leaves out any path the manifest does not "
+            "claim: copy the unclaimed paths listed in this row's details somewhere safe before "
+            "you restore a snapshot. A merge restore keeps this home's copy of a database no store "
+            "declares. Report them so the manifest claims them."
         ),
     )
 

@@ -625,7 +625,14 @@ year beside the store's own.
 
 **The snapshot is the backup; the shards are a copy of the records.** A
 restore reads a snapshot, which holds every store whole: a folder with every
-file at its path, a database through the backup API. The shards — the hourly
+file at its path, a database through the backup API. Every database is one
+file there, wherever it is in the home: one the inventory declares is matched
+by its path, never its name, and any other a folder holds (an installed app's,
+the user's own) is copied through the backup API too, with no `-wal` or `-shm`
+beside it. No restore puts one into the home: a merge puts a database in on its
+own, removing first a log this home kept at its path with no database there,
+and a replace moves this home's database aside with its log, and its workspace
+and skills as they are, never copied (`durability.sqlite_files`). The shards — the hourly
 export and what a sync carries — hold the stores whose content is records, and
 each database as rows, and nothing restores a home from them. A folder of files
 (skills, cron scripts, uploads, the workspace, installed apps, hooks) is in

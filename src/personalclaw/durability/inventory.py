@@ -131,11 +131,13 @@ class StateEntry:
     # Sub-paths inside `path` that are themselves derived (indexes, caches,
     # git-owned working copies). Relative to `path`; glob syntax allowed.
     derived_within: tuple[str, ...] = field(default_factory=tuple)
-    # For a ``sqlite`` store kept once per key as well as at `path`: where the other copies are
-    # (home-relative globs, one ``*`` per path segment). Each is this store — the same kind,
-    # domain and merge — so a snapshot and an export copy it through the sqlite backup API as they
-    # copy `path`, a merge restore merges it as it merges `path`, and the undeclared-database audit
-    # counts it declared (`partition_paths`). Every memory partition keeps its own memory database.
+    # Where this entry keeps a database once per key (home-relative globs, one ``*`` per path
+    # segment). A snapshot and an export copy each through the sqlite backup API, and the
+    # undeclared-database audit counts it declared (`partition_paths`). For a ``sqlite`` store,
+    # each is this store kept as well as at `path` — the same kind, domain and merge — and a merge
+    # restore merges it as it merges `path`: every memory partition keeps its own memory database.
+    # For a ``tree``, each is a database inside it, which a merge restore and an import take by the
+    # tree's own rule, whole and only where the home has none: an installed app keeps its own.
     partitions: tuple[str, ...] = field(default_factory=tuple)
     # For a ``sqlite`` store whose tables its stores make one by one as each is first used: how this
     # version opens a database file of it, given its path, as all of them open it — every table
@@ -885,6 +887,13 @@ INVENTORY: tuple[StateEntry, ...] = (
         # never ships a `venv` (`supply_chain.NEVER_INSTALLED_NAMES`), so one at any depth here
         # was built on this machine, and the `.{name}.rollback` copy of an update matches too.
         derived_within=("*/.app_secret", "*/venv"),
+        # Each app's own databases, in the `data/` folder its backend writes, or parked at
+        # `.{name}.data` by a keep-data uninstall. A backend holds its database open in WAL mode,
+        # and undeclared, a snapshot copied the file as bytes without its log and an export left
+        # it out. A merge restore and an import take one as they take the rest of an app's data:
+        # whole where this home has none, and where it has one this home's stays as it is, since
+        # an app's tables are the app's own to merge (`durability.sqlite_files`).
+        partitions=("apps/*/data/*.db", "apps/.*.data/*.db"),
     ),
     StateEntry(
         id="extensions",
@@ -2591,7 +2600,11 @@ def audit_home(home: Path) -> AuditResult:
             continue
         if rel_db.startswith(declared_trees):
             continue
-        result.undeclared_dbs.append(rel_db)
+        # Read from the file, last, once the path has not already answered: one SQLite reads as a
+        # database, or an empty one, which SQLite opens as an empty database. A file of the
+        # user's merely named `.db` is not one.
+        if _a_database(db):
+            result.undeclared_dbs.append(rel_db)
     return result
 
 
@@ -2611,3 +2624,17 @@ def _db_files(home: Path) -> list[Path]:
         dirnames[:] = [d for d in dirnames if not is_ignored((rel_dir / d).as_posix())]
         found.extend(Path(dirpath) / f for f in filenames if f.endswith(".db"))
     return sorted(found)
+
+
+def _a_database(path: Path) -> bool:
+    """Whether *path* is a database file: one SQLite reads as a database, or an empty regular
+    file, which SQLite opens as an empty one (never a link's target)."""
+    import stat
+
+    from personalclaw.durability.sqlite_files import is_database
+
+    try:
+        info = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and (info.st_size == 0 or is_database(path))

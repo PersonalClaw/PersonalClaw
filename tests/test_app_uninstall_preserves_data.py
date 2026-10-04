@@ -1188,21 +1188,26 @@ def _racing_copytree(lock: Path, *, forever: bool, calls: list[int]):
     auto-maintenance (``NOTE_TOOL``), so this wrapper is the only writer of that path.
     """
     real_copytree = app_manager.shutil.copytree
-    real_copy2 = app_manager.shutil.copy2
+    given: list = []  # the copy function each top-level call was handed
 
     def _copy(fsrc, fdst, *ca, **ck):
         if Path(fsrc) == lock:
             Path(fsrc).unlink(missing_ok=True)  # the detached child finishing
-        return real_copy2(fsrc, fdst, *ca, **ck)
+        return given[-1](fsrc, fdst, *ca, **ck)
 
     # `copytree` RECURSES through itself once per subdirectory, passing `copy_function`
     # positionally. So the wrapper mirrors the real signature (a `**kwargs` passthrough
-    # re-supplies an argument the recursion already gave positionally), and `copy_function
-    # is None` is what tells a top-level call from a recursive one — without it, `calls`
-    # would count directories instead of attempts.
-    def _copytree(src, dst, symlinks=False, ignore=None, copy_function=None, *rest, **k):
-        if copy_function is None:
+    # re-supplies an argument the recursion already gave positionally), and a `copy_function`
+    # other than this wrapper's own `_copy` is what tells a top-level call from a recursive
+    # one — without it, `calls` would count directories instead of attempts. `_copy` then runs
+    # the copy function the call was handed (a database through SQLite's backup API), so the
+    # one file's disappearance is all that is instrumented.
+    def _copytree(
+        src, dst, symlinks=False, ignore=None, copy_function=app_manager.shutil.copy2, *rest, **k
+    ):
+        if copy_function is not _copy:
             calls.append(1)
+            given.append(copy_function)
             if forever:
                 # A NEW lock before every walk: the tree never settles, so retries run out.
                 lock.parent.mkdir(parents=True, exist_ok=True)
@@ -1266,18 +1271,21 @@ def test_a_copy_failure_whose_source_is_still_there_still_fails_closed(tmp_path,
     _write_note(name, "one", "body")
 
     real_copytree = app_manager.shutil.copytree
-    real_copy2 = app_manager.shutil.copy2
     calls: list[int] = []
+    given: list = []  # the copy function each top-level call was handed
     victim = _notebook(name) / "one.md"
 
     def _copy(fsrc, fdst, *ca, **ck):
         if Path(fsrc) == victim:
             raise OSError(errno.EACCES, "permission denied")
-        return real_copy2(fsrc, fdst, *ca, **ck)
+        return given[-1](fsrc, fdst, *ca, **ck)
 
-    def _copytree(srcp, dstp, symlinks=False, ignore=None, copy_function=None, *rest, **k):
-        if copy_function is None:  # top-level call, not `copytree`'s own recursion
+    def _copytree(
+        srcp, dstp, symlinks=False, ignore=None, copy_function=app_manager.shutil.copy2, *rest, **k
+    ):
+        if copy_function is not _copy:  # top-level call, not `copytree`'s own recursion
             calls.append(1)
+            given.append(copy_function)
         return real_copytree(srcp, dstp, symlinks, ignore, _copy, *rest, **k)
 
     with monkeypatch.context() as m:

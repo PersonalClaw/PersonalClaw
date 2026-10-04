@@ -35,6 +35,7 @@ from pathlib import Path
 
 from personalclaw import embedding_arrivals
 from personalclaw.durability import inventory as inv
+from personalclaw.durability import sqlite_files
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD, PREREQ_ABSENT
 from personalclaw.durability.pull_engine import DbMerger
 
@@ -91,17 +92,14 @@ def _apply_db_merge(entry: inv.StateEntry, src: Path, dst: Path) -> list[str]:
     return what it left unchanged (empty when everything came in).
 
     A live DB that doesn't exist yet is created by copying the source wholesale (the first sync
-    onto a fresh machine); otherwise the merge functions ATTACH and INSERT OR IGNORE, so the
-    live machine's own rows are never overwritten and — for memory.db — deletions survive.
+    onto a fresh machine), on its own (`sqlite_files.bring_in`: a log left at its path with no
+    database would be read into it); otherwise the merge functions ATTACH and INSERT OR IGNORE,
+    so the live machine's own rows are never overwritten and — for memory.db — deletions survive.
     """
     from personalclaw import snapshot
 
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if not dst.exists():
+    if sqlite_files.bring_in(src, dst):
         # No local DB yet: the source IS the merged result. Byte-copy is correct and lossless.
-        import shutil
-
-        shutil.copy2(src, dst)
         return []
     left: list[str] = []
     if entry.id == _MEMORY_DB_ENTRY:
