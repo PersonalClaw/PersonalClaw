@@ -1401,8 +1401,8 @@ class DashboardApprovalState:
     def _channel_chat(self, name: str) -> "_ChatSession | None":
         """The chat that holds the conversation *name*: the one open here, else the conversation
         loaded whole into one, archived or not (archival is not deletion), else a new one when
-        nothing of it is persisted yet. None when something is persisted that cannot be loaded:
-        a blank chat would be saved over its transcript."""
+        nothing of it is persisted yet. None for a Temporary chat whose session has ended, which
+        is not opened again, so its Trust is refused rather than given to a new chat."""
         from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
         from personalclaw.dashboard.chat_utils import resolve_history_key
 

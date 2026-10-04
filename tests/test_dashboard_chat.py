@@ -958,15 +958,14 @@ class TestInMemoryAuthority:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         log = state.conversation_log
-        # Stale disk data
-        log.append("dashboard:s1", "user", "old question")
-        log.append("dashboard:s1", "assistant", "old answer")
-
-        # Active session with different messages
+        # Active session with its own messages
         session = state.get_or_create_session("s1")
         session.append("user", "new question")
         session.append("tool", "✅ running")
         session.drain()
+        # Different lines written to its file beside it: stale disk data
+        log.append("dashboard:s1", "user", "old question")
+        log.append("dashboard:s1", "assistant", "old answer")
 
         async with TestClient(TestServer(_make_app(state))) as client:
             resp = await client.get("/api/chat/sessions/s1")
@@ -983,11 +982,11 @@ class TestInMemoryAuthority:
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         log = state.conversation_log
+        session = state.get_or_create_session("s2")
         # Simulate: 8 messages on disk total (5 older + 3 recent)
         for i in range(8):
             log.append("dashboard:s2", "user", f"msg {i}")
         # Session buffer holds the last 3; the first 5 live outside it
-        session = state.get_or_create_session("s2")
         session.append("user", "msg 5")
         session.append("user", "msg 6")
         session.append("user", "msg 7")

@@ -276,6 +276,7 @@ class _ChatSession(ChatQueue):
         "_fork_lock",
         "_tab_id",
         "_disk_older_count",
+        "_kept_unread",
         "_file_changes",
         "_declared_file_change_idx",
         "_acp_breaker",
@@ -511,6 +512,7 @@ class _ChatSession(ChatQueue):
         # the conversation shows before this buffer but which this session never writes.
         # Set when the transcript is seeded; the session's own file is always loaded whole.
         self._disk_older_count: int = 0
+        self._kept_unread: bool = False  # what is kept could not be read (open_kept_chat)
         # Per-turn file-change accumulator [{path, before, after}], reset at the
         # top of each run_chat and flushed onto the assistant message's meta at turn end.
         self._file_changes: list[dict[str, str]] = []
@@ -2223,6 +2225,10 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         """Return existing session or create a new one. With no *name*, the new chat is given
         one no chat has (:func:`~personalclaw.dashboard.chat_names.new_chat_name`).
 
+        A *name* a chat is kept under makes that chat, its record and whole transcript
+        (``chat_persistence.open_kept_chat``), as an open one is returned as it is: the other
+        arguments shape a new chat only.
+
         ``app`` is the origin tag (a hidden worker's, a channel's). ``created_by_app`` is the
         VERIFIED identity of the app whose request starts the conversation, which only a route
         handler holding an app token passes. A name already persisted keeps the creator its meta
@@ -2242,22 +2248,28 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             from personalclaw.dashboard.chat_names import new_chat_name
 
             name = new_chat_name(self)
-        session = _ChatSession(
-            name,
-            agent=agent,
-            workspace_dir=workspace_dir,
-            model=model,
-            mode=mode,
-            memory_mode=memory_mode or "persistent",
-            project_id=project_id,
-        )
-        session._on_message = self._broadcast_chat_message
-        session._channel_link_of = functools.partial(channel_links.chat_link, self, name)
         # A new chat's name is one no chat has, so nothing kept is read for it: it is a new chat
         # and takes on no other chat's record. A name the caller gives may be a kept chat's, and
-        # then the session is that chat's, with the creator and the tab id its record holds. The
+        # then the session is that chat, with the creator and the tab id its record holds. The
         # tab id is how a save tells the chat's own transcript from another chat's.
-        persisted = self._persisted_meta(name) if named else None
+        from personalclaw.dashboard import chat_persistence  # it imports this module
+
+        kept = chat_persistence.kept_chat(self, name) if named else None
+        persisted = kept[1] if kept is not None else None
+        if persisted is not None:
+            session = _ChatSession(name)
+        else:
+            session = _ChatSession(
+                name,
+                agent=agent,
+                workspace_dir=workspace_dir,
+                model=model,
+                mode=mode,
+                memory_mode=memory_mode or "persistent",
+                project_id=project_id,
+            )
+        session._on_message = self._broadcast_chat_message
+        session._channel_link_of = functools.partial(channel_links.chat_link, self, name)
         held_tab = persisted.get("tab_id") if persisted else None
         session._tab_id = (
             held_tab if isinstance(held_tab, str) and held_tab else uuid.uuid4().hex[:12]
@@ -2277,44 +2289,27 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             or (persisted_origin if isinstance(persisted_origin, str) else "")
             or session.created_by_app
         )
-        if ephemeral:
+        if kept is not None:
+            chat_persistence.open_kept_chat(self, session, *kept, memory_mode=memory_mode)
+        elif ephemeral:
             self._ephemeral_keys.add(f"dashboard:{name}")
         self._sessions[name] = session
         # The `session.created` platform-event emit site — a new session row just
         # became true here. Fanned out ONLY to apps that declared the subscription (deny by
         # default); `emit` is total, so an app-side failure can never fail this creation.
         #
-        # Guarded on "no persisted history", because this method is ALSO how a session is
-        # REHYDRATED: `chat_persistence.restore_recent_sessions` (bulk, at startup) and
-        # `_rehydrate_session_from_history` / the resume + post-to-an-old-session paths all
-        # reach the create branch for a session that already exists on disk. Announcing
-        # those would re-fire `session.created` for every restored session on every gateway
-        # restart, and an app would double-count sessions it already saw. Asked
-        # provider-agnostically (`resolve_history_key`) rather than by key shape, so a
-        # channel thread is recognised as persisted too. Fails OPEN: an unreadable log reads
-        # as "no history", which at worst re-announces, never swallows a real creation.
-        if not self._has_persisted_history(name):
+        # Guarded on no record being kept, because this method is ALSO how a kept chat comes
+        # back (the start's restore, opening one from the list, resume, a worker naming its
+        # session): announcing those would re-fire `session.created` for every restored session
+        # on every restart, and an app would double-count sessions it already saw. Fails OPEN:
+        # a record that cannot be read at worst re-announces, never swallows a real creation.
+        if persisted is None:
             from personalclaw.apps.app_events import SESSION_CREATED
             from personalclaw.apps.app_events import emit as emit_platform_event
 
             emit_platform_event(SESSION_CREATED, {"session": name})
         self.push_sessions_update()
         return session
-
-    def _has_persisted_history(self, name: str) -> bool:
-        """Whether ``name`` already has persisted conversation metadata — i.e. a session
-        materialized under this name is being REHYDRATED, not created.
-
-        Used by the ``session.created`` platform-event emit site (APE-2) to tell a real
-        creation from a restore, since both go through ``get_or_create_session``.
-        Best-effort by design: any failure answers "no history", so the worst outcome is a
-        re-announced session rather than a swallowed creation."""
-        try:
-            from personalclaw.dashboard.chat_utils import resolve_history_key
-
-            return bool(resolve_history_key(self.conversation_log, name))
-        except Exception:
-            return False
 
     def session_creating_app(self, name: str) -> str:
         """The app whose token started the conversation *name*, or ``""``.

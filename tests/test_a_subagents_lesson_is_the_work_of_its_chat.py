@@ -41,6 +41,8 @@ AGENT = "subagent:a1b2c3d4"
 ITS_AGENT = "subagent:c0ffee00"
 #: A chat nothing records: not open in the gateway, and no transcript.
 GONE = "dashboard:chat-30-1790700000"
+#: A Temporary chat open in the gateway, with no transcript written yet.
+LIVE = "dashboard:chat-31-1790700001"
 
 
 def _working_for(state: Any, monkeypatch: pytest.MonkeyPatch, parents: dict[str, str]) -> None:
@@ -172,8 +174,8 @@ async def test_a_subagent_of_a_chat_that_keeps_nothing_is_refused_and_told_why(
 async def test_a_subagent_of_a_live_temporary_chat_is_refused(tmp_path, monkeypatch):
     """The live chat is read first: a Temporary chat whose transcript is not written yet."""
     async with _gateway(tmp_path, monkeypatch) as gw:
-        gw.state.get_or_create_session(HERE.removeprefix("dashboard:"), memory_mode="temporary")
-        _working_for(gw.state, monkeypatch, {AGENT: HERE})
+        gw.state.get_or_create_session(LIVE.removeprefix("dashboard:"), memory_mode="temporary")
+        _working_for(gw.state, monkeypatch, {AGENT: LIVE})
         saved_ok, saved = await _remember(AGENT)
         lessons = _lessons(gw.home)
 

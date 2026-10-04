@@ -219,12 +219,14 @@ async def test_archiving_lands_its_flag_without_rewriting_the_transcript(tmp_pat
 
     state = _make_state(tmp_path)
     name = _seed_two_turns(state)
+    chat = state.get_or_create_session(name)
+    assert len(chat.messages) == 4, "precondition: the chat came back holding its transcript"
+    # The file gains a turn the chat is not given (a writer beside it appends one), so the
+    # chat's buffer is poorer than the disk.
+    state.conversation_log.append(_hk(name), "user", "a turn written beside the chat")
     size_before, msgs_before, _ = _disk(state, name)
 
-    blank = state.get_or_create_session(name)
-    blank.append("user", "a single stray turn", "msg u", broadcast=False)
-    blank.drain()
-    save_session_to_history(state, blank, closed=True)
+    save_session_to_history(state, chat, closed=True)
 
     size_after, msgs_after, closed_after = _disk(state, name)
     assert closed_after, "the archive flag never landed"
@@ -359,20 +361,21 @@ def test_a_save_does_not_orphan_a_bare_key_transcript(tmp_path):
 
     state = _make_state(tmp_path)
     key = _seed_bare_key_thread(state)
-    before = len(state.conversation_log.read_messages(key))
-    assert before == 4
+    before = [m["content"] for m in state.conversation_log.read_messages(key)]
+    assert len(before) == 4
 
     session = state.get_or_create_session(key)
-    session.append("user", "a stray one-message buffer", "msg u", broadcast=False)
+    session.append("user", "a new turn in the thread", "msg u", broadcast=False)
     session.drain()
     save_session_to_history(state, session)
 
     assert not state.conversation_log.has_log(
         _hk(key)
     ), "the save created a second file under the dashboard: form, orphaning the transcript"
-    assert (
-        len(state.conversation_log.read_messages(key)) == before
-    ), "the one-message buffer replaced a 4-message thread transcript"
+    assert [m["content"] for m in state.conversation_log.read_messages(key)] == [
+        *before,
+        "a new turn in the thread",
+    ], "the save replaced the thread's transcript instead of continuing it"
 
 
 @pytest.mark.asyncio
@@ -417,16 +420,48 @@ async def test_an_unreadable_log_fails_open_on_the_save_guard(tmp_path):
 
     state = _make_state(tmp_path)
     name = _seed_two_turns(state)
+    session = state.get_or_create_session(name)
+    session.append("user", "written despite the fault", "msg u", broadcast=False)
+    session.drain()
+
+    def _boom(_key):
+        raise OSError("disk on fire")
+
+    state.conversation_log.read_messages = _boom  # type: ignore[method-assign]
+    chat_persistence.save_session_to_history(state, session)
+
+    del state.conversation_log.read_messages
+    _, msgs, _ = _disk(state, name)
+    assert msgs == 5, f"the guard refused a live write on an unreadable log (msgs={msgs})"
+
+
+@pytest.mark.asyncio
+async def test_a_chat_opened_while_its_transcript_cannot_be_read_never_writes_over_it(
+    tmp_path, caplog
+):
+    """🔴 Red before: a chat made while its kept transcript could not be read came back blank,
+    and its save wrote its one new turn over the four kept ones (the guard, unable to count
+    them, let it through). It is still opened, so a disk that misbehaves locks nobody out of
+    their chat, but it holds none of what is kept, so every save from it is refused and says so,
+    and the kept transcript stays as it is."""
+    from personalclaw.dashboard import chat_persistence
+
+    state = _make_state(tmp_path)
+    name = _seed_two_turns(state)
 
     def _boom(_key):
         raise OSError("disk on fire")
 
     state.conversation_log.read_messages = _boom  # type: ignore[method-assign]
     session = state.get_or_create_session(name)
-    session.append("user", "written despite the fault", "msg u", broadcast=False)
+    assert session.messages == [], "precondition: nothing of the transcript could be read"
+    session.append("user", "a turn while the disk misbehaves", "msg u", broadcast=False)
     session.drain()
     chat_persistence.save_session_to_history(state, session)
+    chat_persistence.save_session_to_history(state, session, force=True, final=True)
 
     del state.conversation_log.read_messages
     _, msgs, _ = _disk(state, name)
-    assert msgs == 1, f"the guard refused a live write on an unreadable log (msgs={msgs})"
+    assert msgs == 4, f"a chat that held none of the transcript wrote over it (msgs={msgs})"
+    assert any("was not saved" in r.getMessage() for r in caplog.records), "refused in silence"
+    assert session.messages[-1]["content"] == "a turn while the disk misbehaves"

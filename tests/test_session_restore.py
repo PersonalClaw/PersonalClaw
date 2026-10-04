@@ -169,6 +169,12 @@ class TestRestoreRecentSessions:
     def test_skips_already_existing_sessions(self, tmp_path, monkeypatch):
         """Does not overwrite sessions that already exist in state."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        # Pre-create the session
+        session = state.get_or_create_session("existing")
+        session.append("user", "already here")
+        session.drain()
+
         _write_session(
             tmp_path,
             "dashboard_existing",
@@ -176,12 +182,6 @@ class TestRestoreRecentSessions:
         )
         path = tmp_path / "dashboard_existing.jsonl"
         path.touch()
-
-        state = _make_state(tmp_path)
-        # Pre-create the session
-        session = state.get_or_create_session("existing")
-        session.append("user", "already here")
-        session.drain()
 
         restored = restore_recent_sessions(state, window_minutes=60)
         assert restored == 0

@@ -224,6 +224,9 @@ async def run_planner_pass(
         except OSError:
             pass
     try:
+        # The planner is one session across its loop's passes: a retry tells it to use what it
+        # found already. After a restart the kept chat comes back whole (`get_or_create_session`),
+        # so the next pass's model is given the earlier passes' turns, as it is while it stays open.
         session = state.get_or_create_session(
             name=skey,
             agent=agent_name,

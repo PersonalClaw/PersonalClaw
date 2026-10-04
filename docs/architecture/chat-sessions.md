@@ -294,6 +294,46 @@ chat, channel thread, loop worker, webhook, subagent).
   either saved, or a save still on its way for a chat deleted and named again.
   `POST /api/chat/sessions` given a kept chat's name opens that chat, so
   `personalclaw run --session` continues its conversation.
+- **A chat opened again by its name continues it.** `get_or_create_session` is
+  the one place a session is made, and a name whose transcript is kept on disk
+  (the file the chat's saves rewrite, whatever its first line says) makes that
+  chat: `chat_persistence.continue_kept_chat`, the one loader, gives it every
+  field of its record a save writes back and its whole transcript before the
+  chat is open here. What the caller asks for (an agent, a model, a folder) shapes
+  a new chat only, as for a chat already open, and a memory mode other than the
+  kept chat's is refused. The ways a chat comes back (the start's restore, opening
+  a chat from the list, resume) and the callers that name their sessions all go
+  through it. Each way back used to restore its own part of the record, and the
+  callers that name their sessions none of it, so a session made blank for a kept
+  name was saved over the transcript: a loop worker the watchdog re-armed after a
+  restart lost every earlier turn at the stop. A Temporary chat that is not
+  running here has ended, so its name makes a new chat. A kept chat whose record
+  or transcript cannot be read is still opened (`open_kept_chat`), since a disk that misbehaves locks
+  nobody out of a chat that is there, but it holds none of what is kept, so
+  `save_session_to_history` refuses, and logs, every save from it (`force`
+  included) and what is kept stays as it is; it is not opened as a Temporary chat,
+  whose end would delete the transcript. Each named worker session
+  is one ongoing conversation by what its feature does, so after a restart each
+  continues, and its model is given its earlier turns through the history a fresh
+  runtime is handed (`prior_turns_transcript`; an agent CLI that can load its own
+  session by the kept id loads that instead):
+  - a loop's stage worker the watchdog re-arms (`loop/manager.start`): an
+    interrupted loop resumes. The cycle prompts are not among the turns handed
+    back, as for any chat (they are `nudge` rows); the cycle in flight carries the
+    current one.
+  - a loop's task worker the scheduler spawns again
+    (`loop/manager.spawn_task_worker`): it carries on with its one task, in its own
+    checkout.
+  - a loop's planner (`planning/runner.run_planner_pass`): one session across its
+    loop's passes, whose retry tells it to use what it found already.
+  - a client of the OpenAI-compatible endpoint registered to keep its
+    conversation (`inbound/openai_dialect`). A client that keeps none is let go of
+    its earlier requests before each turn (`_reset_session`), and its model is given
+    none of them.
+  - a schedule's chat (`dashboard/schedule_inject`): filled from the schedule's own
+    conversation only while it is new, and threaded each result after that, as
+    while it stays open, so its runs are not poured into it again as turns of
+    their own.
 - **`dashboard/chat_persistence.py`** — the dashboard-side persistence
   contract over the JSONL store (message append, metadata, variants).
   Model-to-provider matching is data-driven via
@@ -301,9 +341,9 @@ chat, channel thread, loop worker, webhook, subagent).
   site, and unknown model families are never restricted.
 - **The transcript buffer is the whole file.** `save_session_to_history`
   rewrites a session's file from `_ChatSession.messages`, so the buffer holds
-  every message the file holds and nothing trims it. Every path that loads a
-  persisted chat (boot restore, opening one from disk, resume) goes through
-  `_seed_transcript`, which loads the whole file with each line's `cls` and
+  every message the file holds and nothing trims it. Every chat made for a kept
+  transcript is loaded through `_seed_transcript` (in `continue_kept_chat`), which
+  loads the whole file with each line's `cls` and
   `meta`. The buffer holds transcript entries only: a streamed answer is ONE
   `streaming` entry however many chunks it arrives in (`stream_chunk`), settled
   in place into an `assistant` entry (`finish_stream`), and the end-of-turn

@@ -369,7 +369,9 @@ async def test_a_rehydrated_session_is_not_announced_as_created(tmp_path, monkey
         # `resolve_history_key` looks for).
         state.conversation_log.append(_history_key_for("s1"), "user", "hello")
         state._sessions.pop("s1")
-        assert state._has_persisted_history("s1"), "the fixture did not persist any history"
+        assert state.conversation_log.has_log(
+            _history_key_for("s1")
+        ), "the fixture did not persist any history"
         state.get_or_create_session("s1")
         assert await _inbox(client, "listener") == [], "a rehydrated session was re-announced"
 

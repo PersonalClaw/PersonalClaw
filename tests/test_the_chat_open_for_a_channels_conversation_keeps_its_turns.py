@@ -128,15 +128,17 @@ def test_no_chat_is_opened_by_a_turn_and_another_logs_turn_is_not_the_open_chats
 
 
 def test_a_chat_with_no_title_of_its_own_keeps_the_conversations_title(state):
-    _turn(state, "tidy the notes", "Done.")
-    state.conversation_log.set_title(THREAD, "Tidy the notes")
     chat = state.get_or_create_session(THREAD)
     assert chat.title == THREAD, "a chat opened before the conversation was named"
-    chat.append("user", "tidy the notes", "msg msg-u", broadcast=False)
-    chat.append("assistant", "Done.", "msg msg-a", broadcast=False)
+    _turn(state, "tidy the notes", "Done.")
+    state.conversation_log.set_title(THREAD, "Tidy the notes")
 
     save_all_sessions_to_history(state)
     assert state.conversation_log.get_metadata(THREAD).get("title") == "Tidy the notes"
+    assert [m["content"] for m in state.conversation_log.read_messages(THREAD)] == [
+        "tidy the notes",
+        "Done.",
+    ]
 
 
 def test_a_chat_open_before_the_conversation_is_named_shows_the_name_it_is_given(state):

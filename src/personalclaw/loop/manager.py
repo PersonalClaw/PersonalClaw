@@ -382,6 +382,10 @@ async def start(state, svc, loop_id: str) -> Loop:
     # A run of the loop beginning (again) asks again: "This loop" was for the run it was given in.
     _LOOP_GRANTS.discard(loop_id)
 
+    # The worker's chat is the loop's one conversation, and a loop the watchdog re-arms after a
+    # restart resumes it: the kept chat comes back whole (`get_or_create_session`), so its saves
+    # keep every earlier cycle and its model is given the earlier cycles' turns, as a worker that
+    # stayed open here is.
     session = state.get_or_create_session(
         name=session_key(loop_id),
         agent=loop.agent or strat.default_agent,
@@ -907,6 +911,8 @@ async def spawn_task_worker(state, svc, loop: Loop, task, worktree_dir: str) -> 
         return skey
     kinds.ensure_loaded()
     strat = kinds.get_or_none(loop.kind)
+    # One task's worker carries on with its task: spawned again after a restart, its kept chat
+    # comes back whole (`get_or_create_session`), and its model is given its earlier turns.
     session = state.get_or_create_session(
         name=skey,
         agent=loop.agent or (strat.default_agent if strat else ""),

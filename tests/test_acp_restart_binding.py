@@ -16,6 +16,7 @@ lived in the OTHER restore path, so the key was written and then never read back
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -372,19 +373,20 @@ class TestResumeSidSurvivesARestart:
 # ── The first message after a restart must not run on a blank session ──
 
 
-class TestAColdKeyPostRehydratesItsBinding:
-    """A named session that is on disk but not in memory must come back WITH its
-    persisted runtime binding.
+class TestAColdKeyComesBackWithItsBinding:
+    """A named session that is on disk but not in memory comes back WITH its persisted
+    runtime binding, whichever way it is asked for.
 
-    ``get_or_create_session`` mints a BARE session on a miss, and after a restart every
-    un-foldered session is a miss (the startup restore is window/folder-scoped and
-    ``restore_sessions`` defaults to false). So the first ``POST /api/chat`` resolved on
-    the native axis even though the meta line said ``acp:<cli>`` — and then
-    ``save_session_to_history`` rebuilt that meta line from the blank session and
-    DROPPED the binding, turning one bad turn into permanent state. It also made resume
-    unreachable: the resume id is handed to whatever provider the turn resolved, and a
-    native provider ignores it. A GET of the session first happened to rehydrate and
-    hide the whole thing, which is why it only bit non-UI callers.
+    After a restart every un-foldered session is a miss (the startup restore is
+    window/folder-scoped and ``restore_sessions`` defaults to false), and
+    ``get_or_create_session`` minted a BARE session on a miss. So the first
+    ``POST /api/chat`` resolved on the native axis even though the meta line said
+    ``acp:<cli>`` — and then ``save_session_to_history`` rebuilt that meta line from the
+    blank session and DROPPED the binding, turning one bad turn into permanent state. It
+    also made resume unreachable: the resume id is handed to whatever provider the turn
+    resolved, and a native provider ignores it. A session made for a kept chat's name is
+    that chat now (``get_or_create_session`` loads it), so no caller has to remember to
+    load it first.
     """
 
     def _log(self, tmp_path):
@@ -409,29 +411,20 @@ class TestAColdKeyPostRehydratesItsBinding:
         assert SESSION not in restarted._sessions
         return restarted
 
-    def test_get_or_create_alone_returns_a_blank_session(self, tmp_path):
-        """The floor that makes the next test mean something: the create path on its own
-        genuinely loses the binding, so the fix cannot be vacuous."""
+    @pytest.mark.parametrize("way", ["made by its name", "opened from the list"])
+    def test_the_session_made_for_it_carries_the_binding(self, tmp_path, way):
         restarted = self._persisted_session(tmp_path)
-        blank = restarted.get_or_create_session(SESSION)
-        assert blank.acp_provider == ""
-
-    def test_rehydrating_first_restores_the_binding_the_turn_will_resolve(self, tmp_path):
-        """What ``api_chat`` now does before ``get_or_create_session``. The rehydrate
-        REGISTERS the restored session, so the create returns that one — the object the
-        turn reads ``acp_provider`` off."""
-        restarted = self._persisted_session(tmp_path)
-        _rehydrate_session_from_history(restarted, SESSION)
+        if way == "opened from the list":
+            assert _rehydrate_session_from_history(restarted, SESSION) is not None
         used = restarted.get_or_create_session(SESSION)
         assert used.acp_provider == "acp:claude-code"
         assert used.workspace_dir == str(tmp_path / "ws")
 
     def test_the_meta_line_survives_the_turn_that_follows(self, tmp_path):
         """The permanence half: with the binding restored, the end-of-turn save rewrites
-        the meta line WITH it. Without the rehydrate the same save erases it, and no
-        later restore can recover what is no longer written down."""
+        the meta line WITH it. A blank session's save erased it, and no later restore can
+        recover what is no longer written down."""
         restarted = self._persisted_session(tmp_path)
-        _rehydrate_session_from_history(restarted, SESSION)
         s = restarted.get_or_create_session(SESSION)
         s.append("user", "second turn", "msg msg-u")
         save_session_to_history(restarted, s)
@@ -439,28 +432,34 @@ class TestAColdKeyPostRehydratesItsBinding:
         assert meta.get("acp_provider") == "acp:claude-code"
 
     def test_a_never_persisted_name_is_still_created_fresh(self, tmp_path):
-        """VACUITY FLOOR: the rehydrate must not become a precondition. A brand-new
-        session name has nothing on disk and still opens."""
+        """VACUITY FLOOR: the restore is not a precondition. A brand-new session name has
+        nothing on disk and still opens, with no binding."""
         restarted = self._persisted_session(tmp_path)
         assert _rehydrate_session_from_history(restarted, "chat-9-brand-new") is None
         fresh = restarted.get_or_create_session("chat-9-brand-new")
         assert fresh.key.endswith("chat-9-brand-new")
+        assert fresh.acp_provider == ""
 
-    def test_api_chat_rehydrates_before_it_resolves(self, tmp_path):
-        """THE CALL SITE. The two helpers above are correct in isolation; what shipped
-        broken was their ORDER in ``api_chat``. Assert the handler's source contract:
-        the rehydrate precedes ``get_or_create_session``, because after it the create is
-        a no-op that returns the already-registered session."""
-        import inspect
+    @pytest.mark.asyncio
+    async def test_the_first_post_after_a_restart_runs_on_its_binding(self, tmp_path, monkeypatch):
+        """THE CALL SITE: the first ``POST /api/chat`` to the cold key hands its turn the
+        session with the binding its meta line records."""
+        from aiohttp.test_utils import TestClient, TestServer
+        from chat_test_helpers import _make_app
 
-        from personalclaw.dashboard import chat_handlers
+        restarted = self._persisted_session(tmp_path)
+        started: list[tuple[str, str]] = []
 
-        src = inspect.getsource(chat_handlers.api_chat)
-        # Matched WITHOUT the closing paren: the claim is the ORDER of the two calls, not
-        # the rehydrate's argument list (it now also passes `include_archived=True`, so a
-        # send may seed an archived key — the same key `session_key_exists` above already
-        # declared writable).
-        assert "_rehydrate_session_from_history(state, session_name" in src
-        assert src.index("_rehydrate_session_from_history(state, session_name") < src.index(
-            "state.get_or_create_session(session_name"
-        ), "api_chat resolves the session before restoring its binding"
+        async def _turn(_state, session, _message):
+            started.append((session.acp_provider, session.workspace_dir))
+
+        monkeypatch.setattr("personalclaw.dashboard.chat_handlers.run_chat", _turn)
+        async with TestClient(TestServer(_make_app(restarted))) as client:
+            resp = await client.post("/api/chat", json={"message": "again", "session": SESSION})
+            resp.close()
+        assert restarted._sessions[SESSION].acp_provider == "acp:claude-code"
+        for _ in range(100):
+            if started:
+                break
+            await asyncio.sleep(0.01)
+        assert started == [("acp:claude-code", str(tmp_path / "ws"))]

@@ -63,22 +63,30 @@ def inject_schedule_result_to_session(
     On first open the session is linked to ``cron:{id}`` and hydrated from the
     cron's conversation history; subsequent calls thread the new result in
     (deduped). Returns the dashboard session.
+
+    The chat is one ongoing chat. After a restart its kept transcript comes back whole
+    (``get_or_create_session``), so its owner's earlier turns there are given to the model
+    again, and only a chat that holds nothing yet is filled from the cron's history: a kept
+    one is threaded the result, as an open one is, rather than handed the cron's runs since
+    as turns of their own beside the results already in it.
     """
     session_name = f"cron-{job.id}"
     session = state.get_or_create_session(name=session_name, agent=job.agent_id or "")
     session.title = f"Cron: {_redact(job.name)}"
 
     if not session.linked_session_key:
-        # First open — link to the cron's agent session and hydrate its history.
+        # First open here — link to the cron's agent session, and hydrate its history into a
+        # new chat.
         session.linked_session_key = f"cron:{job.id}"
-        msgs = history
-        if msgs is None and state.conversation_log is not None:
-            try:
-                msgs = state.conversation_log.read_messages(f"cron:{job.id}")
-            except Exception:
-                logger.debug("Failed to read cron history for %s", job.id, exc_info=True)
-                msgs = []
-        hydrate_session_from_history(session, msgs or [])
+        if not session.messages:
+            msgs = history
+            if msgs is None and state.conversation_log is not None:
+                try:
+                    msgs = state.conversation_log.read_messages(f"cron:{job.id}")
+                except Exception:
+                    logger.debug("Failed to read cron history for %s", job.id, exc_info=True)
+                    msgs = []
+            hydrate_session_from_history(session, msgs or [])
 
     if result_text:
         context = f"# Cron Job Result: {_redact(job.name)}\n\n{_redact(result_text)}"

@@ -22,7 +22,7 @@ from personalclaw.dashboard.chat_utils import (
     resolve_history_key,
 )
 from personalclaw.dashboard.state import DashboardState, _ChatSession
-from personalclaw.history import CREATED_BY_APP_META_KEY
+from personalclaw.history import CREATED_BY_APP_META_KEY, listed_title
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import VALID_TASK_MODES
 from personalclaw.turn_source import source_of
@@ -366,8 +366,8 @@ def _attach_rewound(session: _ChatSession, m: dict) -> None:
 def _seed_transcript(state: DashboardState, session: _ChatSession, history_key: str) -> None:
     """Load the WHOLE persisted transcript of *history_key* into *session*'s buffer.
 
-    THE one loader, for every path that materialises a persisted chat: the boot restore,
-    opening a chat from disk, and resume. It is never a window. The save rewrites the
+    The transcript half of :func:`continue_kept_chat`, the one loader for every chat that
+    comes back. It is never a window. The save rewrites the
     whole file FROM this buffer, so a message left out here is a message the next save
     deletes — and it was: the boot restore kept the last 500, the open-from-disk path the
     last 200, the next turn then went unsaved (the guard saw "buffer ≤ disk") and the
@@ -415,12 +415,11 @@ def _seed_transcript(state: DashboardState, session: _ChatSession, history_key: 
 def _restore_runtime_binding(state: DashboardState, session: _ChatSession, meta: dict) -> None:
     """Restore a session's RUNTIME binding from its persisted metadata line.
 
-    One helper for both restore paths — the bulk startup restore
-    (``restore_recent_sessions``) and the targeted single-session rehydrate — because
-    they had silently drifted: only the targeted path read ``acp_provider``, so a
-    gateway restart, which goes through the BULK path, always brought the session back
-    on the native axis. Two independent readers of one contract is how a restore ends
-    up half-implemented; there is now one.
+    Part of :func:`continue_kept_chat`, the one loader. The restore paths each had their
+    own copy once, and they had silently drifted: only the targeted path read
+    ``acp_provider``, so a gateway restart, which went through the BULK path, always
+    brought the session back on the native axis. Two independent readers of one contract
+    is how a restore ends up half-implemented; there is now one.
 
     ``_acp_meta_binding`` records what the meta line ASKED the runtime to be, whether
     or not the binding was honoured, so the first turn after a restore can say so
@@ -462,29 +461,18 @@ def _restore_runtime_binding(state: DashboardState, session: _ChatSession, meta:
 def _rehydrate_session_from_history(
     state: DashboardState, session_name: str, *, include_archived: bool = False
 ) -> _ChatSession | None:
-    """Rehydrate a single dashboard session from persisted history.
-
-    Unlike ``state.get_or_create_session`` (which creates a fresh, empty session with
-    default ``memory_mode='persistent'``), this helper reads the session's
-    metadata and messages from ``conversation_log`` so the restored session has
-    the original title/agent/model/memory_mode and its message history
-    populated. Returns ``None`` if the session does not exist on disk (so
-    callers can fall through to other delivery paths without creating a
+    """The kept chat *session_name*, opened from disk for a READER, or ``None`` when no chat is
+    kept under it (so callers can fall through to other delivery paths without creating a
     phantom empty tab).
 
-    Intended for targeted resume paths (e.g. cron→origin injection after
-    gateway restart). Bulk startup restore still uses ``restore_recent_sessions``.
+    The chat itself is loaded where every session is made
+    (:meth:`DashboardState.get_or_create_session`, through :func:`continue_kept_chat`); what
+    this adds is the reader's answer for a chat that is not there to open: never persisted, a
+    Temporary chat whose session ended, or an archived chat.
 
-    *include_archived* loads a session whose metadata carries ``closed``. It exists for
-    the writers that name a chat before they write to it: the ``POST /api/chat`` SEED,
-    which has already asked :func:`session_key_exists` "may I write this key?" and been
-    told yes, because "archival is not deletion" and an archived session stays WRITABLE;
-    ``POST /api/chat/sessions`` given the name of a kept chat; and the chat a Trust opens
-    for a conversation a channel runs itself. Writable but not SEEDABLE is incoherent,
-    and it is the incoherence that caused the data loss: the seed returned ``None``,
-    ``get_or_create_session`` minted a BLANK session for a key holding a real transcript,
-    and the save then wrote that blank buffer over it.
-    Readers keep the default (``False``) — for them ``closed`` still means "not
+    *include_archived* opens a session whose metadata carries ``closed``: for the chat a Trust
+    opens for a conversation a channel runs itself, which is writable because "archival is not
+    deletion". Readers keep the default (``False``) — for them ``closed`` still means "not
     resident", which is what makes an archived chat absent from the UI.
     """
     if not state.conversation_log:
@@ -507,29 +495,116 @@ def _rehydrate_session_from_history(
         return None
     if meta.get("closed") and not include_archived:
         return None
-    try:
-        _restore_cfg = AppConfig.load()
-    except Exception:
-        _restore_cfg = None
-    provider_model_map = _build_agent_model_map()
     session = state.get_or_create_session(session_name)
-    # Pull display fields from session listing for title parity with bulk restore.
-    sessions = state.conversation_log.list_sessions()
-    session_info = next(
-        (s for s in sessions if s.get("key") == history_key),
-        {},
+    logger.info("Rehydrated session %s (%s) from history", session_name, session.title)
+    return session
+
+
+def kept_chat(state: DashboardState, name: str) -> tuple[str, dict | None] | None:
+    """What is kept on disk for a chat named *name*: ``None`` when nothing is, else the key of
+    its transcript, the file a chat of that name saves to (``persisted_history_key``), with its
+    record (its metadata line, ``{}`` when it has none), or ``None`` for a record that cannot
+    be read.
+
+    Kept means the file is there, whatever its first line says: a save rewrites that file, so a
+    chat made for it must hold what it holds. A disk that cannot say whether it is there answers
+    kept and unreadable. A Temporary chat that is not running here has ended, so it is forgotten
+    now (``chat_forget.forget_if_ended``) and nothing is kept.
+    """
+    log = state.conversation_log
+    if log is None or forget_if_ended(state, name):
+        return None
+    key = persisted_history_key(log, name)
+    try:
+        if not log.has_log(key):
+            return None
+        return key, log.get_metadata(key)
+    except OSError:
+        logger.warning("the record of chat %s could not be read", name, exc_info=True)
+        return key, None
+
+
+def open_kept_chat(
+    state: DashboardState,
+    session: _ChatSession,
+    key: str,
+    record: dict | None,
+    *,
+    memory_mode: str | None = None,
+) -> None:
+    """Make *session*, which :meth:`DashboardState.get_or_create_session` is making for a kept
+    chat's name, that chat, before it is open here: its record and whole transcript
+    (:func:`continue_kept_chat`). A *memory_mode* other than the kept chat's is refused
+    (``ValueError``), as for a chat already open.
+
+    That method is the one place a session is made, so every way a chat comes back (the start's
+    restore, opening a chat from the list, resume) and every caller that names its session (a
+    loop's workers and planner, a client of the OpenAI-compatible endpoint, a schedule's chat)
+    continues the kept chat. A session made blank for a kept name was saved over the transcript:
+    a loop worker the watchdog re-armed after a restart lost every turn before it at the stop.
+
+    A record or transcript that cannot be read does not keep its owner out of the chat (it is
+    opened, as a disk that misbehaves never locks anyone out of a chat that is there), but the
+    chat then holds none of what is kept, so it never writes over it: every save from it is
+    refused (:func:`save_session_to_history`), and what is kept stays as it is. Nor is it opened
+    as a Temporary chat, whose end deletes the chat's transcript.
+    """
+    if record is not None:
+        try:
+            continue_kept_chat(state, session, key, record)
+        except Exception:  # noqa: BLE001 — answered below: the chat holds none of it
+            logger.warning("chat %s could not be loaded from %s", session.key, key, exc_info=True)
+        else:
+            if memory_mode not in (None, session.memory_mode):
+                raise ValueError(
+                    f"Session {session.key!r} already exists with "
+                    f"memory_mode={session.memory_mode!r}"
+                )
+            return
+    if session.memory_mode == TEMPORARY:
+        raise ValueError(f"Session {session.key!r} already exists and could not be read")
+    session._kept_unread = True
+    logger.error(
+        "chat %s was opened without what is kept as %s, which could not be read; it is kept as"
+        " it is, and this chat's turns are held in memory only",
+        session.key,
+        key,
     )
-    # Titles may have been auto-generated by an LLM (_generate_title_via_provider)
-    # and are surfaced on the dashboard, so apply the same redaction passes
-    # used on assistant content before setting. Defence-in-depth — the title
-    # author is trusted-ish (our own agent process), but the generation input
-    # is user content, so a prompt injection could craft a title with an
-    # exfiltration URL or leaked credential.
-    raw_title = session_info.get("title") or meta.get("title") or session_name
-    raw_title, _ = redact_exfiltration_urls(raw_title)
+
+
+def continue_kept_chat(
+    state: DashboardState, session: _ChatSession, history_key: str, meta: dict
+) -> None:
+    """Make *session* the kept chat whose record (*meta*) and transcript are under
+    *history_key*: every field of the record a save writes back, and the whole transcript.
+
+    THE one loader for a chat that comes back, whichever way it comes back.
+    :meth:`DashboardState.get_or_create_session` calls it for every session it makes for a
+    kept chat's name (the start's restore, opening a chat from the list, resume, and every
+    caller that names its session: a loop's workers and planner, a client of the
+    OpenAI-compatible endpoint, a schedule's chat), and resume calls it for a body that names
+    another kept chat than its path. A save rebuilds the whole record and rewrites the whole
+    transcript from the session it saves, so a field this leaves out is a field the next save
+    drops, and a message it leaves out is a message the next save deletes. Each way back used
+    to restore its own subset of the record (opening a chat from the list left out its colour
+    theme and its voice choice, resume its tags, lifecycle, project, task mode and reasoning
+    effort), and every caller that named its session restored none of it: a loop worker the
+    watchdog re-armed after a restart started blank, and the stop's save replaced the kept
+    transcript with the one turn since.
+    """
+    log = state.conversation_log
+    if log is None:
+        return
+    # The name the chat list shows (`history.listed_title`). Titles may have been
+    # auto-generated by an LLM (_generate_title_via_provider) and are surfaced on the
+    # dashboard, so apply the same redaction passes used on assistant content before
+    # setting. Defence-in-depth — the title author is trusted-ish (our own agent process),
+    # but the generation input is user content, so a prompt injection could craft a title
+    # with an exfiltration URL or leaked credential.
+    raw_title, _ = redact_exfiltration_urls(listed_title(log, history_key))
     raw_title, _ = redact_credentials(raw_title)
     session.title = raw_title
-    session._titled = bool(session_info.get("title") or meta.get("title"))
+    session._titled = bool(raw_title)
     if meta.get("created_at"):
         session.created_at = meta["created_at"]
     if meta.get("agent"):
@@ -542,18 +617,16 @@ def _rehydrate_session_from_history(
             session.model = ""
     elif session.agent:
         try:
-            pc = _restore_cfg.agents.get(session.agent) if _restore_cfg else None
+            cfg = AppConfig.load()
+            pc = cfg.agents.get(session.agent)
             provider_name = pc.provider_agent if pc and pc.provider_agent else session.agent
-            session.model = provider_model_map.get(provider_name, "")
+            session.model = _build_agent_model_map().get(provider_name, "")
         except Exception:
-            logger.debug(
-                "Failed to resolve model for rehydrated session %s", session_name, exc_info=True
-            )
+            logger.debug("Failed to resolve model for kept chat %s", session.key, exc_info=True)
     if meta.get("reasoning_effort"):
         session.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
     # Runtime binding: the ephemeral discovered-ACP override (per-session, never in
-    # config), the workspace, the session mode and the task mode. Shared with the bulk
-    # startup restore so the two paths cannot drift again.
+    # config), the workspace, the session mode and the task mode.
     _restore_runtime_binding(state, session, meta)
     if meta.get("folder_id"):
         session.folder_id = meta["folder_id"]
@@ -561,6 +634,14 @@ def _rehydrate_session_from_history(
         session.pinned = True
     if meta.get("color_index") is not None:
         session.color_index = meta["color_index"]
+    if meta.get("color_theme"):
+        session.color_theme = meta["color_theme"]
+    # Natural voice, per-conversation scope. Re-normalized on read so a
+    # hand-edited meta line can only ever yield a member of the closed tri-state.
+    if meta.get("natural_voice"):
+        from personalclaw.natural_voice import normalize_conversation_choice
+
+        session.natural_voice = normalize_conversation_choice(meta["natural_voice"])
     raw_tags = meta.get("tags")
     if isinstance(raw_tags, list):
         session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
@@ -584,8 +665,6 @@ def _rehydrate_session_from_history(
 
         session._side = SideState.from_dict(_side_meta)
     _seed_transcript(state, session, history_key)
-    logger.info("Rehydrated session %s (%s) from history", session_name, session.title)
-    return session
 
 
 def resolve_session(state: DashboardState, name: str):
@@ -662,19 +741,18 @@ def restore_recent_sessions(
     The start's pass over the chats the last gateway left, so it first forgets every Temporary
     one: their sessions ended with that gateway, however it ended
     (``chat_forget.forget_ended_temporary_chats``).
+
+    This decides which kept chats come back at the start; each is loaded, record and
+    transcript, where every session is made (:meth:`DashboardState.get_or_create_session`,
+    through :func:`continue_kept_chat`).
     """
-    if not state.conversation_log:
+    log = state.conversation_log
+    if not log:
         return 0
     forget_ended_temporary_chats(state)
     cutoff = time.time() - (window_minutes * 60) if window_minutes > 0 else None
     restored = 0
-
-    provider_model_map = _build_agent_model_map()
-    try:
-        _restore_cfg = AppConfig.load()
-    except Exception:
-        _restore_cfg = None
-    for s in state.conversation_log.list_sessions():
+    for s in log.list_sessions():
         key = s.get("key", "")
         if key.startswith("dashboard:"):
             session_name = key.removeprefix("dashboard:")
@@ -684,7 +762,7 @@ def restore_recent_sessions(
             continue
         if session_name in state._sessions:
             continue
-        meta = state.conversation_log.get_metadata(key)
+        meta = log.get_metadata(key)
         if meta.get("memory_mode") == TEMPORARY:
             continue  # forgotten above; one that could not be deleted is still not restored
         has_folder = bool(meta.get("folder_id"))
@@ -696,77 +774,12 @@ def restore_recent_sessions(
         if not has_folder and not has_pin:
             if cutoff is not None and s.get("modified", 0) < cutoff:
                 continue
+        # A chat comes back from the transcript its saves rewrite. A file the list names that
+        # is not that one (a name an older version stacked `dashboard_` prefixes onto) is left
+        # where it is, rather than restored into a chat whose saves would replace another file.
+        if log._path(persisted_history_key(log, session_name)) != log._path(key):
+            continue
         session = state.get_or_create_session(session_name)
-        # Titles can be LLM-generated (auto-title) and are surfaced on the
-        # dashboard — apply the same redaction as assistant content. Matches
-        # the treatment in _rehydrate_session_from_history above.
-        raw_title = s.get("title", session_name)
-        raw_title, _ = redact_exfiltration_urls(raw_title)
-        raw_title, _ = redact_credentials(raw_title)
-        session.title = raw_title
-        session._titled = bool(s.get("title"))
-        if meta.get("created_at"):
-            session.created_at = meta["created_at"]
-        if meta.get("agent"):
-            session.agent = meta["agent"]
-        if meta.get("model"):
-            normalized = _normalize_model(meta["model"])
-            if _model_matches_provider(normalized):
-                session.model = normalized
-            else:
-                session.model = ""
-        elif session.agent:
-            try:
-                pc = _restore_cfg.agents.get(session.agent) if _restore_cfg else None
-                provider_name = pc.provider_agent if pc and pc.provider_agent else session.agent
-                session.model = provider_model_map.get(provider_name, "")
-            except Exception:
-                logger.debug(
-                    "Failed to resolve model for restored session %s", session_name, exc_info=True
-                )
-        if meta.get("reasoning_effort"):
-            session.reasoning_effort = _validate_reasoning_effort(meta["reasoning_effort"])
-        # Runtime binding (ACP override / workspace / session mode / task mode). This is
-        # THE path a gateway restart takes, and it used to skip ``acp_provider`` and
-        # ``task_mode`` entirely — so every restart resolved the next turn on the native
-        # axis with a default-Agent tool gate. Shared with the targeted rehydrate above.
-        _restore_runtime_binding(state, session, meta)
-        if meta.get("folder_id"):
-            session.folder_id = meta["folder_id"]
-        if meta.get("pinned"):
-            session.pinned = True
-        if meta.get("color_index") is not None:
-            session.color_index = meta["color_index"]
-        if meta.get("color_theme"):
-            session.color_theme = meta["color_theme"]
-        # Natural voice, per-conversation scope. Re-normalized on read so a
-        # hand-edited meta line can only ever yield a member of the closed tri-state.
-        if meta.get("natural_voice"):
-            from personalclaw.natural_voice import normalize_conversation_choice
-
-            session.natural_voice = normalize_conversation_choice(meta["natural_voice"])
-        raw_tags = meta.get("tags")
-        if isinstance(raw_tags, list):
-            session.tags = [str(t) for t in raw_tags if isinstance(t, str) and t]
-        # Session lifecycle. Tolerant: an old session has none of these keys and
-        # reads as an active, never-yet-touched, non-exempt session.
-        _lc = meta.get("lifecycle")
-        if isinstance(_lc, str) and _lc in ("active", "archived"):
-            session.lifecycle = _lc
-        _la = meta.get("last_activity_at")
-        if isinstance(_la, (int, float)):
-            session.last_activity_at = float(_la)
-        if meta.get("never_archive"):
-            session.never_archive = True
-        session.memory_mode = meta.get("memory_mode", "persistent")
-        if meta.get("forked_from") is not None:
-            session.forked_from = meta["forked_from"]
-        _side_meta = meta.get("side")
-        if isinstance(_side_meta, dict) and _side_meta.get("messages"):
-            from personalclaw.dashboard.side_state import SideState
-
-            session._side = SideState.from_dict(_side_meta)
-        _seed_transcript(state, session, key)
         restored += 1
         logger.info("Restored session %s (%s)", session_name, session.title)
     return restored
@@ -808,6 +821,18 @@ def save_session_to_history(
     # (the archive flag included), whatever `force` says: `force` vouches for this chat's own
     # buffer, and says nothing about a transcript that is another chat's.
     if _another_chats_transcript(state, session, history_key):
+        return
+    # 🔴 A KEPT CHAT THIS SESSION DID NOT LOAD IS NEVER WRITTEN, whatever `force` says. A session
+    # made for a kept chat holds its whole record and transcript (`continue_kept_chat`), except
+    # when they could not be read as it was made (`open_kept_chat`): it then holds none of them,
+    # and a save from it could only replace them with its own turns.
+    if getattr(session, "_kept_unread", False):
+        logger.error(
+            "chat %s was not saved: what is kept as %s could not be read when it was opened, and"
+            " it is kept as it is; this chat's turns are held in memory only",
+            session.key,
+            history_key,
+        )
         return
     # 🔴 THE OVERWRITE GUARD. This function does not append — it REWRITES the whole
     # transcript file from `msgs`. So it must not run when `msgs` holds less than the

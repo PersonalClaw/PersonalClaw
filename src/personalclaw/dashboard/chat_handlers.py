@@ -27,8 +27,8 @@ from personalclaw.dashboard.approval_state import (
 from personalclaw.dashboard.chat_persistence import (
     _redact_meta,
     _rehydrate_session_from_history,
-    _seed_transcript,
     _validate_reasoning_effort,
+    continue_kept_chat,
     resolve_session,
     save_session_to_history,
     session_key_exists,
@@ -204,19 +204,14 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     if not isinstance(session_name, str) and session_name is not None:
         session_name = None  # coerce non-string session to auto-generate
 
-    # A named session that is on disk but not in memory must come back WITH its
-    # persisted runtime binding, not as a blank one. ``get_or_create_session`` mints a
-    # bare session on a miss, and after a gateway restart every un-foldered session is a
-    # miss (the startup restore is window/folder-scoped and ``restore_sessions`` defaults
-    # to false) — so the first message after a restart resolved on the native axis even
-    # though the session's meta line said ``acp:<cli>``, and then
-    # ``_save_session_to_history`` rebuilt that meta line from the blank session and
-    # DROPPED the binding, turning a one-turn slip into permanent state. That also made
-    # protocol resume unreachable: the resume id is handed to whatever provider the turn
-    # resolved, and a native provider ignores it. A GET of the session first happened to
-    # rehydrate and hide all of this, which is why it only bit non-UI callers.
-    # Registers the restored session in ``state._sessions``, so the create below
-    # returns it; a name with nothing on disk yields None and still creates fresh.
+    # A named session that is on disk but not in memory comes back WITH its persisted
+    # runtime binding and its whole transcript, archived or not ("archival is not
+    # deletion"): `get_or_create_session` makes a kept chat's name into that chat. After a
+    # gateway restart every un-foldered session is a miss (the startup restore is
+    # window/folder-scoped and ``restore_sessions`` defaults to false), and a blank session
+    # minted for one resolved its first message on the native axis though its meta line said
+    # ``acp:<cli>``, then rebuilt that meta line from the blank session and DROPPED the
+    # binding, and wrote its buffer over the kept transcript.
     #
     # 🔴 …but a name the client supplies is only honored when it NAMES SOMETHING.
     # `get_or_create_session` mints a blank session on a miss, so a send to a
@@ -225,25 +220,16 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # /api/chat/sessions/{key}` 200 again, and carrying only the resurrecting turn.
     # That is "delete" degraded to "close", reachable from a background tab, a retried
     # request or a queued send. `session_key_exists` is the one owner of that question
-    # (log-file presence, so an ARCHIVED session is still writable and the G157
-    # disk-only rehydrate above still works); the refusal matches the {session}-addressed
+    # (log-file presence, so an ARCHIVED session is still writable and a chat kept only on
+    # disk still comes back); the refusal matches the {session}-addressed
     # route family, 47 of whose other 49 members already 404 on an unknown key — measured
     # against a live gateway — and `GET /api/sessions/{key}` in particular, which stopped
     # reading a deleted key as an empty-but-real session for exactly this reason
     # (tests/test_session_detail_404.py). A client that wants a NEW conversation omits
     # `session` — that contract is unchanged and is what the dashboard's `ensureSession`
     # already uses.
-    #
-    # The seed takes `include_archived=True` because THIS caller has just been told the
-    # key may be written: `session_key_exists` passes an ARCHIVED key deliberately
-    # ("archival is not deletion"). Seeding refused the same key, so the two halves of
-    # one decision disagreed — and a blank session was minted for a key holding a real
-    # transcript, which `save_session_to_history` then wrote over. Writable implies
-    # seedable; the readers that want `closed` to mean "not resident" keep the default.
-    if session_name:
-        if not session_key_exists(state, session_name):
-            return json_error("session_not_found", status=404)
-        _rehydrate_session_from_history(state, session_name, include_archived=True)
+    if session_name and not session_key_exists(state, session_name):
+        return json_error("session_not_found", status=404)
     # An app's request that names no conversation starts one that is the app's. One it names was
     # already held to the app's own by the permission middleware (`ROUTE_AUTHZ["POST /api/chat"]`),
     # before anything above loaded it.
@@ -1175,12 +1161,9 @@ async def api_chat_session_create(request: web.Request) -> web.Response:
         memory_mode = body.get("memory_mode", "persistent")
         if memory_mode not in ("persistent", "incognito", "temporary"):
             return web.json_response({"error": "invalid memory_mode"}, status=400)
-        # A name that is a kept chat's opens that chat, as a name open here already does. A blank
-        # session minted for it replaced the kept transcript at the gateway's stop, or once it
-        # held more turns: `personalclaw run --session` on a gateway the run had started itself
-        # lost the earlier runs' conversation that way, and never continued it.
-        if name:
-            _rehydrate_session_from_history(state, name, include_archived=True)
+        # A name that is a kept chat's opens that chat (`get_or_create_session`), as a name open
+        # here does, so `personalclaw run --session` continues its conversation after a restart;
+        # the request's other fields shape a new chat only.
         session = state.get_or_create_session(
             name,
             agent=agent,
@@ -2419,6 +2402,9 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
     # only ever going to produce a blank session wearing a dead conversation's name.
     if not session_key_exists(state, history_key):
         return json_error("session_not_found", status=404)
+    log = state.conversation_log
+    # A path naming a kept chat comes back as that chat, its whole record and transcript
+    # (`get_or_create_session`).
     session = state.get_or_create_session(name, created_by_app=request.get("app", ""))
     # 🔴 EVERY disk read below reads THIS key, not `history_key`. `history_key` is the
     # BARE client-supplied name; a dashboard session's file lives under the
@@ -2429,46 +2415,26 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
     # practice only because the startup restore usually makes the session resident
     # first, so the early-return above fires. The canonical form was already being
     # computed four lines up for the in-memory dedupe and simply never reached disk.
-    resolved_key = persisted_history_key(state.conversation_log, history_key)
+    resolved_key = persisted_history_key(log, history_key)
+    own_key = persisted_history_key(log, name)
+    if log._path(resolved_key) != log._path(own_key):
+        if log.has_log(own_key):
+            # The path's own chat is kept, and it is the one resumed: a body naming another
+            # chat does not make one chat of two kept ones, whose next save would replace the
+            # path's transcript with the other's.
+            logger.warning(
+                "resume of %s: its own chat is kept, so %s is not loaded into it", name, history_key
+            )
+            resolved_key = own_key
+        else:
+            # The body names a kept chat into a path that keeps none: that chat's record and
+            # whole transcript are brought into this one, through the one loader.
+            continue_kept_chat(state, session, resolved_key, log.get_metadata(resolved_key))
     title = body.get("title", "")
     if title:
         session.title = title
         session._titled = True
-    else:
-        sessions = state.conversation_log.list_sessions()
-        for s in sessions:
-            if s.get("key") == resolved_key:
-                session.title = s.get("title", resolved_key)
-                session._titled = True
-                break
-    # Restore original created_at from history metadata
-    meta = state.conversation_log.get_metadata(resolved_key)
-    if meta.get("created_at"):
-        session.created_at = meta["created_at"]
-    if meta.get("agent"):
-        session.agent = meta["agent"]
-    if meta.get("workspace_dir"):
-        session.workspace_dir = meta["workspace_dir"]
-    if meta.get("mode"):
-        session.mode = meta["mode"]
-    if meta.get("folder_id"):
-        session.folder_id = meta["folder_id"]
-    if meta.get("pinned"):
-        session.pinned = True
-    if meta.get("color_index") is not None:
-        session.color_index = meta["color_index"]
-    if meta.get("color_theme"):
-        session.color_theme = meta["color_theme"]
-    # Natural voice — the SECOND restore path for a session's meta line
-    # (chat_persistence.py has the other). Both have to read it or a reopened
-    # conversation silently reverts to inheriting the agent's preference.
-    if meta.get("natural_voice"):
-        from personalclaw.natural_voice import normalize_conversation_choice
-
-        session.natural_voice = normalize_conversation_choice(meta["natural_voice"])
-    session.memory_mode = meta.get("memory_mode", "persistent")
-    if meta.get("forked_from") is not None:
-        session.forked_from = meta["forked_from"]
+    meta = log.get_metadata(resolved_key)
     # Clear closed flag so session restores on next gateway restart. This is now the
     # ONLY un-archiver: `save_session_to_history` preserves `closed` instead of dropping
     # it on every rebuild, so resume is what a user's explicit "reopen" runs through —
@@ -2486,11 +2452,6 @@ async def api_chat_session_resume(request: web.Request) -> web.Response:
                     state.conversation_log._invalidate_cache(resolved_key)
         except Exception:
             logger.warning("Failed to clear closed flag for %s", resolved_key, exc_info=True)
-    # The whole transcript, every field of every line — through the one loader the boot
-    # restore and the open-from-disk path use. This path used to keep the last 500 and
-    # rebuild each line with a guessed `cls` and no `meta`, and the next save wrote the
-    # stripped window over the file.
-    _seed_transcript(state, session, resolved_key)
     total = session.message_count
     recent = session.messages[-200:] if len(session.messages) > 200 else session.messages
     state.push_sessions_update()

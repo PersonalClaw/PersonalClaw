@@ -384,7 +384,7 @@ def test_the_scanner_tells_a_guarded_writer_from_an_unguarded_one():
 
 _HANDLERS = SRC / "dashboard" / "chat_handlers.py"
 #: The live guard line in ``api_chat``. The plant below removes it.
-_GUARD_LINE = "        if not session_key_exists(state, session_name):"
+_GUARD_LINE = "    if session_name and not session_key_exists(state, session_name):"
 
 
 def test_stripping_the_real_guard_reds_the_ratchet():
@@ -411,7 +411,7 @@ def test_stripping_the_real_guard_reds_the_ratchet():
     # 2) The plant APPLIED. A swap that silently matched nothing would make step 3 a
     #    tautology about unmodified source — the exact shape of a vacuous guard.
     stripped = real.replace(
-        _GUARD_LINE + '\n            return json_error("session_not_found", status=404)\n',
+        _GUARD_LINE + '\n        return json_error("session_not_found", status=404)\n',
         "",
         1,
     )

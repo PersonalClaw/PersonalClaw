@@ -413,6 +413,11 @@ def _prompt_of(data: object) -> str:
     return ""
 
 
+def _listed_title(head: _Head | None, name: str) -> str:
+    """The title the chat list shows: the metadata's, else the first user message, else *name*."""
+    return (head.meta.get("title") or head.first_prompt or name) if head is not None else name
+
+
 def _recorded_count(meta: Mapping[str, Any], message_bytes: int) -> int | None:
     """The message count the metadata records, while the file still holds exactly the message
     bytes it was recorded with — the dashboard's save and the import both record them. A writer
@@ -840,9 +845,7 @@ class ConversationLog:
                 "modified": stat.st_mtime,
                 "created": meta.get("created_at") or utc_iso(stat.st_mtime),
                 "memory_mode": meta.get("memory_mode", "persistent"),
-                "title": meta.get("title")
-                or (head.first_prompt if head is not None else "")
-                or key,
+                "title": _listed_title(head, key),
             }
             if meta.get("agent"):
                 entry["agent"] = meta["agent"]
@@ -1237,6 +1240,15 @@ class ConversationLog:
             return {}
         head = self._head(path, stat, listing=False)
         return dict(head.meta) if head is not None else {}
+
+
+def listed_title(log: ConversationLog, key: str) -> str:
+    """The title the chat list shows for *key*, read from its transcript's head alone."""
+    path = log._path(key)
+    try:
+        return _listed_title(log._head(str(path), path.stat(), listing=True), path.stem)
+    except OSError:
+        return path.stem
 
 
 # ── Module-level helpers for auto skill eligibility ──

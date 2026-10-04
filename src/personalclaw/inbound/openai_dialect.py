@@ -638,6 +638,9 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
     if state is None:  # pragma: no cover — the app factory always installs it
         return openai_error("Gateway state unavailable.", code="service_unavailable", status=503)
 
+    # A client that keeps its conversation continues it across a restart: its kept chat comes back
+    # whole (`get_or_create_session`) and its model is given the earlier turns. One that keeps none
+    # is let go of them below, before its turn (`_reset_session`).
     session = state.get_or_create_session(key, agent=agent)
     # One request at a time per session: its turns are delivered on one queue, to one reader. A
     # second request beside the first started a second turn, and the two readers took each
