@@ -354,3 +354,127 @@ describe('the consent question is an answer, not a failed request', () => {
     expect(sent).toHaveLength(1)
   })
 })
+
+describe('an Allow of a workflow is held to the version its question showed', () => {
+  // The question an automation's Allow answers names the version of the workflow it runs, and
+  // carries what it showed (`shown`, `triggers/grants.py`). The yes sends it back, so a save that
+  // lands while the dialog is open is not what the yes allows: the gateway refuses it
+  // (`409 stale_write`, nothing changed) with the question as it is now, which says who saved
+  // since, and the owner is asked again.
+  const SHOWN = { name: 'weekly-report', version: 1, digest: 'a'.repeat(64) }
+  const AGAIN = { name: 'weekly-report', version: 2, digest: 'b'.repeat(64) }
+  const QUESTION = 'Allowing “Weekly report” lets it use the “Run workflow” action, as it is now, when it runs. It runs “weekly-report” as it is when you allow it (version 1 now).'
+  const MOVED = '“weekly-report” changed after you were asked about version 1: v2 by an agent.'
+  const AGAIN_QUESTION = `${MOVED} Allowing “Weekly report” lets it use the “Run workflow” action, as it is now, when it runs. It runs “weekly-report” as it is when you allow it (version 2 now, saved by an agent).`
+  const TITLE = 'Allow this trigger to run?'
+
+  const asks = (shown: Record<string, unknown>, consent = QUESTION) =>
+    new ApiError('send {"confirm": true} to confirm', 400, 'confirmation_required', {
+      field: 'triggers.store:manual:weekly-report.capabilities', consent, title: TITLE, shown,
+    })
+  const asksAgain = (shown: Record<string, unknown>) =>
+    new ApiError(`Nothing was changed: ${MOVED} Look at it again before you allow it.`, 409, 'stale_write', {
+      field: 'triggers.store:manual:weekly-report.capabilities', consent: AGAIN_QUESTION, title: TITLE, shown,
+    })
+
+  it('reads what the question showed, and only an object', () => {
+    expect(consentAsked(asks(SHOWN))?.shown).toEqual(SHOWN)
+    expect(consentAsked(new ApiError('x', 400, 'confirmation_required', {
+      field: 'f', consent: CONSENT, title: LOOSEN, shown: 'version 1',
+    }))?.shown).toBeUndefined()
+  })
+
+  it('the yes sends back what its question showed', async () => {
+    const send = vi.fn(async (c: boolean, _shown?: Record<string, unknown>) => {
+      if (!c) throw asks(SHOWN)
+      return 'allowed'
+    })
+    await expect(withSecurityConsent(send)).resolves.toBe('allowed')
+    expect(send.mock.calls).toEqual([[false], [true, SHOWN]])
+  })
+
+  it('a yes refused because the workflow moved is asked again, in the new words', async () => {
+    const send = vi.fn(async (c: boolean, shown?: Record<string, unknown>) => {
+      if (!c) throw asks(SHOWN)
+      if (shown?.version === 1) throw asksAgain(AGAIN)
+      return 'allowed'
+    })
+    await expect(withSecurityConsent(send)).resolves.toBe('allowed')
+    expect(send.mock.calls).toEqual([[false], [true, SHOWN], [true, AGAIN]])
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+    const second = confirmSpy.mock.calls[1][0] as { title: string; body: string }
+    expect(second.title).toBe(TITLE)
+    expect(second.body).toBe(AGAIN_QUESTION)
+  })
+
+  it('declining the second question sends nothing more', async () => {
+    confirmSpy.mockImplementationOnce(async () => true).mockImplementationOnce(async () => false)
+    const send = vi.fn(async (c: boolean, _shown?: Record<string, unknown>) => {
+      if (!c) throw asks(SHOWN)
+      throw asksAgain(AGAIN)
+    })
+    await expect(withSecurityConsent(send)).rejects.toBeInstanceOf(ConsentDeclined)
+    expect(send).toHaveBeenCalledTimes(2)
+  })
+
+  it('a stale write that asks nothing passes through untouched', async () => {
+    const stale = new ApiError('The document changed since you read it.', 409, 'stale_write')
+    const send = vi.fn(async (c: boolean) => {
+      if (!c) throw asks(SHOWN)
+      throw stale
+    })
+    await expect(withSecurityConsent(send)).rejects.toBe(stale)
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+  })
+
+  describe('on the wire', () => {
+    /** A gateway that asks with `shown`, refuses the first yes as moved (asked again, as the 200
+     *  this page is answered a question with), and takes the second. */
+    function gateway(ok: unknown) {
+      const bodies: Record<string, unknown>[] = []
+      vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+        const body = (init.body ? JSON.parse(String(init.body)) : {}) as Record<string, unknown>
+        bodies.push(body)
+        const asked = (code: string, detail: Record<string, unknown>) => new Response(JSON.stringify({
+          error: { code, message: 'asked', detail },
+        }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-PersonalClaw-Consent-Asked': '1' } })
+        if (body.confirm !== true) {
+          return asked('confirmation_required', { field: 'f', consent: QUESTION, title: TITLE, shown: SHOWN })
+        }
+        if ((body.shown as { version?: number } | undefined)?.version !== 2) {
+          return asked('stale_write', { field: 'f', consent: AGAIN_QUESTION, title: TITLE, shown: AGAIN })
+        }
+        return new Response(JSON.stringify(ok), { status: 200 })
+      }))
+      return bodies
+    }
+
+    const trigger = { id: 'store:manual:weekly-report', raw_id: 'manual:weekly-report', kind: 'store', name: 'Weekly report', action: { provider: 'run-workflow', config: { workflow: 'weekly-report' } } }
+    const RUNS = { provider: 'run-workflow', config: { workflow: 'weekly-report' } }
+    const writers: Array<[string, () => Promise<unknown>, unknown]> = [
+      ['toggleStoreTrigger', () => api.toggleStoreTrigger('manual:weekly-report', true), { ok: true }],
+      ['enableSchedule', () => api.enableSchedule('friday-report', true), { ok: true }],
+      ['toggleHook', () => api.toggleHook('h', true), { ok: true }],
+      ['createSchedule', () => api.createSchedule({ name: 'Friday report', cron: '0 17 * * 5', action: RUNS }), { ok: true, trigger }],
+      ['updateSchedule', () => api.updateSchedule('friday-report', { action: RUNS }, 's1'), { ok: true, trigger }],
+      ['createEvent', () => api.createEvent({ pattern: 'AppEvent', action: RUNS }), { ok: true, trigger }],
+      ['createRunCompleted', () => api.createRunCompleted({ name: 'After', source_def: 'nightly', action: RUNS }), { ok: true, trigger }],
+      ['createHook', () => api.createHook({ name: 'h', event: 'SessionStart', provider: 'run-workflow', provider_config: RUNS.config }), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
+      ['updateHook', () => api.updateHook('h', { provider: 'run-workflow', provider_config: RUNS.config }, 'h1'), { ok: true, trigger: { ...trigger, kind: 'lifecycle' } }],
+    ]
+
+    it.each(writers)('%s sends the yes with what each question showed', async (_name, write, ok) => {
+      const bodies = gateway(ok)
+      await write()
+      expect(confirmSpy).toHaveBeenCalledTimes(2)
+      expect(bodies).toHaveLength(3)
+      expect(bodies[0].confirm).toBeUndefined()
+      expect(bodies[0].shown).toBeUndefined()
+      expect(bodies[1]).toMatchObject({ confirm: true, shown: SHOWN })
+      expect(bodies[2]).toMatchObject({ confirm: true, shown: AGAIN })
+      // The same write each time, only consented.
+      const { confirm: _c, shown: _s, ...resent } = bodies[2]
+      expect(resent).toEqual(bodies[0])
+    })
+  })
+})

@@ -198,7 +198,10 @@ async def test_a_trigger_fired_run_records_the_def_version_it_executed(monkeypat
         kind="manual",
         workflow={"inline": {"provider": "run-workflow", "config": {"workflow": "sample"}}},
     )
-    assert grants.give(automation) == ["run-workflow"]
+    asked = grants.question(automation)
+    assert asked is not None and asked.shown is not None, asked
+    allowed = grants.allowing(automation, asked.shown)
+    assert grants.give(automation, allowing=allowed) == ["run-workflow"]
     TriggerStore(base_dir=config_dir()).upsert(automation)
     # A prior RUNNING run forces the `queue` branch: a durable DRAFT row, nothing launched.
     prior = store.create(WorkflowRun(id="", workflow_name="sample", status=RunStatus.RUNNING))

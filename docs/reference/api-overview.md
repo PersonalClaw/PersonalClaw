@@ -228,6 +228,14 @@ has cost someone a debugging session.
   `X-PersonalClaw-Consent: ask` and gets the same body as a `200` marked
   `X-PersonalClaw-Consent-Asked: 1`, which the dashboard does for every write, so its Allow
   dialogs log no failed request. Treat that `200` as the question, never as a success.
+- **An automation's Allow of a workflow is held to the version its question showed.** The
+  question about an action that runs a workflow carries `shown` in `error.detail` (the workflow's
+  name, version and digest, and the same of each workflow it runs as a step, in `calls`); send it
+  back with `"confirm": true`. A yes without it, or with one the workflow or a step workflow has
+  moved past since, changes nothing and answers `409 stale_write`, "Nothing was changed: …", naming
+  who saved each version since, with the question as it is now in `error.detail` (its own `shown`
+  included): ask again and send that one back. The CLI's `--yes` cannot carry it, so a workflow's
+  Allow is given on the Triggers page.
 - **Task comment authors are server-derived.** `POST /api/tasks/{task_id}/comments`
   rejects an `author` in the body; the configured username wins.
 - **Locked dashboard presets refuse mutation.** `PUT`/`DELETE` on a locked

@@ -33,6 +33,7 @@ compare them; a list written by hand only records what someone already knew.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -137,23 +138,23 @@ def _action_config_fields() -> set[str]:
 
 
 def _function_source(path: Path, func: str) -> str:
-    """One top-level function's source — `def` or `async def` — up to the next top-level line.
+    """One top-level function's source — `def` or `async def` — exactly as the parse tree has it.
 
     Anchored on the function itself rather than on the next `async def`, so a handler turning
     synchronous (as `_update_schedule` did, to keep its revision check and its write free of an
-    `await`) neither loses the region nor quietly absorbs the helpers that follow it.
+    `await`) neither loses the region nor quietly absorbs the helpers that follow it. Read from the
+    tree rather than up to the next line that starts at the margin: a signature black wraps puts
+    its closing `)` there, and the region ended at the signature, with no field read at all.
     """
     text = path.read_text(encoding="utf-8")
-    m = re.search(rf"^(?:async )?def {re.escape(func)}\(", text, re.M)
-    if m is None:
-        pytest.fail(
-            f"{path.relative_to(_REPO_ROOT)}: no top-level `def {func}(`. The census cannot see "
-            "this handler any more — re-point it at whatever replaced it, then re-check that the "
-            "fields below still line up."
-        )
-    rest = text[m.end() :]
-    nxt = re.search(r"\n\S", rest)
-    return text[m.start() : m.end() + (nxt.start() if nxt else len(rest))]
+    for node in ast.parse(text).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func:
+            return ast.get_source_segment(text, node) or ""
+    pytest.fail(
+        f"{path.relative_to(_REPO_ROOT)}: no top-level `def {func}(`. The census cannot see "
+        "this handler any more — re-point it at whatever replaced it, then re-check that the "
+        "fields below still line up."
+    )
 
 
 def _handler_reads(func: str) -> set[str]:

@@ -472,6 +472,9 @@ def _starter(
             extra=app_work.stamp(
                 {CONSENT_KEY: consent, **({lasting_work.ASKED_BY: asked} if asked else {})}, work
             ),
+            # The workflow is the agent's tasks, compiled just now, which her Allow above covers:
+            # no saved workflow, so no version an automation of hers was allowed for.
+            held_to_its_work=False,
         )
 
     return _begin

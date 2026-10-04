@@ -53,6 +53,7 @@ from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
     ActionResult,
+    run_identity,
 )
 from personalclaw.action_providers.services import (
     get_action_services,
@@ -230,6 +231,9 @@ class InvokeAgentActionProvider(ActionProvider):
             # The project the step's run belongs to (from the run's record): the agent's work is
             # the project's. "" for a trigger's fire, which runs in no project.
             project_id=ctx.project_id,
+            # The run whose step this is, from its dispatch ("" for a trigger's fire): a workflow
+            # the agent starts is held to what that run may start (`automation_version.bound_for`).
+            workflow_run=run_identity(ctx, "run_id"),
         )
 
 

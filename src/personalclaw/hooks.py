@@ -913,11 +913,11 @@ def hook_arrived_from_another_home(row: dict) -> dict:
     """A hook from another home, as it is brought into this one: what it is
     (:func:`hook_what_it_is`), switched off. A hook runs on the agent's own events — every prompt,
     every tool call — so one from elsewhere runs here only once someone here switches it on, which
-    asks first for what it runs (``dashboard.handlers.triggers._switch_on_grant``). The rule every
-    way one arrives applies — the ``hooks`` inventory entry's ``arrives``: a device sync, a snapshot
-    or archive merge (``durability.reconcile.bring_in``), and a sync conflict resolved with the
-    other machine's version or a drafted merge of a hook this home no longer has (one it has takes
-    the version in as an edit, :func:`hook_edit_arrived_from_another_home`)."""
+    asks first for what it runs (``dashboard.handlers.trigger_consent.switch_on_grant``). The rule
+    every way one arrives applies — the ``hooks`` inventory entry's ``arrives``: a device sync, a
+    snapshot or archive merge (``durability.reconcile.bring_in``), and a sync conflict resolved
+    with the other machine's version or a drafted merge of a hook this home no longer has (one it
+    has takes the version in as an edit, :func:`hook_edit_arrived_from_another_home`)."""
     arrived = hook_what_it_is(row)
     arrived["enabled"] = False
     return arrived

@@ -1480,7 +1480,13 @@ CONSENT_QUESTION = "personalclaw.consent_question"
 
 
 def consent_required(
-    field: str, consent: str, *, title: str, change: str = "", caution: str = ""
+    field: str,
+    consent: str,
+    *,
+    title: str,
+    change: str = "",
+    caution: str = "",
+    shown: dict[str, Any] | None = None,
 ) -> web.Response:
     """The ``400 confirmation_required`` a write that needs the owner's yes answers when it did
     not carry ``"confirm": true`` — one shape for every writer (the config PATCH, an agent's
@@ -1496,16 +1502,15 @@ def consent_required(
     LooseningAsk``. Both ride ``detail`` when there is one, and the message carries them too, so a
     client that reads only the message is asked the same question.
 
+    A question about a workflow an automation runs also says what it showed of it (*shown*: the
+    version and digest its sentence names, and each workflow it runs as a step at theirs,
+    `triggers.grants.Question.shown`). The yes sends it back with ``confirm``, and is held to it.
+
     A client that says it asks (`dashboard.consent_ask`) receives the same body as a ``200``:
     the question, not a failure. Every other client keeps the ``400``."""
-    detail = {"field": field, "consent": consent, "title": title}
-    said = [consent]
-    if change:
-        detail["change"] = change
-        said.append(change.replace("\n", "; ") + ".")
-    if caution:
-        detail["caution"] = caution
-        said.append(caution)
+    detail, said = _question(field, consent, title=title, change=change, caution=caution)
+    if shown is not None:
+        detail["shown"] = shown
     response = json_error(
         "confirmation_required",
         message=f'send {{"confirm": true}} to confirm — {" ".join(said)}',
@@ -1514,3 +1519,50 @@ def consent_required(
     )
     response[CONSENT_QUESTION] = True
     return response
+
+
+def asked_again(
+    field: str,
+    why: str,
+    consent: str,
+    *,
+    title: str,
+    change: str = "",
+    caution: str = "",
+    shown: dict[str, Any] | None = None,
+) -> web.Response:
+    """The ``409 stale_write`` a yes answers when what its question showed has moved since the
+    owner was asked (*why*: what moved, and who saved each version since,
+    `triggers.grants.AskAgain`): nothing was changed — the refusal "Use vN" gives a version saved
+    after its owner looked — and the owner is asked again. ``error.detail`` carries the question as
+    it is now, as :func:`consent_required` carries one, its sentence opened with *why*, so the
+    page asks her again in the gateway's words (`web/src/lib/securityConsent.ts`) and her next yes
+    is held to what the new question shows. A client that says it asks receives it as a ``200``,
+    as it receives every question."""
+    detail, said = _question(field, f"{why} {consent}", title=title, change=change, caution=caution)
+    if shown is not None:
+        detail["shown"] = shown
+    response = json_error(
+        "stale_write",
+        message=f"Nothing was changed: {why} Look at it again before you allow it.",
+        status=409,
+        error_extra={"detail": detail},
+    )
+    response[CONSENT_QUESTION] = True
+    return response
+
+
+def _question(
+    field: str, consent: str, *, title: str, change: str, caution: str
+) -> tuple[dict[str, Any], list[str]]:
+    """A consent question's ``error.detail`` (``{field, consent, title}``, with the loosening's
+    ``change`` and ``caution`` when it has them), and its sentences, as a message carries them."""
+    detail: dict[str, Any] = {"field": field, "consent": consent, "title": title}
+    said = [consent]
+    if change:
+        detail["change"] = change
+        said.append(change.replace("\n", "; ") + ".")
+    if caution:
+        detail["caution"] = caution
+        said.append(caution)
+    return detail, said

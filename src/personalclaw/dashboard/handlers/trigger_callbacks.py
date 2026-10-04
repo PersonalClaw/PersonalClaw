@@ -77,10 +77,11 @@ async def toggle(request: web.Request, state: DashboardState, raw: str) -> web.R
     Switching one on must name the context the owner read (``seal``, from the listed row): the
     agent can re-register a callback with other context at any moment, and a yes given to the
     context on the page must not become a yes to one the page never showed (409 when it moved).
-    Both answers are written to the security audit, like every grant (`triggers._audit_grant`).
+    Both answers are written to the security audit, like every grant
+    (`trigger_consent.audit_grant`).
     """
     from personalclaw import webhook_callbacks
-    from personalclaw.dashboard.handlers.triggers import _audit_grant
+    from personalclaw.dashboard.handlers.trigger_consent import audit_grant
     from personalclaw.http_errors import consent_required, json_error
     from personalclaw.owner_grants import seal
     from personalclaw.request_validation import bool_field, json_object_body
@@ -106,14 +107,14 @@ async def toggle(request: web.Request, state: DashboardState, raw: str) -> web.R
             )
         field = f"triggers.{KIND}:{raw}.allowed"
         if not confirm_granted(body):
-            _audit_grant(caller, "denied", f"{field}: switching on without confirm")
+            audit_grant(caller, "denied", f"{field}: switching on without confirm")
             return consent_required(
                 field, webhook_callbacks.consent(callback), title=webhook_callbacks.CONSENT_TITLE
             )
         webhook_callbacks.allow(callback)
-        _audit_grant(caller, "success", f"trigger:{KIND}:{raw}")
+        audit_grant(caller, "success", f"trigger:{KIND}:{raw}")
     elif not on and allowed:
         webhook_callbacks.disallow(callback)
-        _audit_grant(caller, "success", f"trigger:{KIND}:{raw}: taken back")
+        audit_grant(caller, "success", f"trigger:{KIND}:{raw}: taken back")
     state.push_refresh("crons")
     return web.json_response({"ok": True, "trigger": serialize(callback)})

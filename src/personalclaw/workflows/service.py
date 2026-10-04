@@ -33,6 +33,7 @@ from personalclaw.approval_answer import Principal
 from personalclaw.stale_write import revision_of
 from personalclaw.workflows import (
     attention,
+    automation_version,
     blocks,
     declines,
 )
@@ -747,11 +748,15 @@ async def start_run(
     document: str = "",
     extra: dict[str, Any] | None = None,
     budget: RunBudget | None = None,
+    held_to_its_work: bool = True,
 ) -> dict[str, Any]:
     """Instantiate a def and start driving it.
 
     A caller idempotency key returns the EXISTING run rather than minting a second one — a
     retried tool call is a retry, not a new request (WF2-R1).
+
+    Work done for an owner-allowed automation's run starts only what that run may start
+    (`automation_version.held_start`); a batch's start (`batch_start`) is not held to its work.
 
     Preflight runs first unless explicitly skipped: a missing credential caught here costs
     nothing, and caught at node 7 has already paid for six nodes of model calls.
@@ -803,6 +808,11 @@ async def start_run(
         return _service_failure("WF_DEF_NOT_FOUND", f"no workflow definition named {name!r}")
 
     spec = definition if isinstance(definition, dict) else definition.to_dict()
+    key = session_key if held_to_its_work else ""  # a batch runs the agent's own tasks
+    held = await automation_version.held_start(name, spec, key, getattr(supervisor, "state", None))
+    if held.refused:
+        return _service_failure(held.code, held.refused)
+    spec = held.spec
     # Use the SAME tree-derived schema the planner review emits. A declared-only check misses
     # `{{inputs.x}}` when the definition forgot to declare x, which is precisely the drift
     # `resolve_unfilled_inputs` exists to make impossible.
@@ -916,6 +926,8 @@ async def start_run(
         from personalclaw.workflows.deliverable import RUN_DOCUMENT_KEY
 
         run_extra[RUN_DOCUMENT_KEY] = document
+    if held.carried is not None:
+        run_extra = automation_version.stamp(run_extra, held.carried)
 
     try:
         caps = run_budget.declared(spec, over=budget)
@@ -926,7 +938,7 @@ async def start_run(
             id="",
             workflow_name=name,
             status=RunStatus.DRAFT,
-            spec_version=int(spec.get("version", 1) or 1),
+            spec_version=held.version,
             inputs=dict(inputs or {}),
             mode=mode if mode in ("blocking", "background") else "background",
             project_id=project_id,
@@ -2314,7 +2326,9 @@ def fork_run(
     return _ok(**result.to_dict())
 
 
-async def start_draft_run(run_id: str, *, supervisor: Any = None) -> dict[str, Any]:
+async def start_draft_run(
+    run_id: str, *, supervisor: Any = None, session_key: str = ""
+) -> dict[str, Any]:
     """Start a run that already EXISTS as a draft — the caller-driven launch
     `mid_flight._apply_fork` promises.
 
@@ -2337,6 +2351,9 @@ async def start_draft_run(run_id: str, *, supervisor: Any = None) -> dict[str, A
     Nothing special is needed for an overlap-QUEUED draft (`overlap.QUEUED_KEY`): the drain
     selects on `status=DRAFT`, so a manually started run leaves its window and cannot be
     launched twice — and `supervisor.launch` is idempotent per run id regardless.
+
+    A start made for the work of a run an owner-allowed automation started (*session_key*) is
+    refused, in words (`automation_version.draft_refusal`).
     """
     run = store.get(run_id)
     if run is None:
@@ -2349,6 +2366,9 @@ async def start_draft_run(run_id: str, *, supervisor: Any = None) -> dict[str, A
             "it to branch a fresh attempt.",
             status=run.status.value,
         )
+    why = automation_version.draft_refusal(run_id, session_key, getattr(supervisor, "state", None))
+    if why:
+        return _service_failure("WF_RUN_NOT_ALLOWED", why)
     spec = store.read_spec(run_id)
     if spec is None:
         return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")

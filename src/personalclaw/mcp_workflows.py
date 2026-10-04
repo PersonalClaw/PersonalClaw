@@ -877,8 +877,17 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         )
 
     if name == "workflow_start_draft":
+        from personalclaw.mcp_core import _resolve_session_key
+
+        # Named for the chat whose turn this is, as `workflow_start` is: the work of a run an
+        # allowed automation started starts no draft (`automation_version.bound_for`).
+        caller = _resolve_session_key()
         return _fmt(
-            _on_engine(lambda supervisor: service.start_draft_run(run_id, supervisor=supervisor)),
+            _on_engine(
+                lambda supervisor: service.start_draft_run(
+                    run_id, supervisor=supervisor, session_key=caller
+                )
+            ),
             summary=SUMMARIES["workflow_start_draft"],
         )
 

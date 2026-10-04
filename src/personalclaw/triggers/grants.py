@@ -26,8 +26,10 @@ action as it stood when they gave it; and nothing but that yes gives one.
   own, and tightening one needs nobody's yes.
 * **Only the owner gives one, by saying yes** (:func:`give`): the Triggers page's switch (its Allow
   is the same switch sent on again), the create dialog and the editor, each after its consent
-  question (:func:`question`); and the CLI's `cron add` and `cron update` with `--yes`. Everything
-  else creates and edits without one. A trigger the chat makes (`automation_create`,
+  question (:func:`question`); and the CLI's `cron add` and `cron update` with `--yes`, for an
+  action that runs no workflow (a yes typed there answers a question an earlier command printed,
+  and cannot say which version of a workflow it showed). Everything else creates and edits without
+  one. A trigger the chat makes (`automation_create`,
   `set_onetime_task`, `set_recurring_task`) is made without one, so one whose action needs a grant
   does not run until the owner allows it on the Triggers page (an action that only reads, or only
   sends the owner words they gave, needs none); a chat edit that needs a grant is saved with the
@@ -42,6 +44,11 @@ action as it stood when they gave it; and nothing but that yes gives one.
   followed, since that save is her yes; a newer one anything else saves — an agent's tool, a sync,
   an import, an app — is not, until she chooses "Use vN" (:func:`use_current_version`), which asks.
   The workflows it runs as steps are held to the versions they were at the yes, by the same rule.
+  The version is the one the question showed, not the one there is when the yes arrives: the
+  question carries what it showed (:attr:`Question.shown`), the yes sends it back, and a yes whose
+  workflow, or a workflow it runs as a step, has moved since is refused and asked again, naming who
+  saved each version since (:func:`allowing`). A save that lands between the question and the yes
+  is not allowed unseen.
 * **A restart gives nothing.** The capability backfill that granted every ungranted row whatever
   it ran, on every start, is gone: by the time it ran, the edit it rewarded was nobody's decision.
 
@@ -80,11 +87,39 @@ _SAVED_BY_WORDS = {
 
 class Question(NamedTuple):
     """What saving a trigger needs the owner to allow, as the owner is asked it: the providers,
-    the sentence they agree to (:func:`consent`) and the dialog's heading (:func:`title`)."""
+    the sentence they agree to (:func:`consent`) and the dialog's heading (:func:`title`).
+
+    ``shown`` is what it showed of the workflow its action runs: the version and digest the
+    sentence names, and each workflow it runs as a step at theirs (`automation_version.Allowed`, as
+    a dict). The yes sends it back, and is held to it (:func:`allowing`). None for an action that
+    runs no workflow, or one by a name no workflow has."""
 
     providers: list[str]
     sentence: str
     title: str
+    shown: dict[str, Any] | None = None
+
+
+class AskAgain(Exception):
+    """A yes to run a workflow that is not a yes to the workflow as it is now (:func:`allowing`):
+    what its question showed of it, or of a workflow it runs as a step, has moved since, or the yes
+    did not say what it was shown. Raised before anything is written, for the door to answer:
+    nothing is changed, and the owner is asked again (`http_errors.asked_again`). ``why`` says
+    what moved, and who saved each version since."""
+
+    def __init__(self, why: str) -> None:
+        super().__init__(why)
+        self.why = why
+
+
+class Allowing(NamedTuple):
+    """What a yes to run a workflow allows, held to what its question showed (:func:`allowing`):
+    the workflow as it is now (None when no workflow by its name can run, which a yes gives
+    nothing to), and each workflow it runs as a step at every depth (`automation_version.closure`).
+    What :func:`give` records."""
+
+    now: "Current | None"
+    calls: "tuple[Allowed, ...]" = ()
 
 
 def missing(trigger: Any) -> list[str]:
@@ -233,14 +268,27 @@ def question(candidate: Any, *, before: Any = None) -> Question | None:
     if not need:
         return None
     if before is None:
-        return Question(
-            need, consent(candidate, need, creating=True), title(candidate, need, creating=True)
-        )
-    return Question(
-        need,
-        consent(candidate, need, saving=True, changed=changed),
-        title(candidate, need, saving=True, changed=changed),
+        return asking(candidate, need, creating=True)
+    return asking(candidate, need, saving=True, changed=changed)
+
+
+def asking(
+    trigger: Any,
+    providers: list[str],
+    *,
+    creating: bool = False,
+    saving: bool = False,
+    changed: list[str] | tuple[str, ...] = (),
+) -> Question:
+    """The question a grant of `providers` to `trigger` asks (:class:`Question`), with the same
+    arguments as :func:`consent`: its sentence, its heading (:func:`title`), and what it shows of
+    the workflow its action runs (:attr:`Question.shown`), read once, so the version the sentence
+    names is the one the yes is held to."""
+    sentence, shown = _consent(
+        trigger, providers, creating=creating, saving=saving, changed=changed
     )
+    heading = title(trigger, providers, creating=creating, saving=saving, changed=changed)
+    return Question(providers, sentence, heading, shown)
 
 
 def title(
@@ -290,6 +338,19 @@ def consent(
     no files to change can be held to. An automation allowed without being told it could only read
     was an automation allowed to do a job it could not do.
     """
+    return _consent(trigger, providers, creating=creating, saving=saving, changed=changed)[0]
+
+
+def _consent(
+    trigger: Any,
+    providers: list[str],
+    *,
+    creating: bool,
+    saving: bool,
+    changed: list[str] | tuple[str, ...],
+) -> tuple[str, dict[str, Any] | None]:
+    """:func:`consent`'s sentence, and what it shows of the workflow `trigger`'s action runs
+    (:attr:`Question.shown`), from the one read the sentence names its version from."""
     from personalclaw.triggers.legacy_import import IMPORTED_BY
 
     name = _name(trigger)
@@ -312,22 +373,33 @@ def consent(
         said = f"Allowing “{name}” lets it use {uses}, as it is now, when it runs."
     else:
         said = f"Switching “{name}” on allows it to use {uses}, as it is now, when it runs."
-    reach = what_its_agent_may_do(trigger) or _which_version(trigger)
-    return f"{said} {reach}" if reach else said
+    reach, shown = what_its_agent_may_do(trigger), None
+    if not reach:
+        reach, shown = _which_version(trigger)
+    return (f"{said} {reach}" if reach else said), shown
 
 
-def _which_version(trigger: Any) -> str:
-    """Which version of its workflow a yes to `trigger` lets it run, in the consent's words, or
-    ``""`` when its action runs no workflow (or none by that name exists, which its save refuses).
-    """
+def _which_version(trigger: Any) -> tuple[str, dict[str, Any] | None]:
+    """Which version of its workflow a yes to `trigger` lets it run, in the consent's words, and
+    what that shows (:attr:`Question.shown`); ``("", None)`` when its action runs no workflow (or
+    none by that name exists, which its save refuses). A question keeps nothing in the history: only
+    the yes does (:func:`give`)."""
     name = _workflow_of(trigger)
     if not name:
-        return ""
-    from personalclaw.workflows.automation_version import called, current_now
+        return "", None
+    from personalclaw.workflows.automation_version import (
+        Allowed,
+        called,
+        closure_now,
+        current_now,
+    )
 
     now = current_now(name)
     if now is None or not now.spec:
-        return ""
+        return "", None
+    shown = Allowed(
+        name, now.version, now.digest, closure_now(now.spec, root=name, keeping=False)
+    ).to_dict()
     by = _SAVED_BY_WORDS.get(now.saved_by) if now.saved_by != "owner" else ""
     version = f"version {now.version} now, saved by {by}" if by else f"version {now.version} now"
     started = [n for n in called(now.spec) if n != name]
@@ -335,12 +407,12 @@ def _which_version(trigger: Any) -> str:
         return (
             f"It runs “{name}” as it is when you allow it ({version}), and a newer version only "
             "once you save one in the workflow's editor."
-        )
+        ), shown
     return (
         f"It runs “{name}” as it is when you allow it ({version}), and {_quoted(started)}, "
         "which it runs as steps, as they are then too; and a newer version of any of them only "
         "once you save one in its editor."
-    )
+    ), shown
 
 
 def _quoted(names: list[str]) -> str:
@@ -486,34 +558,121 @@ def allows_its_agent(trigger_id: str) -> bool:
     return not missing(trigger)
 
 
-def give(trigger: Any) -> list[str]:
+def give(trigger: Any, *, allowing: Allowing | None = None) -> list[str]:
     """Grant `trigger` what its action runs, in place. Returns what was granted.
 
     The owner's yes, and only that: the Triggers page's switch, the create dialog and the editor
     call this after their consent question, and the CLI after `--yes`. A row a legacy import
     brought over becomes the owner's here too (`legacy_import.adopt`), since this is the review it
     was waiting for.
+
+    For an action that runs a workflow, the yes is to the version its question showed, which its
+    door has held it to before writing anything (*allowing*, :func:`allowing`), and this records
+    exactly that. Without it the yes names no version and allows none (:class:`AskAgain`): the CLI's
+    ``--yes``, which answers a question an earlier command printed, is one.
     """
     from personalclaw.triggers.legacy_import import adopt
-    from personalclaw.triggers.screen import grant_action
+    from personalclaw.triggers.screen import grant_action, ungranted_providers
 
     name = _workflow_of(trigger)
-    if not name:
+    if not name or RUNS_A_WORKFLOW not in ungranted_providers(trigger):
+        # An action that runs no workflow, or one whose workflow this yes does not grant: it holds
+        # its grant, and the version that grant was given for, already.
         granted = grant_action(trigger)
         adopt(trigger)
         return granted
-    from personalclaw.workflows.automation_version import current_now
-
-    now = current_now(name)
-    if now is None or not now.spec:
+    if allowing is None or (allowing.now is not None and allowing.now.name != name):
+        # No question this yes answered showed a version of it: one that cannot be shown one here
+        # (the CLI's `--yes`) is sent where it can be.
+        raise AskAgain(
+            f"this yes names no version of “{name}”, so it allows none of it. "
+            f"{_only_on_the_page(trigger)}"
+        )
+    if allowing.now is None:
         # A yes to a workflow that is not there would be a yes to whatever is saved under its name
         # next, so it gives nothing: its fire says the workflow is missing.
         adopt(trigger)
         return []
     granted = grant_action(trigger)
-    _allow(trigger, now)
+    _allow(trigger, allowing.now, calls=allowing.calls)
     adopt(trigger)
     return granted
+
+
+def allowing(trigger: Any, shown: Any) -> Allowing | None:
+    """What a yes to `trigger` allows of the workflow its action runs, held to what the yes's
+    question showed of it (*shown*, :attr:`Question.shown`, as the yes sends it back): the
+    workflow as it is now and each workflow it runs as a step, when they are what the question
+    showed. None when its action runs no workflow.
+
+    Asked by each door that gives a grant, before it writes anything, and handed to :func:`give`,
+    so what is recorded is what was read here. Raises :class:`AskAgain` when the workflow, or one
+    it runs as a step, has moved since the question (a save that landed between the question and
+    the yes, a step workflow added or dropped), when the workflow is gone, and when *shown* names
+    no version of it: none of those is the yes to what the owner was shown. A workflow that cannot
+    run by its name, asked about as one, gives nothing (:func:`give`).
+    """
+    name = _workflow_of(trigger)
+    if not name:
+        return None
+    from personalclaw.workflows.automation_version import Allowed, closure_now, current_now
+
+    now = current_now(name)
+    if now is None or not now.spec:
+        if shown is not None:
+            raise AskAgain(f"“{name}” was removed after you were asked.")
+        return Allowing(None)
+    held = Allowed.from_dict(shown)
+    if held is None or held.workflow != name:
+        raise AskAgain(_unshown(name))
+    calls = closure_now(now.spec, root=name)
+    moved = _what_moved(held, now, calls)
+    if moved:
+        raise AskAgain(moved)
+    return Allowing(now, calls)
+
+
+def _unshown(name: str) -> str:
+    """Why a yes that names no version of the workflow *name* allows none of it."""
+    return f"“{name}” was allowed without the version you were shown, so the yes allows none of it."
+
+
+def _what_moved(held: "Allowed", now: "Current", calls: "tuple[Allowed, ...]") -> str:
+    """What has moved since a question showed *held*, the workflow being *now* and the workflows
+    it runs as steps *calls*: one sentence per workflow, naming who saved each version since the
+    one shown; ``""`` when nothing has."""
+    from personalclaw.workflows.automation_version import current_now
+
+    said: list[str] = []
+    if (held.version, held.digest) != (now.version, now.digest):
+        said.append(_moved_since(f"“{now.name}”", held.version, now))
+    was = {call.workflow: call for call in held.calls}
+    nowadays = {call.workflow: call for call in calls}
+    for step, call in nowadays.items():
+        before = was.get(step)
+        if before is None:
+            said.append(
+                f"“{now.name}” runs “{step}” as a step now too (version {call.version}), which "
+                "you were not asked about."
+            )
+        elif (before.version, before.digest) != (call.version, call.digest):
+            what = f"“{step}”, which it runs as a step,"
+            said.append(_moved_since(what, before.version, current_now(step)))
+    said.extend(
+        f"“{now.name}” no longer runs “{step}” as a step." for step in was if step not in nowadays
+    )
+    return " ".join(said)
+
+
+def _moved_since(what: str, version: int, now: "Current | None") -> str:
+    """One workflow's sentence for :func:`_what_moved`: *what* changed after the owner was asked
+    about *version*, and who saved each version since (`automation_version.saved_since`)."""
+    from personalclaw.workflows.automation_version import saved_since
+
+    since = saved_since(now.name, version, now) if now is not None else []
+    if since:
+        return f"{what} changed after you were asked about version {version}: {_since(since)}."
+    return f"{what} changed after you were asked about version {version}."
 
 
 def _workflow_of(trigger: Any) -> str:

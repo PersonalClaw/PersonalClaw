@@ -357,11 +357,14 @@ def _cli_chat_channels() -> dict[str, Any]:
     return {t.name: t for t in build_channel_transports()}
 
 
-def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> list[str]:
+def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> tuple[list[str], bool]:
     """What saving *candidate* needs the owner's yes for, in the sentences the Triggers page's
     dialog shows: a grant for what its action runs (`triggers.grants.question`, *before* being the
     row as stored or None for a new one), and a posture that loosens whether its agent asks
-    (`automation_posture`) over the *stored* action config."""
+    (`automation_posture`) over the *stored* action config. And whether that grant is for a
+    workflow, which only the Triggers page can give: its yes is to the version its question showed
+    (`grants.Question.shown`), and a ``--yes`` typed for a question an earlier command printed
+    cannot say which that was."""
     from personalclaw.automation_posture import unconsented_step_loosening
     from personalclaw.triggers import grants
     from personalclaw.triggers.action_edit import action_in
@@ -382,29 +385,44 @@ def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> list[str]:
     )
     if loosened is not None:
         sentences.append(loosened[1].consent)
-    return sentences
+    return sentences, grant is not None and grant.shown is not None
 
 
-def _cron_refuse(questions: list[str], *, operation: str, resources: str, nothing: str) -> NoReturn:
+def _cron_refuse(
+    questions: list[str],
+    *,
+    operation: str,
+    resources: str,
+    nothing: str,
+    on_the_page: bool = False,
+) -> NoReturn:
     """Say on stderr what a `cron` write would need the owner's yes for, change nothing, and
     exit 1.
 
     The CLI's form of the Triggers page's consent dialog: the same sentences, and ``--yes`` for the
     Allow. The CLI's other confirmations work the same way (``skills install`` refuses a warning
     and says "re-run with --force"): the command says what it needs and changes nothing, never
-    doing the write quietly.
+    doing the write quietly. A grant for a workflow (*on_the_page*) is not offered ``--yes``: that
+    yes is to the version its question showed, and only the Triggers page's question can say which.
     """
     print("This needs your yes:", file=sys.stderr)
     for sentence in questions:
         print(f"  {sentence}", file=sys.stderr)
-    print(f"{nothing} Re-run with --yes to allow it.", file=sys.stderr)
+    if on_the_page:
+        print(
+            f"{nothing} A yes given here cannot say which version of the workflow it is for: "
+            "allow it on the Triggers page, which shows you the version and asks first.",
+            file=sys.stderr,
+        )
+    else:
+        print(f"{nothing} Re-run with --yes to allow it.", file=sys.stderr)
     sel().log_api_access(
         caller="cli",
         operation=operation,
         outcome="denied",
         source="cli",
         resources=resources,
-        error="needs --yes",
+        error="needs the Triggers page" if on_the_page else "needs --yes",
     )
     sys.exit(1)
 
@@ -495,7 +513,7 @@ def _cron(args: argparse.Namespace) -> None:
         # The questions the Triggers page's create dialog asks, asked here the CLI's way: an agent
         # job needs the owner's yes to run unattended, and `--approval-mode auto` needs it again.
         yes = bool(getattr(args, "yes", False))
-        questions = _cron_questions(
+        questions, _a_workflow = _cron_questions(
             Trigger(id="", name=args.name, kind="clock", workflow=workflow), before=None, stored={}
         )
         if questions and not yes:
@@ -633,17 +651,18 @@ def _cron(args: argparse.Namespace) -> None:
             candidate = copy.deepcopy(existing.trigger)
             candidate.workflow = edited_workflow(existing.trigger.workflow, patch["workflow"])
             stored_cfg = action_in(existing.trigger.workflow).get("config")
-            questions = _cron_questions(
+            questions, a_workflow = _cron_questions(
                 candidate,
                 before=existing.trigger,
                 stored=stored_cfg if isinstance(stored_cfg, dict) else {},
             )
-            if questions and not yes:
+            if questions and (a_workflow or not yes):
                 _cron_refuse(
                     questions,
                     operation="cron.update",
                     resources=f"job_id={args.job_id} fields={','.join(sorted(patch))}",
                     nothing="Nothing was changed.",
+                    on_the_page=a_workflow,
                 )
 
         result = _tools.update(

@@ -136,6 +136,7 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("dashboard/handlers/tools.py", "api_tool_invoke", "dry_run"): False,
     ("dashboard/handlers/tools.py", "api_tools_toggle", "enabled"): "required",
     ("dashboard/handlers/trigger_callbacks.py", "toggle", "enabled"): None,
+    ("dashboard/handlers/trigger_consent.py", "_grant_for_save", "enabled"): False,
     ("dashboard/handlers/trigger_runs.py", "_run_store", "dry_run"): False,
     ("dashboard/handlers/trigger_runs.py", "api_trigger_answer", "answer"): "required",
     ("dashboard/handlers/triggers.py", "_create_schedule", "catch_up"): False,
@@ -143,7 +144,6 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("dashboard/handlers/triggers.py", "_create_schedule", "failure_dedupe"): False,
     ("dashboard/handlers/triggers.py", "_create_schedule", "silent"): False,
     ("dashboard/handlers/triggers.py", "_create_schedule", "strict_schedule"): False,
-    ("dashboard/handlers/triggers.py", "_grant_for_save", "enabled"): False,
     ("dashboard/handlers/triggers.py", "_update_schedule", "catch_up"): "optional",
     ("dashboard/handlers/triggers.py", "_update_schedule", "failure_dedupe"): "optional",
     ("dashboard/handlers/triggers.py", "_update_schedule", "silent"): "optional",
@@ -199,9 +199,15 @@ _WIDENING = {
 _AMBIGUOUS = {"status", "value", "answer"}
 
 
-def _body_module(text: str) -> bool:
+def _body_module(rel: str, text: str) -> bool:
+    """A module a door's body is read in: one that reads a request body, or any handler module,
+    since a door hands the body it read to its helpers there (`dashboard/handlers/trigger_consent`
+    reads a save's `enabled` from the body `triggers` read)."""
     return (
-        "json_object_body(" in text or "await request.json()" in text or "await req.json()" in text
+        rel.startswith("dashboard/handlers/")
+        or "json_object_body(" in text
+        or "await request.json()" in text
+        or "await req.json()" in text
     )
 
 
@@ -415,10 +421,10 @@ def _tree() -> tuple[dict[tuple[str, str, str], object], list[tuple[str, str, st
     modules = 0
     for path in sorted(SRC.rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        if not _body_module(source):
+        rel = path.relative_to(SRC).as_posix()
+        if not _body_module(rel, source):
             continue
         modules += 1
-        rel = path.relative_to(SRC).as_posix()
         found, wrong = _scan(source)
         declared |= {(rel, fn, field): how for (fn, field), how in found.items()}
         misreads += [(rel, *row) for row in wrong]

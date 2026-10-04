@@ -321,6 +321,14 @@ in its editor, and the panel says when one has a newer version, with **Use the n
 move them, which asks first. A step that starts a workflow the automation was not allowed with does
 not run, and says why. A workflow's **Versions** tab lists the automations that run it as a step too.
 
+What you allow is the version the question showed you. If the workflow, or one it runs as a step,
+changes while the question is open (an agent saves a new version, say), your Allow changes nothing:
+you are asked again, told who saved what since, about the workflow as it is now. And an agent your
+automation's workflow starts (an *Invoke agent* or *Run prompt* step) can start a workflow itself only
+one the automation was allowed with, at the version you allowed or a newer one you saved; any other
+it does not start, and says why. `personalclaw cron update --yes` cannot say which version you were
+shown, so a Run workflow automation is allowed on the Triggers page.
+
 | | |
 |---|---|
 | **Checked on** | the automation's panel and its row on the **Triggers** page, and the workflow's **Versions** tab |

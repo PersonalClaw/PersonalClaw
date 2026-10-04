@@ -544,6 +544,9 @@ class SubagentInfo:
     # is then 0.0, which is not a price, and a run's dollar cap cannot count it
     # (`workflows.step_usage.subagent_usage`). Last, for the reason `trigger_id` is.
     priced: bool = True
+    # The workflow run whose step started it, or "": a workflow it starts is held to what that run
+    # may start (`workflows.automation_version.bound_for`). Last, as `trigger_id` is.
+    workflow_run: str = ""
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1190,6 +1193,7 @@ class SubagentManager:
         app: str = "",
         held_back: str = "",
         project_id: str = "",
+        workflow_run: str = "",
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1249,6 +1253,8 @@ class SubagentManager:
             project_id (str): The project its work belongs to — a workflow step's run's, from the
                 run's record (``ActionContext.project_id``) — or "" for none. Its session is that
                 project's (``subagent_session.session_kwargs``).
+            workflow_run (str): The workflow run whose step starts it (an "Invoke agent" or "Run
+                prompt" step's), or "" for none (``SubagentInfo.workflow_run``).
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -1446,6 +1452,7 @@ class SubagentManager:
             app=app,
             held_back=held_back or "",
             project_id=project_id or "",
+            workflow_run=workflow_run or "",
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
         # It keeps what its parent keeps, and reads what its parent reads.

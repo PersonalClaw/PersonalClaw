@@ -367,6 +367,13 @@ WF_ERROR_CODES: dict[str, str] = {
     "WF_POLICY_KEY_UNKNOWN": (
         "A policy-override key is not in the overridable set; the message names both."
     ),
+    "WF_RUN_NOT_ALLOWED": (
+        "The start is made for the work of a run an automation its owner allowed started (an agent "
+        "a step of that run started, a subagent of its, a run it started), and it names a workflow "
+        "that automation was not allowed with, a version of one that is no longer kept, or a draft "
+        "run, or the run that work is done for cannot be read. Nothing was started; the message "
+        "says which and what to do."
+    ),
     "WF_RUN_NOT_PRELAUNCH": (
         "The run has already launched, so the operation is refused: its policy overlay is "
         "frozen (the engine's own saves would revert a live edit), and there is nothing left "

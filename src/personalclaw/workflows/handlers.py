@@ -145,6 +145,10 @@ _STATUS_MAP: dict[str, tuple[int, str]] = {
     # `run_not_live`/`already_terminal`. Its own wire code rather than a reuse, so a client
     # can say "edit before launch" instead of a generic state complaint.
     "WF_RUN_NOT_PRELAUNCH": (409, "run_not_prelaunch"),
+    # 403: the start is well-formed, and the caller may not make it. It is the work of a run an
+    # automation was allowed for, which starts only the workflows that automation was allowed with
+    # (`automation_version.bound_for`); the message says which and why.
+    "WF_RUN_NOT_ALLOWED": (403, "forbidden"),
     # 400: a typo'd knob is the client's to fix, and the detail carries `unknown_keys` +
     # `overridable` so the retry is not blind (the strict write side).
     "WF_POLICY_KEY_UNKNOWN": (400, "unknown_policy_key"),
@@ -1739,13 +1743,18 @@ async def api_run_start_draft(request: web.Request) -> web.Response:
     Guarded by `workflow_run_start`, the same operation the create-and-start route uses. A
     separate permission would let a caller who may not start a workflow start one through the
     other door — and starting a draft spends exactly the same money. The draft is a run that
-    exists, so a Temporary or Incognito chat's call starts only one of its own (`_guard`).
+    exists, so a Temporary or Incognito chat's call starts only one of its own (`_guard`), and the
+    work of a run an allowed automation started starts none (`service.start_draft_run`).
     """
     denied = _guard(request, "workflow_run_start", run_id=request.match_info.get("run_id", ""))
     if denied is not None:
         return denied
     run_id = request.match_info.get("run_id", "")
-    result = await service.start_draft_run(run_id, supervisor=_supervisor(request))
+    result = await service.start_draft_run(
+        run_id,
+        supervisor=_supervisor(request),
+        session_key=approval_answer.work_of_request(request),
+    )
     _audit(request, "workflow_run_start", "success" if result.get("ok") else "failure", run_id)
     # 202, matching the create-and-start route's non-blocking arm: the tick loop is scheduled, and
     # the run's own status endpoint is where its progress is read.

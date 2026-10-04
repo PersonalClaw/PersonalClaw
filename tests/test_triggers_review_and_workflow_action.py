@@ -222,13 +222,21 @@ async def test_a_run_workflow_trigger_missing_a_required_input_is_refused(home, 
     assert body["error"]["message"] == "workflow 'brief': missing required input(s): topic"
 
 
+async def _allowed(client: Any, body: dict[str, Any]) -> Any:
+    """Create *body*'s trigger as the create dialog does: asked first, then the owner's yes, which
+    sends back what the question showed of the workflow it runs (`grants.Question.shown`)."""
+    asked = await client.post("/api/triggers", json={**body, "confirm": False})
+    shown = (await asked.json())["error"]["detail"]["shown"]
+    return await client.post("/api/triggers", json={**body, "shown": shown})
+
+
 @pytest.mark.asyncio
 async def test_a_run_workflow_trigger_with_its_inputs_saves(home, workflows):
     """The control for the three refusals above: a complete action saves as it always did."""
     async with _client() as client:
-        resp = await client.post(
-            "/api/triggers",
-            json=_schedule("run-workflow", {"workflow": "brief", "inputs": {"topic": "tides"}}),
+        resp = await _allowed(
+            client,
+            _schedule("run-workflow", {"workflow": "brief", "inputs": {"topic": "tides"}}),
         )
         body = await resp.json()
     assert resp.status == 200, body
@@ -241,9 +249,9 @@ async def test_an_edit_that_leaves_the_workflow_without_its_input_is_refused(hom
     """🔴 Red on main. The edit is checked against the provider the trigger already runs, as the
     action it saves: the inputs it sends replace the saved ones whole (`triggers.action_edit`)."""
     async with _client() as client:
-        made = await client.post(
-            "/api/triggers",
-            json=_schedule("run-workflow", {"workflow": "brief", "inputs": {"topic": "tides"}}),
+        made = await _allowed(
+            client,
+            _schedule("run-workflow", {"workflow": "brief", "inputs": {"topic": "tides"}}),
         )
         tid = (await made.json())["trigger"]["id"]
         resp = await client.put(

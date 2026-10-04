@@ -184,7 +184,16 @@ relative to `PersonalClaw/src/personalclaw/`.
   anything else saved, which waits for her "Use vN" on the trigger's panel
   (`POST /api/triggers/{id}/workflow-version`, asked first;
   `workflows.automation_version`); the workflows it starts as steps are held to
-  the versions recorded with that yes, by the same rule. The wire carries
+  the versions recorded with that yes, by the same rule. The version recorded is
+  the one the question showed, not the one there is when the yes arrives: the
+  question carries `shown` (the workflow's version and digest, and its step
+  workflows'), every door that gives a grant sends it back and holds the yes to
+  it before writing anything (`grants.allowing`), and a yes whose workflow or
+  step workflow moved since answers `409 stale_write` with the question as it is
+  now, naming who saved each version since, so the owner is asked again. The
+  CLI's `--yes` answers a question an earlier command printed and cannot say
+  which version that showed, so `cron update` sends a workflow's Allow to the
+  Triggers page. The wire carries
   `workflow_version`, the version a fire runs and any newer one waiting, its
   steps' too, and what Use vN sends back. PersonalClaw's own triggers
   are granted by the code that makes them, since each runs an action it fixes

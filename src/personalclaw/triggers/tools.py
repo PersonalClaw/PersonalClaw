@@ -847,6 +847,7 @@ def create(
     ttl_secs: float = 0,
     gates: dict[str, Any] | None = None,
     owner_consented: bool = False,
+    allowing: Any = None,
     recurrence: str = "",
     say: str = "",
     via: str = "",
@@ -874,6 +875,8 @@ def create(
 
     🔴 A NEW TRIGGER IS GRANTED ONLY BY THE OWNER'S YES (`triggers.grants`). `owner_consented` is
     that yes: the Triggers page's create dialog passes it after asking, and the CLI after `--yes`.
+    For an action that runs a workflow, the yes is to the version its question showed, which the
+    dialog held it to (`allowing`, `grants.allowing`); a yes that names none creates nothing.
     Without it the row is created as asked but not allowed to run its action, and the Triggers page
     offers Allow. Measured on `main`: `automation_create` froze the grant for whatever it made, so
     an agent's automation came with its own permission to run.
@@ -1110,7 +1113,10 @@ def create(
     # action gets an empty block either way: the fence permits those without one, and a
     # written-out grant would imply an opt-in nobody had to make.
     if owner_consented:
-        grants.give(trigger)
+        try:
+            grants.give(trigger, allowing=allowing)
+        except grants.AskAgain as again:
+            return AutomationToolResult(False, f"Error: nothing was created: {again.why}")
     # 🔴 ARM A CLOCK TRIGGER ON CREATION. `create` persisted `next_fire_at=""`, and
     # `service.due_ids` only surfaces rows that HAVE one — so every cron created through this
     # function (the chat tools, and the API from this session) would never fire. Arming at
@@ -1326,6 +1332,7 @@ def update(
     patch: dict[str, Any],
     owner_consented: bool = False,
     chat_channels: Any = None,
+    allowing: Any = None,
 ) -> AutomationToolResult:
     """`automation_update` — patch an existing automation through the allowlist.
 
@@ -1351,8 +1358,11 @@ def update(
     and so does one that changes what a granted action runs — the grant was for the action as the
     owner allowed it (`grants.narrow`), so another command, URL, prompt or agent is a new question.
     `owner_consented` is that yes, passed by the editor after its consent dialog
-    (`dashboard.handlers.triggers._grant_for_save`) and by the CLI after `--yes`: the save then
-    grants what the action runs, so Run now works straight away. Every other caller — the chat's
+    (`dashboard.handlers.trigger_consent.save_consent`) and by the CLI after `--yes`: the save then
+    grants what the action runs, so Run now works straight away. For an action that runs a workflow
+    the yes is to the version its question showed, which the editor held it to (`allowing`,
+    `grants.allowing`); a yes that names none — the CLI's — saves nothing, and says where the
+    automation is allowed. Every other caller — the chat's
     `automation_update` — cannot give it, so the edit is kept and the trigger switched off until
     the owner switches it on from the Triggers page, which asks first; and a posture only the owner
     can loosen is refused outright (`posture_refusal`). Measured on `main`: an agent re-pointing an
@@ -1517,7 +1527,10 @@ def update(
     # The owner's yes is about the action this save carries — the question the editor asked names
     # it — so it grants only when the patch carries one.
     if missing and owner_consented and "workflow" in applied:
-        granted = grants.give(trigger)
+        try:
+            granted = grants.give(trigger, allowing=allowing)
+        except grants.AskAgain as again:
+            return AutomationToolResult(False, f"Error: nothing was saved: {again.why}")
     elif missing and "workflow" in applied:
         trigger.enabled = False
         trigger.next_fire_at = ""

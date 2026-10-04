@@ -22,13 +22,22 @@ an allowed automation starts carries those versions on its record (:data:`STEP_V
 step starts the version allowed with it, by the same rule (:func:`step_runs`), at every depth. A
 step that starts a workflow its automation was not allowed with does not run, and says why.
 
+**What an agent working for such a run starts, too.** A step can start an agent (an "Invoke
+agent" or "Run prompt" step), which records the run it works for (``SubagentInfo.workflow_run``),
+and that agent can start a workflow itself (``workflow_start``). Its start is held to what the run
+may start, by the same rule (:func:`bound_for`): a workflow the run's automation was allowed with
+starts at the version allowed, or a newer one the owner saved herself, and carries the versions on
+to its own steps; any other workflow, and a draft run, is refused in words. A subagent of that
+agent, and the work of a run it started, is held the same way, up the chain its work is done for.
+
 A version the automation was allowed that can no longer be found is refused, never swapped for
 another: the run does not start, and it says why and what to do (:attr:`Runs.problem`).
 
 The automations PersonalClaw's own code makes and grants run the workflow as it is now
 (`grants.made_by_personalclaw`): each runs a template PersonalClaw ships, which changes only with
-PersonalClaw itself. A run started any other way — the Run button, an agent's ``workflow_start``, a
-step of another workflow such a run started — runs the definition as it is now too.
+PersonalClaw itself. A run started any other way — the Run button, the ``workflow_start`` of an
+agent no allowed run binds, a step of another workflow such a run started — runs the definition as
+it is now too.
 """
 
 from __future__ import annotations
@@ -36,7 +45,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 
 from personalclaw.workflows import defs as defs_mod
@@ -316,6 +325,101 @@ def bound_in(run: Any) -> dict[str, Allowed] | None:
     return _pins(raw) if isinstance(raw, dict) else None
 
 
+#: How many links of the chain a piece of work is done for are followed: further than any nesting
+#: of agents and runs reaches, so a chain that goes on past it is one whose end cannot be told.
+_MOST_LINKS = 32
+
+
+def bound_for(session_key: str, *, state: Any = None) -> tuple[dict[str, Allowed] | None, str]:
+    """The versions a workflow the work of *session_key* starts may run (:func:`step_runs`), when
+    that work is done for a run an owner-allowed automation started (:func:`bound_in`): an agent a
+    step of the run started (``SubagentInfo.workflow_run``), a subagent of that agent's (its
+    parent's session), a step of the run itself (`ownership.owned_key`), and the work of a run any
+    of those started (the session that run was started for), the nearest such run first.
+
+    ``(None, "")`` when no such run binds it: a chat, a page of the owner's, an app, an agent this
+    gateway does not run. ``(None, why)`` when a run the chain names cannot be read: which
+    workflows it may start cannot be told, so it starts none.
+
+    *state* is the gateway's dashboard state, whose running agents are read (``state.subagents``),
+    else the state the gateway hands its own work (`action_providers.services`).
+    """
+    from collections import deque
+
+    from personalclaw import session_keys
+    from personalclaw.workflows import ownership
+
+    agents = getattr(state if state is not None else _gateway_state(), "subagents", None)
+    pending = deque([(session_key or "").strip()])
+    seen: set[str] = set()
+    while pending:
+        key = pending.popleft()
+        if not key or key in seen:
+            continue
+        if len(seen) >= _MOST_LINKS:
+            return None, (
+                "the work this agent does is done for a chain of runs and agents longer than "
+                "PersonalClaw follows, so which workflows it may start cannot be told, and none "
+                "was started"
+            )
+        seen.add(key)
+        if session_keys.SUBAGENT.names(key):
+            info = _agent(agents, key[len(session_keys.SUBAGENT.prefix) :])
+            if info is None:
+                continue
+            run_id = str(getattr(info, "workflow_run", "") or "")
+            pending.append(str(getattr(info, "parent_session_key", "") or ""))
+        else:
+            owned = ownership.parse_owned(key)
+            if owned is None:
+                continue
+            run_id = owned[0]
+        if not run_id:
+            continue
+        run = _run_named(run_id)
+        if run is None:
+            return None, (
+                f"the run this agent works for ({run_id}) cannot be read, so which workflows it "
+                "may start cannot be told, and none was started"
+            )
+        bound = bound_in(run)
+        if bound is not None:
+            return bound, ""
+        pending.append(str(getattr(getattr(run, "origin", None), "session_key", "") or ""))
+    return None, ""
+
+
+def _gateway_state() -> Any:
+    """The dashboard state the gateway hands its own work, or None outside a gateway."""
+    from personalclaw.action_providers.services import get_action_services
+
+    services = get_action_services()
+    return getattr(services, "state", None) if services is not None else None
+
+
+def _agent(agents: Any, agent_id: str) -> Any:
+    """The running agent *agent_id* (``SubagentManager.get``), or None: none by that id, or no
+    agents to read."""
+    if agents is None:
+        return None
+    try:
+        return agents.get(agent_id)
+    except Exception:  # noqa: BLE001 - an agent that cannot be read is none this gateway runs
+        logger.debug("could not read agent %s", agent_id, exc_info=True)
+        return None
+
+
+def _run_named(run_id: str) -> Any:
+    """The run *run_id* as its record holds it, or None when there is none or it cannot be read."""
+    from personalclaw.workflows import store
+
+    try:
+        return store.get(run_id)
+    except Exception:  # noqa: BLE001 - a record that cannot be read binds nothing it can name
+        logger.warning("could not read run %s for what its work may start", run_id)
+        return None
+
+
 def _pins(raw: Any) -> dict[str, Allowed]:
     """``{name: {"version", "digest"}}`` as :class:`Allowed` by name, an entry that does not say
     both left out."""
@@ -355,9 +459,15 @@ class Runs:
     problem: str = ""
 
 
-def runs(allowed: Allowed | None, now: Current, *, step: bool = False) -> Runs:
-    """What a fire of an automation allowed *allowed* runs, the workflow being *now*; with *step*,
-    what a step of its run that starts that workflow runs.
+#: Who starts the workflow a refusal is about, as its words name them: the fire itself, a step of
+#: the run, or an agent working for the run (`workflow_start`).
+_BY_THE_FIRE, _BY_A_STEP, _BY_ITS_AGENT = "fire", "step", "agent"
+
+
+def runs(allowed: Allowed | None, now: Current, *, by: str = _BY_THE_FIRE) -> Runs:
+    """What a fire of an automation allowed *allowed* runs, the workflow being *now*; *by* a step
+    of its run, or an agent working for it (:func:`step_runs`), what that start of the workflow
+    runs, and a refusal names who did not start it.
 
     ``allowed`` None is an automation that runs the workflow as it is (one PersonalClaw's own code
     made), and a run started any other way."""
@@ -373,23 +483,79 @@ def runs(allowed: Allowed | None, now: Current, *, step: bool = False) -> Runs:
         return Runs(now.spec, now.version, now.saved_by, followed=followed)
     held = record or _recorded(now.name, allowed.version, allowed.digest)
     if held is None:
-        return Runs(None, allowed.version, "", newer=now, problem=_gone(allowed, now, step=step))
+        return Runs(None, allowed.version, "", newer=now, problem=_gone(allowed, now, by=by))
     try:
         spec = versions.runnable(held.spec)
     except (ValueError, TypeError):
-        return Runs(None, allowed.version, "", newer=now, problem=_gone(allowed, now, step=step))
+        return Runs(None, allowed.version, "", newer=now, problem=_gone(allowed, now, by=by))
     return Runs(spec, held.version, held.saved_by, followed=followed, newer=now)
 
 
-def step_runs(bound: dict[str, Allowed], now: Current) -> Runs:
+def step_runs(bound: dict[str, Allowed], now: Current, *, agent: bool = False) -> Runs:
     """What a step of a run an owner-allowed automation started runs when it starts *now*'s
     workflow, the run being one that may run *bound*: the version allowed with it, or a newer one
     the owner saved herself, by :func:`runs`; nothing, and why, for a workflow it was not allowed
-    with."""
+    with. *agent*: the start is an agent's working for such a run (:func:`bound_for`), not a
+    step's, and a refusal says so."""
+    starter = _BY_ITS_AGENT if agent else _BY_A_STEP
     allowed = bound.get(now.name)
     if allowed is None:
-        return Runs(None, 0, "", newer=now, problem=_not_allowed(now.name))
-    return runs(allowed, now, step=True)
+        return Runs(None, 0, "", newer=now, problem=_not_allowed(now.name, by=starter))
+    return runs(allowed, now, by=starter)
+
+
+@dataclass(frozen=True)
+class Held:
+    """What a start of a workflow runs (:func:`held_start`): *spec* at *version*, and the versions
+    its own steps may start (*carried*, None when nothing holds them); nothing when *refused* says
+    why, *code* being the start's failure."""
+
+    spec: dict[str, Any]
+    version: int
+    carried: dict[str, Allowed] | None = None
+    refused: str = ""
+    code: str = "WF_RUN_NOT_ALLOWED"
+
+
+async def held_start(name: str, spec: dict[str, Any], session_key: str, state: Any = None) -> Held:
+    """What a start of *name*, its definition being *spec* now, runs when it is made for the work
+    of *session_key* (`service.start_run`).
+
+    Work done for a run an owner-allowed automation started (:func:`bound_for`) starts only a
+    workflow that automation was allowed with, at the version allowed or a newer one the owner
+    saved herself (:func:`step_runs`), and that run carries those versions on to its own steps
+    (:func:`step_versions`). Any other workflow is refused in words, as a step that starts one is:
+    a run nobody watches has nobody to ask. Every other start runs *spec* as it is."""
+    as_is = Held(spec, int(spec.get("version", 1) or 1))
+    held_to, untold = bound_for(session_key, state=state)
+    if untold:
+        return replace(as_is, refused=untold)
+    if held_to is None:
+        return as_is
+    located = await find(name)
+    if located is None:
+        return replace(
+            as_is, refused=f"no workflow definition named {name!r}", code="WF_DEF_NOT_FOUND"
+        )
+    fire = step_runs(held_to, current_of(name, *located), agent=True)
+    if fire.spec is None:
+        return replace(as_is, refused=fire.problem)
+    return Held(fire.spec, fire.version, step_versions(held_to, name, fire))
+
+
+def draft_refusal(run_id: str, session_key: str, state: Any = None) -> str:
+    """Why a start of the draft run *run_id* made for the work of *session_key* is refused, or
+    ``""``: work done for a run an owner-allowed automation started starts only a workflow the
+    automation was allowed with, at the version allowed (:func:`held_start`), and a draft is none
+    of them."""
+    held_to, untold = bound_for(session_key, state=state)
+    if untold or held_to is None:
+        return untold
+    return (
+        "an agent working for an automation's run starts only a workflow the automation was "
+        f"allowed with, at the version allowed, and the draft run {run_id!r} is none of them, "
+        "so it was not started. Start it yourself if you want it run."
+    )
 
 
 #: What to do about a step that may run nothing, as a step's failure says it.
@@ -472,17 +638,22 @@ def saved_since(name: str, version: int, now: Current) -> list[tuple[int, str]]:
     return out
 
 
-def _gone(allowed: Allowed, now: Current, *, step: bool = False) -> str:
-    """Why a fire, or one of its steps, did not run: the version it was allowed is not in the
-    history any more."""
+def _gone(allowed: Allowed, now: Current, *, by: str) -> str:
+    """Why a fire, one of its steps or an agent working for its run (*by*) did not start the
+    workflow: the version it was allowed is not in the history any more."""
     said = (
         f"“{now.name}” has changed since this automation was allowed to run it, and the version it "
         f"was allowed (v{allowed.version}) is no longer kept here, so "
     )
-    if step:
+    if by == _BY_A_STEP:
         return (
             f"{said}this step did not start it. To run version {now.version}, open the automation "
             "on the Triggers page and use its newer versions, which asks you first."
+        )
+    if by == _BY_ITS_AGENT:
+        return (
+            f"{said}its agent did not start it. To let it start version {now.version}, open the "
+            "automation on the Triggers page and use its newer versions, which asks you first."
         )
     return (
         f"{said}it did not run. To run version {now.version}, open the automation on the Triggers "
@@ -490,8 +661,16 @@ def _gone(allowed: Allowed, now: Current, *, step: bool = False) -> str:
     )
 
 
-def _not_allowed(name: str) -> str:
-    """Why a step of an allowed automation's run did not start the workflow *name*."""
+def _not_allowed(name: str, *, by: str) -> str:
+    """Why a step of an allowed automation's run, or an agent working for it (*by*), did not start
+    the workflow *name*."""
+    if by == _BY_ITS_AGENT:
+        return (
+            f"this automation was not allowed to run “{name}”, so its agent did not start it: an "
+            "agent working for an automation's run starts only a workflow the automation was "
+            "allowed with, at the version allowed or a newer one you saved yourself. Start "
+            f"“{name}” yourself if you want it run."
+        )
     return (
         f"this automation was not allowed to run “{name}”, so this step did not start it: a step "
         "starts only a workflow named in the version of its workflow the automation was allowed, "

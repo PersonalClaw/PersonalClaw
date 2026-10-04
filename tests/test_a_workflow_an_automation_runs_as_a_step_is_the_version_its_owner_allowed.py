@@ -180,7 +180,9 @@ def _allowed_automation() -> Trigger:
         created_by="user",
         workflow={"inline": {"provider": "run-workflow", "config": {"workflow": PARENT}}},
     )
-    assert grants.give(trigger) == ["run-workflow"]
+    asked = grants.question(trigger)
+    assert asked is not None and asked.shown is not None, asked
+    assert grants.give(trigger, allowing=grants.allowing(trigger, asked.shown)) == ["run-workflow"]
     TriggerStore(base_dir=config_loader.config_dir()).upsert(trigger)
     return trigger
 

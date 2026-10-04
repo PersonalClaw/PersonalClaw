@@ -99,6 +99,12 @@ export function isTransientFailure(e: unknown): boolean {
  *  `withSecurityConsent` answers. Nothing was written: the question is not a success. */
 const ASKS_FOR_CONSENT = { 'X-PersonalClaw-Consent': 'ask' }
 
+/** A trigger write's body, sent again with the owner's yes (`withSecurityConsent`): `confirm: true`,
+ *  and what the question she answered showed of the workflow its action runs (`shown`), which the
+ *  gateway holds that yes to (`triggers/grants.py`). The body as it is when she has not answered. */
+const consented = (body: Record<string, unknown>, c: boolean, shown?: Record<string, unknown>) =>
+  c ? { ...body, confirm: true, ...(shown ? { shown } : {}) } : body
+
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok || r.headers?.get?.('X-PersonalClaw-Consent-Asked') === '1') throw await apiError(r)
   return r.json() as Promise<T>
@@ -9375,15 +9381,15 @@ export const api = {
     // Empty matches every app event — the catch-all, which is why AppEvent needs no second pattern.
     event_glob?: string
     max_fires?: number; debounce_secs?: number; action: { provider: string; config: Record<string, unknown> }
-  }) => withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger; warning?: string }>('/api/triggers',
-    { trigger_type: 'event', ...body, ...(c ? { confirm: true } : {}) })),
+  }) => withSecurityConsent((c, shown) => post<{ ok: boolean; trigger: Trigger; warning?: string }>('/api/triggers',
+    consented({ trigger_type: 'event', ...body }, c, shown))),
   // Create a trigger that runs after a run ends: on any run of a workflow (`source_def`) or on one
   // run going now (`source_run`). The gateway refuses a run that has ended or does not exist.
   createRunCompleted: (body: {
     name: string; source_def?: string; source_run?: string
     action: { provider: string; config: Record<string, unknown> }
-  }) => withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers',
-    { trigger_type: 'run_completed', ...body, ...(c ? { confirm: true } : {}) })),
+  }) => withSecurityConsent((c, shown) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers',
+    consented({ trigger_type: 'run_completed', ...body }, c, shown))),
   // schedule trigger helpers (id is the bare schedule raw id — the shared
   // Schedule* components mutate by bare id, which the helpers re-namespace).
   // `unreadable` rides along: every `/api/triggers` read names the files the page lists from that
@@ -9397,16 +9403,16 @@ export const api = {
   // "Auto-approve tools" is an automation's approval posture: turning it on is asked for in the
   // gateway's words, like a looser config field (`securityConsent.ts`).
   createSchedule: (body: Record<string, unknown>) =>
-    withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers',
-      { trigger_type: 'schedule', ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) })),
+    withSecurityConsent((c, shown) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers',
+      consented({ trigger_type: 'schedule', ..._scheduleBodyToWire(body) }, c, shown))),
   // The edit form saves the WHOLE automation (its skip dates as one list, and every action setting
   // it shows) from the copy it read, so the save names that copy's revision — on the consented resend
   // too, which is the same write. A copy that went stale is refused with `409 stale_write`
   // (`lib/staleWrite.ts`).
   updateSchedule: (id: string, body: Record<string, unknown>, base: string) =>
-    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(
+    withSecurityConsent((c, shown) => put<{ ok: boolean; trigger: Trigger }>(
       `/api/triggers/schedule:${encodeURIComponent(id)}`,
-      { ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) }, basedOn(base))),
+      consented(_scheduleBodyToWire(body), c, shown), basedOn(base))),
   deleteSchedule: (id: string) => del(`/api/triggers/schedule:${encodeURIComponent(id)}`),
   runSchedule: (id: string, dryRun = false) =>
     post<TriggerRunResult>(`/api/triggers/schedule:${encodeURIComponent(id)}/run`, dryRun ? { dry_run: true } : undefined),
@@ -9414,8 +9420,8 @@ export const api = {
   // version has been allowed nothing — so the gateway may ask first (`confirmation_required`), and
   // the owner is asked in its words before the switch is resent with consent.
   enableSchedule: (id: string, enabled: boolean) =>
-    withSecurityConsent((c) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`,
-      c ? { enabled, confirm: true } : { enabled })),
+    withSecurityConsent((c, shown) => post(`/api/triggers/schedule:${encodeURIComponent(id)}/toggle`,
+      consented({ enabled }, c, shown))),
   scheduleToChat: (id: string) => post<{ ok: boolean; session: string }>(`/api/triggers/schedule:${encodeURIComponent(id)}/to-chat`),
   // Per-trigger run history. `triggerId` is the FULL facade id (`schedule:abc`, `store:file:notes`)
   // — these wrappers hardcoded a `schedule:` prefix, so a store trigger's history was unrequestable
@@ -9867,27 +9873,26 @@ export const api = {
   decideTriggerReview: (body: { trigger_id: string; kind: TriggerReviewCard['kind']; action: 'run_now' | 'dismiss' }) =>
     post<{ ok: boolean; outcome?: string; reason?: string; result?: string; refused?: string; status?: string }>('/api/triggers/review', body),
   createHook: (body: Record<string, unknown>) =>
-    withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers', {
+    withSecurityConsent((c, shown) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers', consented({
       trigger_type: 'lifecycle', name: body.name, event: body.event, matcher: body.matcher,
       action: { provider: body.provider, config: body.provider_config ?? {} },
-      ...(c ? { confirm: true } : {}),
-    })).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
+    }, c, shown))).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
   // The edit form saves the whole trigger (every action setting it shows, an emptied one as cleared)
   // from the copy it read, so the save — and its consented resend — names that copy's revision
   // (`HookItem.revision`).
   updateHook: (id: string, body: Record<string, unknown>, base: string) =>
-    withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}`, {
-      ...('provider' in body || 'provider_config' in body
+    withSecurityConsent((c, shown) => put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}`, consented(
+      'provider' in body || 'provider_config' in body
         ? { ...body, action: { provider: body.provider, config: body.provider_config ?? {} } }
-        : body),
-      ...(c ? { confirm: true } : {}),
-    }, basedOn(base))).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
+        : body,
+      c, shown,
+    ), basedOn(base))).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
   deleteHook: (id: string) => del(`/api/triggers/lifecycle:${encodeURIComponent(id)}`),
   // Asks first when switching ON grants what the action runs — see `enableSchedule`. Allow on a hook
   // that is on is the switch sent on again.
   toggleHook: (id: string, enabled: boolean) =>
-    withSecurityConsent((c) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`,
-      c ? { enabled, confirm: true } : { enabled })),
+    withSecurityConsent((c, shown) => post(`/api/triggers/lifecycle:${encodeURIComponent(id)}/toggle`,
+      consented({ enabled }, c, shown))),
   testHook: (id: string, context?: string) => post<{ ok: boolean; result: { stdout: string; stderr: string; exit_code: number; error: string; duration_ms: number } }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}/test`, { context: context ?? 'test' }),
 
   // store triggers — the unified TriggerStore kinds with no legacy backend
@@ -9905,8 +9910,8 @@ export const api = {
       `/api/triggers/${encodeURIComponent(id)}/workflow-version`,
       c ? { ...use, confirm: true } : { ...use })),
   toggleStoreTrigger: (rawId: string, enabled: boolean) =>
-    withSecurityConsent((c) => post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`,
-      c ? { enabled, confirm: true } : { enabled })),
+    withSecurityConsent((c, shown) => post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`,
+      consented({ enabled }, c, shown))),
   /** Resume all: switch on every automation a restore holds (`triggers/restore_hold.py`), each the
    *  way its own switch would. One that refuses — its action needs your yes, which its own switch
    *  asks for — stays held, with why. */

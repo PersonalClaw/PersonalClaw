@@ -170,6 +170,14 @@ async def _agents_gateway_save(said: str) -> dict[str, Any]:
     return saved
 
 
+def _her_yes(trigger: Trigger) -> list[str]:
+    """The owner's yes to the question she is asked about *trigger*, held to what it showed
+    (`grants.allowing`): what it granted."""
+    asked = grants.question(trigger)
+    assert asked is not None and asked.shown is not None, asked
+    return grants.give(trigger, allowing=grants.allowing(trigger, asked.shown))
+
+
 def _allowed_automation(*, created_by: str = "user", capabilities: dict | None = None) -> Trigger:
     """A "Run workflow" automation the owner allowed (`grants.give`, her yes), stored."""
     trigger = Trigger(
@@ -180,7 +188,7 @@ def _allowed_automation(*, created_by: str = "user", capabilities: dict | None =
         workflow={"inline": {"provider": "run-workflow", "config": {"workflow": NAME}}},
     )
     if capabilities is None:
-        assert grants.give(trigger) == ["run-workflow"]
+        assert _her_yes(trigger) == ["run-workflow"]
     else:
         trigger.capabilities = capabilities
     TriggerStore(base_dir=config_loader.config_dir()).upsert(trigger)
@@ -314,9 +322,11 @@ async def test_the_create_dialogs_allow_records_the_version_it_allowed(engine):
         "trigger_type": "schedule",
         "name": "Friday report",
         "cron": "0 17 * * 5",
-        "confirm": True,
         "action": {"provider": "run-workflow", "config": {"workflow": NAME}},
     }
+    asked = await api_trigger_create(_request("POST", "/api/triggers", body, state=MagicMock()))
+    shown = _reply(asked)["error"]["detail"]["shown"]
+    body.update(confirm=True, shown=shown)
     created = await api_trigger_create(_request("POST", "/api/triggers", body, state=MagicMock()))
     assert created.status == 200, _reply(created)
     _agents_tool_save("the agent's rewrite")

@@ -1278,9 +1278,38 @@ Use vM. An Allow from before allowed versions were recorded is bound, at its
 first fire, to the version it runs then. PersonalClaw's own automations (its
 `system` triggers, which run templates it ships) record no version and run the
 template as it is; a run no automation its owner allowed started — the Run
-button, an agent's `workflow_start`, a step of one of those — runs the definition
-as it is. The workflow's page lists the automations that run it, as their own
-action or as a step, each with its version (`GET /api/workflows/{name}/automations`).
+button, the `workflow_start` of an agent no allowed run binds, a step of one of
+those — runs the definition as it is. The workflow's page lists the automations
+that run it, as their own action or as a step, each with its version (`GET
+/api/workflows/{name}/automations`).
+
+**The Allow is the version its question showed.** The question an Allow answers
+(`triggers.grants.asking`) names the workflow's version and carries what it
+showed (`shown`: `automation_version.Allowed` as a dict, its step workflows in
+`calls`), and every door that gives a grant — the create dialog, the editor, the
+switch and Allow — holds the yes to it before it writes anything
+(`grants.allowing`): the version recorded is the one the owner read, and a save
+that lands between her question and her yes — an agent's `workflow_author`, an
+import, a sync — is refused (`409 stale_write`, "Nothing was changed: …"), with
+the question as it is now, which says who saved each version since the one she
+was shown. A yes that names no version allows none of it; the CLI's `--yes`
+cannot name one, so it sends a workflow's Allow to the Triggers page.
+
+**What an agent working for an allowed run starts is held too.** An agent an
+"Invoke agent" or "Run prompt" step of such a run starts records the run it works
+for (`SubagentInfo.workflow_run`; a stage's agent is a leaf of its run and may
+start no workflow at all). The workflow it starts with `workflow_start` — through
+its tool in the gateway or an agent CLI's `POST /api/workflows/runs` — is held to
+what that run may start (`automation_version.bound_for`, which follows a subagent
+to its parent and a run to the session it was started for, the nearest allowed
+run first): a workflow the automation was allowed with starts at the version
+allowed, or a newer one the owner saved herself, and the run carries the versions
+on to its own steps; any other workflow, and a draft run (`workflow_start_draft`),
+is refused in words (`WF_RUN_NOT_ALLOWED`, `403`), as a step that starts one is,
+since nobody is there to ask in the middle of an unattended run. A run the chain
+names that cannot be read starts nothing. A batch an agent fans out
+(`subagent_run`) is its own tasks, compiled into a workflow its own Allow covers,
+and is not held to an automation's versions.
 
 Authoring conventions, the lint that enforces them, and the macro/block
 libraries are documented in
