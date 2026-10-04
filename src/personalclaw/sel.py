@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
 
+from personalclaw import session_keys
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.audit_subject import SUBJECT_MAX_CHARS, audit_text, subject_of
 
@@ -1084,26 +1085,28 @@ class SecurityEventLog:
         return total
 
 
+#: The interface a security-log row records work under, by the kind of its session key, when the
+#: row names none. A run-owned stage session (``workflow``) is here because this is the table
+#: ``log_tool_call`` actually reads: a helper elsewhere that returned "workflow" would have been a
+#: parallel path the audit log never consults, leaving every run-owned tool call recorded as
+#: ``channel``, the catch-all where unrecognized keys silently land, and "what did the run do"
+#: unanswerable from the log even though every event is in it. A room member's own session
+#: (``rooms.turn.session_key``) is the room's, which the catch-all would record as a chat
+#: channel's. Any other key is a chat channel's.
+_SOURCE_OF_KIND: tuple[tuple[session_keys.SessionKind, str], ...] = (
+    (session_keys.WORKFLOW_STEP, "workflow"),
+    (session_keys.DASHBOARD, "dashboard"),
+    (session_keys.TRIGGER, "cron"),
+    (session_keys.SUBAGENT, "subagent"),
+    (session_keys.ROOM, "room"),
+)
+
+
 def _infer_source(session_key: str) -> str:
-    """Infer the source interface from a session key."""
-    # A run-owned stage session. Registered HERE because this is the
-    # function `log_tool_call` actually calls — a helper elsewhere that returned "workflow" would
-    # have been a parallel path the audit log never consults, leaving every run-owned tool call
-    # recorded as `channel`, the catch-all where unrecognized keys silently land. That makes "what
-    # did the run do" unanswerable from the log even though every event is in it.
-    if session_key.startswith("workflow:"):
-        return "workflow"
-    if session_key.startswith("dashboard:"):
-        return "dashboard"
-    if session_key.startswith("cron:"):
-        return "cron"
-    if session_key.startswith("subagent:"):
-        return "subagent"
-    # A room member's own session (`rooms.turn.session_key`): its calls are the room's, and the
-    # catch-all would record them as a chat channel's.
-    if session_key.startswith("room:"):
-        return "room"
-    return "channel"
+    """The interface a security-log row records *session_key*'s work under: its kind's
+    (:data:`_SOURCE_OF_KIND`, ``session_keys.kind_of``), else a chat channel's."""
+    kind = session_keys.kind_of(session_key or "")
+    return next((source for row, source in _SOURCE_OF_KIND if row is kind), "channel")
 
 
 def sel() -> SecurityEventLog:

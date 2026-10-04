@@ -1493,9 +1493,9 @@ export interface ChatSessionSummary {
   folder_id?: string; tags?: string[]; color_index?: number | null
   last_message?: string; prompt_preview?: string
   // Session origin: 'manual' (user-initiated) vs a worker started by a goal loop /
-  // code project / campaign. Worker sessions carry the originating entity's id +
+  // code project. Worker sessions carry the originating entity's id +
   // friendly label so the history list can tag + link them and default-hide them.
-  origin?: 'manual' | 'loop' | 'code' | 'campaign' | 'channel'
+  origin?: 'manual' | 'loop' | 'code' | 'channel'
   source_id?: string; source_label?: string
   // Session lifecycle. 'archived' leaves the active list but
   // stays fully searchable and restorable — archiving is never deletion.

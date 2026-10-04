@@ -17,6 +17,13 @@ This census reads the source tree for the places a string becomes a session key 
 It follows a key built from a name to what the name holds: a variable of the function it is in,
 a constant of its module, or a constant imported from another. A record of who did something (an
 audit row, a usage row) labels the row and is judged by nothing, so its key is not a mint.
+
+The readers that tell one kind of key from another for a route, a record, a prompt, an origin or
+the idle sweep (:data:`READERS`) are held to the rows too: one that spells a kind's prefix where it
+reads a key (``key.startswith("cron:")``, a tuple of prefixes it loops over) is a second answer to
+which kind a key is, and it drifts: the reader that names a run's runtime to its model told a
+workflow step's that it ran in a messaging channel while the audit log recorded a workflow's, and
+a prefix outlived the kind it named.
 """
 
 from __future__ import annotations
@@ -383,6 +390,242 @@ def test_a_key_minted_from_its_row_and_a_record_of_who_did_something_pass():
     assert [m.literal for m in census.mints() if m.where.startswith("personalclaw.example")] == [
         None
     ]
+
+
+# ── the readers that tell one kind of key from another ──────────────────────────────────────
+
+#: The readers that tell one kind of key from another, by module: where a subagent's report goes
+#: (``gateway``), the interface a security-log row names (``sel``), the prompt a run's model is
+#: framed by and the runtime it is told it runs in (``context``), the origin a turn is tracked under
+#: (``resilience.active_jobs``) and a history row is tagged with (``dashboard.chat_handlers``), what
+#: the idle sweep leaves alone (``session``), and which loop a session is (``loop``).
+READERS: dict[str, tuple[str, ...]] = {
+    "personalclaw.gateway": (
+        "GatewayOrchestrator._notif_meta",
+        "GatewayOrchestrator._init_subagents._subagent_done",
+    ),
+    "personalclaw.sel": ("_infer_source",),
+    "personalclaw.context": ("_prompt_use_case_for", "_runtime_display_name", "_is_spawn"),
+    "personalclaw.resilience.active_jobs": ("classify_origin",),
+    "personalclaw.dashboard.chat_handlers": ("_origin_of",),
+    "personalclaw.session": ("SessionManager._expire_idle",),
+    "personalclaw.loop.manager": ("worker_ids",),
+    "personalclaw.loop.plan_walkthrough": ("planner_loop_id",),
+}
+
+#: The string methods a key's prefix is read with (``key.startswith("cron:")``). ``len`` is read
+#: too: a prefix is cut off a key by it (``key[len("loop-"):]``).
+READ_METHODS = frozenset(
+    {"startswith", "removeprefix", "partition", "rpartition", "split", "find", "index"}
+)
+
+LoopTargets = dict[str, list[tuple[ast.expr, int | None]]]
+
+
+def _function_named(module: _Module, dotted: str) -> ast.AST | None:
+    """The function *dotted* names in *module*: a function, ``Class.method``, or one defined in
+    another (``Class.method.inner``)."""
+    scope: ast.AST = module.tree
+    for part in dotted.split("."):
+        found = next(
+            (
+                node
+                for node in ast.walk(scope)
+                if node is not scope
+                and isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == part
+            ),
+            None,
+        )
+        if found is None:
+            return None
+        scope = found
+    return scope
+
+
+def _loop_targets(function: ast.AST) -> LoopTargets:
+    """The names *function*'s ``for`` loops bind: what each iterates, and which element of a row
+    it takes (``None`` for the row itself)."""
+    targets: LoopTargets = {}
+    for node in ast.walk(function):
+        if not isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            continue
+        bound = node.target
+        names: list[tuple[ast.expr, int | None]] = (
+            [(bound, None)] if isinstance(bound, ast.Name) else []
+        )
+        if isinstance(bound, (ast.Tuple, ast.List)):
+            names = [(element, index) for index, element in enumerate(bound.elts)]
+        for name, index in names:
+            if isinstance(name, ast.Name):
+                targets.setdefault(name.id, []).append((node.iter, index))
+    return targets
+
+
+def _held(census: Census, module: _Module, name: str) -> tuple[_Module, ast.expr] | None:
+    """What the constant *name* holds, and the module it is written in: one of *module*'s, or one
+    it imports from a module of the census."""
+    if name in module.constants:
+        return module, module.constants[name]
+    if name in module.imports:
+        origin, attribute = module.imports[name]
+        owner = census.modules.get(origin)
+        if owner is not None and attribute in owner.constants:
+            return owner, owner.constants[attribute]
+    return None
+
+
+def hand_typed_reads(census: Census, module: _Module, function: ast.AST) -> list[str]:
+    """Each prefix of a kind *function* spells where it reads a key, as ``line: 'prefix'``: the
+    argument of a string method a prefix is read with or of ``len``, followed through what a name
+    holds (a variable of the function, a constant of its module or one it imports, the variable
+    of a ``for`` over such a constant's rows) and into each element of a tuple."""
+    local = _assigned(function)
+    loops = _loop_targets(function)
+
+    def spelled(owner: _Module, node: ast.expr, seen: frozenset = frozenset()) -> list[str]:
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return [text for element in node.elts for text in spelled(owner, element, seen)]
+        if (
+            isinstance(node, ast.Name)
+            and node.id not in local
+            and (owner.name, node.id) not in seen
+        ):
+            inner = seen | {(owner.name, node.id)}
+            if owner is module and node.id in loops:
+                return [
+                    text
+                    for iterable, index in loops[node.id]
+                    for element in _taken(owner, iterable, index)
+                    for text in spelled(owner, element, inner)
+                ]
+            held = _held(census, owner, node.id)
+            if held is not None and isinstance(held[1], (ast.Tuple, ast.List, ast.Set)):
+                return spelled(held[0], held[1], inner)
+        scope = local if owner is module else {}
+        return [text for text, _ in census.heads(owner, node, scope) if text is not None]
+
+    def _taken(owner: _Module, iterable: ast.expr, index: int | None) -> list[ast.expr]:
+        rows: list[ast.expr] = [iterable]
+        if isinstance(iterable, ast.Name):
+            held = _held(census, owner, iterable.id)
+            rows = local.get(iterable.id) or ([held[1]] if held is not None else [])
+        taken: list[ast.expr] = []
+        for row in rows:
+            for element in row.elts if isinstance(row, (ast.Tuple, ast.List)) else []:
+                if index is None:
+                    taken.append(element)
+                elif isinstance(element, (ast.Tuple, ast.List)) and len(element.elts) > index:
+                    taken.append(element.elts[index])
+        return taken
+
+    found: list[str] = []
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        reads = isinstance(node.func, ast.Attribute) and node.func.attr in READ_METHODS
+        cuts = isinstance(node.func, ast.Name) and node.func.id == "len"
+        if reads or cuts:
+            found += [
+                f"{node.lineno}: {text!r}"
+                for text in spelled(module, node.args[0])
+                if session_keys.kind_of(text) is not None
+            ]
+    return found
+
+
+def reads_the_table(census: Census, module: _Module, function: ast.AST) -> bool:
+    """Whether *function* reads the table: it names a row or a function of ``session_keys``, a
+    constant of its module built from one, or another of :data:`READERS`."""
+    readers = {
+        (name, dotted.rsplit(".", 1)[-1])
+        for name, dotted_names in READERS.items()
+        for dotted in dotted_names
+    }
+
+    def names_it(owner: _Module, node: ast.AST) -> bool:
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Attribute) and isinstance(inner.value, ast.Name):
+                if census._module_named(owner, inner.value.id) == REGISTRY:
+                    return True
+            if isinstance(inner, ast.Name) and inner.id in owner.imports:
+                origin, attribute = owner.imports[inner.id]
+                if origin == REGISTRY or (origin, attribute) in readers:
+                    return True
+        return False
+
+    named = {node.id for node in ast.walk(function) if isinstance(node, ast.Name)}
+    return names_it(module, function) or any(
+        names_it(*held) for name in named if (held := _held(census, module, name)) is not None
+    )
+
+
+@pytest.mark.parametrize(
+    "module, function", [(module, f) for module, names in READERS.items() for f in names]
+)
+def test_a_reader_that_tells_kinds_apart_reads_them_from_the_table(tree_census, module, function):
+    owner = tree_census.modules[module]
+    node = _function_named(owner, function)
+    assert node is not None, f"{module} has no {function}: name the reader where it is now"
+    spelled = hand_typed_reads(tree_census, owner, node)
+    assert spelled == [], (
+        f"{module}.{function} spells a kind's prefix where it reads a key ({', '.join(spelled)}): "
+        "read the kind from its row in session_keys"
+    )
+    # The vacuity control: a reader the scan saw nothing in passes the line above, so it is
+    # seen telling the kinds apart through the table.
+    assert reads_the_table(tree_census, owner, node), f"{module}.{function} reads no row"
+
+
+_SNIPPET_A_READER_THAT_SPELLS = """
+_ORIGINS = (("loop-", "loop"), ("legacy-", "legacy"))
+
+def origin_of(name):
+    for prefix, origin in _ORIGINS:
+        if name.startswith(prefix):
+            return origin
+    if name.startswith(("cron:", "subagent:")):
+        return name[len("cron:"):]
+    return "manual"
+"""
+
+_SNIPPET_A_READER_OF_THE_ROWS = """
+from personalclaw import session_keys
+
+_ORIGINS = ((session_keys.LOOP, "loop"),)
+
+def origin_of(name):
+    kind = session_keys.kind_of(name)
+    for row, origin in _ORIGINS:
+        if row is kind and name.startswith(row.prefix):
+            return origin
+    return "manual"
+"""
+
+
+def test_a_reader_that_spells_a_prefix_is_refused_through_its_loop_its_tuple_and_its_cut():
+    census = Census({"personalclaw.example": _SNIPPET_A_READER_THAT_SPELLS})
+    module = census.modules["personalclaw.example"]
+    reader = _function_named(module, "origin_of")
+    assert reader is not None
+
+    assert sorted(hand_typed_reads(census, module, reader)) == [
+        "6: 'loop-'",
+        "8: 'cron:'",
+        "8: 'subagent:'",
+        "9: 'cron:'",
+    ]
+    assert reads_the_table(census, module, reader) is False
+
+
+def test_a_reader_of_the_rows_passes():
+    census = Census({"personalclaw.example": _SNIPPET_A_READER_OF_THE_ROWS})
+    module = census.modules["personalclaw.example"]
+    reader = _function_named(module, "origin_of")
+    assert reader is not None
+
+    assert hand_typed_reads(census, module, reader) == []
+    assert reads_the_table(census, module, reader) is True
 
 
 # ── the table itself ──────────────────────────────────────────────────────────────────────

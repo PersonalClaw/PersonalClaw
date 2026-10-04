@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from personalclaw import session_keys
+
 # Origin classes. Only ``webui`` and ``channel:*`` are INTERACTIVE (a human is
 # waiting on the stream); the rest are unattended and are never cancel-and-replace
 # targets — a user message landing on a busy loop/cron/subagent session queues.
@@ -35,16 +37,34 @@ class ActiveJob:
         return self.origin == "webui" or self.origin.startswith("channel:")
 
 
-def classify_origin(session_key: str) -> str:
-    """Map a session key to its origin class, using the platform's verified key
-    conventions (see PLATFORM-RESILIENCE §6.3):
+#: The origin class of each kind of key a turn's origin is read from (``session_keys``). A
+#: heartbeat task's run is told apart first: its key is a trigger's kind (``cron:``).
+_ORIGIN_OF_KIND: tuple[tuple[session_keys.SessionKind, str], ...] = (
+    (session_keys.LOOP, "loop"),
+    (session_keys.LOOP_COLON, "loop"),
+    (session_keys.TRIGGER, "cron"),
+    (session_keys.SUBAGENT, "subagent"),
+    (session_keys.DASHBOARD, "webui"),
+    (session_keys.CHAT, "webui"),
+    (session_keys.CHAT_FILE, "webui"),
+    (session_keys.SCHEDULE_CHAT, "webui"),
+)
 
-    * ``loop-<id>`` / ``loop-plan-…``          → ``loop``
-    * ``cron:system:heartbeat-tasks:<run>``    → ``heartbeat``
-    * ``cron:<job>``                           → ``cron``
-    * ``subagent:<id>``                        → ``subagent``
-    * ``dashboard:<session>`` or a bare webui  → ``webui``
-    * anything else                            → ``other`` (treated non-interactive)
+
+def classify_origin(session_key: str) -> str:
+    """Map a session key to its origin class, by the kind the key is judged as
+    (``session_keys.judged_kind``, :data:`_ORIGIN_OF_KIND`):
+
+    * ``cron:system:heartbeat-tasks:<run>``                     → ``heartbeat``
+    * a loop's own session (``loop-<id>``, ``loop-<id>-<task>``,
+      ``loop-plan-<id>``, in either form)                       → ``loop``
+    * ``cron:<job>``                                            → ``cron``
+    * ``subagent:<id>``                                         → ``subagent``
+    * a chat: ``dashboard:<session>``, ``chat-…``, ``dashboard_…``,
+      a scheduled job's chat (``cron-<job>``), and a chat's own
+      name, which no kind names                                 → ``webui``
+    * a key of any other kind (an outside caller's, a webhook's,
+      a side question's …)                                      → ``other`` (non-interactive)
 
     A channel transport turn is tagged ``channel:<name>`` by the caller (the inbound
     path knows the transport), not derivable from the key here.
@@ -54,17 +74,10 @@ def classify_origin(session_key: str) -> str:
     key = session_key or ""
     if key.startswith(TASK_SESSION_PREFIX):
         return "heartbeat"
-    if key.startswith("loop-"):
-        return "loop"
-    if key.startswith("cron:"):
-        return "cron"
-    if key.startswith("subagent:"):
-        return "subagent"
-    if key.startswith("dashboard:") or key == "dashboard":
+    kind = session_keys.judged_kind(key)
+    if kind is None:
         return "webui"
-    # A dashboard session is often keyed by a bare name (no prefix); the dashboard
-    # runner is the webui channel, so an unprefixed interactive session is webui.
-    return "webui"
+    return next((origin for row, origin in _ORIGIN_OF_KIND if row is kind), "other")
 
 
 class ActiveJobTracker:

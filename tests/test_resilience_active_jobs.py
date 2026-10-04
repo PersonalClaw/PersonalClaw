@@ -37,6 +37,25 @@ def test_classify_origin(key, expected):
     assert classify_origin(key) == expected
 
 
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        # A loop's own session, in the form its tools run under too.
+        ("dashboard:loop-0badf00d", "loop"),
+        ("loop-0badf00d-t-2b9c41fe", "loop"),
+        # A chat: the dashboard's own name for one, and a scheduled job's results chat.
+        ("chat-3-1767225600", "webui"),
+        ("cron-nightly-digest", "webui"),
+        # Work of another kind is not a chat a follow-up may cut off.
+        ("inbound:cli:nightly", "other"),
+        ("hook:deploy-notes", "other"),
+        ("side:chat-3-1767225600", "other"),
+    ],
+)
+def test_the_origin_is_the_kind_of_the_key_as_the_docstring_says(key, expected):
+    assert classify_origin(key) == expected
+
+
 def test_only_interactive_origins_are_cancellable():
     assert is_cancellable_origin("webui") is True
     assert is_cancellable_origin("channel:slack") is True

@@ -7,12 +7,12 @@ A tool call that needs a person's approval ends one of four ways
 * **expired** — nobody answered inside the approval window (``agent.approval_timeout_minutes``),
   so the call was denied. Its Inbox row closed with it and nothing else said so: an approval
   asked at night was gone from every surface by morning, and the call had never run.
-* **unattended** — the run had no one to ask (a trigger's session, a loop's worker, a channel
-  delivery, a subagent), so a call that needs approval is declined AT ONCE rather than parked:
-  the chat runner's fail-fast for a runtime that asks, and the native runtime's own decline for
-  one that does not (``TOOL_META_AUTO_DENIED``). Declining is the design — an unattended run must
-  not wedge waiting for an answer it will never get — but it was written only to the run's
-  transcript and the security log.
+* **unattended** — the run had no one to ask (a trigger's session, an Unattended loop's worker, a
+  channel delivery, a subagent), so a call that needs approval is declined AT ONCE rather than
+  parked: the chat runner's fail-fast for a runtime that asks, and the native runtime's own
+  decline for one that does not (``TOOL_META_AUTO_DENIED``). Declining is the design — an
+  unattended run must not wedge waiting for an answer it will never get — but it was written only
+  to the run's transcript and the security log.
 
 Each now leaves ONE Inbox item, ``system/auto_denied`` with item kind ``system``: what was denied,
 who asked, when, why, and that it did not run. ``refs.session`` is where it happened, so the Inbox
@@ -77,15 +77,22 @@ def _input_line(tool_input: str) -> str:
 def answerable_chat(session_key: str) -> str:
     """``session_key`` when it names a chat a person can answer in, else ``""``.
 
-    A workflow stage is not a chat, and an unattended session (a trigger's, a loop worker's, a
-    channel's, a heartbeat task's) is by definition one nobody is watching — asking either
-    to "try again" would be asking nobody.
+    A workflow stage is not a chat, and neither is a loop's own session, whichever its Mode: what
+    it asks is answered on its loop's page. An unattended session (a trigger's, a channel's, a
+    heartbeat task's) is by definition one nobody is watching. Asking any of them to "try again"
+    would be asking nobody.
     """
+    from personalclaw import session_keys
     from personalclaw.guardrails.policy import is_unattended_session
 
     key = (session_key or "").strip()
     # A workflow stage (`workflow:<run>:<node>`, `ownership.is_owned`) is not a chat.
-    if not key or ownership.is_owned(key) or is_unattended_session(key):
+    if (
+        not key
+        or ownership.is_owned(key)
+        or session_keys.is_loop_work(key)
+        or is_unattended_session(key)
+    ):
         return ""
     return key
 

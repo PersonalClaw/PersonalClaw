@@ -33,10 +33,6 @@ def test_planner_session_names_the_loop_it_plans():
     assert _origin_of("loop-plan-not-a-loop") == ("loop", "")
 
 
-def test_campaign_worker():
-    assert _origin_of("campaign-xyz") == ("campaign", "xyz")
-
-
 def test_app_tag_fallback_when_no_prefix():
     # A disk-only worker whose key lacks the prefix but carries a persisted app tag.
     assert _origin_of("dashboard-thing", "loop") == ("loop", "")

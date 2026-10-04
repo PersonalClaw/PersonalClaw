@@ -14,7 +14,7 @@ from typing import Any
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
-from personalclaw import approval_answer, approval_grants
+from personalclaw import approval_answer, approval_grants, session_keys
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig, default_workspace_dir, resolve_session_workspace
@@ -50,8 +50,6 @@ from personalclaw.dashboard.chat_utils import (
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import CREATED_BY_APP_META_KEY
 from personalclaw.http_errors import json_error
-from personalclaw.loop import files as loop_files
-from personalclaw.loop.plan_walkthrough import PLANNER_SESSION_PREFIX
 from personalclaw.own_words import OWN_WORDS, RAN_PROMPT, pasted_blocks, typed_text
 from personalclaw.request_validation import bool_field, json_object_body
 
@@ -94,8 +92,6 @@ async def _run_chat_scoped(state: DashboardState, session: _ChatSession, message
     being lumped in with the CLI. A dashboard session binds nothing, keeping every
     interactive turn byte-identical to today.
     """
-    from personalclaw import session_keys
-
     key = session.key or ""
     if not session_keys.INBOUND.names(key):
         await run_chat(state, session, message)
@@ -556,44 +552,27 @@ async def _maybe_cancel_and_replace(
         return None
 
 
-# Worker session key prefixes — loop/code/campaign engines persist under the
-# ``dashboard_`` namespace like user chats, but are NOT user-initiated chats.
-# They're identified by key prefix (robust: their `agent` field varies —
-# personalclaw-loop, "Claude Code", "default", …) rather than the in-memory `app`
-# tag, which isn't always persisted to disk. Each prefix maps to an ORIGIN so the
-# history list can tag these sessions and default-hide them behind a filter
-# (rather than dropping them entirely, which left loop/code conversations
-# unreachable). The originating entity id is the key with the prefix stripped.
-_WORKER_PREFIX_ORIGIN = (("loop-", "loop"), ("campaign-", "campaign"))
-
-# The unified planner session key (loop-plan-<id>) — no standing loop to link to.
-_LOOP_PLAN_PREFIX = PLANNER_SESSION_PREFIX
-
-
 def _origin_of(name: str, app: str = "") -> tuple[str, str]:
     """Classify a session by origin → ``(origin, source_id)``.
 
-    ``origin`` is ``manual`` for a user-initiated chat, else ``loop`` (every unified
-    loop kind — general/goal/code/design) or ``campaign``. Prefer the persisted/in-
-    memory ``app`` tag when present; fall back to the key prefix (the only signal for
-    disk-only worker sessions). The source_id is the originating loop id.
+    ``origin`` is ``manual`` for a user-initiated chat, else ``loop`` (every unified loop kind —
+    general/goal/code/design). A loop's own sessions persist under the ``dashboard_`` namespace
+    like user chats but are not user-initiated chats, so the history list tags them and hides them
+    behind a filter by default (dropping them entirely left loop and code conversations
+    unreachable). They are told by the kind of their key (``session_keys.LOOP``), which a session
+    known only from disk carries too, and not by their ``agent`` field, which varies
+    (personalclaw-loop, "Claude Code", "default", …): ``loop-<id>`` (its stage worker),
+    ``loop-<id>-<task>`` (a task worker) and ``loop-plan-<id>`` (its planner, which exists while it
+    plans: every surface that lists the session names it by that loop). The source_id is the
+    loop's id (``manager.session_loop``). A session whose key is no loop's but which a loop's
+    engine tagged (``app``) is a loop's too, with no loop to link to.
     """
-    for prefix, origin in _WORKER_PREFIX_ORIGIN:
-        if name.startswith(prefix):
-            if origin == "loop":
-                # Unified loop sessions: loop-<id> (main worker), loop-<id>-<taskid>
-                # (a parallel code/design task-worker → its parent loop <id>), and
-                # loop-plan-<id> (the stepwise planner of loop <id>, which exists while it
-                # plans: every surface that lists the session names it by that loop).
-                if name.startswith(_LOOP_PLAN_PREFIX):
-                    planned = name[len(_LOOP_PLAN_PREFIX) :]
-                    return origin, (planned if loop_files.valid_loop_id(planned) else "")
-                from personalclaw.loop.manager import worker_ids
+    from personalclaw.loop.manager import session_loop
 
-                return origin, worker_ids(name)[0]
-            return origin, name[len(prefix) :]
-    if app in ("loop", "code", "campaign"):
-        return "loop" if app == "code" else app, ""
+    if session_keys.LOOP.names(name):
+        return "loop", session_loop(name)
+    if app in ("loop", "code"):
+        return "loop", ""
     return "manual", ""
 
 
@@ -674,7 +653,7 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
     survives gateway restarts and ``restore_sessions=false`` (older chats live
     only on disk until opened). In-memory entries win on key collision (they're
     live/authoritative). Non-persistent (incognito/temporary) histories are
-    excluded. Worker sessions (goal loops / code projects / campaigns) ARE included
+    excluded. A loop's own sessions (goal loops, code projects and every other kind) ARE included
     but tagged with their ``origin`` + ``source_id``/``source_label`` so the UI can
     default-hide them behind a filter and link each back to its cockpit.
 
@@ -718,10 +697,9 @@ async def api_chat_sessions(request: web.Request) -> web.Response:
     # In-memory first — these are live and authoritative.
     for s in state._sessions.values():
         # A ROOM MEMBER'S OWN PROVIDER SESSION IS NOT A CHAT. Each member of an Agent Room
-        # holds a real session keyed `room:<room>:<member>`, and that prefix
-        # is deliberately absent from every worker-origin tuple — which means `_origin_of`
-        # classifies it `manual` and it would surface here as though the USER had opened it,
-        # titled by its key, one row per member. That is the room's attribution property
+        # holds a real session keyed `room:<room>:<member>`, which is no loop's session, so
+        # `_origin_of` classifies it `manual` and it would surface here as though the USER had
+        # opened it, titled by its key, one row per member. That is the room's attribution property
         # inverted: a member's conversation reading as the human's. The disk branch below
         # already skips worker namespaces on the same reasoning; this is the in-memory half,
         # which had no filter at all.

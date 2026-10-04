@@ -40,14 +40,23 @@ def worker_ids(key: str) -> tuple[str, str]:
     (``t-2b9c41fe``), which is why reading up to the LAST dash named a loop that does not exist.
     The planner's ``loop-plan-<id>`` is not a worker, and ``plan`` is not a loop id, so it names
     none."""
-    if not key.startswith("loop-"):
+    if not session_keys.LOOP.names(key):
         return "", ""
-    loop_id, _, task_id = key[len("loop-") :].partition("-")
+    loop_id, _, task_id = key[len(session_keys.LOOP.prefix) :].partition("-")
     if not loop_files.valid_loop_id(loop_id):
         return "", ""
     if task_id and not loop_files.valid_task_guidance_id(task_id):
         return "", ""
     return loop_id, task_id
+
+
+def session_loop(key: str) -> str:
+    """The loop whose own session *key* is, in its bare form: its stage worker's, a task worker's
+    (:func:`worker_ids`) or its planner's (``plan_walkthrough.planner_loop_id``). ``""`` for any
+    other key."""
+    from personalclaw.loop.plan_walkthrough import planner_loop_id
+
+    return worker_ids(key)[0] or planner_loop_id(key)
 
 
 def worker_finding_count(key: str) -> int:

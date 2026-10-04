@@ -85,7 +85,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import approval_grants
+from personalclaw import approval_grants, session_keys
 from personalclaw.approval_grants import ToolDecision
 from personalclaw.approval_source import ROOM_SOURCE
 from personalclaw.audit_subject import log_title
@@ -411,7 +411,9 @@ def agent_shaped_identity(identity: str) -> str:
     predicate deliberately answers ``False`` for. ``room:`` is a watched kind BY DESIGN
     (``session_keys.ROOM``: that is what keeps the human the approver), which means a member's
     own session key reads as attended and would otherwise pass as human. It is the single most
-    important identity to refuse here, so it is checked explicitly.
+    important identity to refuse here, so it is checked explicitly. So is a loop's own session:
+    an Attended loop's is watched, because a person answers what it asks, and it is still the
+    loop's agent and not that person.
 
     An empty identity is refused: "nobody in particular" must not resolve to the human.
     """
@@ -420,6 +422,8 @@ def agent_shaped_identity(identity: str) -> str:
         return "an empty identity names nobody, and nobody is not the human"
     if key.startswith(SESSION_KEY_PREFIX):
         return f"{key!r} is a room member's own session key"
+    if session_keys.is_loop_work(key):
+        return f"{key!r} is a loop's own session key"
     if is_unattended_session(key):
         return f"{key!r} carries an unattended session prefix"
     return ""

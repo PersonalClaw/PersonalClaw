@@ -256,6 +256,25 @@ def ready_line(*, port: int, home: Path, minted: MintedSession) -> str:
     return f"PERSONALCLAW_READY:{json.dumps(payload)}"
 
 
+#: The parents a finished subagent's result is not announced into as a channel thread's
+#: conversation is (``_inject_with_retry``): a scheduled job's run, which takes it through an
+#: injection of its own, a subagent, an app's agent work (``handlers/apps.api_app_agent_run``: its
+#: result is the app's to read, and handing it to her agent's turn ran it on her tools) and a
+#: workflow run's step (``ownership.OWNED_PREFIX``). A step's completion is consumed by the run's
+#: own controller, which polls ``SubagentManager.get``
+#: (``stage_settlement.reconcile_dispatched_stages``), so the work for it is not "deliver it
+#: somewhere else" but "do not deliver it twice": announced into,
+#: ``sessions.get_or_create("workflow:...")`` spun up a session that never existed and burned a
+#: model turn injecting the result into it, retried ``_MAX_INJECT_ATTEMPTS`` times. The prefix and
+#: not ``is_owned`` is the test for routing: a malformed owned key is still not a channel.
+_NOT_ANNOUNCED_INTO: tuple[session_keys.SessionKind, ...] = (
+    session_keys.TRIGGER,
+    session_keys.SUBAGENT,
+    session_keys.APP,
+    session_keys.WORKFLOW_STEP,
+)
+
+
 def announce_axis(thread_channel: str | None) -> str:
     """The axis a finished subagent's announce turn rides in a parent that is no dashboard chat.
 
@@ -273,10 +292,11 @@ def announce_profile(parent_key: str, thread_channel: str | None) -> "SafetyProf
 
     The announcement hands the parent session a subagent's result, text a model wrote from
     whatever it read, and the parent's turn acts on it. A parent nobody watches (a scheduled
-    job's session, an Inbox sweep, a side session, a webhook's turn, a loop) resolves the
-    headless profile, whose grants admit a call only when its tool declares it reads, so the
-    turn is held to them as a webhook's own turn is (``dashboard.handlers.hooks``). It was held
-    to nothing: its calls met only the approval policy, whose hooks approve a hook-neutral write.
+    job's session, an Inbox sweep, a side session, a webhook's turn, an Unattended loop's)
+    resolves the headless profile, whose grants admit a call only when its tool declares it
+    reads, so the turn is held to them as a webhook's own turn is (``dashboard.handlers.hooks``).
+    It was held to nothing: its calls met only the approval policy, whose hooks approve a
+    hook-neutral write.
 
     ``None`` for a parent a person is in: one linked to a channel thread (their conversation
     there, whose chat binding :func:`announce_axis` keeps) and one no unattended key names. A
@@ -3512,21 +3532,14 @@ class GatewayOrchestrator:
         """
         if not parent_key:
             return None
-        from personalclaw.workflows import ownership
-
-        if parent_key.startswith("dashboard:"):
-            return {"session": parent_key.removeprefix("dashboard:")}
-        # `workflow:<run>:<node>` is excluded for the same reason as `cron:`/`subagent:`/`hook:`:
-        # the `chan, ts = key.split(":", 1)` below reads a namespace prefix as a CHANNEL id, so a
-        # run-owned key would ask the delivery provider to build a thread link for a channel named
-        # "workflow" with ts "<run>:<node>". That is a vendor call on parsed garbage. Latent rather
-        # than live today — every run-owned spawn is `silent=True`, and the one caller reachable
-        # with such a key suppresses the notification for a silent batch — but it is the same
-        # omission as the routing branch in `_subagent_done`, one branch away from the tail that
-        # run-owned completions now land in.
-        if ":" in parent_key and not parent_key.startswith(
-            ("cron:", "subagent:", "hook:", ownership.OWNED_PREFIX)
-        ):
+        if session_keys.DASHBOARD.names(parent_key):
+            return {"session": parent_key.removeprefix(session_keys.DASHBOARD.prefix)}
+        # A channel thread's key is `<channel>:<ts>`, which names no kind of key the gateway
+        # mints (`session_keys.kind_of`). Every kind is excluded, `workflow:<run>:<node>` and
+        # `cron:` among them: the `chan, ts = key.split(":", 1)` below would read its prefix as a
+        # CHANNEL id and ask the delivery provider to build a thread link for a channel named
+        # "workflow" with ts "<run>:<node>", a vendor call on parsed garbage.
+        if ":" in parent_key and session_keys.kind_of(parent_key) is None:
             chan, ts = parent_key.split(":", 1)
             # The link is the channel's that issued the id, or none: another channel's link to it
             # opens nothing, or the wrong conversation.
@@ -3749,8 +3762,9 @@ class GatewayOrchestrator:
 
     def _init_subagents(self) -> None:
         """Initialize the subagent manager."""
-        # Imported for `_subagent_done`'s routing: the run-owned session namespace is defined once,
-        # in the module that owns it, so this branch cannot drift from `dispatch_stage`'s key.
+        # Imported for `_subagent_event`'s note: whether a session is a workflow step's is answered
+        # once, in the module that owns the run-owned namespace, so it cannot drift from
+        # `dispatch_stage`'s key.
         from personalclaw.workflows import ownership
 
         async def _broadcast_subagent_status(info: SubagentInfo, event: str) -> None:
@@ -4142,10 +4156,10 @@ class GatewayOrchestrator:
             # Channel → channel thread + dashboard notification
             # Cron/no parent → dashboard notification only
 
-            if parent_key.startswith("dashboard:") and self.dashboard_state:
+            if session_keys.DASHBOARD.names(parent_key) and self.dashboard_state:
                 # Dashboard session — route subagent result through run_chat
                 # for full streaming, tool call visibility, and proper lifecycle.
-                _session_name = parent_key.removeprefix("dashboard:")
+                _session_name = parent_key.removeprefix(session_keys.DASHBOARD.prefix)
                 _injection_session = self.dashboard_state.get_session(_session_name)
 
                 # Redact LLM-generated output before any external surface
@@ -4238,24 +4252,7 @@ class GatewayOrchestrator:
                     )
                 return
 
-            if parent_key and not parent_key.startswith(
-                # `workflow:<run>:<node>` is a RUN-OWNED session (`ownership.OWNED_PREFIX`), not a
-                # channel. Its completion is consumed by the run's own controller, which polls
-                # `SubagentManager.get` (`stage_settlement.reconcile_dispatched_stages`) — so the
-                # work here is not "deliver it somewhere else", it is "do not deliver it twice".
-                # Without this the key fell through to the branch below and a finished stage was
-                # treated as a chat: `sessions.get_or_create("workflow:...")` spun up an ACP session
-                # for a session that never existed and burned a full model turn injecting the result
-                # into it, retried `_MAX_INJECT_ATTEMPTS` times. `dispatch_stage` already declares
-                # the intended policy in its docstring — "completions belong in the run journal, not
-                # injected into whatever chat session happened to start the run" — and passes
-                # `silent=True` to say so; the only reader of `silent` is the notification tail
-                # below, which is where this now lands. The PREFIX (not `is_owned`) is the right
-                # test for routing: a malformed owned key is still not a channel. Nor is
-                # `app:<name>`, an app's agent work (`handlers/apps.api_app_agent_run`): its result
-                # is the app's to read, and handing it to her agent's turn ran it on her tools.
-                ("cron:", "subagent:", "app:", ownership.OWNED_PREFIX)
-            ):
+            if parent_key and not any(kind.names(parent_key) for kind in _NOT_ANNOUNCED_INTO):
                 # Channel session — inject silently into ACP session (no visible channel message).
                 # Retry up to _MAX_INJECT_ATTEMPTS times on timeout.
                 assert self.sessions is not None
@@ -4434,7 +4431,7 @@ class GatewayOrchestrator:
             # Cron parent — inject result back into the cron session.
             # Track pending injections to avoid resetting the session while
             # other subagents are queued behind the per-session semaphore.
-            if parent_key.startswith("cron:"):
+            if session_keys.TRIGGER.names(parent_key):
                 self._cron_injecting[parent_key] = self._cron_injecting.get(parent_key, 0) + 1
                 assert self.sessions is not None
                 acquired = False
@@ -4534,7 +4531,7 @@ class GatewayOrchestrator:
                     body,
                     meta=notice_meta,
                 )
-            if not parent_key.startswith("cron:"):
+            if not session_keys.TRIGGER.names(parent_key):
                 logger.info("Subagent %s → notification only (parent=%s)", info.id, parent_key)
 
         assert self.sessions is not None

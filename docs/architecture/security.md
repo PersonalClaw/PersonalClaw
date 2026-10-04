@@ -339,19 +339,27 @@ grants, is refused before its message is sent, and the owner is told why.
 Whether anybody watches a piece of work is decided by the kind of session key it runs under, and
 every gate on this page asks the same table: the safety profile a run resolves (`HEADLESS` for work
 nobody watches), the approval posture of a run nobody can be asked in, the dollar caps an unattended
-image, video, speech or transcription is held to, the self-stop check below, and the autonomy
+image, video, speech or transcription is held to, the self-stop check below, the rules a
+subagent's report is handed back under, the check of an agent CLI's adapter, and the autonomy
 ladder's ceiling. Nobody watches a trigger's fire or a scheduled job's run (`cron:`), a subagent
-(`subagent:`), a loop's worker (`loop-`, whose own sessions also carry the loop's Mode), a caller
-from outside the dashboard (`inbound:`), a webhook's turn (`hook:`), a dispatch with no session
-(`unattended:`), a Home tile's refresh (`tile:`, its button included: what its data sources fetch
-was written into the tile), an app's own work (`app:`: a request its backend makes with its token, a
-tool it invokes, an agent it starts), and the other kinds the table lists. Watched: a chat you are
-in, a room's members (you approve every action a room takes), the prompt optimizer and an agent's
-test chat. A key no row names is a chat's own name, and a chat is watched, so
+(`subagent:`), a caller from outside the dashboard (`inbound:`), a webhook's turn (`hook:`), a
+dispatch with no session (`unattended:`), a Home tile's refresh (`tile:`, its button included: what
+its data sources fetch was written into the tile), an app's own work (`app:`: a request its backend
+makes with its token, a tool it invokes, an agent it starts), and the other kinds the table lists.
+Watched: a chat you are in, a room's members (you approve every action a room takes), the prompt
+optimizer and an agent's test chat. A loop's own sessions (`loop-`: its stage worker, a worker per
+task and its planner) are judged by the loop's Mode, read from the loop each time a gate asks and
+in either form of the key, the bare one and the `dashboard:` one its tools run under: an Unattended
+loop's are watched by nobody, so its worker cannot stop or restart PersonalClaw, and an Attended
+loop's are watched, since you answer what they ask. A loop whose Mode cannot be read is judged
+unattended. A loop's session is still never the person a room asks, nor a chat the Inbox can ask to
+try again. A key no row names is a chat's own name, and a chat is watched, so
 `tests/test_session_key_census.py` reads the source for every key it mints and fails one whose kind
-has no row, or one minted with its prefix spelled out instead of read from its row. A media call (an
-image, a video, speech, a transcription) that names no session is the work it is made in: speech an
-app's request asks for is held to the dollar caps, as the app's other calls are.
+has no row, or one minted with its prefix spelled out instead of read from its row; it holds the
+readers that tell one kind of key from another (where a subagent's report goes, the interface the
+security log names, a run's prompt and runtime, a turn's origin, the idle sweep) to the table too. A
+media call (an image, a video, speech, a transcription) that names no session is the work it is
+made in: speech an app's request asks for is held to the dollar caps, as the app's other calls are.
 
 ### What an unattended action is refused (`guardrails/denylist.py`)
 
@@ -372,9 +380,9 @@ Every path that runs a command with nobody answering it asks the same rules (`ch
 `check_action` for a command) before it runs anything: a loop's check and a workflow's verify gate
 (`loop.gates.run_verify_command`), a workflow's setup and teardown steps
 (`workflows.provisioning.run_step`), an effect's teardown (`workflows.effects.run_teardown`),
-and the agent's bash tool under its session, which a session nobody is in (a schedule's, a
-loop's or a subagent's turn, a scheduled script's call, an app's tool call) is held to and a chat
-you are in is not.
+and the agent's bash tool under its session, which a session nobody is in (a schedule's, an
+Unattended loop's or a subagent's turn, a scheduled script's call, an app's tool call) is held to
+and a chat you are in, or an Attended loop's turn, is not.
 Each asks them before the shell denylist, the order `check_action` asks its own rules, so a
 command both catch (`personalclaw update`) is refused for its effect, in the same words on
 every path.

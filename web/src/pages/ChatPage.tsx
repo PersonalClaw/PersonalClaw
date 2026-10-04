@@ -5026,8 +5026,8 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   // bury manual conversations, but stay reachable when the user wants to dive in.
   //
   // 🔑 `room` IS A FIFTH SCOPE, AND IT IS NOT A SESSION ORIGIN. This union has always been a
-  // VIEW union rather than a mirror of `ChatSessionSummary.origin` — it adds the synthetic `all`
-  // and drops `campaign`. Agent Rooms extends it on the same axis: a room is
+  // VIEW union rather than a mirror of `ChatSessionSummary.origin` — it adds the synthetic
+  // `all`. Agent Rooms extends it on the same axis: a room is
   // not a chat session, it is read from `/api/rooms`, and each member's own provider session is
   // filtered out of `/api/chat/sessions` by the backend — so this scope SWAPS THE LIST BODY for
   // the rooms list instead of narrowing `sessions`. That is why `matches` below never sees it.
@@ -5206,8 +5206,7 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   const unlisted = contentKeys && contentCoverage?.matched ? contentCoverage.matched - contentKeys.size : 0
   const matches = useCallback((s: ChatSessionSummary) => {
     const sOrigin = s.origin ?? 'manual'
-    // 'all' shows everything; otherwise the row's origin must match the scope
-    // (campaign workers surface under 'all' only — there's no dedicated tab yet).
+    // 'all' shows everything; otherwise the row's origin must match the scope.
     if (origin !== 'all' && sOrigin !== origin) return false
     // Query match = local (title/key/preview) OR a backend content hit on this key.
     if (n) {
@@ -5430,14 +5429,14 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
               that came in on a chat channel says which one instead (`FromChannel`). */}
           <FromChannel s={s} />
           {s.origin && s.origin !== 'manual' && s.origin !== 'channel' && (() => {
-            const kind = s.origin === 'code' ? 'code project' : s.origin === 'loop' ? 'loop' : 'campaign'
+            const kind = s.origin === 'code' ? 'code project' : 'loop'
             const label = s.source_label || s.source_id || kind
-            const canOpen = !!s.source_id && (s.origin === 'code' || s.origin === 'loop')
-            // A campaign origin has no cockpit to open, so this chip is never actionable
-            // — it is provenance, not a control. It used to render as a permanently disabled
-            // button element: announced as a button that can never be pressed in ANY state, which
-            // no reason could ever unblock. A span is what it actually is; the tag now follows
-            // whether there is somewhere to go.
+            const canOpen = !!s.source_id
+            // A worker that names no loop (its engine tagged it, its key names none) has no
+            // cockpit to open, so its chip is provenance, not a control. It used to render as a
+            // permanently disabled button element: announced as a button that can never be
+            // pressed in ANY state, which no reason could ever unblock. A span is what it actually
+            // is; the tag now follows whether there is somewhere to go.
             // (Comment deliberately spells no literal button tag — the primitive-adoption ratchet
             // counts raw source, comments included, so prose markup reds CI.)
             const chip = 'inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] transition-colors'

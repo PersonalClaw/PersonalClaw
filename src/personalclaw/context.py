@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from personalclaw import home_paths, memory_writes
+from personalclaw import home_paths, memory_writes, session_keys
 from personalclaw.agent import _shipped_prompt
 from personalclaw.agents.defaults import is_default_agent
 from personalclaw.agents.instructions import AgentInstructions, agent_instructions
@@ -692,6 +692,7 @@ _RUNTIME_DISPLAY = {
     "cron": "PersonalClaw cron job",
     "subagent": "PersonalClaw subagent",
     "room": "PersonalClaw agent room",
+    "workflow": "PersonalClaw workflow step",
     "channel": "messaging channel",
 }
 
@@ -718,50 +719,39 @@ def _home_directory_line() -> str:
 
 
 def _runtime_display_name(session_key: str) -> str:
-    """Map a session_key to a human-readable runtime name.
+    """The runtime *session_key*'s work runs in, as its model is told: the interface its
+    security-log rows name (``sel._infer_source``, read from the kind of the key), so the audit
+    log and the model's context agree on the runtime."""
+    from personalclaw.sel import _infer_source
 
-    Uses the same prefix heuristic as ``sel.py:_infer_source()`` so both
-    SEL audit logs and LLM context agree on the runtime.
-    """
-    if session_key.startswith("dashboard:") or session_key.startswith("dashboard_"):
-        source = "dashboard"
-    elif session_key.startswith("cron:") or session_key.startswith("cron_"):
-        source = "cron"
-    elif session_key.startswith("subagent:"):
-        source = "subagent"
-    elif session_key.startswith("room:"):
-        source = "room"
-    else:
-        source = "channel"
+    source = _infer_source(session_key)
     return _RUNTIME_DISPLAY.get(source, source)
 
 
-def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
-    """The prompt use-case for a session. An explicit non-default value wins;
-    otherwise derive from the session_key prefix (subagent/cron/webhook/workflow →
-    the ``background`` prompt). Defaults to ``chat``.
+#: The kinds of key whose work is framed by the ``background`` prompt when nothing names a use case:
+#: a trigger's or a scheduled job's run, a subagent, a webhook's turn (``dashboard/handlers/
+#: hooks.py``: the Background prompt names this context, and without the entry a webhook run was
+#: framed as an interactive chat), and a workflow run's step, which resolved to the ``chat`` prompt
+#: without it, a stage worker framed as a conversational assistant. Behaviour keys off ``_app``;
+#: this is only the PROMPT use-case, derived from the kind of the key by design.
+_BACKGROUND_KINDS: tuple[session_keys.SessionKind, ...] = (
+    session_keys.TRIGGER,
+    session_keys.SUBAGENT,
+    session_keys.WEBHOOK,
+    session_keys.WORKFLOW_STEP,
+)
 
-    Loop and Code workers derive nothing here: they run as reserved agents whose own
-    prompt is the override, so no bound prompt could reach them (their session keys are
-    ``dashboard:loop-<id>`` besides, which no prefix below matches)."""
+
+def _prompt_use_case_for(session_key: str | None, explicit: str = "") -> str:
+    """The prompt use-case for a session. An explicit non-default value wins; otherwise the
+    ``background`` prompt for a key of a kind in :data:`_BACKGROUND_KINDS`, else ``chat``.
+
+    A loop's sessions derive nothing here: they run as reserved agents whose own prompt is the
+    override, so no bound prompt could reach them, and the key they run under,
+    ``dashboard:loop-<id>``, is a dashboard chat's kind of key (``session_keys.kind_of``)."""
     if explicit and explicit != "chat":
         return explicit
-    sk = session_key or ""
-    if (
-        sk.startswith("cron:")
-        or sk.startswith("cron_")
-        or sk.startswith("subagent:")
-        # A webhook-triggered session (`hook:<id>` — `dashboard/handlers/hooks.py`). The
-        # Background prompt names this context explicitly, and without the entry a webhook
-        # run was framed as an interactive chat.
-        or sk.startswith("hook:")
-        # A run-owned stage session. Without this an owned
-        # session resolved to the `chat` prompt — a stage worker framed as a conversational
-        # assistant, which is the wrong framing for unattended work and the same near-miss the
-        # `loop_`/`loop:` entry above already documents. Behaviour keying stays on `_app`; this is
-        # only the PROMPT use-case, which is prefix-derived by design here.
-        or sk.startswith("workflow:")
-    ):
+    if session_keys.kind_of(session_key or "") in _BACKGROUND_KINDS:
         return "background"
     return explicit or "chat"
 
@@ -771,7 +761,7 @@ def _is_spawn(session_key: str | None) -> bool:
     helper of whatever started it, on that one's runtime, and is framed as a sub-agent on the
     Background prompt rather than handed the default agent's own instructions: those belong to
     the default agent's own work, and the helper may be running for another agent entirely."""
-    return (session_key or "").startswith("subagent:")
+    return session_keys.SUBAGENT.names(session_key or "")
 
 
 def _resolve_use_case_prompt(use_case: str, values: dict[str, Any] | None = None) -> str:

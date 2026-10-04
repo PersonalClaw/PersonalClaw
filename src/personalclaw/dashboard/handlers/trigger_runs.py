@@ -752,8 +752,8 @@ def _judged_as(runs_for: approval_answer.Principal | None, trigger_id: str) -> s
     Yours is the one run here a person answers: you started it, so it is not asked a rule written
     for work nobody answers (``manual_refusal`` and the grant still hold it). An agent's is its
     session's, so a run an agent's tool starts is held as that session holds its own work: refused
-    what unattended work is refused in a session nobody is in (a schedule's, a loop's, a
-    subagent's turn), and not in a chat you are in (``guardrails.policy.is_unattended_session``).
+    what unattended work is refused in a session nobody is in (a schedule's, an Unattended loop's,
+    a subagent's turn), and not in a chat you are in (``guardrails.policy.is_unattended_session``).
     Anyone else's has no session and nobody answering it: an app's is judged as an app's
     dispatch, and a webhook's fire, a view's refresh or a caller that did not say whose run it is
     as the trigger's own fire (``unattended_dispatch_key``)."""

@@ -7,8 +7,11 @@ gate work, and both are answered here:
 * **Is anybody watching?** The safety profile a run resolves (``guardrails.policy``), the
   approval posture of a run nobody can be asked in, the dollar caps an unattended image, video,
   speech or transcription is held to, the check that refuses an unattended command that would
-  stop PersonalClaw, and the autonomy ladder's ceiling all read the one answer
-  :func:`is_unattended` gives.
+  stop PersonalClaw, the rules a subagent's report is handed back under, and the autonomy
+  ladder's ceiling all read the one answer :func:`is_unattended` gives. For most kinds the row
+  says it. For a loop's own sessions the loop's Mode says it, read from the loop each time it is
+  asked: an Attended loop's work is watched and an Unattended loop's is not, under either form of
+  its key.
 * **Is its runtime reset after each use?** A key of a stateless kind never resumes a provider
   session (``session.SessionManager``).
 
@@ -16,7 +19,8 @@ Each kind is one row below, and the code that mints a key reads its row (:meth:`
 :attr:`SessionKind.prefix`), so a key cannot be minted under one spelling and judged by a copy of
 another. A key that matches no row is a chat's own name, one the owner or a client gave it, and a
 chat is watched. ``tests/test_session_key_census.py`` reads the source tree for every key it mints
-and fails on a kind no row names, so new work cannot be judged watched by omission.
+and fails on a kind no row names, so new work cannot be judged watched by omission, and holds the
+readers that tell one kind of key from another to the rows too.
 """
 
 from __future__ import annotations
@@ -31,7 +35,10 @@ class SessionKind:
     ``unattended`` — nobody watches the work, so nobody can answer an ask it raises.
     ``stateless`` — its runtime is never resumed: every use starts fresh.
     ``wrapped`` — also judged in the ``dashboard:`` form the provider layer wraps a dashboard
-    chat's key in, for a kind whose work runs as a dashboard chat but is never watched there.
+    chat's key in, for a kind whose work runs as a dashboard chat but is not a chat's.
+    ``by_mode`` — whether anybody watches is not the kind's to say but the Mode of the loop the
+    key names, read when it is asked (:func:`is_unattended`). ``unattended`` is then the reading
+    for a key whose loop's Mode cannot be read.
     ``who`` — who is running, as the subject of a sentence a person reads ("A subagent asked to
     run …").
     """
@@ -41,6 +48,7 @@ class SessionKind:
     who: str
     stateless: bool = False
     wrapped: bool = False
+    by_mode: bool = False
 
     def key(self, rest: str) -> str:
         """The key of this kind named *rest*."""
@@ -89,6 +97,18 @@ OPTIMIZER = SessionKind("_optimizer:", unattended=False, who="The prompt optimiz
 #: reply (``dashboard.handlers.agent_marketplace``).
 AGENT_TEST = SessionKind("agent_marketplace_test:", unattended=False, who="An agent's test chat")
 
+# ── work its loop's Mode decides ──────────────────────────────────────────────────────────────
+
+#: A loop's own sessions: its stage worker ``loop-<id>``, a worker per task ``loop-<id>-<task>``
+#: and its planner ``loop-plan-<id>`` (``loop.manager``, ``loop.plan_walkthrough``). Whether
+#: anybody watches one is its loop's Mode (``loop.posture.unattended_by_key``): an Attended
+#: loop's are watched, an Unattended loop's are not, and one whose loop cannot be read is judged
+#: unattended. Its turns run as a dashboard chat's, so its wrapped provider key is judged the same.
+LOOP = SessionKind("loop-", unattended=True, wrapped=True, by_mode=True, who="A loop")
+
+#: A loop, in the colon spelling. Kept so a key named this way is judged as a loop's is.
+LOOP_COLON = SessionKind("loop:", unattended=True, wrapped=True, by_mode=True, who="A loop")
+
 # ── work nobody watches ───────────────────────────────────────────────────────────────────────
 
 #: A trigger's fire or a scheduled job's run, ``cron:<id>`` (``triggers.wakeup``), a heartbeat
@@ -108,14 +128,6 @@ INBOX = SessionKind("inbox:", unattended=True, stateless=True, who="An Inbox run
 #: A side question asked beside a chat, ``side:<chat>`` (``dashboard.side``): answered in a
 #: throwaway session with every tool refused, so nothing in it is ever put to a person.
 SIDE = SessionKind("side:", unattended=True, stateless=True, who="A side question")
-
-#: A loop's worker, planner or task worker, ``loop-<id>`` (``loop.manager``). A loop's own
-#: sessions also carry its Mode, which the chat runner reads first: an Attended loop's worker puts
-#: its asks to a person.
-LOOP = SessionKind("loop-", unattended=True, who="A loop")
-
-#: A loop, in the colon spelling. Kept so a key named this way is judged as a loop's is.
-LOOP_COLON = SessionKind("loop:", unattended=True, who="A loop")
 
 #: A dispatch that has no session at all — a trigger's fire, a hook's action, a workflow's own
 #: commands, a loop's gate — named for what fired it
@@ -190,23 +202,45 @@ def kind_of(key: str) -> SessionKind | None:
     return found
 
 
+def _judged(key: str) -> tuple[SessionKind | None, str]:
+    """The kind the work *key* names is judged as (:func:`judged_kind`), and *key* in that kind's
+    own form: without the dashboard's wrapper when it is judged through it."""
+    key = key or ""
+    if DASHBOARD.names(key):
+        inner = key[len(DASHBOARD.prefix) :]
+        kind = kind_of(inner)
+        if kind is not None and kind.wrapped:
+            return kind, inner
+    return kind_of(key), key
+
+
 def judged_kind(key: str) -> SessionKind | None:
     """The kind the work *key* names is judged as: :func:`kind_of`, except that the dashboard's
     wrapped form of a :attr:`~SessionKind.wrapped` kind's key is judged as that kind, so the
     answer does not depend on which layer asks."""
-    key = key or ""
-    if DASHBOARD.names(key):
-        inner = kind_of(key[len(DASHBOARD.prefix) :])
-        if inner is not None and inner.wrapped:
-            return inner
-    return kind_of(key)
+    return _judged(key)[0]
 
 
 def is_unattended(key: str) -> bool:
-    """Whether nobody watches the work *key* names (:func:`judged_kind`). A chat's own name, which
-    no row names, is watched."""
+    """Whether nobody watches the work *key* names (:func:`judged_kind`): what its kind's row
+    says, and for a loop's own session what its loop's Mode says, read now
+    (``loop.posture.unattended_by_key``). A chat's own name, which no row names, is watched."""
+    kind, own = _judged(key)
+    if kind is None:
+        return False
+    if kind.by_mode:
+        from personalclaw.loop.posture import unattended_by_key
+
+        return unattended_by_key(own)
+    return kind.unattended
+
+
+def is_loop_work(key: str) -> bool:
+    """Whether *key* names a loop's own session, in either form and whichever its loop's Mode: a
+    kind whose watching is its loop's Mode (:attr:`SessionKind.by_mode`). Its asks are answered on
+    its loop's page, and it is never the person who answers them."""
     kind = judged_kind(key)
-    return kind is not None and kind.unattended
+    return kind is not None and kind.by_mode
 
 
 def is_stateless(key: str) -> bool:

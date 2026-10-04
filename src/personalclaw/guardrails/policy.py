@@ -202,13 +202,14 @@ def unattended_dispatch_key(origin: str) -> str:
 
 def is_unattended_session(session_key: str) -> bool:
     """True when nobody watches the work ``session_key`` names — the keys that resolve through
-    HEADLESS by construction: a trigger's run, a subagent, a loop's worker, a caller from outside
-    the dashboard, a webhook's turn, a Home tile's refresh, an app's own work, a sessionless
-    dispatch, and every other kind ``session_keys`` marks unattended.
+    HEADLESS by construction: a trigger's run, a subagent, an Unattended loop's sessions, a caller
+    from outside the dashboard, a webhook's turn, a Home tile's refresh, an app's own work, a
+    sessionless dispatch, and every other kind ``session_keys`` marks unattended.
 
     The answer is :func:`personalclaw.session_keys.is_unattended`, which also reads a kind's
     dashboard-wrapped provider form where its work runs as a dashboard chat, so the posture does not
-    depend on which layer is asking. A chat's own name is watched.
+    depend on which layer is asking, and reads a loop's Mode for its sessions. A chat's own name is
+    watched, and so is an Attended loop's session.
     """
     return session_keys.is_unattended(session_key)
 

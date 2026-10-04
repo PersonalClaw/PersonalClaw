@@ -239,14 +239,12 @@ class TestChatSessionsListMerge:
         state = _make_state(tmp_path)
         log = state.conversation_log
         log.append("dashboard:loop-abc123", "user", "worker noise")
-        log.append("dashboard:campaign-def456", "user", "worker noise")
         log.append("dashboard:real_chat", "user", "real conversation")
         async with TestClient(TestServer(_make_app(state))) as client:
             data = await (await client.get("/api/chat/sessions")).json()
             by_key = {s["key"]: s for s in data}
             assert by_key["real_chat"]["origin"] == "manual"
             assert by_key["loop-abc123"]["origin"] == "loop"
-            assert by_key["campaign-def456"]["origin"] == "campaign"
 
     @pytest.mark.asyncio
     async def test_in_memory_session_not_duplicated(self, tmp_path, monkeypatch):
@@ -262,7 +260,7 @@ class TestChatSessionsListMerge:
 
     @pytest.mark.asyncio
     async def test_list_tags_in_memory_worker_sessions_by_origin(self, tmp_path, monkeypatch):
-        """A loop/campaign worker session live IN MEMORY is surfaced with a non-manual
+        """A loop's worker session live IN MEMORY is surfaced with a non-manual
         origin too (same include-and-tag contract as the disk branch), so the UI can
         filter it out — it is not dropped server-side."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)

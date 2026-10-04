@@ -639,10 +639,10 @@ class TestRuntimeDisplayName:
         "session_key, expected_runtime",
         [
             ("dashboard:chat-1-100", "PersonalClaw dashboard"),
-            ("dashboard_chat-1-100", "PersonalClaw dashboard"),
             ("cron:daily", "PersonalClaw cron job"),
-            ("cron_076ab486", "PersonalClaw cron job"),
             ("subagent:abc-123", "PersonalClaw subagent"),
+            ("room:pricing:analyst", "PersonalClaw agent room"),
+            ("workflow:r-1:review", "PersonalClaw workflow step"),
             ("1234567890.123456", "messaging channel"),
         ],
     )
@@ -650,6 +650,18 @@ class TestRuntimeDisplayName:
         from personalclaw.context import _runtime_display_name
 
         assert _runtime_display_name(session_key) == expected_runtime
+
+    @pytest.mark.parametrize(
+        "session_key",
+        ["dashboard:chat-1-100", "cron:daily", "subagent:abc-123", "workflow:r-1:review", "C0:1"],
+    )
+    def test_the_runtime_is_the_interface_the_security_log_names(self, session_key):
+        """The model is told the runtime the audit log records the work under, so the two agree:
+        a workflow step's model was told it ran in a messaging channel."""
+        from personalclaw.context import _RUNTIME_DISPLAY, _runtime_display_name
+        from personalclaw.sel import _infer_source
+
+        assert _runtime_display_name(session_key) == _RUNTIME_DISPLAY[_infer_source(session_key)]
 
     def test_agent_identity_injected_with_session_key(self, tmp_path):
         """build_session_context injects [CURRENT AGENT] and [RUNTIME] when session_key is provided."""  # noqa: E501

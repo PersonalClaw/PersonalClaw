@@ -18,6 +18,14 @@ by :func:`frame`, so none of them can run looser than the Mode its loop was star
 A Mode that cannot be read — no loop, or an ``attended`` that is neither ``True`` nor ``False`` —
 is the cautious reading of both halves: its sessions ask a person, and their spend still counts
 against the cap.
+
+Every check of whether anybody watches a piece of work reads the Mode too, by the key the work
+runs under (:func:`unattended_by_key`, which ``session_keys.is_unattended`` asks for a loop's
+sessions): an Unattended loop's sessions are refused a command that would stop or restart
+PersonalClaw, resolve the safety profile of work nobody watches and are held to the autonomy
+ladder's ceiling for it, as a scheduled job's are, and an Attended loop's are judged as a chat
+someone is in. There the cautious reading of a Mode that cannot be read is the other one: nobody is
+watching.
 """
 
 from __future__ import annotations
@@ -59,6 +67,33 @@ def of(loop: Any) -> Posture:
         mode,
     )
     return UNREADABLE
+
+
+def unattended_by_key(key: str) -> bool:
+    """Whether nobody watches the work of the loop session *key* (its stage worker's, a task
+    worker's or its planner's, bare), by its loop's Mode read from the store now: ``False`` for an
+    Attended loop, ``True`` for an Unattended one.
+
+    A key that names no loop, a loop that is gone and a store that cannot be read are all judged
+    unattended. Each check that asks this (the self-stop rule, the safety profile, the autonomy
+    ladder's ceiling, the rules a subagent's report is handed back under, the check of an agent
+    CLI's adapter) is stricter for work nobody watches, so that is the cautious reading here."""
+    from personalclaw.loop import store
+    from personalclaw.loop.manager import session_loop
+
+    loop_id = session_loop(key)
+    if not loop_id:
+        return True
+    try:
+        loop = store.get(loop_id)
+    except Exception:
+        logger.warning(
+            "loop %s: its Mode could not be read, so its work is judged unattended",
+            loop_id,
+            exc_info=True,
+        )
+        return True
+    return getattr(loop, "attended", None) is not True
 
 
 def arm(session: Any, posture: Posture, *, granted: bool = False) -> None:

@@ -97,14 +97,6 @@ _MAX_POOL = 10
 # prevents replenishment when the live process count is already high.
 _MAX_POOL_PROCESSES = 150
 
-# Goal loop worker sessions are HEADLESS (no UI tab) and long-running — a single
-# cycle can fan out to subagents and run well past the idle-sweep window. They
-# are NOT dashboard chat tabs, so the "tab closed → orphan" heuristic must never
-# reap them; their lifecycle is owned by the loop watchdog (unresponsive /
-# loop-exhaustion), not the idle sweep. Reaping one mid-turn kills the in-flight
-# cycle (and its subagents) before it can record a finding.
-_LOOP_WORKER_PREFIX = session_keys.DASHBOARD.key(session_keys.LOOP.prefix)
-
 
 # Context usage at which a turn's log line is a warning. Compaction itself happens at the
 # Settings threshold, `context_compaction.autocompact_pct()`.
@@ -2219,10 +2211,14 @@ class SessionManager:
             for key, sess in self._sessions.items():
                 if session_keys.CHANNEL.names(key):
                     continue
-                # Goal loop workers are headless + supervised by the watchdog;
-                # never idle/orphan-reap them (a long cycle would be killed
-                # mid-turn). The watchdog ends them deterministically instead.
-                if key.startswith(_LOOP_WORKER_PREFIX):
+                # A loop's own sessions (its workers and its planner) are headless and
+                # long-running: a single cycle can fan out to subagents and run well past the
+                # idle-sweep window. They are not dashboard chat tabs, so the "tab closed →
+                # orphan" heuristic must never reap them, and an idle sweep must not either: their
+                # lifecycle is the loop watchdog's (unresponsive / loop-exhaustion), and reaping
+                # one mid-turn kills the cycle in flight (and its subagents) before it can record a
+                # finding.
+                if session_keys.is_loop_work(key):
                     continue
                 total_checked += 1
                 # A turn holds this runtime. It is not idle, and it ends by its own bounds (the
@@ -2232,7 +2228,9 @@ class SessionManager:
                 if sess.semaphore.locked():
                     continue
                 idle = now - sess.last_used > timeout_secs
-                orphaned = key.startswith("dashboard:") and chats is not None and key not in chats
+                orphaned = (
+                    session_keys.DASHBOARD.names(key) and chats is not None and key not in chats
+                )
                 if idle or orphaned:
                     expired.append((key, sess, sess.last_used, orphaned))
         if expired:

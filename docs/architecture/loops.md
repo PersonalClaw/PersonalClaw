@@ -347,6 +347,15 @@ created without one, a row the store cannot read) is the cautious reading of bot
 sessions ask a person, and their spend still counts against the cap. A loop created with no Mode
 (`POST /api/loops` without `attended`, an agent's `code_project_create`) is Attended.
 
+Every check of whether anybody watches a piece of work reads the Mode too, by the key the work runs
+under (`posture.unattended_by_key`, which `session_keys.is_unattended` asks for a loop's session in
+either form: `loop-<id>`, and `dashboard:loop-<id>`, which its tools run under). An Unattended loop's
+sessions are refused a command that would stop or restart PersonalClaw, resolve the headless safety
+profile and are held to the autonomy ladder's ceiling for work nobody watches, and a subagent one
+started reports back under the rules for a parent nobody watches, as a scheduled job's does. An
+Attended loop's sessions are judged watched. A key whose loop is gone, or whose Mode cannot be read,
+is judged unattended: for these checks that is the cautious reading.
+
 - **Attended.** A session's call that needs approval goes through the same path a chat's does
   (`approval_state._hold_approval`): the card on the loop's page (`LoopApprovals`, in the loop, code
   and design cockpits and in the planning walkthrough), the bell and Inbox row, a phone push and the
