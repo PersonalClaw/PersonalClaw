@@ -48,6 +48,7 @@ _ONE_MACHINES = {
     "crons": {"jobs": []},
     "event_triggers": {"triggers": []},
     "autonudge": {"loops": {}},
+    "digest_channels": {"version": 1, "channels": {"slack": {"channel": "D1", "run_id": "r-1"}}},
 }
 
 

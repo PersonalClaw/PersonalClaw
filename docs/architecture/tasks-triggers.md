@@ -537,7 +537,8 @@ configuration is: restored whole or not at all, and left as they are by a pull.
 budget caps count (`spend.json`), its tool counters (`tool_usage.json`), its
 context-savings ledger (`tokenjuice_savings.json`), when its own backups and
 syncs last ran (`durability_state.json`), which due-date notices it sent
-(`task_due_notices.json`), and the legacy files each home imports once
+(`task_due_notices.json`), which Morning triage digest each chat channel's DM
+last received (`digest_channels.json`), and the legacy files each home imports once
 (`crons.json`, `event_triggers.json`, `autonudge.json`) are `machine_local`: a
 snapshot and a backup carry them, a sync never does, a pull leaves this
 machine's as they are even from a peer that still sends one, and the review
