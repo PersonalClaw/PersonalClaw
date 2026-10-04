@@ -283,13 +283,48 @@ same list:
 (active → stale → archived); an archived skill stays on disk but is kept off the
 turn index. `--dry-run` reports without writing.
 
+A skill you bring over from another tool (onboarding's **Bring your setup over**)
+goes through the same supply-chain scan as a marketplace install and lands under
+`imported/<source>/<name>/`, with the lock its install recorded.
+
+## Changes the system proposes
+
+The system proposes changes to your library and never makes one itself. A turn that
+used a skill and still went wrong (you corrected it, a step failed and had to be
+retried, or you declined an action the skill asked for) files a proposal to refine
+that skill, and the after-turn review can propose a refinement or a new skill too.
+Both run while `learning.skill_ladder` is on, which it is by default. A proposal waits
+in **Skills → Proposals** and as a row in your Inbox until you answer it, on either:
+answering it on one answers it on the other, and dismissing its Inbox row rejects it.
+
+Any skill in your library can be refined, whatever folder holds it: one you wrote, an
+imported one under `imported/<source>/`, or an auto-created one under `auto/`. A
+refinement's review shows the diff that accepting it makes. Accepting adds the
+refinement beside the skill as an overlay, merged onto the skill when it loads, so
+the skill's own files are never rewritten: an imported or installed skill still
+matches its lock, and reverting the refinement deletes one file. If the skill was
+removed after the proposal was filed, accepting adds the refinement as a new skill
+under `auto/` instead, as its review says. Rejecting changes nothing.
+
+While a proposal about a skill waits for you, no second one about that skill is
+filed, and a skill takes at most one refinement in any 24 hours.
+
+Each proposal is one file in `~/.personalclaw/skills/.proposals/`, named from the
+skill's name in lowercase letters, digits and hyphens, plus a digest; the skill's own
+name is kept inside it. Earlier versions named a proposal about a skill in a folder
+after the folder's path, which put it where the queue never looked: the first read of
+the queue moves such a proposal into it, and its Inbox row follows.
+
 ## Where things live
 
 | Path | What |
 |---|---|
 | `~/.personalclaw/skills/<key>/SKILL.md` | Your library — and where bundled/project skills are synced to |
+| `~/.personalclaw/skills/imported/<source>/<name>/SKILL.md` | A skill imported from another tool, with its install lock |
 | `~/.agents/skills/<key>/SKILL.md` | Cross-client directory, read only once you allow it; never written |
 | `~/.personalclaw/agents/<agent>/skills/<key>/SKILL.md` | One agent's private override |
+| `~/.personalclaw/skills/.proposals/<id>.json` | Proposals waiting for your review |
+| `~/.personalclaw/skills/.overlays/<key>.json` | Accepted refinements, merged onto the skill `<key>` when it loads |
 | `~/.personalclaw/skills/.skill_embeddings.json` | Description embeddings, keyed by the text embedded and the model, filled in the background |
 
 Nothing here rewrites a `SKILL.md`. Refinements ride as a sidecar overlay merged

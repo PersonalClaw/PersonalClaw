@@ -757,7 +757,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/skills/proposals` — the pending autonomous-synthesis proposals
 - `DELETE /api/skills/proposals/{id}` — drop a proposal (never installed).
 - `GET /api/skills/proposals/{id}` — full proposal incl. procedure + fenced source.
-- `POST /api/skills/proposals/{id}/accept` — install into the live auto/ tier
+- `POST /api/skills/proposals/{id}/accept` — refine the skill it names, or add it as a skill.
 - `GET /api/skills/search` — search across all registered skill providers.
 - `DELETE /api/skills/{name}` — remove a skill installed in the home.
 - `GET /api/skills/{name}` — get or update a skill. (Listing is served by

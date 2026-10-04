@@ -911,8 +911,12 @@ async def api_skill_proposal_detail(request: web.Request) -> web.Response:
 
 
 async def api_skill_proposal_accept(request: web.Request) -> web.Response:
-    """POST /api/skills/proposals/{id}/accept — install into the live auto/ tier
-    (with optional reviewer edits) + clear the proposal."""
+    """POST /api/skills/proposals/{id}/accept — refine the skill it names, or add it as a skill.
+
+    A refinement rides beside the skill it names as an overlay, whatever folder holds the skill,
+    and leaves the skill's own files (an imported skill's lock among them) as they were; a new
+    skill, or a refinement whose skill was removed since, is added under ``auto/``. Optional
+    reviewer edits apply either way, and the proposal leaves the queue."""
     from personalclaw.skills import proposals
 
     pid = request.match_info.get("id", "")

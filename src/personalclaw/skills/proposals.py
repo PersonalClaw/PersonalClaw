@@ -9,7 +9,9 @@ runs until a person approves it.
 A proposal is a JSON record under ``~/.personalclaw/skills/.proposals/<id>.json``
 carrying the synthesized skill (slug/description/triggers/procedure) + provenance +
 a **fenced** excerpt of the source trace (so the reviewer sees what drove it without
-that text being executable if it's ever re-fed to a model). Accept installs the
+that text being executable if it's ever re-fed to a model). The id names that one file
+whatever the skill is called (:func:`_make_id`); the skill's own name, slashes and all,
+stays on the record. Accept installs the
 proposal — a ``kind="new"`` proposal via the auto-skill writer, a ``kind="refine"``
 proposal as a SIDECAR OVERLAY on its named target skill (``overlays.py``; the base
 ``SKILL.md`` is never rewritten, so a locked skill stays verifiable and revert is a
@@ -20,16 +22,18 @@ path (by design).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
-from personalclaw.record_ids import record_path
+from personalclaw.record_ids import is_safe_record_id, record_path
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,12 @@ _PROPOSALS_DIRNAME = ".proposals"
 _SOURCE_EXCERPT_MAX = 4_000
 # Per-source cap so a chatty source can't flood the queue (mirrors evolution.py).
 _MAX_PENDING = 100
+#: The readable half of a proposal id is at most this long. The digest after it is what makes the
+#: id unique; the label only has to say which skill a file in the folder is about.
+_ID_LABEL_MAX = 48
+#: An id as the store minted it before ids were built for the folder: the slug itself, a hyphen,
+#: and twelve hex digits of digest (:func:`_successor`).
+_OLD_ID = re.compile(r"(?P<slug>.+)-(?P<digest>[0-9a-f]{12})", re.DOTALL)
 
 
 def _proposals_dir() -> Path:
@@ -162,9 +172,48 @@ class SkillProposal:
         }
 
 
+def _id_label(slug: str) -> str:
+    """The readable half of a proposal id: *slug* in lowercase letters, digits and hyphens.
+
+    Built from that allowlist, never by removing what is unsafe, so no spelling of a name can
+    bring a separator, a parent-folder segment or a drive into the id.
+    """
+    label = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")[:_ID_LABEL_MAX].rstrip("-")
+    return label or "proposal"
+
+
 def _make_id(slug: str, session_key: str, created_at: str) -> str:
+    """The id of a proposal for *slug*: the name of one file, directly in the proposals folder.
+
+    *slug* is a skill's name, or a model's choice of one, and a skill is named by its folder in
+    the library: ``imported/<source>/<name>`` for an imported skill, ``auto/<name>``, any folder
+    a user made, in any characters. The id was the slug itself with the digest on the end, so a
+    refinement of most skills got an id with slashes in it: the record went into a subfolder the
+    listing never reads, the routes refused the id, and the anti-flood rail, which reads the same
+    listing, filed the next stumble beside it. The name stays on the record (``slug``,
+    ``refine_target``); the id only has to be unique, and to name a file.
+
+    The digest covers the whole slug, so two names that read the same once flattened (``a/b`` and
+    ``a-b``) still get two ids.
+    """
     h = hashlib.sha1(f"{slug}|{session_key}|{created_at}".encode("utf-8")).hexdigest()[:12]
-    return f"{slug}-{h}"
+    return f"{_id_label(slug)}-{h}"
+
+
+def _successor(old_id: object) -> str:
+    """The id a proposal the store filed as *old_id* has now, or ``""`` when *old_id* is an id
+    of today's shape, or not one the store ever minted.
+
+    Only an id :func:`_make_id` used to mint and the store can no longer address qualifies: the
+    slug, a hyphen and the twelve-digit digest, unsafe as a record id because of what the slug
+    held. The successor keeps that digest, so it is :func:`_make_id`'s value for the same
+    proposal: a re-filing of it after the move is the same record, not a second one. A function
+    of the old id alone, because that is all an Inbox row holds of its proposal.
+    """
+    if not isinstance(old_id, str) or is_safe_record_id(old_id):
+        return ""
+    old = _OLD_ID.fullmatch(old_id)
+    return f"{_id_label(old['slug'])}-{old['digest']}" if old else ""
 
 
 # ── which skill is a proposal ABOUT ───────────────────────────────────────────
@@ -214,20 +263,42 @@ def accept_target(prop: SkillProposal, *, resolves=None) -> str:
     probe = resolves or _live_resolver()
     if prop.kind == "refine" and prop.refine_target and probe(prop.refine_target):
         return prop.refine_target
-    implied = f"{AUTO_SKILL_NAMESPACE}/{prop.slug}"
-    return implied if probe(implied) else ""
+    own = _own_slug(prop)
+    implied = f"{AUTO_SKILL_NAMESPACE}/{own}"
+    return implied if own and probe(implied) else ""
+
+
+def _own_slug(prop: SkillProposal) -> str:
+    """The slug of the ``auto/`` skill *prop* names as the user's own, or ``""`` when its slug
+    holds nothing the auto namespace can spell.
+
+    It is what :func:`accept_target` overlays when no installed skill takes *prop* as a
+    refinement, and what :func:`accept` creates when that skill does not exist either. A
+    refinement's slug is its skill's whole name (``imported/<source>/<name>``, ``auto/<name>``)
+    and a new skill's is a model's choice, while ``create_auto_skill`` takes one lowercase
+    segment, so a refinement whose skill had since been removed — which the review surface says
+    accepting "would add as a new skill instead" — could only fail. This is that new skill's
+    name: the slug in the namespace's alphabet, without the ``auto/`` it may already carry, so a
+    deleted ``auto/`` skill comes back under its own name.
+    """
+    from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE, _auto_name_from_title
+
+    return _auto_name_from_title(prop.slug.removeprefix(f"{AUTO_SKILL_NAMESPACE}/"))
 
 
 def subject(prop: SkillProposal, *, resolves=None) -> str:
-    """The skill *prop* is about, resolvable or not — :func:`accept_target` or ``auto/<slug>``.
+    """The skill *prop* is about, resolvable or not — :func:`accept_target`, or the ``auto/``
+    skill accept would create (:func:`_own_slug`).
 
     Total where ``accept_target`` is partial, because the coalescing question ("is the user
     already being asked about this skill?") has an answer even for a slug nothing has
-    installed yet: two proposals to create the same new skill are still one review.
+    installed yet: two proposals to create the same new skill are still one review. A slug with
+    nothing the auto namespace can spell is its own subject.
     """
     from personalclaw.skills.loader import AUTO_SKILL_NAMESPACE
 
-    return accept_target(prop, resolves=resolves) or f"{AUTO_SKILL_NAMESPACE}/{prop.slug}"
+    own = _own_slug(prop) or prop.slug
+    return accept_target(prop, resolves=resolves) or f"{AUTO_SKILL_NAMESPACE}/{own}"
 
 
 #: How long an ACCEPTED refinement suppresses the next proposal for the same subject. A
@@ -358,7 +429,7 @@ def enqueue(
         logger.info("skill-proposal coalesced: dropping %r — %s", slug, reason)
         return None
     try:
-        atomic_write(d / f"{pid}.json", json.dumps(prop.to_dict(), indent=2))
+        atomic_write(_path(pid), json.dumps(prop.to_dict(), indent=2))
     except OSError:
         logger.debug("skill proposal write failed", exc_info=True)
         return None
@@ -481,6 +552,9 @@ def _load(pid: str) -> SkillProposal | None:
 def list_pending(*, _surface: bool = True) -> list[SkillProposal]:
     """All pending proposals, newest-first by created_at.
 
+    A record an older id put where the listing does not look is moved first
+    (:func:`_move_old_records`), in both modes, so the anti-flood rail sees it too.
+
     ``_surface=False`` skips the inbox backfill. Private-by-underscore because exactly one
     caller wants it: :func:`coalesce_reason` runs INSIDE :func:`enqueue`, and surfacing rows
     from the middle of an enqueue would raise inbox items for other proposals as a side effect
@@ -489,6 +563,7 @@ def list_pending(*, _surface: bool = True) -> list[SkillProposal]:
     d = _proposals_dir()
     if not d.is_dir():
         return []
+    _move_old_records(d)
     out: list[SkillProposal] = []
     for p in d.glob("*.json"):
         try:
@@ -501,6 +576,106 @@ def list_pending(*, _surface: bool = True) -> list[SkillProposal]:
     if _surface:
         backfill_inbox_items(out)
     return out
+
+
+def _move_old_records(d: Path) -> int:
+    """Move every record filed under an id the store cannot address to its :func:`_successor`,
+    directly in the folder. Returns how many moved.
+
+    An idempotent backfill keyed on what is on disk, run by the read path. Before ids were built
+    for the folder, a proposal about a namespaced skill was written at
+    ``.proposals/<namespace>/…/<name>-<digest>.json``, where no listing looks, and a slug with a
+    backslash or an over-long one gave a top-level record no route would open. Those are
+    proposals still waiting on the user, and nothing expires them, so they are moved rather than
+    left behind: each is rewritten under its successor id, the old file goes, and so do the
+    folders it leaves empty. A record is moved only from where the old store wrote it (the file's
+    path is its id), and a file that does not read as a proposal is left alone.
+
+    The successor is a function of the old id, so two readers moving the same record write the
+    same file, and a record whose old file cannot be removed is not left beside its twin: the
+    twin would outlive the user's decision on it and bring the proposal back.
+    """
+    moved = 0
+    emptied: set[Path] = set()
+    try:
+        found = sorted(d.rglob("*.json"))
+    except OSError:
+        logger.debug("skill proposals: could not walk %s", d, exc_info=True)
+        return 0
+    for old_file in found:
+        if old_file.parent == d and is_safe_record_id(old_file.stem):
+            continue
+        if old_file.is_symlink() or not old_file.is_file():
+            continue
+        try:
+            rec = SkillProposal(**json.loads(old_file.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            continue
+        new_id = _successor(rec.id)
+        if not new_id or old_file.relative_to(d).as_posix() != f"{rec.id}.json":
+            continue
+        old_id, rec.id = rec.id, new_id
+        target = _path(new_id)
+        try:
+            atomic_write(target, json.dumps(rec.to_dict(), indent=2))
+        except OSError:
+            logger.debug("skill proposal %r: could not write it as %s", old_id, new_id)
+            continue
+        try:
+            old_file.unlink()
+        except FileNotFoundError:
+            pass  # another reader moved it first
+        except OSError:
+            logger.debug("skill proposal %r: could not remove its old file", old_id)
+            with contextlib.suppress(OSError):
+                target.unlink()
+            continue
+        emptied.update(p for p in old_file.parents if d in p.parents)
+        moved += 1
+    for folder in sorted(emptied, key=lambda p: len(p.parts), reverse=True):
+        try:
+            folder.rmdir()
+        except OSError:
+            pass  # still holds something, which is not this backfill's to remove
+    if moved:
+        logger.info("moved %d skill proposal(s) to ids the store can address", moved)
+    return moved
+
+
+def _point_rows_at_moved_records(store: Any) -> list[Any]:
+    """Point every Inbox row that names its proposal by an old id at the id the record was moved
+    to (:func:`_successor`), its dedup key with it. Returns the rows it changed.
+
+    The row is the same request, so it keeps its place, its status and its one notification;
+    pointed at the moved record, it opens, accepts and rejects it like any other. Keyed on the
+    rows themselves, not on what :func:`_move_old_records` moved in this pass, so a row whose
+    record an earlier read moved is still found.
+    """
+    changed: list[Any] = []
+    for row in store.items.values():
+        old_id = row.refs.get("skill_proposal")
+        new_id = _successor(old_id)
+        if not new_id:
+            continue
+        row.refs["skill_proposal"] = new_id
+        if row.refs.get("dedup_key") == f"skill_proposal:{old_id}":
+            row.refs["dedup_key"] = f"skill_proposal:{new_id}"
+        changed.append(row)
+    return changed
+
+
+def _announce_rows(rows: list[Any]) -> None:
+    """Send each changed row to every open surface, as every other writer of a row does."""
+    state = _dashboard_state()
+    if state is None:
+        return
+    from personalclaw.inbox import redact_item
+
+    for row in rows:
+        try:
+            state.broadcast_ws("inbox_item_updated", redact_item(row.to_dict()))
+        except Exception:  # noqa: BLE001 — a surface missing a frame re-reads; the row is saved
+            logger.debug("proposal row %s: could not announce it", row.id, exc_info=True)
 
 
 def backfill_inbox_items(pending: "list[SkillProposal] | None" = None) -> int:
@@ -516,21 +691,14 @@ def backfill_inbox_items(pending: "list[SkillProposal] | None" = None) -> int:
     already resolved is deliberately skipped — re-creating an item for it would resurrect a
     decision they'd made.
 
+    A row that still names its proposal by an old id is pointed at the id the record was moved to
+    (:func:`_point_rows_at_moved_records`) before anything is surfaced, so the moved record is
+    found to have its row rather than given a second one.
+
     Runs from `list_pending()` (the read path both the skills page and the API use), so the
     first look at either surface after an upgrade is already correct.
     """
-    props = pending if pending is not None else []
-    if pending is None:
-        d = _proposals_dir()
-        if not d.is_dir():
-            return 0
-        for p in d.glob("*.json"):
-            try:
-                rec = SkillProposal(**json.loads(p.read_text(encoding="utf-8")))
-                if rec.status == "pending":
-                    props.append(rec)
-            except (OSError, ValueError, TypeError):
-                continue
+    props = pending if pending is not None else list_pending(_surface=False)
     if not props:
         return 0
 
@@ -539,6 +707,11 @@ def backfill_inbox_items(pending: "list[SkillProposal] | None" = None) -> int:
         # running service holds in memory, and the backfill would re-surface a duplicate for a
         # proposal that already has a live row.
         store = _inbox_store_for_write()
+        repointed = _point_rows_at_moved_records(store)
+        if repointed:
+            store.save()
+            _announce_rows(repointed)
+            logger.info("pointed %d inbox row(s) at their moved skill proposals", len(repointed))
         # Any item referencing the pid counts as "has one", INCLUDING a resolved one —
         # otherwise every read would re-raise items for proposals the user has answered.
         seen = {
@@ -677,10 +850,10 @@ def accept(
         logger.info("Accepted proposal %s → overlaid %s v%d", pid, target, version)
         return AcceptResult(target, version)
 
-    # ── nothing to refine: create a fresh auto/ skill ──
+    # ── nothing to refine: create a fresh auto/ skill, named as `accept_target` probed it ──
     prov = AutoSkillProvenance(session_key=prop.session_key, created_at=prop.created_at)
     created = loader.create_auto_skill(
-        prop.slug,
+        _own_slug(prop),
         description=eff_description,
         triggers=prop.triggers,
         procedure_md=eff_procedure,
