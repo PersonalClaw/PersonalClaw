@@ -30,12 +30,18 @@ Redaction still runs downstream. It is the backstop; this is the mechanism.
 
 ``global``  a credential in the store, usable by anything on this instance.
 ``project`` a credential in the SAME store under a namespaced key (:data:`PROJECT_KEY_PREFIX`),
-            scoped by convention to one project. There is deliberately **no second store and no
-            per-project index file**: namespacing the key means the keychain backend, the
-            ``.env`` 0600 floor, the union read, and — critically — the inventory's
-            ``secret=True`` projection into ``portability.EXPORT_EXCLUDE`` all apply to a project
-            secret for free. A sidecar index would have needed every one of those re-derived, and
-            the one that was missed would be the one that leaked.
+            read only by the runs of that one project: a run in the project reads its own secret
+            first and the global one of the same name second (:func:`reading_order`, applied by
+            ``llm.credentials.resolve_secret``), and nothing else reads it — not another project's
+            run, not an automation, a settings record or an app, and not by spelling its stored
+            key. It is never copied into the gateway's environment either
+            (``config.credentials.mirrored_into_the_environment``), which every child the gateway
+            starts inherits. There is deliberately **no second store and no per-project index
+            file**: namespacing the key means the keychain backend, the ``.env`` 0600 floor, the
+            union read, and — critically — the inventory's ``secret=True`` projection into
+            ``portability.EXPORT_EXCLUDE`` all apply to a project secret for free. A sidecar index
+            would have needed every one of those re-derived, and the one that was missed would be
+            the one that leaked.
 ``host``    a credential-shaped name present in the gateway's OWN environment that the vault does
             not hold and PersonalClaw did not set itself. **The value lives in the host
             environment, not in the vault**, so the vault
@@ -54,7 +60,9 @@ two shipped reference readers (``workflows.secrets.secret_keys_referenced`` and
 ``triggers.secrets.references``). A maintained ``secret → consumers`` table would be a count kept
 beside a table: it can disagree with the specs in two directions at once (a stale entry pointing
 at a deleted workflow, and a fresh reference nothing recorded), and neither is visible from the
-table alone. Derivation cannot drift from the thing it derives from.
+table alone. Derivation cannot drift from the thing it derives from. A global row lists every
+reference to its name; a project row lists the workflows, whose runs in that project read it, and
+no automation, since an automation runs in no project.
 """
 
 from __future__ import annotations
@@ -95,6 +103,24 @@ def is_reserved_key(key: str) -> bool:
     :data:`RESERVED_KEY_PREFIXES`). Reserved keys live in the credential store like any other, but
     the vault's read model omits them so they cannot be presented — or deleted — as user secrets."""
     return any(key.startswith(prefix) for prefix in RESERVED_KEY_PREFIXES)
+
+
+def is_project_key(key: str) -> bool:
+    """Whether *key* lies in the store's project namespace (:data:`PROJECT_KEY_PREFIX`).
+
+    By prefix, not by :func:`split_project_key`: a name that starts like a project's key is never a
+    name a secret is given or read by, decodable or not, so a global secret can never be mistaken
+    for a project one and a reference can never reach a project's secret by its stored key.
+    """
+    return key.startswith(PROJECT_KEY_PREFIX)
+
+
+def is_namespaced_key(key: str) -> bool:
+    """Whether *key* lies in a namespace the store keeps for keys nobody names by hand: a setting's
+    own key (:func:`is_reserved_key`) or a project's (:func:`is_project_key`). A secret is stored,
+    listed and read by its own name, and a name in one of these is refused wherever one is typed
+    (Settings → Secrets, ``setup --credential``, a connector pack)."""
+    return is_reserved_key(key) or is_project_key(key)
 
 
 #: Scope identifiers. Wire values as well as internal ones — one vocabulary, so the frontend's
@@ -150,6 +176,41 @@ def valid_project_id(project_id: str) -> bool:
     if not pid or PROJECT_KEY_SEP in pid:
         return False
     return not _BAD_PROJECT_ID_RE.search(pid)
+
+
+def reading_order(name: str, project_id: str = "") -> list[tuple[str, str]]:
+    """``(store key, scope)`` pairs a run of *project_id* reads *name* from, first match wins.
+
+    The ONE statement of the scope rule, by key name alone: a run in a project reads that
+    project's secret first and the global one second; a run with no project ("") reads only the
+    global one. A project id that could not have been used to store a secret
+    (:func:`valid_project_id`) holds none, so it reads as no project. Both
+    ``llm.credentials.resolve_secret`` (which reads the value) and :func:`stored_scope` (which
+    reads names only) walk this list, so the value a run is handed and the scope its record names
+    cannot disagree about the order.
+    """
+    order: list[tuple[str, str]] = []
+    if project_id and valid_project_id(project_id):
+        order.append((project_secret_key(project_id, name), SCOPE_PROJECT))
+    order.append((name, SCOPE_GLOBAL))
+    return order
+
+
+def stored_scope(name: str, project_id: str = "") -> str:
+    """Where a run of *project_id* reads the STORED secret *name* from, told from key names alone:
+    :data:`SCOPE_PROJECT`, :data:`SCOPE_GLOBAL`, or ``""`` when the store holds neither.
+
+    What a step that hands ``{{secret:NAME}}`` on to its agent records: the agent's shell fills it
+    from the store (``llm.credentials.resolve_secret`` with ``environment=False``) in this same
+    order, and recording it must not read the value the step never held.
+    """
+    from personalclaw.config.credentials import credential_names
+
+    held = set(credential_names())
+    for key, scope in reading_order(name, project_id):
+        if key in held:
+            return scope
+    return ""
 
 
 @dataclass(frozen=True)
@@ -277,7 +338,9 @@ def list_presence(
                 name=name,
                 scope=SCOPE_PROJECT,
                 project_id=owner,
-                consumers=consumer_map.get(key, ()),
+                # A reference names a secret by its own name, and a workflow's runs in this
+                # project read this row for it. An automation runs in no project: it never does.
+                consumers=tuple(c for c in consumer_map.get(name, ()) if c.kind == "workflow"),
             )
         )
 
@@ -364,8 +427,10 @@ async def consumers_for() -> dict[str, tuple[SecretConsumer, ...]]:
     the pattern could be correct on its own and still disagree with the resolver, which is the
     failure a derived index exists to make impossible.
 
-    Keyed by the STORE key, not the display name, so a project-scoped row and a global row of the
-    same name do not collide: a project secret's consumers are looked up under its namespaced key.
+    Keyed by the name a reference uses, which is a secret's own name in every scope: a reference
+    never spells a project's stored key (the resolver refuses one). :func:`list_presence` gives a
+    global row every consumer of its name, and a project row the workflows among them, whose runs
+    in that project read the project's secret instead.
 
     Never raises. A store that cannot be read yields fewer consumer links, which degrades the
     vault to "presence without provenance" — the security properties are unaffected, and refusing

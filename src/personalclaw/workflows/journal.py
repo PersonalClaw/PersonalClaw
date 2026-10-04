@@ -53,6 +53,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from personalclaw import secrets_vault
+
 # The vocabulary and the machinery are re-exported wholesale: 26 modules read these names off THIS
 # module, and the drift tests assert `journal.LEDGER_KINDS` by that path.
 from personalclaw.ledger import (  # noqa: F401 — re-exported for this module's importers
@@ -90,6 +92,7 @@ from personalclaw.ledger import (  # noqa: F401 — re-exported for this module'
     RUN_ABANDONED,
     RUN_FINISHED,
     RUN_STARTED,
+    SECRET_READ,
     SEEN_SET,
     STEERING,
     STEP_ATTEMPT,
@@ -120,6 +123,15 @@ from personalclaw.workflows.models import Failure, InstanceState
 
 if TYPE_CHECKING:
     from personalclaw.workflows.step_usage import StepUsage
+
+#: Where a step's secret came from, in the words its record shows (`Journal.secret_read`). Keyed
+#: through the module rather than by importing its constants: every upper-case string this module
+#: holds is read as a ledger kind (`tests/test_ledger_golden.py` sweeps them).
+_SCOPE_WORDS = {
+    secrets_vault.SCOPE_PROJECT: "this project's secrets",
+    secrets_vault.SCOPE_GLOBAL: "the global secrets",
+    secrets_vault.SCOPE_HOST: "the gateway's environment",
+}
 
 # ── hashing ──────────────────────────────────────────────────────────────────
 
@@ -184,6 +196,40 @@ class Journal(LedgerWriter):
             epoch=epoch,
             lane=lane,
             resolved_prompt_ref=resolved_prompt_ref,
+        )
+
+    def secret_read(
+        self, path: str, node_id: str, *, epoch: int, name: str, scope: str, handed_on: bool
+    ) -> None:
+        """A ``{{secret:NAME}}`` the step at *path* used, by its NAME and *scope*, never its value.
+
+        *handed_on* is a step that kept the reference as the name for its agent, where
+        PersonalClaw's bash tool fills it in: *scope* is then where that tool reads it from in
+        this run, and ``""`` when nothing holds it. ``rationale`` is the row's one line for a
+        reader (the runs surface shows it)."""
+        words = _SCOPE_WORDS.get(scope, "")
+        reference = "{{secret:" + name + "}}"
+        if not handed_on:
+            rationale = f"{reference} was filled in from {words}."
+        elif words:
+            rationale = (
+                f"{reference} went to the step's agent as a name; PersonalClaw's bash tool fills "
+                f"it in from {words}."
+            )
+        else:
+            rationale = (
+                f"{reference} went to the step's agent as a name; no secret by that name is "
+                "stored, so PersonalClaw's bash tool refuses a command that uses it."
+            )
+        self.write(
+            SECRET_READ,
+            instance_path=path,
+            node_id=node_id,
+            epoch=epoch,
+            name=name,
+            scope=scope,
+            handed_on=handed_on,
+            rationale=rationale,
         )
 
     def step_completed(

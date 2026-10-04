@@ -15,6 +15,7 @@ const doc: UiDoc = {
     { name: 'emptyLabel', description: "Label for the empty (\"\") option (default 'New project'). Chat passes 'No project' since an unbound chat scopes to nothing — same component, no dual path." },
     { name: 'emptyHint', description: "Muted suffix beside the empty-option label (default '(auto-named)') explaining the backend auto-create behavior." },
     { name: 'openSignal', description: 'Monotonic counter — each increment opens the picker (drives the "/project" slash command); mount / 0 ignored.' },
+    { name: 'align', description: "Which edge of the trigger the menu lines up with (default 'left'), as Popover's align: 'right' for a picker at the right of a row, such as a settings row's control, whose menu would otherwise run off the page." },
   ],
   bestPractices: [
     { guidance: true, description: 'Drive it controlled: pass the project id as value and thread the onChange id into the create payload as `project_id`; treat `\'\'` as auto/new.' },

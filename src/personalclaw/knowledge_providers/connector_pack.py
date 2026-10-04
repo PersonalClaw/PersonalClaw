@@ -144,11 +144,11 @@ def _default_secret(name: str) -> str:
     """Resolve ``name`` from the credential store Settings → Secrets writes, or raise. Never
     returns a blank."""
     from personalclaw.config.loader import config_dir
-    from personalclaw.llm.credentials import CredentialStore, OwnedCredentialRefused
+    from personalclaw.llm.credentials import CredentialStore, SecretNameRefused
 
     try:
         cred = CredentialStore(config_dir()).resolve(name)
-    except OwnedCredentialRefused as refused:
+    except SecretNameRefused as refused:
         raise PackConfigError(str(refused)) from None
     except KeyError as exc:
         raise PackConfigError(

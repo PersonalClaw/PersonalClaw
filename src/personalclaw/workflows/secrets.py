@@ -6,9 +6,9 @@ Ledger the flywheel later reads, and rendered in a UI. A token inline in a spec 
 token leaked to all of those at once.
 
 So credentials are never IN a spec — a spec carries `{{secret:KEY}}`, resolved
-server-side at dispatch against the credential store (`bindings.py` owns the resolution;
-`node_bindings._secret_resolver` is the injected seam). This module owns the three
-surrounding disciplines:
+server-side at dispatch against the credential store, the run's project's secret first
+(`bindings.py` owns the resolution; `node_bindings._secrets_for` is the injected seam). This
+module owns the three surrounding disciplines:
 
 * **Presence, not value, on read.** `strip_secrets` replaces a secret-bearing field with
   a boolean `_has*` flag, so a GET can render "an API key is set" without shipping it.

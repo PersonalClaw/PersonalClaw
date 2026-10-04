@@ -534,6 +534,10 @@ class SubagentInfo:
     held_back: str = ""
     # The calls its owner declined (`declined_calls.declined_step`), hers, not refusals. Last.
     declined_calls: list[dict[str, Any]] = field(default_factory=list)
+    # The project its work belongs to (`ActionContext.project_id`, from its run's record), or "".
+    # Its session is that project's: its shell fills `{{secret:NAME}}` from the project's secrets
+    # first. Last, for the reason `trigger_id` is.
+    project_id: str = ""
 
 
 # Delivery callback: a BATCH of completed subagents that all share one
@@ -1165,6 +1169,7 @@ class SubagentManager:
         may_change: tuple[str, ...] = (),
         app: str = "",
         held_back: str = "",
+        project_id: str = "",
     ) -> SubagentInfo | None:
         """Spawn a subagent for *task*.
 
@@ -1221,6 +1226,9 @@ class SubagentManager:
                 ask again, within the time limit a subagent is given (:meth:`_spawn_grant`).
             app (str): The app whose ``agent`` permission starts this run (``subagent_tier``).
             held_back (str): Why it may do less than its step asks (``AgentRunPolicy.held_back``).
+            project_id (str): The project its work belongs to — a workflow step's run's, from the
+                run's record (``ActionContext.project_id``) — or "" for none. Its session is that
+                project's (``subagent_session.session_kwargs``).
 
         Returns:
             SubagentInfo | None: Agent metadata, or None if at capacity.
@@ -1417,6 +1425,7 @@ class SubagentManager:
             may_change=tuple(may_change),
             app=app,
             held_back=held_back or "",
+            project_id=project_id or "",
         )
         info._raw_task = task  # masked by `redact_for_model` when the prompt is composed
         # It keeps what its parent keeps, and reads what its parent reads.

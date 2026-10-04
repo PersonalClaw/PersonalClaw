@@ -768,12 +768,12 @@ def test_the_spawn_path_WRITES_the_flags_the_seam_reads(monkeypatch):
     from personalclaw.workflows.models import Node, NodeKind
 
     node = Node(kind=NodeKind.STAGE, id="cache_0", config={})
-    env = leaf_spawn_env(node, {"capability": "research"}, run_id="r1", depth=0)
+    env = leaf_spawn_env(node, {"capability": "research"}, run_id="r1", project_id="", depth=0)
     assert env[WF_DEPTH_KEY] == "1", "the child did not get a deeper depth than its parent"
     assert env[mcp_shared.LEAF_READ_ONLY_KEY] == "1"
     assert env["__wf_node_id"] == "cache_0"
 
-    mutating = leaf_spawn_env(node, {"capability": "mutating"}, run_id="r1", depth=0)
+    mutating = leaf_spawn_env(node, {"capability": "mutating"}, run_id="r1", project_id="", depth=0)
     assert mcp_shared.LEAF_READ_ONLY_KEY not in mutating
 
 

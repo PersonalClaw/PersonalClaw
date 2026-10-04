@@ -74,7 +74,9 @@ class _OneCall:
 def _stage_env(capability: str = "mutating") -> dict[str, str]:
     """The env a stage of run :data:`RUN` is spawned with, from the engine's own builder."""
     node = Node.from_dict({"kind": "stage", "id": "check", "config": {"prompt": "x"}})
-    return leaf_spawn_env(node, {"prompt": "x", "capability": capability}, run_id=RUN, depth=0)
+    return leaf_spawn_env(
+        node, {"prompt": "x", "capability": capability}, run_id=RUN, project_id="", depth=0
+    )
 
 
 async def _native_turn(

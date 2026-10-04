@@ -818,11 +818,12 @@ async def start_run(
 
     # Run-start preflight: credentials, binaries, models and action providers.
     # Blocking here rather than degrading at node 7, which has already paid for six nodes.
-    # `skip_preflight` exists for a deliberate override, and says so in the response.
+    # `skip_preflight` exists for a deliberate override, and says so in the response. Its
+    # credentials are checked as the run's steps will read them, its project's own first.
     if not skip_preflight:
         from personalclaw.workflows.preflight import preflight as run_preflight
 
-        checks = run_preflight(spec)
+        checks = run_preflight(spec, project_id=project_id)
         if not checks.ok:
             return _service_failure(
                 "WF_RUN_PREFLIGHT_FAILED",

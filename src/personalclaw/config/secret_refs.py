@@ -139,8 +139,12 @@ class SecretOwner:
 
 
 def _core_holds(key: str) -> bool:
-    """Whether a core record may resolve ``key``: it is no app's, and no MCP server's."""
-    return not key.startswith((*_APP_KEY_PREFIXES, _MCP_OWNED_PREFIX))
+    """Whether a core record may resolve ``key``: it is no app's, no MCP server's, and no
+    project's. A project's secret is read only by that project's runs (``secrets_vault``), and a
+    settings record is no run of any project, so its name reads the global secret instead."""
+    from personalclaw.secrets_vault import is_project_key
+
+    return not key.startswith((*_APP_KEY_PREFIXES, _MCP_OWNED_PREFIX)) and not is_project_key(key)
 
 
 def _app_part(app: str) -> str:
@@ -220,10 +224,14 @@ def _app_label(app: str) -> str:
 def _where_it_lives(key: str, owner: SecretOwner) -> str:
     """Whose ``key`` is, as the person reading the refusal knows it — a place, never a value.
     "A different owner" alone reads as nonsense to someone who stored the key themselves."""
+    from personalclaw.secrets_vault import is_project_key
+
     if key.startswith(_APP_KEY_PREFIXES):
         return "another app's credential" if owner.app is not None else "an app's credential"
     if key.startswith(_MCP_OWNED_PREFIX):
         return "another MCP server's credential"
+    if is_project_key(key):
+        return "a project's own secret, which only that project's runs read"
     if key.startswith(OWNED_KEY_PREFIX):
         return "a credential of PersonalClaw's own settings"
     return "a credential in Settings → Secrets"

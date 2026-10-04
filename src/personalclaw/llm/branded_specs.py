@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.llm.build_kwargs import output_cap, per_call_temperature
 from personalclaw.llm.capabilities import Capability
-from personalclaw.llm.credentials import Credential, OwnedCredentialRefused
+from personalclaw.llm.credentials import Credential, SecretNameRefused
 from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import CredentialMissing, ProviderEntry
 from personalclaw.llm.subscription_credentials import resolve_subscription_credential
@@ -205,7 +205,7 @@ def resolve_credential(entry: ProviderEntry, kwargs: dict, *, label: str) -> Cre
         )
     try:
         cred = store.resolve(entry.credential)  # type: ignore[attr-defined]
-    except OwnedCredentialRefused as refused:
+    except SecretNameRefused as refused:
         raise CredentialMissing(f"{label}: {refused}") from None
     except KeyError:
         cred = None

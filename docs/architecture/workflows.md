@@ -335,17 +335,35 @@ definition (a `{{nodes.…}}` id, a field of another step's output, a loop root,
 and is `internal`, since whoever pressed Run did not write it. Neither is retryable. A
 secret the credential store does not hold is refused, never substituted: the store
 answers "" for a missing key, and a request carrying it fails at its receiver with
-nothing naming the key. The store is the one Settings → Secrets writes
-(`llm/credentials.py` `CredentialStore`, reading `config/credentials.py`). An owned
-`PCSECRET_…` key, which belongs to a provider's or an app's own setting, is refused by
-name with the reason, so a step cannot read another record's key.
+nothing naming the key. The store is the one Settings → Secrets writes, read through one
+resolver (`llm/credentials.py` `resolve_secret`, reading `config/credentials.py`). **A run
+that belongs to a project reads that project's secret first** (Settings → Secrets keeps it in
+the same store under the project's own key) **and the global secret of the same name
+second; a run with no project reads only the global one** (`secrets_vault.reading_order`).
+Nothing reads a project's secret by its stored key: an owned `PCSECRET_…` key, which belongs
+to a provider's or an app's own setting, and a project's `PCPROJ_…` key are both refused by
+name with the reason, so a step cannot read another record's key or another project's
+secret. A project's secret is never copied into the gateway's environment, which every child
+the gateway starts inherits.
 
 A `{{secret:KEY}}` is filled in only where the step runs its config itself. A step whose
 config is text for a model (a `stage`, `infer` or `visualize` step, and an `action` whose
 provider's action is a model turn, `ActionProvider.hands_config_to_a_model`) keeps the
-reference as the name (`node_bindings._reference_kept`): filled in there, the value would be
-in the model's context. A stage's agent uses the name in a command, and its `bash` tool fills
-it in as the command runs.
+reference as the name (`node_bindings._secrets_for`): filled in there, the value would be
+in the model's context. A stage's agent uses the name in a command, and PersonalClaw's `bash`
+tool fills it in as the command runs, with the run's project: the stage's lineage carries it
+(`engine.leaf_spawn_env`, from the run's record). The agent an Invoke Agent or Run Prompt step
+starts works for the run's project the same way: the engine sets `ActionContext.project_id`
+from the run's record, never from the step's config, and the provider starts its agent with it
+(`SubagentManager.spawn(project_id=…)`), so that agent's session is the project's.
+
+Each secret a step uses goes on the run's record as a `secret_read` ledger row: the secret's
+name and where it came from (this project's secrets, the global ones, or the gateway's
+environment) — for a stage, an Invoke Agent or a Run Prompt step, which hands the reference
+on, where PersonalClaw's `bash` tool reads it in that agent — and a one-line `rationale` the
+run's node inspector shows. Never the value. A reference handed on to any other model (an
+`infer` step, a best-of-n sample, a second opinion) gets no row: nothing of the run's reads it
+there.
 
 Two asymmetries that are easy to get backwards:
 

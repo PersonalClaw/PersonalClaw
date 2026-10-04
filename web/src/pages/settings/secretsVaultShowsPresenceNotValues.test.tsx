@@ -87,7 +87,8 @@ async function mount(secrets: () => Promise<unknown>) {
   putSecret.mockReset().mockResolvedValue({ secret: {}, secrets: [] })
   deleteSecret.mockReset().mockResolvedValue({ deleted: '', project_id: '', secrets: [] })
   vi.doMock('../../ui/dialog', () => ({ confirm: vi.fn(async () => true) }))
-  vi.doMock('../../lib/api', () => ({ api: { secrets, putSecret, deleteSecret } }))
+  // `projects` names the per-project groups; an empty list names each by its id.
+  vi.doMock('../../lib/api', () => ({ api: { secrets, putSecret, deleteSecret, projects: async () => [] } }))
   const { SecretsPanel } = await import('./SecretsPanel')
   await act(async () => {
     render(<SecretsPanel />)
@@ -109,8 +110,8 @@ describe('a stored secret renders as presence, never as a value', () => {
     expect(screen.getByText('GITHUB_TOKEN')).toBeTruthy()
     expect(screen.getByText('DB_PASSWORD')).toBeTruthy()
     expect(screen.getAllByText(/^set$/i).length).toBe(2)
-    // The project row says whose it is.
-    expect(screen.getByText('proj-a')).toBeTruthy()
+    // The project row says whose it is: no project of that id is listed, and the page says so.
+    expect(screen.getByText('proj-a (not a current project)')).toBeTruthy()
   })
 
   it('says out loud when nothing references a secret', async () => {

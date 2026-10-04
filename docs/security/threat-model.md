@@ -407,9 +407,10 @@ Data leaving the running system:
   hidden value where it stands (`masked_edit`, `keep_masked_lines`): an edit keeps every stored
   byte outside the text it replaces, and a change that would move, copy or rewrite a hidden value
   is refused. A tool that needs a credential takes `{{secret:NAME}}`: `bash` fills in a credential
-  the owner stored in Settings → Secrets as the command runs (never the gateway's environment,
-  never a setting's own key) and masks every value it handed the command out of what the command
-  prints (`redact_known_values`). Text handed to a model keeps the reference as the name: a
+  the owner stored in Settings → Secrets as the command runs — the call's project's own secret
+  first, then the global one (`llm.credentials.resolve_secret`; never the gateway's environment,
+  never a setting's own key, never a project's secret by its stored key) — and masks every value
+  it handed the command out of what the command prints (`redact_known_values`). Text handed to a model keeps the reference as the name: a
   trigger whose action is a model turn (`ActionProvider.hands_config_to_a_model`) and a workflow's
   stage, infer and visualize steps do not fill it in, so the agent's tools do. What this cannot
   cover is in [limitations §11](limitations.md#11-what-reaches-a-model-is-masked-by-shape-and-an-agent-clis-own-tools-are-outside-it).

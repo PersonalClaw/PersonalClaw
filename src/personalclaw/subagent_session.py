@@ -40,6 +40,10 @@ def session_kwargs(info: SubagentInfo, *, unattended: bool) -> tuple[str | None,
     # the run previews what WOULD happen with no side effects.
     if info.dry_run:
         extra["dry_run"] = True
+    if info.project_id:
+        # The project its work belongs to: its session is that project's, so its shell fills a
+        # `{{secret:NAME}}` from that project's secrets first (`command_secrets.call_project`).
+        extra["project_id"] = info.project_id
     from personalclaw.workflows.provisioning import step_documents, step_reads
 
     if roots := [*info.may_read, *info.may_change, *step_documents(info.parent_run)]:

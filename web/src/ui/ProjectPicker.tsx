@@ -16,10 +16,13 @@ import { overlayEnter, physics } from '../design/motion'
  *  Controlled: `value` is the project id ("" = auto/new). Loads the project list
  *  lazily on first open so the create page paints instantly.
  */
-export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint, openSignal }: {
+export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint, openSignal, align = 'left' }: {
   value: string
   onChange: (projectId: string) => void
   disabled?: boolean
+  // Which edge of the trigger the menu lines up with, as `Popover`'s `align`: 'right' for a picker
+  // at the right of a row (a settings row's control), whose menu would otherwise run off the page.
+  align?: 'left' | 'right'
   // The label/hint for the empty ("") option. Defaults suit the loop create flow
   // (backend auto-creates a project from the task). Chat passes "No project" / no hint
   // since an unbound chat scopes to nothing — same component, no dual path.
@@ -131,8 +134,8 @@ export function ProjectPicker({ value, onChange, disabled, emptyLabel, emptyHint
           // so unlike a `role="menu"` it MUST carry a name — and this one had none.
           aria-label="Project"
           variants={overlayEnter} initial="initial" animate="animate" exit="exit"
-          style={{ transformOrigin: 'top left' }}
-          className="absolute z-30 mt-1 max-h-[300px] w-[240px] overflow-y-auto rounded-lg border border-outline-variant/50 bg-surface-container p-1 shadow-menu">
+          style={{ transformOrigin: align === 'right' ? 'top right' : 'top left' }}
+          className={`absolute z-30 mt-1 max-h-[300px] w-[240px] overflow-y-auto rounded-lg border border-outline-variant/50 bg-surface-container p-1 shadow-menu${align === 'right' ? ' right-0' : ''}`}>
           {/* The empty option. Loop flow: "New project (auto-named)" — backend names it
               from the goal/task. Chat passes emptyLabel="No project" (unbound). */}
           <button type="button" role="option" aria-selected={!value} tabIndex={tabIndexFor(0)}

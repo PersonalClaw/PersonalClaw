@@ -44,6 +44,13 @@ EFFECT = "effect"
 #: the mode was warn or reject — an escape a `warn` run continued past still has to be
 #: findable afterwards.
 STEP_SCOPE = "step_scope_violation"
+#: A `{{secret:NAME}}` a step used: its NAME and the scope it came from (this run's project, the
+#: global secrets, or the gateway's environment), or — for a stage, an Invoke Agent or a Run
+#: Prompt step, which hands the reference on to an agent working for the run — the scope
+#: PersonalClaw's bash tool reads it from there. Never the value. Without it a run in a project
+#: that silently read the global secret instead of its own looked exactly like one that read the
+#: right one.
+SECRET_READ = "secret_read"
 ITERATION = "iteration"
 USER_EDITED_MID_FLIGHT = "user_edited_mid_flight"
 #: A queued batch failed its TOCTOU re-verify (state moved under the preview). Journaled
@@ -212,6 +219,7 @@ LEDGER_KINDS = frozenset(
         GATE_REVISED,
         EFFECT,
         STEP_SCOPE,
+        SECRET_READ,
         MUTATION_REJECTED,
         INPUTS_STALE,
         ITERATION,

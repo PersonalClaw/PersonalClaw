@@ -805,6 +805,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "secret_absent": "No secret is stored under that name in the scope you asked for.",
     "secret_host_readonly": "That row is inherited from the host environment, so the vault "
     "cannot change or remove it — unset it where the gateway's environment is defined.",
+    # A name starting PCSECRET_ or PCPROJ_ is where the store keeps a setting's own key or a
+    # project's secret: storing or deleting one by name would reach a key another surface manages.
+    "secret_name_reserved": "Names starting with PCSECRET_ or PCPROJ_ are where PersonalClaw "
+    "keeps a setting's own key and a project's secrets — choose another name, and pick the "
+    "project to store a secret for one.",
     # ── user-authored inbox note (handlers_inbox.api_inbox_note_create) ──
     # Three codes rather than the generic `invalid_request`/`bad_request` pair, because the
     # compose surface branches on all three and each has a DIFFERENT next move: an empty

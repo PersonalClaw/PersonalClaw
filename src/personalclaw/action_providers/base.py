@@ -41,6 +41,12 @@ class ActionContext:
     to the agent's task. `fire_files` are the files the fire is about (the file that arrived),
     which that agent's file tools may read. Both are the dispatch's alone, out of `payload` for
     `answer`'s reason: third-party event data must not be able to spell them.
+    `project_id` is the project the workflow run this action is a step of belongs to, from the
+    run's record (``engine.dispatch_action`` sets it), or "" — a trigger's fire, a hook and a tile
+    run in no project. A provider that starts an agent hands it on
+    (`SubagentManager.spawn(project_id=…)`), so that agent's work is the project's: its shell fills
+    a ``{{secret:NAME}}`` from that project's secrets first. Out of `payload` for `answer`'s reason:
+    a step's config or an event must not be able to name another project.
     """
 
     event: str
@@ -51,6 +57,7 @@ class ActionContext:
     trigger_id: str = ""
     fire_facts: str = ""
     fire_files: tuple[str, ...] = ()
+    project_id: str = ""
 
 
 @dataclass

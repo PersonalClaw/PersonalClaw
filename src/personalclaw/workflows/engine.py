@@ -591,7 +591,9 @@ def stage_capability(cfg: dict[str, Any]) -> str:
     return "mutating" if posture == "full" else "research"
 
 
-def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) -> dict[str, str]:
+def leaf_spawn_env(
+    node: Node, cfg: dict[str, Any], *, run_id: str, project_id: str, depth: int
+) -> dict[str, str]:
     """The env one stage leaf runs with: lineage + capability posture, secret-filtered.
 
     Built here because this is where a leaf is actually spawned — the compiled `postures` block is
@@ -602,6 +604,11 @@ def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) 
     The child's depth is the parent's PLUS ONE: a leaf that inherited the parent's depth unchanged
     would let each level re-spend the same budget, and `depth_lint`'s static refusal of a nested
     batch would never trip.
+
+    *project_id* is the run's project, from the run's record (the controller passes it), never a
+    field of the step's config: the leaf's tools read it (`mcp_shared.leaf_value`) to know whose
+    work this is — the agent's shell fills a `{{secret:NAME}}` from this project's secrets first.
+    Required, with no default, so a spawn cannot quietly run as no project's.
     """
     from personalclaw.env import gateway_env
     from personalclaw.mcp_shared import LEAF_READ_ONLY_KEY, leaf_env
@@ -609,7 +616,7 @@ def leaf_spawn_env(node: Node, cfg: dict[str, Any], *, run_id: str, depth: int) 
 
     lineage = lineage_env(
         run_id=run_id,
-        project_id=str(cfg.get("project_id", "") or ""),
+        project_id=project_id,
         node_id=node.id or "",
         depth=int(depth) + 1,
     )
@@ -660,6 +667,9 @@ async def dispatch_stage(
     subagents: Any = None,
     depth: int = 0,
     run_id: str = "",
+    #: The run's project ("" for none), from its record: the stage's agent works for it
+    #: (`leaf_spawn_env`).
+    project_id: str = "",
     #: This instance's engine key (`root.body@2.children[1]`). The claim's target — see
     #: `claim_key` on why a node id is not one.
     instance_path: str = "",
@@ -848,7 +858,7 @@ async def dispatch_stage(
             # WRITER for the flags `mcp_shared.leaf_tool_denial` reads: without it the depth counter
             # and the read-only flag would never be set, and the handler seam would be a gate on a
             # value nobody writes — the exact inert-control shape this clause exists to close.
-            extra_env=leaf_spawn_env(node, cfg, run_id=run_id, depth=depth),
+            extra_env=leaf_spawn_env(node, cfg, run_id=run_id, project_id=project_id, depth=depth),
             request_key=request_key,
             # Her earlier Allow, only when it was for exactly this request.
             approved_at=approved_at if approved_request == request_key else 0.0,
@@ -1264,6 +1274,8 @@ async def dispatch_action(
         context=str(cfg.get("context", "") or ""),
         payload=payload,
         answer=answer,
+        # The run's project, from its record: an agent this step starts works for it.
+        project_id=project_id,
     )
     # 🔴 The action denylist, as a trigger's fire asks it: among its rules, a step that would stop
     # or replace the gateway its run lives in is refused (`guardrails.self_destruct`). A run is
@@ -2619,6 +2631,7 @@ async def _dispatch_inner(
             subagents=subagents,
             depth=depth,
             run_id=run_id,
+            project_id=project_id,
             instance_path=instance_path,
             cwd=cwd,
             unattended=unattended,

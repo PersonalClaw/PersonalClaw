@@ -19,11 +19,20 @@ SDK), so an app could name another owner's key and read it out of ``.env``.
 :func:`move_credentials_file` moves what the file held into the store at the first start, and
 deletes the file once every value reads back from there.
 
-**Resolving a name:** the process environment (a container passes a secret that way, and the
-store mirrors every named secret into it), then the keychain, then ``<home>/.env``. An OWNED key
-(``PCSECRET_…``, :func:`personalclaw.config.credentials.is_owned_key`) is refused with
-:class:`OwnedCredentialRefused`: it belongs to the settings record that references it, and that
-reference (``config.secret_refs``, owner-checked since #3626) is the only way it is read.
+**Resolving a name** is :func:`resolve_secret`, the one rule every reader of a named secret goes
+through. A run that belongs to a project reads that project's secret first (stored in the same
+store under the project's own key, ``secrets_vault.project_secret_key``) and the global one
+second; anything with no project — an automation, a settings record, a provider entry, an app —
+reads only the global one (``secrets_vault.reading_order``). A global name is read from the process
+environment (a container passes a secret that way, and the store mirrors every named secret into
+it), then the keychain, then ``<home>/.env``; a project's secret is read from the store only,
+because it is never copied into the environment. Two kinds of name are refused before any value is
+read (:func:`name_refusal`): an OWNED key (``PCSECRET_…``,
+:func:`personalclaw.config.credentials.is_owned_key`), with :class:`OwnedCredentialRefused`, since
+it belongs to the settings record that references it and that reference (``config.secret_refs``,
+owner-checked since #3626) is the only way it is read; and a project's stored key
+(``PCPROJ_…``), with :class:`ProjectSecretRefused`, since a reference names a secret by its own
+name and the run's project decides which one it reads.
 
 Property 11 (Provider SDK Lazy Import): stdlib and ``personalclaw.config`` imports only, so no
 provider SDK is pulled in through here.
@@ -61,29 +70,141 @@ class Credential:
     source: CredentialSource = "none"
 
 
-class OwnedCredentialRefused(KeyError):
-    """*name* is an owned key (``PCSECRET_…``), which nothing reads by name.
+class SecretNameRefused(KeyError):
+    """*name* is a key nothing reads by name: :func:`name_refusal` says which kind and why.
 
     A :class:`KeyError`, so every caller that already treats an unknown name as "not configured"
-    refuses this one too, with no value read. ``str()`` is the sentence a user reads, and it
-    names the key, never its value.
+    refuses this one too, with no value read. ``cause`` and ``remedy`` are the two halves a failure
+    record keeps; ``str()`` is the sentence a user reads. Both name the key, never its value.
     """
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, *, cause: str, remedy: str) -> None:
         super().__init__(name)
         self.name = name
-        #: Why it is refused, and what to do instead: the two halves a failure record keeps.
-        self.cause = (
-            f"{name} is where a provider's or an app's own setting keeps its secret, and only "
-            "that setting can read it"
-        )
-        self.remedy = (
-            "store the secret under a name of your own in Settings → Secrets and refer to that "
-            "name"
-        )
+        self.cause = cause
+        self.remedy = remedy
 
     def __str__(self) -> str:
         return f"{self.cause}. To use a secret here, {self.remedy}."
+
+
+class OwnedCredentialRefused(SecretNameRefused):
+    """*name* is an owned key (``PCSECRET_…``): only the setting that references it reads it."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(
+            name,
+            cause=(
+                f"{name} is where a provider's or an app's own setting keeps its secret, and only "
+                "that setting can read it"
+            ),
+            remedy=(
+                "store the secret under a name of your own in Settings → Secrets and refer to "
+                "that name"
+            ),
+        )
+
+
+class ProjectSecretRefused(SecretNameRefused):
+    """*name* is a project's stored key (``PCPROJ_<project>__NAME``), which nothing reads by that
+    key: a reference names the secret by its own name, and the run's project decides which one it
+    reads."""
+
+    def __init__(self, name: str) -> None:
+        from personalclaw.secrets_vault import split_project_key
+
+        split = split_project_key(name)
+        own = split[1] if split is not None else "NAME"
+        reference = "{{secret:" + own + "}}"
+        super().__init__(
+            name,
+            cause=(
+                f"{name} is how Settings → Secrets stores a project's own secret, which only that "
+                "project's runs read, by its own name"
+            ),
+            remedy=(
+                f"refer to it as {reference}: a run in that project reads the project's {own} "
+                f"first, and any other run reads the global {own}"
+            ),
+        )
+
+
+def name_refusal(name: str) -> SecretNameRefused | None:
+    """Why nothing reads *name* by name, or ``None`` when it is an ordinary secret's name.
+
+    Asked by :func:`resolve_secret` before any value is read, and by a caller that resolves
+    references with a resolver of its own (``triggers.secrets.resolve``), so the two kinds of key
+    nobody names by hand are refused the same way everywhere.
+    """
+    from personalclaw.config.credentials import is_owned_key
+    from personalclaw.secrets_vault import is_project_key
+
+    if is_owned_key(name):
+        return OwnedCredentialRefused(name)
+    if is_project_key(name):
+        return ProjectSecretRefused(name)
+    return None
+
+
+@dataclass(frozen=True)
+class SecretRead:
+    """A named secret as a reader got it: the value, and where it came from.
+
+    ``scope`` is ``secrets_vault``'s vocabulary: ``project`` (the run's project's own secret),
+    ``global`` (a secret stored for every project) or ``host`` (a value the gateway's own
+    environment holds and the store does not). A run's record keeps ``name`` and ``scope``, never
+    ``secret``.
+    """
+
+    name: str
+    scope: str
+    secret: str = field(repr=False)
+    source: CredentialSource = "none"
+
+
+def resolve_secret(
+    name: str, *, project_id: str = "", home: Path | None = None, environment: bool = True
+) -> SecretRead:
+    """*name* as a run of *project_id* reads it: the project's own secret first, then the global
+    one (``secrets_vault.reading_order``); ``project_id=""`` for anything that runs in no project.
+
+    The one resolver every reader of a named secret goes through: a workflow step, run start's
+    preflight, the agent's shell fill, an automation's action, a knowledge connector, a provider
+    entry's ``credential`` and an app (:meth:`CredentialStore.resolve`).
+
+    A global name is read from the process environment first when *environment* is true (the
+    owner's own configuration: a workflow step, an automation, a provider entry). The agent's
+    shell passes ``False``: there the agent chooses the name, and the gateway's environment holds
+    what a sandbox keeps from the command. A project's secret is read from the store only — it is
+    never copied into the environment. *home* names the ``.env`` to read (the active home's by
+    default).
+
+    Raises :class:`SecretNameRefused` (a ``KeyError``) for a name nothing reads by name, before any
+    value is read, and :class:`KeyError` when no scope holds *name*.
+    """
+    from personalclaw.config.credentials import credential_names, find_credential
+    from personalclaw.secrets_vault import SCOPE_GLOBAL, SCOPE_HOST, reading_order
+
+    refused = name_refusal(name)
+    if refused is not None:
+        raise refused
+    for key, scope in reading_order(name, project_id):
+        if scope == SCOPE_GLOBAL and environment:
+            value = os.environ.get(key, "")
+            if value:
+                # Mirrored there from the store, or the gateway's own: the store says which.
+                held = key in credential_names()
+                return SecretRead(
+                    name=name,
+                    scope=SCOPE_GLOBAL if held else SCOPE_HOST,
+                    secret=value,
+                    source="env",
+                )
+        value, where = find_credential(key, home=home)
+        if value:
+            source: CredentialSource = "keychain" if where == "keychain" else "file"
+            return SecretRead(name=name, scope=scope, secret=value, source=source)
+    raise KeyError(name)
 
 
 class CredentialStore:
@@ -98,24 +219,15 @@ class CredentialStore:
         self._home = Path(home)
 
     def resolve(self, name: str) -> Credential:
-        """*name*'s value, from the environment, the keychain or ``.env``, in that order.
+        """*name*'s global value, from the environment, the keychain or ``.env``, in that order
+        (:func:`resolve_secret` for a reader that runs in no project).
 
         Raises :class:`KeyError` when no credential of that name is stored, and
-        :class:`OwnedCredentialRefused` (a ``KeyError``) for an owned key, before any value is
-        read.
+        :class:`SecretNameRefused` (a ``KeyError``) for an owned key or a project's stored key,
+        before any value is read.
         """
-        from personalclaw.config.credentials import find_credential, is_owned_key
-
-        if is_owned_key(name):
-            raise OwnedCredentialRefused(name)
-        value = os.environ.get(name, "")
-        if value:
-            return Credential(name=name, kind="api_key", secret=value, source="env")
-        value, where = find_credential(name, home=self._home)
-        if not value:
-            raise KeyError(name)
-        source: CredentialSource = "keychain" if where == "keychain" else "file"
-        return Credential(name=name, kind="api_key", secret=value, source=source)
+        read = resolve_secret(name, home=self._home)
+        return Credential(name=name, kind="api_key", secret=read.secret, source=read.source)
 
 
 # ── the one-time move of credentials.json (gateway boot) ────────────────────────────

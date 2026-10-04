@@ -62,7 +62,8 @@
     {"annotation": "Any", "default": "None", "kind": "positional_or_keyword", "name": "answer"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "trigger_id"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "fire_facts"},
-    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "fire_files"}
+    {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "fire_files"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "project_id"}
    ],
    "returns": "None"
   },
@@ -3299,7 +3300,8 @@
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "refused"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "app"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "held_back"},
-    {"annotation": "list[dict[str, Any]]", "default": "<factory>", "kind": "positional_or_keyword", "name": "declined_calls"}
+    {"annotation": "list[dict[str, Any]]", "default": "<factory>", "kind": "positional_or_keyword", "name": "declined_calls"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "project_id"}
    ],
    "returns": "None"
   },
@@ -3405,7 +3407,8 @@
      {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "may_read"},
      {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "may_change"},
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "app"},
-     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "held_back"}
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "held_back"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "project_id"}
     ],
     "returns": "SubagentInfo | None"
    },

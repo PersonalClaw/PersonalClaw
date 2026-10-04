@@ -42,6 +42,7 @@ from personalclaw.secrets_vault import (
     SCOPE_HOST,
     SecretPresence,
     consumers_for,
+    is_namespaced_key,
     list_presence,
     project_secret_key,
     valid_key_name,
@@ -115,9 +116,9 @@ async def api_secrets_list(request: web.Request) -> web.Response:
     """GET /api/secrets — the vault, presence only.
 
     ``?project_id=`` narrows the project-scoped rows to one project. Global and host rows are
-    always included: a project resolves ``{{secret:KEY}}`` against the same store and the same
-    process environment, so hiding them would show the user fewer credentials than their project
-    can actually reach.
+    always included: a run in the project reads its own secret first and these when it has none by
+    that name, so hiding them would show the user fewer credentials than their project can
+    actually reach.
     """
     denied = _refuse_app(request)
     if denied is not None:
@@ -146,7 +147,12 @@ async def api_secrets_put(request: web.Request) -> web.Response:
     Body: ``{"name": "GITHUB_TOKEN", "value": "…", "project_id": "…"?}``. An existing name in the
     same scope is REPLACED, which is how rotation works — there is no separate rotate verb,
     because "write the new value" is the whole operation and a second endpoint would be a second
-    write path to keep in step with the first.
+    write path to keep in step with the first. With ``project_id`` the secret is that project's:
+    only its runs read it, ahead of a global secret of the same name.
+
+    A name in a namespace the store keeps for itself (a setting's own ``PCSECRET_…`` key, a
+    project's stored ``PCPROJ_…`` key) is refused: storing it would overwrite a key another
+    surface manages, or make a project's secret by its stored key past the ``project_id`` field.
     """
     denied = _refuse_app(request)
     if denied is not None:
@@ -169,6 +175,8 @@ async def api_secrets_put(request: web.Request) -> web.Response:
 
     if not valid_key_name(name):
         return json_error("secret_name_invalid", status=400)
+    if is_namespaced_key(name):
+        return json_error("secret_name_reserved", status=400)
     if project_id and not valid_project_id(project_id):
         return json_error("secret_project_invalid", status=400)
     if not value:
@@ -199,7 +207,9 @@ async def api_secrets_delete(request: web.Request) -> web.Response:
 
     A host-inherited row is refused rather than silently no-oped: its value is in the gateway's
     environment, so the vault genuinely cannot remove it, and reporting success would leave the
-    user believing a credential is gone while every run still resolves it.
+    user believing a credential is gone while every run still resolves it. A name in a store
+    namespace is refused as it is on store: deleting a setting's own key would leave that setting
+    pointing at nothing, and a project's secret is removed by its name and ``project_id``.
     """
     denied = _refuse_app(request)
     if denied is not None:
@@ -208,6 +218,8 @@ async def api_secrets_delete(request: web.Request) -> web.Response:
     project_id = str(request.query.get("project_id") or "").strip()
     if not valid_key_name(name):
         return json_error("secret_name_invalid", status=400)
+    if is_namespaced_key(name):
+        return json_error("secret_name_reserved", status=400)
     if project_id and not valid_project_id(project_id):
         return json_error("secret_project_invalid", status=400)
 

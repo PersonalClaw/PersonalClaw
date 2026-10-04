@@ -333,7 +333,7 @@ def _store_named_credential(credential: str) -> bool:
     Secrets lists and every ``{{secret:NAME}}`` and provider ``credential`` reads. False, with
     the reason on stderr, when nothing was stored."""
     from personalclaw.config.credentials import save_credential
-    from personalclaw.secrets_vault import is_reserved_key, valid_key_name
+    from personalclaw.secrets_vault import is_namespaced_key, valid_key_name
 
     if "=" in credential:
         cred_name, _, cred_val = credential.partition("=")
@@ -346,7 +346,7 @@ def _store_named_credential(credential: str) -> bool:
             f"  ❌ --credential {cred_name!r}: a credential name is letters, digits and "
             "underscores, and does not start with a digit"
         )
-    elif is_reserved_key(cred_name):
+    elif is_namespaced_key(cred_name):
         refusal = (
             f"  ❌ --credential {cred_name!r}: that name is reserved for a key PersonalClaw "
             "manages itself; choose another"

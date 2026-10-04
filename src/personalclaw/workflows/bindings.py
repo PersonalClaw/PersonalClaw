@@ -786,9 +786,9 @@ def resolve_expr(expr: str, ctx: BindingContext) -> Any:
                 "the engine had no credential store to read for this run; check the gateway log",
             )
         value: Any = ctx.secret_resolver(key)
-        # "" is how the credential store answers for a key it does not hold
-        # (`node_bindings._secret_resolver`). Substituted, a request carrying it fails at the
-        # receiver with nothing naming the key, so the trigger path refuses it too.
+        # "" is how the run's resolver answers for a key neither its project nor the global
+        # secrets hold (`node_bindings._secrets_for`). Substituted, a request carrying it fails at
+        # the receiver with nothing naming the key, so the trigger path refuses it too.
         if value is None or value == "":
             raise BindingError(
                 f"secret {key!r} is not set",

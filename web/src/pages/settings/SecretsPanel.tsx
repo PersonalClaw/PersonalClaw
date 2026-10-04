@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { KeyRound, Server, FolderLock, Trash2, Plus, Workflow, Zap, Globe } from 'lucide-react'
 import { api } from '../../lib/api'
-import type { SecretPresenceWire, SecretsVaultState } from '../../lib/api'
+import type { ProjectItem, SecretPresenceWire, SecretsVaultState } from '../../lib/api'
 import { useQuery } from '../../lib/data/useQuery'
 import { Button } from '../../ui/Button'
 import { TextInput } from '../../ui/forms'
-import { CardGridSkeleton, EmptyState, ListRow, LoadError } from '../../ui/ListScaffold'
+import { CardGridSkeleton, EmptyState, InlineLoadError, ListRow, LoadError } from '../../ui/ListScaffold'
+import { ProjectPicker } from '../../ui/ProjectPicker'
 import { confirm } from '../../ui/dialog'
 import { StatusPill } from './bento'
 import { PanelHeader, Row, RowGroup, Section } from './settingsUI'
@@ -15,6 +16,11 @@ import { PanelHeader, Row, RowGroup, Section } from './settingsUI'
  *  collection is the form already on the page, not a separate route, so the on-ramp is "put the
  *  cursor in it" rather than a navigation. */
 const NAME_FIELD_ID = 'secrets-vault-name'
+
+/** A project as this page names it: its name, or — while the list is unknown — its id. An id the
+ *  loaded list does not hold is said to be no current project, never given a name it does not
+ *  have. */
+type ProjectLabel = (projectId: string) => string
 
 /** Settings › Secrets — the vault.
  *
@@ -35,11 +41,28 @@ const NAME_FIELD_ID = 'secrets-vault-name'
  *  cannot remove it. Rendering the third like the first two would tell the user the vault is
  *  managing something it has no control over — so host rows get their own section, their own
  *  glyph, a "from host environment" pill, and a delete control that is disabled WITH the reason.
+ *
+ *  **A project's secret is read by that project's work alone** — its workflow runs, its loops, the
+ *  commands its chats run — ahead of a global secret of the same name, and by nothing outside it
+ *  (the backend's one resolver, `llm.credentials.resolve_secret`). The page says so where a project
+ *  secret is stored, listed and removed, and names each project by its name, chosen with the same
+ *  picker every other project choice uses: an id typed by hand was a secret nothing would read.
  */
 export function SecretsPanel() {
   const { data: v, error, refresh } = useQuery<SecretsVaultState>(
     'settings:secrets', () => api.secrets(),
   )
+  // The same read (and cache) the Projects page names projects from. Pending or failed, a group is
+  // named by its id, which is still true — and a failed read says so above the groups, or the ids
+  // would read as projects that have no name.
+  const { data: projects, error: projectsError, refresh: refreshProjects } = useQuery<ProjectItem[]>(
+    'projects:list', () => api.projects(), { persist: true },
+  )
+  const projectLabel: ProjectLabel = (pid) => {
+    const found = projects?.find((p) => p.id === pid)
+    if (found) return found.name
+    return projects ? `${pid} (not a current project)` : pid
+  }
 
   if (!v) {
     return (
@@ -61,6 +84,9 @@ export function SecretsPanel() {
   for (const s of v.secrets.filter((r) => r.scope === 'project')) {
     byProject.set(s.project_id, [...(byProject.get(s.project_id) ?? []), s])
   }
+  const globalNames = new Set(globals.map((s) => s.name))
+  const projectsHolding = (name: string) =>
+    [...byProject.entries()].filter(([, rows]) => rows.some((r) => r.name === name)).map(([pid]) => projectLabel(pid))
 
   return (
     <>
@@ -70,7 +96,7 @@ export function SecretsPanel() {
           + 'read back — not by this page and not by any API.'}
       />
 
-      <AddSecret onSaved={refresh} />
+      <AddSecret onSaved={refresh} projectLabel={projectLabel} />
 
       {v.secrets.length === 0 ? (
         <EmptyState
@@ -95,11 +121,19 @@ export function SecretsPanel() {
             title="Global"
             icon={KeyRound}
             iconTone="muted"
-            hint={`${v.counts.global} available to every project on this instance.`}
+            hint={`${v.counts.global} available everywhere on this instance. A project's own secret `
+              + 'of the same name comes first for that project\'s work.'}
           >
             {globals.length === 0
               ? <RowGroup><Row label="None stored" hint="Add one above to make it available everywhere." ><span /></Row></RowGroup>
-              : <RowGroup>{globals.map((s, i) => <SecretRow key={s.name} s={s} index={i} onChanged={refresh} />)}</RowGroup>}
+              : (
+                <RowGroup>
+                  {globals.map((s, i) => (
+                    <SecretRow key={s.name} s={s} index={i} onChanged={refresh}
+                      removeBody={globalRemoveBody(s.name, projectsHolding(s.name))} />
+                  ))}
+                </RowGroup>
+              )}
           </Section>
 
           {byProject.size > 0 && (
@@ -107,13 +141,22 @@ export function SecretsPanel() {
               title="Per-project"
               icon={FolderLock}
               iconTone="muted"
-              hint={`${v.counts.project} scoped to a single project.`}
+              hint={`${v.counts.project} scoped to one project. Only that project's work — its `
+                + 'workflow runs, loops and chats — reads one, ahead of a global secret of the same '
+                + 'name. Nothing outside the project reads it.'}
             >
+              {projectsError ? (
+                <InlineLoadError what="your projects" error={projectsError} onRetry={refreshProjects} />
+              ) : null}
               {[...byProject.entries()].map(([pid, rows]) => (
                 <div key={pid} className="mb-l last:mb-0">
-                  <div data-type="caption" className="mb-1 text-on-surface-low">{pid}</div>
+                  <div data-type="caption" className="mb-xs text-on-surface-low">{projectLabel(pid)}</div>
                   <RowGroup>
-                    {rows.map((s, i) => <SecretRow key={s.name} s={s} index={i} onChanged={refresh} />)}
+                    {rows.map((s, i) => (
+                      <SecretRow key={s.name} s={s} index={i} onChanged={refresh}
+                        removeTitle={`Remove ${s.name} from ${projectLabel(pid)}?`}
+                        removeBody={projectRemoveBody(s.name, projectLabel(pid), globalNames.has(s.name))} />
+                    ))}
                   </RowGroup>
                 </div>
               ))}
@@ -134,7 +177,7 @@ export function SecretsPanel() {
                 + 'them — edit them where the gateway is launched. Store one above to take ownership.'}
             >
               <RowGroup>
-                {host.map((s, i) => <SecretRow key={s.name} s={s} index={i} onChanged={refresh} />)}
+                {host.map((s, i) => <SecretRow key={s.name} s={s} index={i} onChanged={refresh} removeBody="" />)}
               </RowGroup>
             </Section>
           )}
@@ -144,22 +187,46 @@ export function SecretsPanel() {
   )
 }
 
+/** What removing a GLOBAL secret does: everything that refers to it fails until it is replaced,
+ *  except the work of a project that keeps its own secret of that name. */
+function globalRemoveBody(name: string, shadowedIn: string[]): string {
+  const except = shadowedIn.length
+    ? `, except work in ${shadowedIn.join(', ')}, which reads its project's own ${name}`
+    : ''
+  return 'The stored value is deleted from the credential store and from this gateway\'s '
+    + `environment. Anything that references {{secret:${name}}} fails until it is replaced${except}. `
+    + 'This cannot be undone: the value cannot be read back out to save it.'
+}
+
+/** What removing a PROJECT's secret does: that project's work falls back to the global secret of
+ *  the same name, or fails while there is none. */
+function projectRemoveBody(name: string, project: string, hasGlobal: boolean): string {
+  const then = hasGlobal
+    ? `then reads the global ${name} instead`
+    : `then fails until it is replaced, since no global ${name} is stored`
+  return `The stored value is deleted from the credential store. Work in ${project} that references `
+    + `{{secret:${name}}} ${then}. This cannot be undone: the value cannot be read back out to save it.`
+}
+
 /** One vault row: name, scope treatment, and what references it. */
-function SecretRow({ s, index, onChanged }: {
+function SecretRow({ s, index, onChanged, removeTitle, removeBody }: {
   s: SecretPresenceWire
   index: number
   onChanged: () => void
+  /** The confirm's title; `Remove NAME?` unless the scope needs saying. */
+  removeTitle?: string
+  /** What removing this row does, in the confirm. Unused for a host row, which cannot be removed. */
+  removeBody: string
 }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const hostRow = s.inherited_from_host
+  const projectRow = s.scope === 'project'
 
   const remove = async () => {
     if (!(await confirm({
-      title: `Remove ${s.name}?`,
-      body: 'The stored value is deleted from the credential store and from this gateway\'s '
-        + 'environment. Anything referencing {{secret:' + s.name + '}} will fail until it is '
-        + 'replaced — this cannot be undone, because the value cannot be read back out to save it.',
+      title: removeTitle ?? `Remove ${s.name}?`,
+      body: removeBody,
       confirmLabel: 'Remove secret',
       danger: true,
     }))) return
@@ -173,9 +240,9 @@ function SecretRow({ s, index, onChanged }: {
 
   return (
     <ListRow index={index} label={s.name}>
-      <div className="flex items-start justify-between gap-l py-2">
+      <div className="flex items-start justify-between gap-l py-s">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-s">
             {hostRow ? <Globe size={14} className="text-on-surface-low" aria-hidden />
               : <KeyRound size={14} className="text-primary" aria-hidden />}
             <span data-type="body-s" className="truncate font-mono text-on-surface">{s.name}</span>
@@ -185,13 +252,15 @@ function SecretRow({ s, index, onChanged }: {
             {hostRow
               ? <StatusPill label="from host environment" tone="warn" />
               : <StatusPill label={s.present ? 'set' : 'not set'} tone="ok" />}
-            {s.scope === 'project' && <StatusPill label="project" tone="primary" />}
+            {projectRow && <StatusPill label="project" tone="primary" />}
           </div>
           {s.consumers.length > 0 ? (
-            <div data-type="caption" className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-on-surface-low">
-              <span>Used by</span>
+            <div data-type="caption" className="mt-xs flex flex-wrap items-center gap-x-s gap-y-xs text-on-surface-low">
+              {/* A project row's consumers are the workflows that name it: they read it when they
+                  run in this project, and the global one anywhere else. */}
+              <span>{projectRow ? 'Read in this project by' : 'Used by'}</span>
               {s.consumers.map((c) => (
-                <span key={`${c.kind}:${c.id}`} className="inline-flex items-center gap-1">
+                <span key={`${c.kind}:${c.id}`} className="inline-flex items-center gap-xs">
                   {c.kind === 'workflow' ? <Workflow size={12} aria-hidden /> : <Zap size={12} aria-hidden />}
                   <span className="truncate">{c.label || c.id}</span>
                 </span>
@@ -199,12 +268,13 @@ function SecretRow({ s, index, onChanged }: {
             </div>
           ) : (
             // Said explicitly rather than left blank. A blank "used by" line is ambiguous
-            // between "nothing references this" (safe to delete) and "we didn't check".
-            <div data-type="caption" className="mt-1 text-on-surface-low">
-              Not referenced by any workflow or automation.
+            // between "nothing references this" (safe to delete) and "we didn't check". An
+            // automation runs in no project, so a project row only ever lists workflows.
+            <div data-type="caption" className="mt-xs text-on-surface-low">
+              {projectRow ? 'Not referenced by any workflow.' : 'Not referenced by any workflow or automation.'}
             </div>
           )}
-          {err && <div role="alert" data-type="caption" className="mt-1 text-danger">{err}</div>}
+          {err && <div role="alert" data-type="caption" className="mt-xs text-danger">{err}</div>}
         </div>
         {/* `Button`'s own soft-off carrier rather than a spread of `unavailableWhen`: this
             component does not forward arbitrary DOM props, and `disabledReason` is the
@@ -228,7 +298,7 @@ function SecretRow({ s, index, onChanged }: {
 }
 
 /** The write-only add form. The value leaves in a POST body and is cleared on success. */
-function AddSecret({ onSaved }: { onSaved: () => void }) {
+function AddSecret({ onSaved, projectLabel }: { onSaved: () => void; projectLabel: ProjectLabel }) {
   const [name, setName] = useState('')
   const [value, setValue] = useState('')
   const [projectId, setProjectId] = useState('')
@@ -239,11 +309,11 @@ function AddSecret({ onSaved }: { onSaved: () => void }) {
   const save = async () => {
     setBusy(true); setErr(''); setNote('')
     try {
-      await api.putSecret(name.trim(), value, projectId.trim())
+      await api.putSecret(name.trim(), value, projectId)
       // Cleared immediately on success. The component holds the value only for as long as it
       // takes to send it; nothing renders it, and nothing re-reads it.
       setValue('')
-      setNote(`${name.trim()} stored.`)
+      setNote(`${name.trim()} stored for ${projectId ? projectLabel(projectId) : 'every project'}.`)
       setName(''); setProjectId('')
       onSaved()
     } catch (e) { setErr(e instanceof Error ? e.message : 'Could not store the secret') }
@@ -260,8 +330,12 @@ function AddSecret({ onSaved }: { onSaved: () => void }) {
         <Row label="Value" hint="Write-only. It is stored in the credential store and never returned.">
           <TextInput value={value} onChange={setValue} ariaLabel="Secret value" type="password" size="sm" />
         </Row>
-        <Row label="Project" hint="Leave empty to make it available to every project.">
-          <TextInput value={projectId} onChange={setProjectId} ariaLabel="Project id (optional)" placeholder="(global)" mono size="sm" />
+        <Row
+          label="Project"
+          hint={'Every project, or one: then only that project\'s work reads it — ahead of a global '
+            + 'secret of the same name — and nothing outside the project does.'}
+        >
+          <ProjectPicker value={projectId} onChange={setProjectId} emptyLabel="Every project" emptyHint="" align="right" />
         </Row>
         <Row label="">
           <div className="flex items-center gap-l">
@@ -278,7 +352,7 @@ function AddSecret({ onSaved }: { onSaved: () => void }) {
           </div>
         </Row>
       </RowGroup>
-      {err && <div role="alert" data-type="body-s" className="mt-2 text-danger">{err}</div>}
+      {err && <div role="alert" data-type="body-s" className="mt-s text-danger">{err}</div>}
     </Section>
   )
 }

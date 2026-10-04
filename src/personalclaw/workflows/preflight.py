@@ -99,12 +99,17 @@ class PreflightResult:
 def preflight(
     spec: dict[str, Any],
     *,
+    project_id: str = "",
     credential_resolver: Any = None,
     which: Any = None,
     model_probe: Any = None,
     provider_lookup: Any = None,
 ) -> PreflightResult:
     """Check everything a run needs before it starts.
+
+    *project_id* is the project the run will belong to ("" for none): its credentials are checked
+    as its steps will read them, the project's own secret first and the global one second, so a
+    secret only the project holds lets the project's run start and refuses every other run.
 
     Every collaborator is injectable so this is unit-testable without a credential store,
     a PATH, or a provider registry — and so a test can prove the unverifiable-vs-missing
@@ -116,7 +121,7 @@ def preflight(
     if not isinstance(requirements, dict):
         requirements = {}
 
-    _check_credentials(spec, requirements, result, credential_resolver)
+    _check_credentials(spec, requirements, result, credential_resolver, project_id)
     _check_binaries(requirements, result, which)
     _check_models(spec, result, model_probe)
     _check_action_providers(spec, result, provider_lookup)
@@ -131,6 +136,7 @@ def _check_credentials(
     requirements: dict[str, Any],
     result: PreflightResult,
     resolver: Any,
+    project_id: str,
 ) -> None:
     from personalclaw.workflows.secrets import secret_keys_referenced
 
@@ -146,18 +152,18 @@ def _check_credentials(
     if lookup is None:
         try:
             from personalclaw.config.loader import config_dir
-            from personalclaw.llm.credentials import CredentialStore, OwnedCredentialRefused
+            from personalclaw.llm import credentials as llm_credentials
 
-            store = CredentialStore(config_dir())
+            home = config_dir()
 
             def lookup(key: str) -> bool:  # type: ignore[misc]
                 try:
-                    cred = store.resolve(key)
-                except OwnedCredentialRefused as refused:
+                    read = llm_credentials.resolve_secret(key, project_id=project_id, home=home)
+                except llm_credentials.SecretNameRefused as refused:
                     raise _Refused(refused) from None
                 except KeyError:
                     return False
-                return bool(getattr(cred, "secret", ""))
+                return bool(read.secret)
 
         except Exception:
             # The store itself is unavailable — report as UNVERIFIABLE, never as missing.
@@ -192,19 +198,25 @@ def _check_credentials(
             logger.debug("preflight: credential lookup failed for %s", key, exc_info=True)
             continue
         if not present:
+            where = (
+                "for this run's project or for every project" if project_id else "for every project"
+            )
             result.findings.append(
                 Finding(
                     code="WF_PRE_CREDENTIAL_MISSING",
                     message=f"credential {key!r} is not set",
-                    remediation=f"store {key!r} in Settings → Secrets, then start the run again",
+                    remediation=(
+                        f"store {key!r} in Settings → Secrets, {where}, then start the run again"
+                    ),
                     kind="credentials",
                 )
             )
 
 
 class _Refused(Exception):
-    """The store refused to read a key by name (``OwnedCredentialRefused``): a finding of its
-    own, since that key IS set and "is not set" would be false."""
+    """The store refused to read a key by name (``SecretNameRefused``: a setting's own key, or a
+    project's stored key): a finding of its own, since that key IS set and "is not set" would be
+    false."""
 
     def __init__(self, reason: Any) -> None:
         super().__init__(str(reason))

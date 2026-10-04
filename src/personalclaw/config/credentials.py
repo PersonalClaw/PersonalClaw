@@ -107,15 +107,20 @@ def mirrored_into_the_environment(key: str) -> bool:
     """Whether a stored credential named ``key`` is mirrored into the process environment, for
     the trusted children that read it there: every NAMED credential, except one whose name decides
     which programs a child runs (``env.PROGRAM_RESOLUTION_NAMES``: ``PATH``, the loader's and the
-    interpreters' start-up variables).
+    interpreters' start-up variables), and except a project's secret.
 
     Such a secret is stored, listed and resolved through its ``{{secret:…}}`` reference like any
     other. Mirrored, it would replace the ``PATH`` (or the libraries, or the code an interpreter
     loads first) of every program the process starts after it, whatever the secret was saved for.
+    A project's secret (``secrets_vault.is_project_key``) is read only by that project's runs,
+    through the resolver (``llm.credentials.resolve_secret``), which reads it from the store.
+    Mirrored, it would reach every child of every run — an MCP server, a cron script, another
+    project's agent — and no child reads it by its stored key anyway.
     """
     from personalclaw.env import PROGRAM_RESOLUTION_NAMES
+    from personalclaw.secrets_vault import is_project_key
 
-    return not is_owned_key(key) and key not in PROGRAM_RESOLUTION_NAMES
+    return not is_owned_key(key) and not is_project_key(key) and key not in PROGRAM_RESOLUTION_NAMES
 
 
 #: Whether this process keeps the OS keychain out entirely (:func:`keychain_off`).
@@ -605,7 +610,8 @@ def save_credential(key: str, value: str) -> None:
     children that inherit ``os.environ`` see it immediately (sandboxed children are
     filtered by name in ``sandbox.py``, independent of the backend). An OWNED key
     (:func:`is_owned_key`) is not: it is read only through its settings reference. Nor is a
-    name that decides which programs run (:func:`mirrored_into_the_environment`).
+    project's secret, read only by that project's runs, nor a name that decides which programs
+    run (:func:`mirrored_into_the_environment`).
     """
     save_credentials({key: value})
 

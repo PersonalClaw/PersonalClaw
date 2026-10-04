@@ -225,6 +225,9 @@ class InvokeAgentActionProvider(ActionProvider):
             may_read=ctx.fire_files,
             may_change=policy.may_change,
             held_back=policy.held_back,
+            # The project the step's run belongs to (from the run's record): the agent's work is
+            # the project's. "" for a trigger's fire, which runs in no project.
+            project_id=ctx.project_id,
         )
 
 

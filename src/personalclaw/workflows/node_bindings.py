@@ -2,7 +2,8 @@
 
 Run inputs, settled outputs, offloaded artifacts, the loop's previous iteration (`last`), the
 enclosing watcher's prior cycle (`previous`), a parallel's siblings, the project Session Brief and
-the secret resolver. Each is read from durable run state — instances and the journal's stored
+the secret resolver, which reads the run's project's secrets first and puts each secret a step uses
+on the run's record. Each is read from durable run state — instances and the journal's stored
 outputs — so a resumed run resolves the same values it would have before the restart.
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.knowledge import session_brief
@@ -89,9 +91,7 @@ def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
         has_previous=_previous_output(ctl, item.path) is not None,
         seen_filter=seen.unseen if seen else None,
         brief=_session_brief(ctl),
-        secret_resolver=(
-            _reference_kept if _config_reaches_a_model(ctl, item.node) else _secret_resolver
-        ),
+        secret_resolver=_secrets_for(ctl, item),
         run_document=deliverable.document_path(ctl.run, ctl.spec),
     )
 
@@ -101,14 +101,11 @@ def context_for(ctl: RunController, item: ReadyNode) -> BindingContext:
 _MODEL_FACING_KINDS = frozenset({NodeKind.STAGE, NodeKind.INFER, NodeKind.VISUALIZE})
 
 
-def _config_reaches_a_model(ctl: RunController, node: Node) -> bool:
-    """Whether *node*'s bound config becomes text a model is handed: a model-calling kind, or an
-    action whose provider's action IS a model turn (``hands_config_to_a_model``), looked up the
-    way ``engine.dispatch_action`` will look it up."""
-    if node.kind in _MODEL_FACING_KINDS:
-        return True
+def _step_provider(ctl: RunController, node: Node) -> Any:
+    """The provider an action *node* dispatches to, looked up the way ``engine.dispatch_action``
+    will look it up, or ``None`` for a node that is no action."""
     if node.kind != NodeKind.ACTION:
-        return False
+        return None
     getter = ctl.services.get_provider
     if getter is None:
         from personalclaw.action_providers.registry import (
@@ -118,17 +115,110 @@ def _config_reaches_a_model(ctl: RunController, node: Node) -> bool:
 
         _ensure_default_providers_registered()
         getter = get_action_provider
-    provider = getter(str((node.config or {}).get("provider", "") or ""))
+    return getter(str((node.config or {}).get("provider", "") or ""))
+
+
+def _config_reaches_a_model(node: Node, provider: Any) -> bool:
+    """Whether *node*'s bound config becomes text a model is handed: a model-calling kind, or an
+    action whose *provider*'s action IS a model turn (``hands_config_to_a_model``)."""
+    if node.kind in _MODEL_FACING_KINDS:
+        return True
     return bool(getattr(provider, "hands_config_to_a_model", False))
 
 
-def _reference_kept(key: str) -> str:
-    """A ``{{secret:KEY}}`` in text a model will be handed, left as the name.
+def _agent_works_for_the_run(node: Node, provider: Any) -> bool:
+    """Whether the model *node*'s config reaches is an agent that works for this run's project, so
+    PersonalClaw's bash tool there fills a reference from the run's project's secrets first: a
+    stage's agent, which the engine starts with the run's project in its lineage
+    (``engine.leaf_spawn_env``), and the agent an Invoke Agent or Run Prompt step starts, which
+    its provider starts for the run's project (``ActionContext.project_id``). Any other model may
+    have no tools that fill a reference (an infer step, a best-of-n sample) or work for no project
+    (a second opinion, an app's provider)."""
+    if node.kind == NodeKind.STAGE:
+        return True
+    from personalclaw.action_providers.invoke_agent_provider import InvokeAgentActionProvider
+    from personalclaw.action_providers.run_prompt_provider import RunPromptActionProvider
 
-    Filled in there, the value would be in the model's context. Left as the name, the agent the
-    text reaches fills it when one of its tools runs (the ``bash`` tool does), so a stage can still
-    use the credential and never see it."""
-    return "{{secret:" + key + "}}"
+    return isinstance(provider, (InvokeAgentActionProvider, RunPromptActionProvider))
+
+
+def _secrets_for(ctl: RunController, item: ReadyNode) -> Callable[[str], str]:
+    """How *item*'s ``{{secret:NAME}}`` references resolve in this run.
+
+    A step whose config is text a model is handed (:func:`_config_reaches_a_model`) keeps each
+    reference as the name: filled in there, the value would be in the model's context. Left as the
+    name, PersonalClaw's ``bash`` tool fills it in when the agent the text reaches runs a command
+    with it — with this run's project, for an agent that works for the run — so the agent can
+    use the credential and never see it.
+
+    Every other step gets the value, through the one resolver
+    (``llm.credentials.resolve_secret``): the run's project's secret first, then the global one;
+    a run with no project reads only the global one. An unknown name returns ``""``: ``resolve()``
+    treats an empty secret as a resolution failure and reports it with the binding's own message,
+    which names the key. A name nothing reads by name (a setting's own ``PCSECRET_…`` key, a
+    project's stored ``PCPROJ_…`` key) raises instead, with the sentence that says why — it is
+    set, so "is not set" would be false — and it is refused the same way when the step would hand
+    it on.
+
+    Each secret a step uses goes on the run's record once per dispatch (``Journal.secret_read``):
+    its name and its scope. Never the value. A reference handed on to an agent that works for the
+    run's project (:func:`_agent_works_for_the_run`) is recorded with the scope PersonalClaw's
+    bash tool reads it from there (``secrets_vault.stored_scope``). One handed on to any other
+    model is not: what reads it there, if anything, is not the run's, so the record claims nothing
+    about it.
+    """
+    from personalclaw.llm.credentials import SecretNameRefused, name_refusal, resolve_secret
+    from personalclaw.secrets_vault import stored_scope
+
+    project = str(getattr(ctl.run, "project_id", "") or "")
+    provider = _step_provider(ctl, item.node)
+    handed_on = _config_reaches_a_model(item.node, provider)
+    records_handed_on = handed_on and _agent_works_for_the_run(item.node, provider)
+    recorded: set[str] = set()
+
+    def _refuse(refused: SecretNameRefused) -> BindingError:
+        return BindingError(refused.cause, remediation=refused.remedy, caller_supplied=True)
+
+    def _record(name: str, scope: str) -> None:
+        if name in recorded:
+            return
+        recorded.add(name)
+        ctl.journal.secret_read(
+            item.path,
+            item.node.id,
+            epoch=ctl._instance(item.path).epoch,
+            name=name,
+            scope=scope,
+            handed_on=handed_on,
+        )
+        logger.info(
+            "run %s step %s: {{secret:%s}} %s %s",
+            ctl.run.id,
+            item.node.id or item.path,
+            name,
+            "handed on, read from" if handed_on else "read from",
+            f"project {project}" if scope == "project" else (scope or "nowhere (not stored)"),
+        )
+
+    def _kept(key: str) -> str:
+        refused = name_refusal(key)
+        if refused is not None:
+            raise _refuse(refused) from None
+        if records_handed_on:
+            _record(key, stored_scope(key, project))
+        return "{{secret:" + key + "}}"
+
+    def _filled(key: str) -> str:
+        try:
+            read = resolve_secret(key, project_id=project)
+        except SecretNameRefused as refused:
+            raise _refuse(refused) from None
+        except KeyError:
+            return ""
+        _record(key, read.scope)
+        return read.secret
+
+    return _kept if handed_on else _filled
 
 
 def node_artifacts(ctl: RunController) -> dict[str, str] | None:
@@ -342,29 +432,3 @@ def _enclosing_parallel(path: str, tree: dict[str, Node]) -> str | None:
         if node is not None and node.kind == NodeKind.PARALLEL:
             return candidate
     return None
-
-
-def _secret_resolver(key: str) -> str:
-    """Resolve `{{secret:KEY}}` from the credential store Settings → Secrets writes.
-
-    Injected rather than imported at the binding layer so unit tests never touch real
-    credentials, and so the resolution point is a single auditable seam.
-
-    An unknown name returns "" rather than raising: `resolve()` treats an empty secret as
-    a resolution failure and reports it with the binding's own error message, which is
-    more actionable than a bare `KeyError` from two layers down. An OWNED key (a provider's or
-    an app's own `PCSECRET_…` key) raises instead, with the sentence that says why no step can
-    read it: that key is set, so "is not set" would be false.
-    """
-    from personalclaw.config.loader import config_dir
-    from personalclaw.llm.credentials import CredentialStore, OwnedCredentialRefused
-
-    try:
-        cred = CredentialStore(config_dir()).resolve(key)
-    except OwnedCredentialRefused as refused:
-        raise BindingError(
-            refused.cause, remediation=refused.remedy, caller_supplied=True
-        ) from None
-    except KeyError:
-        return ""
-    return cred.secret or ""

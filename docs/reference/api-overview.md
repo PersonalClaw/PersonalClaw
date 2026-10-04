@@ -202,7 +202,11 @@ has cost someone a debugging session.
 - **Secret values are write-only.** `/api/secrets` returns presence flags, names and
   derived consumer links — never a value — and there is deliberately no per-secret read
   endpoint. The credential-store migrate/rollback routes likewise carry key names and
-  counts only.
+  counts only. A secret stored with `project_id` is that project's: only its runs read it,
+  ahead of a global secret of the same name, and a project row's consumer links are the
+  workflows that name it. A name starting `PCSECRET_` or `PCPROJ_` is refused on store and
+  on delete (`400 secret_name_reserved`): those are where PersonalClaw keeps a setting's own
+  key and a project's secrets.
 - **Unattended core updates are a config field, not an endpoint.** `updates.auto`
   (`off` | `staged`) is written through `PATCH /api/config/personalclaw`; the dedicated
   `/api/update/auto` route was retired.

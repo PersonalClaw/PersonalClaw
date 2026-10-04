@@ -366,6 +366,8 @@ class TestScopesAndRefusals:
                 {"name": "OK_NAME", "value": "v", "project_id": "bad/slash"},
                 "secret_project_invalid",
             ),
+            ({"name": "PCSECRET_PROVIDER_X__API_KEY", "value": "v"}, "secret_name_reserved"),
+            ({"name": "PCPROJ_proj_a__TOKEN", "value": "v"}, "secret_name_reserved"),
         ],
     )
     async def test_write_refusals(self, vault: Path, body: dict, code: str):
@@ -402,6 +404,7 @@ class TestScopesAndRefusals:
             "secret_project_invalid",
             "secret_absent",
             "secret_host_readonly",
+            "secret_name_reserved",
         ):
             assert code in HTTP_ERROR_CODES, f"{code} needs an HTTP_ERROR_CODES row"
             meaning = HTTP_ERROR_CODES[code]
@@ -564,27 +567,36 @@ class TestConsumersAreDerived:
         assert rows["EI10_HOST_TOKEN"].consumers == ()
 
     @pytest.mark.asyncio
-    async def test_a_project_secrets_links_are_keyed_by_its_STORE_key(
+    async def test_a_project_row_takes_the_workflows_that_name_it_and_no_automation(
         self, vault: Path, monkeypatch
     ):
-        """A project row and a global row of the same name must not share consumers."""
+        """A reference names a secret by its own name. A workflow's runs in the project read the
+        project's row for it, so that row lists the workflow; an automation runs in no project, so
+        it is listed on the global row only. A reference spelled with the project's STORED key
+        links to no row: nothing resolves one."""
         import personalclaw.secrets_vault as vault_mod
 
         store_key = sv.project_secret_key(PROJECT_ID, "EI10_DB_PASSWORD")
         cred.save_credential("EI10_DB_PASSWORD", "a-global-of-the-same-name")
 
         async def _refs():
-            return [("proj-only", "Project only", [store_key])]
+            return [
+                ("nightly-sync", "Nightly sync", ["EI10_DB_PASSWORD"]),
+                ("spelled-out", "Spelled out", [store_key]),
+            ]
 
         monkeypatch.setattr(vault_mod, "_workflow_references", _refs)
-        monkeypatch.setattr(vault_mod, "_trigger_references", lambda: [])
+        monkeypatch.setattr(
+            vault_mod, "_trigger_references", lambda: [("t-1", "Backup", ["EI10_DB_PASSWORD"])]
+        )
         consumers = await vault_mod.consumers_for()
 
         rows = sv.list_presence(consumers=consumers)
         scoped = next(r for r in rows if r.scope == "project" and r.name == "EI10_DB_PASSWORD")
         glob = next(r for r in rows if r.scope == "global" and r.name == "EI10_DB_PASSWORD")
-        assert [c.id for c in scoped.consumers] == ["proj-only"]
-        assert glob.consumers == (), "a global row must not inherit the project row's consumers"
+        assert [c.id for c in scoped.consumers] == ["nightly-sync"]
+        assert sorted(c.id for c in glob.consumers) == ["nightly-sync", "t-1"]
+        assert all(c.id != "spelled-out" for r in rows for c in r.consumers)
 
     @pytest.mark.asyncio
     async def test_a_broken_derivation_goes_WRONG_not_silently_empty(

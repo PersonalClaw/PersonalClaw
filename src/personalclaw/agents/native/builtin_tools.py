@@ -23,7 +23,7 @@ import contextvars
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from personalclaw import cancellation, run_bounds, run_processes
 from personalclaw.agents.native import read_gate
@@ -63,9 +63,6 @@ from personalclaw.tool_providers.base import (
 )
 from personalclaw.tool_providers.projection import project_and_retain, project_output
 from personalclaw.write_locks import write_locked
-
-if TYPE_CHECKING:
-    from personalclaw.triggers.secrets import UnresolvedSecret
 
 logger = logging.getLogger(__name__)
 
@@ -350,42 +347,6 @@ async def _knowledge_refusal(*parts: str):
     from personalclaw.knowledge.text_items import refusal
 
     return await refusal(*parts, surface="knowledge")
-
-
-def _stored_secret(key: str) -> str:
-    """What a command's ``{{secret:KEY}}`` is filled with: a credential the owner stored by name in
-    Settings → Secrets, and nothing else, or ``""``.
-
-    Not ``triggers.secrets.default_resolver``, which reads the gateway's environment first: that is
-    the owner's own action config, while here the agent chooses the name, and in a sandbox tier
-    the environment is exactly what the sandbox keeps from the command. A key another surface
-    manages (``secrets_vault.RESERVED_KEY_PREFIXES``) is not one the owner stored by name, so it is
-    not filled either; an owned key is refused before any resolver is asked.
-    """
-    from personalclaw.config.credentials import credential_names, get_credential
-    from personalclaw.secrets_vault import is_reserved_key
-
-    try:
-        if is_reserved_key(key) or key not in credential_names():
-            return ""
-        return get_credential(key)
-    except Exception:  # noqa: BLE001 - an unreadable store fills nothing, and says so
-        logger.debug("credential store unreadable while filling %r", key, exc_info=True)
-        return ""
-
-
-def _unfilled_reference(missing: UnresolvedSecret) -> str:
-    """The refusal for a command whose ``{{secret:KEY}}`` names nothing the owner stored."""
-    reference = "{{secret:" + missing.key + "}}"
-    if missing.refused is not None:
-        return (
-            f"The command refers to {reference}, which is a setting's own credential: only the "
-            "setting that stored it can use it. Nothing was run."
-        )
-    return (
-        f"The command refers to {reference}, and Settings → Secrets holds no credential by that "
-        "name. Nothing was run."
-    )
 
 
 def _environment_credentials() -> list[str]:
@@ -1532,13 +1493,14 @@ class NativeBuiltinToolProvider(ToolProvider):
         # resolution a trigger's action gets at dispatch). The approval card shows the command as
         # the agent wrote it, reference and all; every value handed to the command is masked out
         # of what it prints, and out of any refusal below, before either reaches the model.
+        from personalclaw.agents.native.command_secrets import stored_secret, unfilled_reference
         from personalclaw.triggers.secrets import UnresolvedSecret
         from personalclaw.triggers.secrets import resolve as resolve_references
 
         handed: list[str] = []
 
         def _filled(key: str) -> str:
-            value = _stored_secret(key)
+            value = stored_secret(key)
             if value:
                 handed.append(value)
             return value
@@ -1548,7 +1510,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         except UnresolvedSecret as missing:
             return ToolResult(
                 success=False,
-                error=_unfilled_reference(missing),
+                error=unfilled_reference(missing),
                 recovery_hints=[
                     "Use a name the user has stored in Settings → Secrets, or ask them to store it."
                 ],

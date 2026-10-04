@@ -16,8 +16,10 @@ UI. The guidance and the mechanism disagreed, and the mechanism won.
 workflow engine's binding context (`BindingContext.secret_resolver`, reached through `_walk_path`
 and the pipe grammar). A trigger action config is a flat `{provider, config}` dict resolved at
 dispatch with no binding tree, so reusing it would mean building a fake context around two lines of
-string substitution. What IS shared is the thing that matters: both resolve against the same
-`CredentialStore`, so a key means one thing across the whole product.
+string substitution. What IS shared is the thing that matters: both resolve through the one resolver
+(`llm.credentials.resolve_secret`), so a key means one thing across the whole product. An automation
+runs in no project, so its action reads only the global secrets: a project's secret is read by that
+project's runs alone (a workflow run an automation starts in a project reads it in its own steps).
 
 **The disciplines, and why each one is here:**
 
@@ -48,9 +50,9 @@ class UnresolvedSecret(Exception):
     """A trigger's action references a credential that is not configured, or one it may not read.
 
     Carries the KEY, because "a secret is missing" without the name leaves the user checking every
-    credential they have. ``refused`` is the store's refusal of an OWNED key
-    (``llm.credentials.OwnedCredentialRefused``): that key is set, so the sentence says why no
-    action can read it instead of calling it missing.
+    credential they have. ``refused`` is the store's refusal of a key nothing reads by name
+    (``llm.credentials.SecretNameRefused``: a setting's own key, or a project's stored key): that
+    key is set, so the sentence says why no action can read it instead of calling it missing.
     """
 
     def __init__(self, key: str, *, refused: Exception | None = None) -> None:
@@ -92,23 +94,22 @@ def references(value: Any) -> list[str]:
 
 
 def default_resolver(key: str) -> str:
-    """Resolve one key from the credential store Settings → Secrets writes. "" when unset.
+    """Resolve one key as an automation reads it: the global secret, through the one resolver
+    (`llm.credentials.resolve_secret`, with no project). "" when unset.
 
-    Mirrors `workflows.node_bindings._secret_resolver` deliberately — the same store, the same
-    empty-on-missing contract — so a key resolves identically whether a workflow or a trigger asks.
-    The caller decides what "" means; `resolve()` below treats it as a refusal.
+    The same resolver and the same empty-on-missing contract a workflow step has, so a key
+    resolves identically whether a workflow or a trigger asks. The caller decides what "" means;
+    `resolve()` below treats it as a refusal.
     """
-    from personalclaw.config.loader import config_dir
-    from personalclaw.llm.credentials import CredentialStore
+    from personalclaw.llm import credentials as llm_credentials
 
     try:
-        cred = CredentialStore(config_dir()).resolve(key)
+        return llm_credentials.resolve_secret(key).secret
     except KeyError:
         return ""
     except Exception:  # noqa: BLE001 - an unreadable store is a missing secret, not a crash
         logger.debug("credential store unreadable while resolving %r", key, exc_info=True)
         return ""
-    return cred.secret or ""
 
 
 def resolve(config: Any, *, resolver: Callable[[str], str] | None = None) -> Any:
@@ -128,16 +129,17 @@ def resolve(config: Any, *, resolver: Callable[[str], str] | None = None) -> Any
     if not keys:
         return config
 
-    from personalclaw.config.credentials import is_owned_key
-    from personalclaw.llm.credentials import OwnedCredentialRefused
+    from personalclaw.llm.credentials import name_refusal
 
     fn = resolver or default_resolver
     values: dict[str, str] = {}
     for key in keys:
-        if is_owned_key(key):
+        refused = name_refusal(key)
+        if refused is not None:
             # Refused before any resolver reads it: an owned key is read only through the
-            # settings record that references it, never by name from an action.
-            raise UnresolvedSecret(key, refused=OwnedCredentialRefused(key))
+            # settings record that references it, and a project's secret only by that project's
+            # runs, by its own name — never by its stored key from an action or a command.
+            raise UnresolvedSecret(key, refused=refused)
         value = fn(key)
         if not value:
             # 🔴 REFUSE, do not substitute "". An empty Authorization header produces a remote 401

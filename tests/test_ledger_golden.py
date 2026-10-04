@@ -224,6 +224,19 @@ def _drive_emitters() -> dict[str, list[str]]:
         signature={"class": "network"},
     )
     j.task_verified("main.children[0]", "gather", task_id="t1", passed=None, criterion="builds")
+    # A secret a step used, by its name and scope and never a value: one filled in from the run's
+    # project, and one handed on to the step's agent that no scope holds.
+    j.secret_read(
+        "main.children[0]",
+        "gather",
+        epoch=1,
+        name="EXAMPLE_TOKEN",
+        scope="project",
+        handed_on=False,
+    )
+    j.secret_read(
+        "main.children[1]", "bulk", epoch=1, name="EXAMPLE_TOKEN", scope="", handed_on=True
+    )
     pending = j.pending_outcome(
         "main.children[0]",
         "gather",

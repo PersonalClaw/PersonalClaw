@@ -169,8 +169,8 @@ def test_a_resolver_returning_empty_is_treated_as_missing():
 
 
 def test_the_default_resolver_returns_empty_for_an_unknown_key(tmp_path, monkeypatch):
-    """Mirrors `workflows.node_bindings._secret_resolver`: the same store and the same
-    empty-on-missing contract, so a key resolves identically for a workflow and a trigger."""
+    """The workflow engine's contract: the same resolver and the same empty-on-missing answer, so
+    a key resolves identically for a workflow and a trigger."""
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     assert S.default_resolver("DEFINITELY_NOT_SET") == ""
 
@@ -179,7 +179,7 @@ def test_an_unreadable_store_is_a_missing_secret_not_a_crash(tmp_path, monkeypat
     """A fire must not die on a corrupt credential file — it must refuse legibly, which the
     `UnresolvedSecret` path above does."""
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    with patch("personalclaw.llm.credentials.CredentialStore", side_effect=OSError("unreadable")):
+    with patch("personalclaw.llm.credentials.resolve_secret", side_effect=OSError("unreadable")):
         assert S.default_resolver("ANY") == ""
 
 
@@ -273,15 +273,18 @@ def test_the_stored_config_is_never_mutated():
     assert stored == "echo {{secret:MY_KEY}}", "the placeholder must survive on the trigger"
 
 
-def test_the_workflow_engine_and_the_trigger_path_share_the_credential_store():
+def test_the_workflow_engine_and_the_trigger_path_share_the_resolver():
     """One key must mean one thing product-wide. Asserted on the source, because the property is
-    that both call `CredentialStore(config_dir()).resolve(...)` — not that they share a function."""
+    that both ask the one resolver (`llm.credentials.resolve_secret`) — a workflow step with its
+    run's project, an automation with none."""
     import inspect
 
-    wf = inspect.getsource(node_bindings._secret_resolver)
+    wf = inspect.getsource(node_bindings._secrets_for)
     tr = inspect.getsource(S.default_resolver)
-    for needle in ("CredentialStore", "config_dir()", "cred.secret or"):
-        assert needle in wf and needle in tr, needle
+    for source in (wf, tr):
+        assert "resolve_secret(key" in source, source
+    assert "project_id=project" in wf
+    assert "project_id" not in tr, "an automation runs in no project"
 
 
 # ── the inline-credential lint on the store ──

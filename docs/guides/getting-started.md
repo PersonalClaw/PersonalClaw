@@ -228,6 +228,9 @@ Model providers are installable apps — nothing is hardwired to a vendor.
 Prefer the terminal? `personalclaw setup --credential NAME=VALUE` saves a
 secret in the same credential store Settings → Secrets uses, where a workflow's
 `{{secret:NAME}}` and a provider entry whose `credential` is `NAME` read it.
+Settings → Secrets can also keep a secret for one project: only that project's
+work (its workflow runs, loops and chats) reads it, ahead of a global secret of
+the same name, and nothing outside the project does.
 `personalclaw doctor` verifies the result end to end.
 
 ## 4. First chat
