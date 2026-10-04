@@ -249,11 +249,12 @@ async def _judge_candidates(
     if provider_factory is None:
 
         def provider_factory(_session_key: str, **_kw: Any) -> Any:
-            from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+            from personalclaw.providers.provider_bridge import resolve_metered_model
 
-            # The reasoning axis — judging a slate IS the reasoning-shaped call, and the
-            # bridge wraps it in the same ModelCallGuard the samples ride.
-            return resolve_provider_for_use_case("reasoning")
+            # The reasoning axis — judging a slate IS the reasoning-shaped call — resolved as
+            # every call automation makes is: the model itself, never an agent CLI, behind the
+            # same ModelCallGuard the samples ride.
+            return resolve_metered_model("reasoning")
 
     judge = LLMJudge(provider_factory)
     try:

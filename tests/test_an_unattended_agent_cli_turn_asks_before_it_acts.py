@@ -18,8 +18,8 @@ agent and whether it wrote; the file itself says whether anything was written.
   her answer.
 * A read-only ``personalclaw run`` turn on an agent CLI holds: the write is refused by its
   read-only mode, before anything could approve it.
-* A chore built on the agent CLI (a chat's title, its follow-ups) runs none of the calls the CLI
-  asks about: a chore answers in text.
+* A chore (a chat's title, its follow-ups) never starts the agent CLI: a chore answers in text,
+  and with no model to answer it the chore is skipped, so nothing the CLI could ask about runs.
 """
 
 from __future__ import annotations
@@ -332,39 +332,28 @@ async def test_a_read_only_run_on_an_agent_cli_refuses_the_write(world):
 
 
 @pytest.mark.asyncio
-async def test_a_chore_on_the_agent_cli_runs_none_of_the_calls_it_asks_about(tmp_path, monkeypatch):
-    """A chore (a chat's title, its follow-ups) answers in text, so it runs no tools. With nothing
-    bound and the agent CLI the one provider there is, the chore is built on that CLI
-    (``one_shot_completion``'s last resort), and its prompt quotes the chat. The write the CLI asks
-    about is refused, and nothing is written. 🔴 Before: the chore approved every call its model
-    asked about, so the file was written, after a read-only run had refused that very write."""
+async def test_a_chore_never_starts_the_agent_cli(tmp_path, monkeypatch):
+    """A chore (a chat's title, its follow-ups) answers in text, so it runs on a model and never on
+    an agent CLI, a whole agent with tools of its own. With nothing bound and the agent CLI the one
+    provider there is, the chore is skipped before anything is built: the CLI never starts, so
+    nothing it could ask about runs, and nothing is written. 🔴 Before: the chore was built on that
+    CLI and approved every call its model asked about, so the file was written, after a read-only
+    run had refused that very write."""
     from personalclaw import chores
     from personalclaw.llm import acp_agent
-    from personalclaw.llm.registry import ProviderRegistry, ProviderResolutionError
+    from personalclaw.llm.registry import ProviderRegistry
 
-    monkeypatch.setattr("personalclaw.acp.client._DRAIN_DURATION", 0.05)
     record = tmp_path / "wire.jsonl"
     target = tmp_path / "pantry.md"
     registry = ProviderRegistry()
     registry.register_type(acp_agent.ACP_AGENT_CAPABILITY, acp_agent._factory)
     registry.register_entry(_cli_entry(record, target))
     monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: registry)
-    monkeypatch.setattr("personalclaw.providers.use_cases.resolution_chain", lambda uc: [])
 
-    def _nothing_bound(use_case: str, **_kw):
-        raise ProviderResolutionError("no model answers the background axis")
+    with pytest.raises(chores.NoModelChosen):
+        await asyncio.wait_for(
+            chores.run_chore("user: Save the pantry list.", usage=chores.chore_usage()), timeout=30
+        )
 
-    monkeypatch.setattr(
-        "personalclaw.providers.provider_bridge.resolve_provider_for_use_case", _nothing_bound
-    )
-
-    answer = await asyncio.wait_for(
-        chores.run_chore("user: Save the pantry list.", usage=chores.chore_usage()), timeout=30
-    )
-
-    rows = [json.loads(line) for line in record.read_text().splitlines() if line]
-    assert [r["option"] for r in rows if r["kind"] == "permission_answer"] == ["reject_once"]
-    assert [r for r in rows if r["kind"] == "wrote"] == [] and not target.exists()
-    assert answer == DID_NOT_WRITE
-    [refused] = _decided(sel().recent(200), "rejected")
-    assert refused["metadata"]["decided_by"] == "reject_all_policy"
+    assert not record.exists(), "the agent CLI was started for a chore"
+    assert not target.exists()

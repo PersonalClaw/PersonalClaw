@@ -238,10 +238,11 @@ async def generate_suggestions(state: "DashboardState") -> list[str]:
         return list(_FALLBACK_SUGGESTIONS)
 
     # Asking RESOLVES a model; a pre-onboarding instance with no provider bound raises
-    # ProviderResolutionError. That is the SAME "can't generate yet" state as an empty context, an
-    # unresolved prompt, a timeout or an answer that cannot be read — a degradation, not a fault —
-    # so each returns the fallback list, the first quietly (a debug line, never a WARNING
-    # traceback). The list is what stamps `cache.generated_at`: an error that propagated to
+    # ProviderResolutionError, and so does a home whose only runtime is an agent CLI, which runs
+    # no chore (``chores.NoModelChosen``). That is the SAME "can't generate yet" state as an empty
+    # context, an unresolved prompt, a timeout or an answer that cannot be read — a degradation,
+    # not a fault — so each returns the fallback list, the first quietly (a debug line, never a
+    # WARNING traceback). The list is what stamps `cache.generated_at`: an error that propagated to
     # ``refresh_suggestions`` left it unset, and ``api_suggestions`` re-ran generation on EVERY
     # poll. Two classes carry the no-model signal (the LLM registry's and the bridge's) — catch
     # both, as ``session.py`` and ``cli.py`` do for the same reason. A first model of the chain
@@ -349,6 +350,11 @@ async def api_suggestions(request: web.Request) -> web.Response:
     refresh hint when it lands. Until a first one lands they are the fallback list the cache
     starts with. This used to wait up to 45s for a first generation and for every ``force``,
     holding one of the browser's six connections to the gateway for as long.
+
+    ``needs_model`` is what the new-chat page says under them while no model is chosen for the
+    chores (``chores.needs_a_model``), ``""`` once one is: read now, so a model chosen a moment
+    ago is not still asked for. With none chosen, a generation asks nothing and the list stays the
+    fallback one.
     """
     state: "DashboardState" = request.app["state"]
     cache = get_suggestions_cache(state)
@@ -363,5 +369,6 @@ async def api_suggestions(request: web.Request) -> web.Response:
                 else True
             ),
             "refreshing": refreshing,
+            "needs_model": "" if chores.model_chosen() else chores.needs_a_model("Suggestions"),
         }
     )

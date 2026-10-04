@@ -775,12 +775,13 @@ async def replay_proposal(
 
         def judge_factory():
             from personalclaw.eval.judge import LLMJudge
-            from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+            from personalclaw.providers.provider_bridge import resolve_metered_model
 
             # `eval_judge` is the session key LLMJudge passes its factory, and the binding the
-            # change names. Resolved through the bridge so the judge rides the same
-            # ModelCallGuard — and therefore the same meter and ceiling — the arms do.
-            return LLMJudge(lambda _key: resolve_provider_for_use_case("reasoning"))
+            # change names. Resolved through the bridge as every call automation makes is (the
+            # model itself, never an agent CLI), so the judge rides the same ModelCallGuard —
+            # and therefore the same meter and ceiling — the arms do.
+            return LLMJudge(lambda _key: resolve_metered_model("reasoning"))
 
     judge = judge_factory()
     try:

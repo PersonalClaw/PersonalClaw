@@ -1,5 +1,6 @@
-import { Sparkles } from 'lucide-react'
+import { ArrowRight, Sparkles } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { TextLink } from '../../ui/TextLink'
 import { fvs } from '../../design/fontWeight'
 
 /** Where "Set up a model" goes — the same destination DegradedChip's "Bind a
@@ -91,5 +92,19 @@ export function NoModelSetupState({ detail, onSetup }: { detail: string; onSetup
         </div>
       </div>
     </div>
+  )
+}
+
+/** The line a surface whose answers come from PersonalClaw's own background chores shows while no
+ *  model is chosen for them: the new-chat suggestions, the dashboard's Suggestions, the follow-ups
+ *  under a reply. Nothing was asked (a chore never runs on an agent CLI), and the sentence is the
+ *  gateway's (`chores.needs_a_model`: "Suggestions need a model: choose one in Settings → Models."),
+ *  shown as the way to where the model is chosen. */
+export function NeedsModelNote({ sentence, className }: { sentence: string; className?: string }) {
+  return (
+    <TextLink href={MODELS_ROUTE} icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis"
+      className={className}>
+      {sentence}
+    </TextLink>
   )
 }

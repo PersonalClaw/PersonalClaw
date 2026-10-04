@@ -232,42 +232,23 @@ class TestOneShotCompletion:
         provider.shutdown.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_first_registry_entry_when_bridge_fails(self) -> None:
+    async def test_the_bridge_refusing_is_the_answer(self) -> None:
+        """Nothing is built around a refusal: the bridge's rule is the one a call is resolved by,
+        and a provider it would not pick (an agent CLI, a model that cannot serve) is never one."""
         from personalclaw import llm_helpers
-
-        class _Built:
-            """The first configured entry's model as its factory builds it: the one-shot call
-            meters it (`provider_bridge.metered`), so it is a model's shape, not a mock's."""
-
-            supports_tools = False
-
-            async def start(self) -> None:
-                return None
-
-            async def shutdown(self) -> None:
-                return None
-
-            async def stream(self, message: str):
-                yield LLMEvent(kind=EVENT_TEXT_CHUNK, text="hello")
-                yield LLMEvent(kind=EVENT_COMPLETE)
+        from personalclaw.providers.provider_bridge import ProviderResolutionError
 
         registry = MagicMock()
-        entry = MagicMock()
-        entry.name = "Bedrock"
-        entry.type = "bedrock"
-        entry.own_model = "claude-x"
-        registry.list_entries.return_value = [entry]
-        registry.build.return_value = _Built()
         with (
             patch(
                 "personalclaw.providers.provider_bridge.resolve_provider_for_use_case",
-                side_effect=RuntimeError("no active selection"),
+                side_effect=ProviderResolutionError("no model is chosen for 'background'"),
             ),
             patch("personalclaw.llm.registry.get_default_registry", return_value=registry),
+            pytest.raises(ProviderResolutionError),
         ):
-            out = await llm_helpers.one_shot_completion("hi")
-        assert out == "hello"
-        registry.build.assert_called_once()
+            await llm_helpers.one_shot_completion("hi")
+        registry.build.assert_not_called()
 
 
 # ── Native structured output reaches ONLY a natively capable provider ──

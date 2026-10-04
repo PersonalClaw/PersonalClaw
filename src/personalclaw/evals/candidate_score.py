@@ -216,12 +216,13 @@ def _criteria(case: dict[str, Any]) -> str:
 
 
 def _judge_factory(usage: Any) -> Any:
-    """The eval judge, resolved through the same guarded bridge the arms use and booked to
-    *usage*, so its calls are charged, held to a bound ceiling and counted as the caller's."""
+    """The eval judge, resolved through the same guarded bridge the arms use (the model itself,
+    never an agent CLI) and booked to *usage*, so its calls are charged, held to a bound ceiling
+    and counted as the caller's."""
     from personalclaw.eval.judge import LLMJudge
-    from personalclaw.providers.provider_bridge import resolve_provider_for_use_case
+    from personalclaw.providers.provider_bridge import resolve_metered_model
 
-    return LLMJudge(lambda _key: resolve_provider_for_use_case("reasoning"), usage=usage)
+    return LLMJudge(lambda _key: resolve_metered_model("reasoning"), usage=usage)
 
 
 def _parse_failure(verdict: Any) -> bool:

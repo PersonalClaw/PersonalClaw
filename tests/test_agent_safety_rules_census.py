@@ -92,16 +92,12 @@ NOT_STARTED_HERE: dict[tuple[str, str], str] = {
     ("evals/child.py", "_run"): "an evaluation cell, in a throwaway home",
 }
 
-#: Direct resolutions through the bridge outside it, with why none starts an agent.
-_A_JUDGE = "a judge on the reasoning model, which the bridge builds with no tools"
-_SAMPLING_JUDGE = ("sampling.py", "_judge_candidates.provider_factory")
+#: Direct resolutions through the bridge outside it, with why none starts an agent. A call that
+#: only wants a model's answer (a judge, a chore) resolves it as the model itself
+#: (``resolve_metered_model``), which never builds an agent, so it is not one of these.
+_MODEL_CHECK = ("dashboard/handlers/model_check.py", "api_onboarding_model_check")
 RESOLVED_DIRECTLY: dict[tuple[str, str], str] = {
-    ("dashboard/handlers/model_check.py", "api_onboarding_model_check"): (
-        "Settings' check that a chat model resolves: built and shut down, sent nothing"
-    ),
-    _SAMPLING_JUDGE: _A_JUDGE,
-    ("learning/replay.py", "replay_proposal.judge_factory.<lambda>"): _A_JUDGE,
-    ("evals/candidate_score.py", "_judge_factory.<lambda>"): _A_JUDGE,
+    _MODEL_CHECK: "Settings' check that a chat model resolves: built and shut down, sent nothing",
 }
 
 #: Sites that name the agent they start and are not that agent's own work, by (file, function),
@@ -223,7 +219,7 @@ def test_every_direct_resolution_through_the_bridge_is_accounted_for():
     sites = _sites(
         "resolve_provider_for_use_case", skip=frozenset({"providers/provider_bridge.py"})
     )
-    assert _SAMPLING_JUDGE in sites, "the detector reads the real tree"
+    assert _MODEL_CHECK in sites, "the detector reads the real tree"
     assert sites == set(RESOLVED_DIRECTLY), (
         f"unaccounted {sorted(sites - set(RESOLVED_DIRECTLY))}, no longer there "
         f"{sorted(set(RESOLVED_DIRECTLY) - sites)}: the chat use case builds an agent with tools"

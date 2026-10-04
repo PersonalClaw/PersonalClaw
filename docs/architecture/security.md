@@ -1384,12 +1384,31 @@ and skill refinement, a Slack thread's title — each answer in text from what t
 and that prompt quotes chats, pages and messages nobody vetted. Each is one call of its own to a
 model on the Background chain (`chores.run_chore`, over `llm_helpers.one_shot_completion`): the
 model is built for the call, sent the chore's own prompt, masked, and nothing of any other chore,
-and it is offered no tools. An agent CLI brings tools of its own, and a home whose one provider is
-an agent CLI has its chores answered there: every call the CLI asks about is refused
-(`llm_helpers.one_shot_completion`), so what a chore's prompt quotes cannot get such a call run,
-and what the CLI runs without asking is the residual
-[limitations §1](../security/limitations.md#1-an-agent-cli-is-held-to-the-rails-only-for-the-calls-it-asks-about)
-describes. No session is kept for them, so what one chat's chore reads never
+and it is offered no tools.
+
+It runs on a model, never on an agent CLI. Every one-shot call is resolved by the bridge's one rule
+for a call automation makes (`provider_bridge.resolve_metered_model`): the model bound for the use
+case (the Background chain, else the Chat chain), else a configured model that names one of its
+own. An agent CLI is never that model: it is a whole agent, with tools of its own, and a home may
+run every chat on one. With no model chosen the chore is skipped before anything is built
+(`chores.NoModelChosen`), and the surface it was for says so: the new-chat page and the dashboard
+under their suggestions, a reply where its follow-ups would be, and an untitled chat's header under
+its name (and in the answer to Regenerate title), each in the words "… need a model: choose one in
+Settings → Models.", leading there. The same rule picks the model a judge grades on (best-of-n, an
+evaluation, a lesson's replay). A call used to fall back to "the first registered provider" when
+nothing was bound, and on a home whose only runtime was an agent CLI that started the CLI for every
+chore.
+
+A tool request on such a call is refused, with nobody asked, and audited as `rejected` with the
+reason `reject_all_policy`: the one-shot call refuses every call its model asks about
+(`llm_helpers.one_shot_completion`), and so does the default policy of
+`llm_helpers.stream_and_collect`, the one loop every helper call streams through, which used to
+approve every request nobody was asked about. A caller whose turn may use tools passes its own
+policy: the heartbeat task (its SafetyProfile, `approval_policy_for_session`), a subagent's result
+announced in its parent (`gateway.injection_approval_policy`) and a room member's turn (the room's
+gate) do; the side chat and an agent's test run on its page refuse every call explicitly.
+
+No session is kept for them, so what one chat's chore reads never
 reaches another's: the chores used to share one long-lived session whose conversation carried
 every chore of every chat, and a consolidation stored words read there as the user's own facts.
 `tests/test_session_acquisition_census.py` fails a chore that takes a session. The one-shot

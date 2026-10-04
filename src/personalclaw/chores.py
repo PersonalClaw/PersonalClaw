@@ -16,9 +16,15 @@ The rest is a one-shot call's. The Background chain in Settings → Models answe
 turn when one fails, does not answer in time, is paused by its breaker, answers nothing or answers
 in a shape the chore cannot read. The spend guard counts it against the day's ceiling. On a model
 on this machine it waits its turn behind the calls somebody is waiting for. It writes one usage
-row. And its model is offered no tools: a chore answers in text from what its prompt carries, and
-that prompt quotes chats, pages and messages nobody vetted. An agent CLI brings tools of its own,
-so on one every call it asks about is refused.
+row. And its model may use no tool: a chore answers in text from what its prompt carries, and that
+prompt quotes chats, pages and messages nobody vetted. So a chore runs on a model, never on an
+agent CLI (a whole agent with tools of its own, which a home may run every chat on), and a tool its
+model asks for is refused, with nobody asked (``llm_helpers.one_shot_completion``).
+
+A chore no model is chosen for is skipped: nothing is built and nothing is sent (the Background
+chain is empty, the Chat chain it falls back to is too, and no configured model names one of its
+own). :func:`run_chore` raises :class:`NoModelChosen` for it, and the surface it was for says so in
+the words of :func:`needs_a_model`, which name where the model is chosen.
 
 Three rules are a chore's own. Its prompt is masked (``security.redact_for_model``): no person
 typed it, and every part of it was read out of stored text. What one answer may run to is bounded
@@ -36,8 +42,31 @@ from collections.abc import Callable
 
 from personalclaw import memory_writes
 from personalclaw.agents.defaults import LITE_AGENT_NAME
+from personalclaw.providers.provider_bridge import ProviderResolutionError
 from personalclaw.security import redact_for_model
 from personalclaw.usage_ledger import Attribution
+
+
+class NoModelChosen(ProviderResolutionError):
+    """A chore skipped because no model is chosen for it (:func:`model_chosen`): nothing was built
+    and nothing was sent. The resolver's own refusal, so every reader of that one reads this as it
+    did; a surface that shows why it has no answer says :func:`needs_a_model`."""
+
+
+def model_chosen() -> bool:
+    """Whether a model is chosen for the chores: the Background chain in Settings → Models, the
+    Chat chain it falls back to, or a configured model that names one of its own. An agent CLI
+    chooses none (``provider_bridge.model_chosen``): it runs no chore."""
+    from personalclaw.providers.provider_bridge import model_chosen as chosen_for
+
+    return chosen_for("background")
+
+
+def needs_a_model(what: str) -> str:
+    """What a surface says while no model is chosen for its chores, *what* naming them as she
+    knows them ("Suggestions", "Follow-ups"): the one sentence each of those surfaces shows, naming
+    where the model is chosen."""
+    return f"{what} need a model: choose one in Settings → Models."
 
 
 async def run_chore(
@@ -55,7 +84,8 @@ async def run_chore(
     asked; the last one is asked once more with what was wrong, and when that misses too an
     ``OutputContractError`` is raised. An empty answer is a failure on every chore. A chore no
     model answered raises the chain's failure, and ``owed_chores.no_model_answered`` says whether
-    a later try can get past it.
+    a later try can get past it. A chore no model is chosen for raises :class:`NoModelChosen`
+    before anything is built.
 
     A chore of a chat that keeps nothing (Incognito or Temporary) reaches no model but the chat's
     own. That chat is the one the chore is for, which *usage* names, read by every record of its
@@ -70,13 +100,20 @@ async def run_chore(
 
     if _reaches_no_model(usage.session_key, memory_mode):
         raise _refusal(usage.session_key, memory_mode)
-    return await one_shot_completion(
-        redact_for_model(prompt),
-        use_case="background",
-        usage=usage,
-        validate=validate,
-        max_output_tokens=int(background_limits().max_output_tokens),
-    )
+    try:
+        return await one_shot_completion(
+            redact_for_model(prompt),
+            use_case="background",
+            usage=usage,
+            validate=validate,
+            max_output_tokens=int(background_limits().max_output_tokens),
+        )
+    except ProviderResolutionError as exc:
+        # The resolver refused before building anything. When that is because no model is chosen
+        # at all, the chore was skipped rather than failed, and its surface says so.
+        if model_chosen():
+            raise
+        raise NoModelChosen(str(exc), exc.agent_error) from exc
 
 
 def _reaches_no_model(chat_key: str, memory_mode: str | None) -> bool:

@@ -768,8 +768,9 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // exist" and anything else as a load failure with a retry. A third, the attachment preview's
   // read, moved with the attachment chips into `pages/chat/AttachmentChips.tsx` and now records the
   // failure instead of reading as "no extractable text". A fourth, the chat list's content search,
-  // fell back to title matches in silence. It now says the search failed and offers a retry.
-  'pages/ChatPage.tsx': 4,
+  // fell back to title matches in silence. It now says the search failed and offers a retry. A
+  // fifth, Regenerate title's answer, read a failed request as no answer; it now says so.
+  'pages/ChatPage.tsx': 3,
   // 3 → 2: the lifecycle-hooks read stopped answering `{}` on a failure (#3725). It now says "Could
   // not read the agent's hooks." The two left are the trigger-name lookup and the active-MCP list.
   'pages/agents/AgentDetail.tsx': 2,

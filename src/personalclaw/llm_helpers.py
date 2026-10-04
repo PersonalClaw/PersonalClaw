@@ -79,7 +79,7 @@ async def stream_and_collect(
     provider: ModelProvider,
     message: str,
     *,
-    approval_policy: ToolApprovalPolicy = ToolApprovalPolicy.AUTO_APPROVE,
+    approval_policy: ToolApprovalPolicy = ToolApprovalPolicy.REJECT_ALL,
     hooks: "HookManager | None" = None,
     on_chunk: Callable[[str], None] | None = None,
     on_tool_approval: "Callable[[LLMEvent], Awaitable[bool | ToolDecision]] | None" = None,
@@ -98,7 +98,10 @@ async def stream_and_collect(
         provider: The LLM provider to stream through.
         message: The prompt to send.
         approval_policy: How to handle tool permission requests. Under every one, a call the
-            deny-list refuses is refused first (``_resolve_permission``).
+            deny-list refuses is refused first (``_resolve_permission``). The default refuses
+            every request, each audited with its reason: a call that asks a model for a text
+            answer (``one_shot_completion``, and every chore through it) lets it use no tool, and
+            nobody is there to be asked. A turn that may use tools passes its own policy.
         hooks: The HookManager the deny-list is read from (the gateway's own when ``None``), and
             whose auto-approve patterns answer a call under HOOK_BASED.
         on_chunk: Optional callback invoked with each text chunk (for progress).
@@ -758,8 +761,8 @@ def use_case_chain(use_case: str) -> list[str]:
     to :func:`run_over_use_case_chain`, and that is deliberate: "a one-entry chain takes
     today's plain path" is a rule about WHICH resolution call is made. The walk passes
     ``model_override=<ref>``; a plain resolve passes none, which additionally admits the
-    implicit-capability fallback and (in ``one_shot_completion``) the last-resort
-    registry build. Collapsing the two would silently change single-binding behaviour.
+    implicit-capability fallback. Collapsing the two would silently change single-binding
+    behaviour.
 
     The composer/session override is deliberately NOT plumbed through here. Every
     consumer of this walk is NON-INTERACTIVE (one-shot completions, the knowledge
@@ -921,17 +924,18 @@ async def one_shot_completion(
 ) -> str:
     """Send a single prompt to the system's configured LLM and return the response.
 
-    The answer is text alone: the model is offered no tools, and a model that brings tools of its
-    own (an agent CLI, which the last-resort build below can reach) has every call it asks about
-    refused.
+    The answer is text alone: the model is offered no tools, it is never an agent CLI (a whole
+    agent with tools of its own, which the resolution below never builds), and a model that asks
+    for a tool anyway has every call it asks about refused.
 
     Resolves the provider through the same use-case bridge the chat path uses —
     which reads the active model selection from ``active_models.json`` (Settings →
     Models) — then builds a temporary instance, streams the response, and returns
-    the collected text. Every resolution path wraps the model in the model-call guard
-    (circuit breaker + hard timeout + attempt audit + the spend budgets): the bridge seam
-    (``provider_bridge.resolve_metered_model``) for the pin, the chain and the plain resolve,
-    and ``provider_bridge.metered`` for the last-resort build, which used to run unguarded.
+    the collected text. Every resolution path (the pin, the chain and the plain resolve) goes
+    through the one seam (``provider_bridge.resolve_metered_model``), which wraps the model in
+    the model-call guard (circuit breaker + hard timeout + attempt audit + the spend budgets)
+    and never builds an agent CLI: a call asks a model for a text answer. With no model chosen
+    for the use case the bridge's refusal is raised, and nothing is built.
 
     ``use_case`` names a chat sub-category axis (MODEL-USE-CASES-V2):
     ``"background"`` IS a real axis now (titles/tags/suggestions/digests/
@@ -996,7 +1000,7 @@ async def one_shot_completion(
     ``None`` (the default) sends nothing, keeping every existing call site unchanged.
 
     The per-call OUTPUT BUDGET (LMMV §2.2) is derived, never hardcoded: every resolution
-    path (pin / chain-advance / plain / last-resort) asks
+    path (pin / chain-advance / plain) asks
     :func:`personalclaw.local_models.budgets.output_budget` for the model it is about to
     run and rides the answer as a ``max_tokens`` build kwarg. A local model whose card
     declares ``context_tokens``/``output_tokens`` therefore gets ITS window instead of the
@@ -1071,7 +1075,7 @@ async def _one_shot_completion(
     max_output_tokens: int | None,
 ) -> str:
     """:func:`one_shot_completion`, with whoever is waiting for it already bound."""
-    from personalclaw.providers.provider_bridge import metered, resolve_metered_model
+    from personalclaw.providers.provider_bridge import resolve_metered_model
     from personalclaw.providers.use_cases import VALID_USE_CASES
     from personalclaw.usage_ledger import UNATTENDED, recorder
 
@@ -1090,7 +1094,7 @@ async def _one_shot_completion(
     from personalclaw.guardrails.failure import EmptyCompletion, OutputContractError
 
     # A pinned sampling temperature rides EVERY resolution path as a build kwarg
-    # (pin / chain-advance / plain / last-resort), so a fallback entry samples at the
+    # (pin / chain-advance / plain), so a fallback entry samples at the
     # temperature the caller asked for rather than silently reverting to the provider
     # default.
     _bridge_kw: dict = {} if temperature is None else {"temperature": float(temperature)}
@@ -1115,7 +1119,7 @@ async def _one_shot_completion(
         advertised ``StructuredOutput.JSON_SCHEMA`` — see
         :func:`_enforces_json_schema_natively` for why an unadvertised provider must not
         receive the key. PER ENTRY is the whole point of deciding here rather than once
-        up front: every resolution path (pin / chain advance / plain / last-resort) funnels
+        up front: every resolution path (pin / chain advance / plain) funnels
         through this function WITH the ref it is about to run, and the chain walk can advance
         from a capable entry to an incapable one mid-call. A decision made once would send
         the constraint to a fallback provider that cannot honour it — precisely the
@@ -1168,9 +1172,8 @@ async def _one_shot_completion(
     async def _ask(provider, text: str, on_complete: Callable[[LLMEvent], None]) -> str:
         """*text*'s answer from *provider*, in text alone. A one-shot call offers its model no
         tools: it answers from what its prompt carries, and that prompt can quote text nobody
-        vetted. So a model that brings tools of its own (an agent CLI) has every call it asks
-        about refused, and what such a CLI runs without asking is the residual
-        ``acp.permission_authority`` declares, audited as ``ungated``."""
+        vetted. So a model that asks for a tool anyway has every call it asks about refused, with
+        nobody asked; and no agent CLI, which brings tools of its own, is ever the model here."""
         return await stream_and_collect(
             provider, text, approval_policy=ToolApprovalPolicy.REJECT_ALL, on_complete=on_complete
         )
@@ -1260,75 +1263,19 @@ async def _one_shot_completion(
             label="one_shot chain",
         )
 
-    provider = None
-    unresolved: Exception | None = None
-    # The single-entry / empty chain resolves the axis itself, so the budget is derived
-    # from the model that axis will actually run (``_chain`` already holds it when there
-    # is one) rather than from nothing — an unbound axis falls back to the window table.
+    # A one-entry or empty chain: the bridge resolves the axis itself, by the one rule every call
+    # automation makes is resolved by (``provider_bridge.resolve_metered_model``) — the model the
+    # use case is bound to, else a configured model that names one of its own, and never an agent
+    # CLI, which is a whole agent with tools of its own and no model to ask for a text answer. Its
+    # refusal is the answer, typed and saying which use case wants which model and where it is
+    # chosen. This call used to build "the first registered provider" when the bridge refused, and
+    # on a home whose only runtime is an agent CLI that was the CLI: every chore started it, and
+    # its requests to run commands were approved with nobody asked.
+    #
+    # The budget is derived from the model the axis will actually run (``_chain`` holds it when
+    # there is one) rather than from nothing — an unbound axis falls back to the window table.
     _plain_ref = _chain[0] if _chain else ""
-    try:
-        provider = resolve_metered_model(resolved_uc, **(await _entry_kw(_plain_ref)))
-    except Exception as exc:  # noqa: BLE001 — the last-resort build below may still serve
-        unresolved = exc
-        logger.debug(
-            "one_shot_completion: use-case bridge resolve failed for %r", resolved_uc, exc_info=True
-        )
-
-    # A binding exists and the bridge refused it: that refusal names the model the user bound and
-    # how to fix it, and it IS the answer. Building "the first registered provider" instead ran
-    # the call on a model nobody chose — best-of-n on a binding whose app update had failed
-    # reported success with every call served by another provider.
-    if provider is None and _chain and unresolved is not None:
-        raise unresolved
-
-    # Last-resort fallback: no active selection AND the bridge couldn't resolve a
-    # capable provider — build the first registered provider so a single-provider
-    # setup with no explicit selection still works.
-    #
-    # This is the FOURTH resolution path, and it was the one place a completion still
-    # inherited the adapters' hardcoded cap: it called ``build`` with no kwargs at all,
-    # so neither the derived budget nor a pinned ``temperature`` reached the provider.
-    # ``registry.build`` forwards kwargs to the type factory exactly as the bridge does
-    # (``provider_bridge`` builds its own ``build_kwargs`` the same way), so the entry
-    # gets the budget derived for the model it is ACTUALLY about to run.
-    #
-    # Fail-soft, and the retry is the point: this path exists because the bridge already
-    # failed, and one reason a bridge resolve fails is a factory that rejects an extra
-    # kwarg. Passing kwargs unconditionally would convert today's working degraded build
-    # into a hard failure for exactly that provider, so a rejected kwarg falls back to
-    # the bare build rather than propagating.
-    if provider is None:
-        from personalclaw.llm.registry import get_default_registry
-
-        # ``provider`` is None only because the bridge raised, so this is its refusal.
-        assert unresolved is not None
-        registry = get_default_registry()
-        entries = registry.list_entries()
-        fallback = entries[0] if entries else None
-        # With no entry, or one that names no model of its own (``ProviderEntry.own_model``),
-        # nothing can serve: nothing named a model for this call, and building that entry could
-        # only send the model empty or leave its provider to pick one. So the bridge's refusal
-        # IS the cause: typed, with the WHAT/WHY/FIX it derived (which use case, and what to set
-        # where). A bare RuntimeError here left a workflow step unable to tell "no model is set
-        # up" from a transient fault, and the run page offered a Retry that could only fail again.
-        if fallback is None or (not fallback.own_model and fallback.type != "acp_agent"):
-            raise unresolved
-        fallback_model = fallback.own_model
-        fallback_ref = f"{fallback.name}:{fallback_model}" if fallback_model else fallback.name
-        try:
-            built = registry.build(
-                fallback.name, **{"model": fallback_model, **(await _entry_kw(fallback_ref))}
-            )
-        except Exception:  # noqa: BLE001 — an unaccepted build kwarg degrades, never blocks
-            logger.debug(
-                "one_shot_completion: last-resort build rejected derived kwargs for %r",
-                fallback.name,
-            )
-            built = registry.build(fallback.name)
-        provider = metered(
-            built, use_case=resolved_uc, provider_name=fallback.name, model=fallback_model
-        )
-
+    provider = resolve_metered_model(resolved_uc, **(await _entry_kw(_plain_ref)))
     return await _attempt(provider)
 
 

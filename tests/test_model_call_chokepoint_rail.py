@@ -12,8 +12,8 @@ at ZERO because zero is the measured population — not as an aspiration:
 
 * ``wrap_model_call_guard`` is called from exactly ONE place in ``src/`` —
   ``providers/provider_bridge.metered``, which ``_resolve_from_config_registry`` calls "at the
-  single point where the entry name + model are known" (its own comment), and which
-  ``one_shot_completion``'s last-resort build calls for the one model built outside the seam.
+  single point where the entry name + model are known" (its own comment). No model is built
+  outside that seam: ``one_shot_completion`` resolves every call through it.
 * ``resolve_provider_for_use_case`` has five provider-returning paths. Four return a value obtained
   from ``_resolve_from_config_registry``. The fifth is the native-agent branch,
   ``_build_native_runtime``, whose docstring records that "its inference ModelProvider is resolved

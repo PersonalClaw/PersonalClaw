@@ -582,8 +582,9 @@ run's budget.
 A step keeps the model it asked for. A binding that cannot be built (a model
 app whose update failed) fails the step, and the failure names the model and
 the fix: nothing builds whichever provider happens to be registered in its
-place (`llm_helpers.one_shot_completion` keeps that last resort for a use case
-with nothing bound at all), and a model named directly is refused by name. A
+place, not even with nothing bound at all (`llm_helpers.one_shot_completion`
+resolves every call by the bridge's one rule, which never picks an agent CLI),
+and a model named directly is refused by name. A
 fallback the user configured, a later entry of the use case's chain, still
 serves, and every row that ends the attempt then carries `model_substituted`:
 the distinct "ran on X instead of Y: why" sentences of its calls, written only

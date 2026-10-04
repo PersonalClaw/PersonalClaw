@@ -89,6 +89,21 @@ def _title_problem(text: str) -> str:
     return "" if parse_title(text) else "no title line"
 
 
+def _titles_need_a_model() -> str:
+    """What a chat's title (and its tags, when the chats are tagged on their own) are waiting on
+    while no model is chosen for the chores (``chores.needs_a_model``)."""
+    return chores.needs_a_model("Titles and tags" if _auto_tag_enabled() else "Titles")
+
+
+def title_needs_model(session: _ChatSession) -> str:
+    """What the chat's header says under a chat that has no title because no model is chosen for
+    the chores (an agent CLI writes none), ``""`` for a titled chat or once a model is chosen. Read
+    with the chat (``GET /api/chat/sessions/{key}``), on opening it and after each turn."""
+    if session._titled or chores.model_chosen():
+        return ""
+    return _titles_need_a_model()
+
+
 async def _generate_title_via_provider(
     messages: list[dict[str, str]], *, usage: Attribution, memory_mode: str | None = None
 ) -> str:
@@ -247,10 +262,14 @@ async def _maybe_auto_title(state: DashboardState, session: _ChatSession) -> Non
 
     An Incognito or Temporary chat is given no model: it is titled by its mode on its first turn,
     and gets no tags. A title no model could be asked for is owed (``owed_chores``) and asked for
-    again once a model answers, rather than waiting on a next turn that may never come.
+    again once a model answers, rather than waiting on a next turn that may never come. With no
+    model chosen for the chores at all nothing is asked: the next turn asks again, and the chat's
+    header says what its title is waiting on (:func:`title_needs_model`).
     """
     try:
         await _title_once(state, session)
+    except chores.NoModelChosen:
+        logger.debug("Auto-title skipped for session %s: no model is chosen for it", session.key)
     except Exception as exc:
         # The chat keeps its first line as the title either way. A model that did not answer
         # is said in one line — its traceback holds only the HTTP client's frames — and a
@@ -323,7 +342,12 @@ async def _title_once(state: DashboardState, session: _ChatSession) -> None:
 
 
 async def api_chat_session_generate_title(request: web.Request) -> web.Response:
-    """POST /api/chat/sessions/{session}/generate-title — manually trigger title generation."""
+    """POST /api/chat/sessions/{session}/generate-title — manually trigger title generation.
+
+    ``{"ok": true, "title": …}`` with the title it gave the chat. With no model chosen for the
+    chores nothing is asked and the chat keeps the name it has: ``{"ok": false, "needs_model":
+    …}`` says what titles (and tags, when the chats are tagged on their own) are waiting on, and
+    where to choose it (``chores.needs_a_model``)."""
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     session = state._sessions.get(name)
@@ -344,6 +368,8 @@ async def api_chat_session_generate_title(request: web.Request) -> web.Response:
             usage=chores.chore_usage(_history_key_for(session.key)),
             memory_mode=session.memory_mode,
         )
+    except chores.NoModelChosen:
+        return web.json_response({"ok": False, "needs_model": _titles_need_a_model()})
     except Exception:
         logger.debug("Title generation failed for session %s", name, exc_info=True)
         user_msgs = [m for m in session.messages if m.get("role") == "user"]

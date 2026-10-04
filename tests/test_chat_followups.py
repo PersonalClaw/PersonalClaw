@@ -2,12 +2,13 @@
 call suggests 2-3 next messages, broadcast over the chat_followups WS event.
 
 Gated OFF for restricted (temporary/incognito) sessions, a non-empty queue, an
-errored turn, or config-disabled; silent (no event) when no model is bound.
+errored turn, or config-disabled; with no model chosen the event carries no chips and
+says why; silent (no event) when the chosen model does not answer.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from chat_test_helpers import _make_state
@@ -138,13 +139,38 @@ class TestMaybeFollowups:
         assert not events
 
     @pytest.mark.asyncio
-    async def test_no_model_bound_is_silent(self, tmp_path, monkeypatch):
-        """get_or_create raising (no model bound) must be swallowed — no event, no crash."""
+    async def test_no_model_chosen_says_why_and_asks_nothing(self, tmp_path, monkeypatch):
+        """With no model chosen for the chores there are no chips, and the event says why: the
+        place under the reply shows it instead. No model is built."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = _seeded_session(state)
-        state.sessions.get_or_create = AsyncMock(side_effect=RuntimeError("no model bound"))
-        state.sessions.release = MagicMock()
+        events: list[tuple[str, object]] = []
+        monkeypatch.setattr(state, "broadcast_ws", lambda t, d: events.append((t, d)), raising=True)
+
+        await _maybe_followups(state, session)  # must not raise
+        assert events == [
+            (
+                "chat_followups",
+                {
+                    "session": session.key,
+                    "items": [],
+                    "needs_model": "Follow-ups need a model: choose one in Settings → Models.",
+                },
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_model_that_does_not_answer_is_silent(self, tmp_path, monkeypatch):
+        """A chosen model failing is swallowed — no event, no crash."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        session = _seeded_session(state)
+
+        async def _fails(prompt, **_kw):
+            raise RuntimeError("the model did not answer")
+
+        monkeypatch.setattr("personalclaw.chores.run_chore", _fails)
         events: list[tuple[str, object]] = []
         monkeypatch.setattr(state, "broadcast_ws", lambda t, d: events.append((t, d)), raising=True)
 

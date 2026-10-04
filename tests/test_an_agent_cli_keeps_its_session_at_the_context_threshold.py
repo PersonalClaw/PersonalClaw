@@ -85,9 +85,7 @@ class _World:
             command=[sys.executable, str(AGENT), "fills-context", str(self.record), "spec"],
             **declared,
         )
-        # Kept out of the shared registry: with no model bound, PersonalClaw's own one-off calls
-        # (a chat's title, its follow-ups) fall back to the first entry there, and they would
-        # prompt this CLI too.
+        # Kept out of the shared registry, so this test's CLI serves only the chat it drives.
         unregister_acp_cli_entry(cli)
         assert entry is not None
         work = tmp_path / "work"

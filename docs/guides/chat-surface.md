@@ -294,8 +294,12 @@ Each suggestion costs one small background model call per reply, using your fast
 model, and it never blocks the answer. Turn it off in **Settings → Chat → Follow-up
 suggestions**; with it off, nothing is generated at all rather than generated and hidden.
 
-They are skipped in **temporary** and **incognito** chats, and they stay silent if you have no
-model bound.
+They are skipped in **temporary** and **incognito** chats. They are written by a model, never by
+an agent CLI, even when your chats run on one. With no model chosen for them (nothing in
+**Settings → Models**, and no provider with a default model), nothing is asked, and the place
+under the reply says *"Follow-ups need a model: choose one in Settings → Models."*, which takes
+you there. The suggestions on a new chat and on the dashboard say the same, and so does an
+untitled chat's header, under its name, for its title and tags.
 
 ## 8. How streaming text appears
 

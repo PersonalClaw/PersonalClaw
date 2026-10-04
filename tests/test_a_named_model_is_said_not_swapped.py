@@ -163,17 +163,11 @@ async def test_a_pinned_model_that_cannot_serve_is_refused_not_replaced_by_the_c
 
 
 @pytest.mark.asyncio
-async def test_nothing_bound_still_uses_the_one_provider_there_is(active, monkeypatch):
-    """The last-resort build stays for the case it exists for: nothing is bound, so nothing was
-    asked for, and the only configured provider answers."""
+async def test_nothing_bound_runs_on_the_configured_model_that_names_its_own(active):
+    """Nothing is bound, so nothing was asked for: the bridge's one rule picks the first configured
+    instance that names a model of its own, and that model answers."""
     from personalclaw.llm_helpers import one_shot_completion
 
-    def _refuse(use_case: str, **_kw: Any):
-        raise ProviderResolutionError("pretend nothing declares the capability")
-
-    monkeypatch.setattr(
-        "personalclaw.providers.provider_bridge.resolve_provider_for_use_case", _refuse
-    )
     assert await one_shot_completion("Hello.", use_case="reasoning") == (f"answered by {LIVE_REF}")
 
 

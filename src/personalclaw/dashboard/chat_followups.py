@@ -6,9 +6,11 @@ bundled ``task-followups`` prompt (bindable in Settings → Prompts), asked as a
 chore of the chat's (``chat_title.chat_chore``): one call of its own on the
 Background chain, behind the spend guard, with no tools, and the output redacted.
 It NEVER blocks the turn: the task is fire-and-forget, stored on
-``session._followups_task``, and the next ``run_chat`` dispatch cancels it. When no
-model is bound the call raises → caught here → no event fires (the degrade
-contract), so the turn completes normally and the FE simply renders no chips.
+``session._followups_task``, and the next ``run_chat`` dispatch cancels it. With no
+model chosen for the chores (an agent CLI writes none) nothing is asked, and the
+event carries no chips and ``needs_model``, the sentence the place under the reply
+shows instead (``chores.needs_a_model``). Any other failure is caught here and no
+event fires, so the turn completes normally and the FE simply renders no chips.
 
 A chip is sent with one click as her own words, so it may say for her only what the exchange
 says. Every chip is written under :data:`_FOLLOWUP_RULES`, whatever prompt is bound, and a chip
@@ -24,6 +26,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+from personalclaw import chores
 from personalclaw.agents.defaults import LITE_AGENT_NAME
 from personalclaw.dashboard.chat_title import chat_chore, keeps_to_its_own_model
 from personalclaw.dashboard.chat_utils import _history_key_for
@@ -188,9 +191,9 @@ async def _generate_followups(session: "_ChatSession") -> list[str]:
     """Ask for *session*'s follow-ups and return them parsed, checked and redacted.
 
     A first model of the Background chain that fails, is paused or answers no list hands the
-    call to the next one. No model bound, or none answering, raises; the caller catches
-    everything (the degrade contract). A follow-up stating a detail the exchange it was written
-    from does not give is left out.
+    call to the next one. No model chosen raises ``chores.NoModelChosen``, which the caller
+    says; none answering raises, and the caller catches it (the degrade contract). A follow-up
+    stating a detail the exchange it was written from does not give is left out.
     """
     from personalclaw.prompt_providers.runtime import render_use_case_prompt
 
@@ -213,7 +216,8 @@ async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> 
     Gated OFF when: config disabled, the chat keeps to its own model (Incognito or
     Temporary — the answer auto-title asks), a loop's hidden worker or planner session, a
     message is queued (the next turn is imminent), or the turn errored. Broadcasts
-    ``chat_followups`` on success; silent on any failure or when no model is bound.
+    ``chat_followups`` on success, and with no chips and the reason when no model is chosen
+    for them; silent on any other failure.
     """
     if not _followups_enabled():
         return
@@ -234,6 +238,16 @@ async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> 
         items = await _generate_followups(session)
     except asyncio.CancelledError:
         raise
+    except chores.NoModelChosen:
+        state.broadcast_ws(
+            "chat_followups",
+            {
+                "session": session.key,
+                "items": [],
+                "needs_model": chores.needs_a_model("Follow-ups"),
+            },
+        )
+        return
     except Exception:
         logger.debug("Follow-up generation failed for %s", session.key, exc_info=True)
         return

@@ -2413,9 +2413,9 @@ def metered(
     outbound scan), as a call automation makes on *use_case*. Not *counted*: everything but the
     day and run budgets, for a session a person answers (an Attended loop's).
 
-    The one place guardrails config becomes a guard: the resolution seam wraps here, and so does a
-    model built outside it (``one_shot_completion``'s last resort). Config-derived tuning is read
-    fail-open — a broken config must never wedge resolution.
+    The one place guardrails config becomes a guard: the resolution seam wraps here, at the point
+    where the entry and its model are known. Config-derived tuning is read fail-open — a broken
+    config must never wedge resolution.
 
     Every model built for anything but a person's own turn passes here (a tool's model, a
     subagent's, a knowledge node's, a loop's), so here is where work that derives from an Incognito

@@ -306,10 +306,14 @@ def test_every_direct_model_resolution_is_metered_or_is_a_person_s_surface():
 
 
 def test_the_resolution_census_is_not_vacuous():
+    """The tree holds both kinds a direct resolution may be. None resolves a guarded axis through
+    the general resolver any more: every call automation makes is resolved as the model itself
+    (``resolve_metered_model``), which never builds an agent CLI. That verdict's classifier is
+    still read, by the snippets below."""
     guarded = guarded_axes()
     verdicts = [resolution_verdict(s, guarded) for s in src_sites(_resolves)]
     assert len(verdicts) >= 8, len(verdicts)
-    for kind in ("guarded", "metered", "listed"):
+    for kind in ("metered", "listed"):
         assert kind in verdicts, f"no resolution reads {kind!r}: the classifier or census drifted"
 
 
@@ -673,27 +677,6 @@ async def test_a_loop_judge_bound_to_chat_is_the_model_itself_and_is_metered(cal
     assert await gates.judge_verdict("Is the task done?", loop_id="abcd1234") == "blue"
     assert calls == [HEAD]
     assert get_meter().day_totals().dollars == pytest.approx(_price("gpt-4o-mini"))
-
-
-@pytest.mark.asyncio
-async def test_a_one_shot_call_built_as_the_last_resort_is_metered(calls, monkeypatch):
-    """🔴 Red before the fix: with nothing bound and the bridge unable to resolve, a one-shot call
-    built the first configured model itself, outside the guard: spent, and never counted."""
-    from personalclaw.guardrails.budgets import get_meter
-    from personalclaw.llm.registry import ProviderResolutionError
-    from personalclaw.llm_helpers import one_shot_completion
-
-    def _unresolvable(*_a: Any, **_k: Any):
-        raise ProviderResolutionError("no model answers the background axis")
-
-    _bound(monkeypatch)
-    monkeypatch.setattr(
-        "personalclaw.providers.provider_bridge.resolve_metered_model", _unresolvable
-    )
-
-    assert await one_shot_completion("Name a colour.", use_case="background") == "blue"
-    assert calls == [NAMED], "the first configured entry, its own model"
-    assert get_meter().day_totals().dollars == pytest.approx(_price("gpt-4o"))
 
 
 # ── the day counts each child once ─────────────────────────────────────────────────────────

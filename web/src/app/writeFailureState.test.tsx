@@ -313,16 +313,17 @@ const SILENT_WRITE_BUDGET: Record<string, number> = {
   // longer exists at any call site, rather than being excused at nine.
   // `lib/agents.ts` (1) is GONE: `ensureBindableAgentName` used to swallow a failed `createAgent` and
   // return the profile name anyway. It propagates now, and each picker that calls it says why.
-  // 9: the side-chat open, the title regen, three optimistic organise writes (pin/folder/
-  // never-archive), the `/optimize` fall-through, the `/undo` fall-through, and the two auto-nudge
-  // controls. The two tag writes left this list when they became one-tag edits that report a refusal.
+  // 8: the side-chat open, three optimistic organise writes (pin/folder/never-archive), the
+  // `/optimize` fall-through, the `/undo` fall-through, and the two auto-nudge controls. The two tag
+  // writes left this list when they became one-tag edits that report a refusal, and the title regen
+  // when it said why nothing was asked and reported a request that failed.
   // (b) `/optimize` sends EITHER WAY, and its comment rules on it: "the turn appearing in the
   // transcript is already the answer to what did my click do."
   // (a) for the rest, and this file carries its own exemplar: `setLifecycle` two lines from
   // `setNeverArchive` already does `reportActionFailure` + an UNGATED `load()` (the refetch is the
   // repair for an optimistic move that already lied). The five organise writes are that same shape
   // with the report missing, and `userActionReported` already pinned three of their siblings.
-  'pages/ChatPage.tsx': 9,
+  'pages/ChatPage.tsx': 8,
   // (b) Ruled on twice: its own comment ("a background refresh must never block the open or surface
   // an error toast") and `userActionReported`'s header, which names it as one of two deliberate
   // silences because it is a `view`-trigger side effect of navigation, not an action.
@@ -573,9 +574,9 @@ describe('§B no write path discards its own failure, tree-wide and by COUNT', (
     expect(c.size, 'the write-failure scanner found no file at all').toBeGreaterThanOrEqual(27)
     // Lowered by exactly the sites fixed since it was measured (ChatPage's two tag writes,
     // LoopPlanReview's swallowed spec save and the lifecycle-hook toggle among them, the
-    // Knowledge page's re-embed trigger: 48 → 47, the binding save above: 47 → 46, and the chat
-    // card's lifecycle write: 46 → 45).
-    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(45)
+    // Knowledge page's re-embed trigger: 48 → 47, the binding save above: 47 → 46, the chat
+    // card's lifecycle write: 46 → 45, and the chat's title regen: 45 → 44).
+    expect([...c.values()].reduce((n, v) => n + v.length, 0)).toBeGreaterThanOrEqual(44)
 
     const kinds = (src: string) => silentSites(src, W).map((s) => s.split(':')[0])
     const n = (src: string) => kinds(src).length

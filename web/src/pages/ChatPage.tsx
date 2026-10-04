@@ -56,7 +56,7 @@ import { useWidgetActionBridge, takePendingWidgetAction } from '../ui/widget/use
 import { InlineError } from '../ui/InlineError'
 import { TextLink } from '../ui/TextLink'
 import { PartialNotice } from '../ui/PartialNotice'
-import { NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoModelSetupState'
+import { NeedsModelNote, NoModelSetupState, isNoModelSetupError, MODELS_PATH } from './chat/NoModelSetupState'
 import { BundledFloorNotice } from './chat/BundledFloorNotice'
 import { ToolCard } from './chat/ToolCard'
 import { onToolResultFull } from './chat/toolResultBridge'
@@ -232,14 +232,17 @@ function greeting(name: string): string {
 /** Contextual prompt-starter chips on the empty-chat hero. Sourced from the
  *  background-computed /api/suggestions (memory + recent activity), so they're
  *  personal, not generic. Clicking one fills the composer (the user reviews, then
- *  sends) rather than firing immediately. Silent when none are available. */
+ *  sends) rather than firing immediately. Silent when none are available. While no model is
+ *  chosen for the chores the list is the standard one, and the line under it says why and links
+ *  to where one is chosen (`needs_model`). */
 function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
   // No `.catch`: this key is PERSISTED, so a swallowed rejection wrote a fabricated `[]` into
   // sessionStorage as though it were an answer, and the next visit painted "no suggestions" from
   // cache. Without it the rejection leaves `data` undefined and nothing is cached. The strip still
   // hides on failure, which is honest — a decoration that quietly does not appear claims nothing.
-  const { data, loading } = useQuery('chat:suggestions', () => api.suggestions().then((r) => r.suggestions), { persist: true })
-  const items = (data ?? []).slice(0, 6)
+  const { data, loading } = useQuery('chat:suggestions', () => api.suggestions(), { persist: true })
+  const items = (data?.suggestions ?? []).slice(0, 6)
+  const needsModel = data?.needs_model ?? ''
   // The read answers at once with the list there is; a new one is written in the background and
   // lands as a `suggestions` refresh hint, so the strip re-reads then.
   useChatSocket((m) => { if (refreshKinds(m).includes('suggestions')) invalidateKeys('chat:suggestions') },
@@ -274,14 +277,17 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
   }
   if (!items.length) return null
   return (
-    <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
-      {items.map((s, i) => (
-        <motion.button key={i} type="button" onClick={() => onPick(s)}
-          initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: 0.04 * i }}
-          className="rounded-pill border border-outline-variant/60 bg-surface-container px-3.5 py-2 text-left text-[0.8125rem] text-on-surface-var transition-colors hover:border-primary/40 hover:bg-surface-high hover:text-on-surface">
-          {s}
-        </motion.button>
-      ))}
+    <div className="flex flex-col items-center gap-s">
+      <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
+        {items.map((s, i) => (
+          <motion.button key={i} type="button" onClick={() => onPick(s)}
+            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring.spatialDefault, delay: 0.04 * i }}
+            className="rounded-pill border border-outline-variant/60 bg-surface-container px-3.5 py-2 text-left text-[0.8125rem] text-on-surface-var transition-colors hover:border-primary/40 hover:bg-surface-high hover:text-on-surface">
+            {s}
+          </motion.button>
+        ))}
+      </div>
+      {needsModel && <NeedsModelNote sentence={needsModel} />}
     </div>
   )
 }
@@ -898,7 +904,10 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   // first click moved the scrolled transcript under the pointer, so the second click of a
   // double-click landed on the reply's own actions (measured: on Speak, then Stop).
   const [followups, setFollowups] = useState<string[]>([])
-  useEffect(() => { setFollowups([]) }, [sessionId])
+  // What stands in their place while no model is chosen for them (the gateway's sentence): cleared
+  // as they are.
+  const [followupsNeed, setFollowupsNeed] = useState('')
+  useEffect(() => { setFollowups([]); setFollowupsNeed('') }, [sessionId])
   // "Check this work" offer: pushed over chat_check_work_offer when
   // the completed turn did 3+ tool calls AND claimed completion. An OFFER only — clicking
   // sends the prompt, so verification is never spent without the user asking for it.
@@ -1072,6 +1081,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
   const setOpenFile = (p: string | null) => setOpenFileRaw(p || '')
   // session title + header actions (#64): rename inline, LLM-regenerate, copy link.
   const [title, setTitle] = useState(seededDetail?.title || '')
+  // Why the chat has no title yet, when no model is chosen for the chores (the gateway's sentence);
+  // read with the chat, on opening it and after each turn, and gone once it has a title.
+  const [titleNeed, setTitleNeed] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [renameVal, setRenameVal] = useState('')
   const [regenningTitle, setRegenningTitle] = useState(false)
@@ -1290,6 +1302,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           return acc
         }, []).slice(-50))
         setTitle(d.title || '')
+        setTitleNeed(d.title_needs_model || '')
         // Seed the session cost chip from the ledger for a revisited chat.
         refreshSessionCost(sessionId)
         // Restore BOTH composer axes to the session's actual posture. Unlike
@@ -1615,7 +1628,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'session_title': {
         const key = String(d.key ?? '')
         const t = String(d.title ?? '')
-        if (t && deliverableToOpenSession(key, sessionRef.current)) setTitle(t)
+        if (t && deliverableToOpenSession(key, sessionRef.current)) { setTitle(t); setTitleNeed('') }
         break
       }
       case 'chat_done': {
@@ -1655,6 +1668,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
           // just-streamed turn (which has no ts yet) is grafted positionally. Cheap:
           // no-op on the overwhelming majority of turns (no episodic recall).
           if (sk !== sessionRef.current) return
+          setTitleNeed(d.title_needs_model || '')
           const byTs = new Map<string, MemoryCitation[]>()
           let lastCites: MemoryCitation[] | null = null
           // A reply that did not finish (`finish_reason`: cut at the output cap, or cut off before
@@ -1749,6 +1763,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       case 'chat_followups': {
         const items = Array.isArray(d.items) ? d.items.filter((x): x is string => typeof x === 'string') : []
         setFollowups(items)
+        setFollowupsNeed(typeof d.needs_model === 'string' ? d.needs_model : '')
         break
       }
       // "Check this work" offer for the just-completed turn.
@@ -1801,6 +1816,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         replyFinished(sessionRef.current, { last: false })
         dropTextRun()
         setFollowups([])  // a new turn is starting (queued drain) — clear stale chips
+        setFollowupsNeed('')
         setTurns((prev) => [...prev, userTurn(content, d.ts ? String(d.ts) : undefined)])
         // The gateway sends this only as it STARTS the turn, so the turn is running whatever
         // this page believed a moment ago. After a Stop the composer has already settled, and a
@@ -2259,6 +2275,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // Sending dismisses any follow-up chips from the prior turn and
     // clears a pending routing suggestion — the moment passed.
     if (followups.length) setFollowups([])
+    if (followupsNeed) setFollowupsNeed('')
     if (checkWorkOffer) setCheckWorkOffer(null)
     if (routingSuggestion) setRoutingSuggestion(null)
     // …and takes down the composer's notice: an error stays until it is dismissed or the
@@ -3247,6 +3264,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     setRenaming(false)
     if (!s || !v || v === title) return
     setTitle(v)
+    setTitleNeed('')
     // Optimistic, so a swallowed rejection left the header showing a name the server refused — it
     // reverted on the next load with no explanation. Reported, not reverted: this family's remedy for
     // an optimistic write is to TELL, and fighting the header while the user may still be editing is
@@ -3263,8 +3281,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     if (!s || regenningTitle) return  // guard against concurrent clicks during the AI call
     setRegenningTitle(true)
     try {
-      const r = await api.generateTitle(s).catch(() => null)
+      const r = await api.generateTitle(s).catch(reportActionFailure('regenerate the title'))
       if (r?.title) setTitle(r.title)
+      // Nothing was asked: no model is chosen for the chores. The chat keeps its name, and the
+      // gateway's sentence says what titles are waiting on and where to choose it.
+      if (r?.needs_model) notify(r.needs_model, 'info')
     } finally {
       setRegenningTitle(false)
     }
@@ -3684,6 +3705,12 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     cost: sessionCost,
   }) : []
 
+  // The title above reads "Untitled chat" for a reason the chat can fix: the line under it says so
+  // first, in the words the other surfaces of these chores use, as the way to where it is fixed.
+  const headerLine = started && titleNeed
+    ? [<NeedsModelNote key="title-need" sentence={titleNeed} />, ...contextChips]
+    : contextChips
+
   if (missing) return <MissingChat draft={input} navigate={navigate} />
   // A failed read with nothing painted: say it failed, and let the user retry. (A transcript
   // painted from the fresh cache stays on screen — a failed REVALIDATION of it is not news.)
@@ -3739,7 +3766,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
             </div>
           )
         )}
-        below={contextChips.length > 0 ? contextChips : undefined}
+        below={headerLine.length > 0 ? headerLine : undefined}
         right={
           // Two live mode selectors (Task, Permission) + New chat / Regen / Activity.
           // Task + Permission are hover-expand mode pills (WidthPill idiom): each shows
@@ -3934,6 +3961,11 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                         {turn.role === 'assistant' && isLast && !streaming && followups.length > 0 && (
                           <FollowupChips items={followups} onPick={(t) => { setInput(t); focusComposerSoon() }} onSend={(t) => { setFollowups([]); void send(t) }} />
                         )}
+                        {/* No chips because no model is chosen for them: the place says why, and
+                            where to choose one. */}
+                        {turn.role === 'assistant' && isLast && !streaming && followupsNeed && (
+                          <div className="mt-m"><NeedsModelNote sentence={followupsNeed} /></div>
+                        )}
                         {/* "Check this work" offer — user-clicked only. */}
                         {turn.role === 'assistant' && isLast && !streaming && checkWorkOffer && (
                           <CheckWorkChip label={checkWorkOffer.label}
@@ -3959,7 +3991,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                       visual-only change until now. Kept separate from srAnnounce so the turn
                       narration and the chips arrival do not overwrite one another. */}
                   <div role="status" aria-live="polite" className="sr-only">
-                    {followupAnnouncement(streaming ? 0 : followups.length)}
+                    {streaming ? '' : followupsNeed || followupAnnouncement(followups.length)}
                   </div>
                 </div>
               </div>

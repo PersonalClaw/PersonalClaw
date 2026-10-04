@@ -34,6 +34,7 @@ from personalclaw.dashboard.chat_persistence import (
     session_key_exists,
 )
 from personalclaw.dashboard.chat_runner import TURN_STOPPED, run_chat, started_by_app
+from personalclaw.dashboard.chat_title import title_needs_model
 from personalclaw.dashboard.chat_utils import (
     _build_stream_chunk,
     _emit_agent_assignment,
@@ -974,6 +975,8 @@ async def api_chat_session_detail(request: web.Request) -> web.Response:
         {
             "key": session.key,
             "title": session.title,
+            # Why an untitled chat has no title yet, when it is that no model is chosen for it.
+            "title_needs_model": title_needs_model(session),
             "running": session.running,
             "stopping": session._stopping,
             # Whether the running turn takes a steer (`running_turn.set_steer_drains`): the

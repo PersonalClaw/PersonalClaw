@@ -18,10 +18,9 @@ Entry points driven, per template:
   skill executes and the SDLC post-gate hook calls) versus the bundled template's
   `check` action node, same construction.
 
-Model seams are stubbed exactly where `test_sampling_best_of_n.py` stubs them
-(`llm_helpers.one_shot_completion` for samples; the judge through
-`provider_bridge.resolve_provider_for_use_case`, which is where the core's DEFAULT
-factory resolves when no factory is injected — the path both real entry points take).
+Model seams are stubbed where the core reaches them (`llm_helpers.one_shot_completion` for
+samples; the judge through `provider_bridge.resolve_metered_model`, which is where the core's
+DEFAULT factory resolves when no factory is injected — the path both real entry points take).
 One stub serves both entry points in each test, so a difference in the answers could
 only come from the entry points themselves.
 
@@ -113,7 +112,7 @@ def _stub_judge(monkeypatch, scores: dict[str, float]) -> None:
     from personalclaw.providers import provider_bridge
 
     provider = _JudgeProvider(scores)
-    monkeypatch.setattr(provider_bridge, "resolve_provider_for_use_case", lambda _uc: provider)
+    monkeypatch.setattr(provider_bridge, "resolve_metered_model", lambda _uc, **_kw: provider)
 
 
 @pytest.fixture(autouse=True)

@@ -8575,7 +8575,8 @@ export const api = {
   // ── Contextual prompt starters (background-computed from memory + recent activity) ──
   // Answers at once. `refreshing`: a new list is being written in the background, and every page
   // hears a `suggestions` refresh hint when it lands (`force` starts one whatever the list's age).
-  suggestions: (force = false) => get<{ suggestions: string[]; generated_at: number; stale: boolean; refreshing: boolean }>(`/api/suggestions${force ? '?force=1' : ''}`),
+  // `needs_model`: what the page says while no model is chosen for the chores, '' once one is.
+  suggestions: (force = false) => get<{ suggestions: string[]; generated_at: number; stale: boolean; refreshing: boolean; needs_model: string }>(`/api/suggestions${force ? '?force=1' : ''}`),
 
   // ── Discover: a curated tour of the system, grouped by area. Tips only
   // point (deep link), never enable; dismissals persist server-side per tip. ──
@@ -8942,7 +8943,7 @@ export const api = {
   deleteTagColumn: (id: string) => del(`/api/chat/tag-columns/${encodeURIComponent(id)}`),
   reorderTagColumns: (ids: string[]) => put('/api/chat/tag-columns/order', { ids }),
   dropSessionToColumn: (session: string, columnId: string) => post(`/api/chat/sessions/${encodeURIComponent(session)}/drop`, { column_id: columnId }),
-  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; messages: ChatHistoryMsg[]; running?: boolean; steerable?: boolean; last_turn_outcome?: 'complete' | 'stopped' | 'error' | 'interrupted' | null; pending_approval?: boolean; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
+  chatSessionDetail: (key: string, read: ReadOptions = {}) => get<{ key: string; title: string; title_needs_model?: string; messages: ChatHistoryMsg[]; running?: boolean; steerable?: boolean; last_turn_outcome?: 'complete' | 'stopped' | 'error' | 'interrupted' | null; pending_approval?: boolean; pending_questions?: QuestionCardFrame[]; agent?: string; model?: string; mode?: string; acp_provider?: string; acp_provider_agent?: string; reasoning_effort?: string; task_mode?: TaskMode; approval?: ApprovalMode; memory_mode?: string; queue?: { id: string; content: string }[]; side?: { open: boolean; messages: { role: string; content: string }[] } | null
     /** Branch lineage: the parent's persisted HISTORY key (`dashboard:<key>`) when
      *  this session was branched, plus the parent's title resolved at read time. Served
      *  here — not carried in navigation state — so the breadcrumb survives a reload.
@@ -9127,8 +9128,9 @@ export const api = {
   // session title: set explicitly, or have the model generate one from the convo.
   renameSession: (session: string, title: string) =>
     patch<{ ok: boolean; title: string }>(`/api/chat/sessions/${encodeURIComponent(session)}/title`, { title }),
+  // `needs_model`: nothing was asked (no model is chosen for the chores); the sentence says so.
   generateTitle: (session: string) =>
-    post<{ ok: boolean; title?: string }>(`/api/chat/sessions/${encodeURIComponent(session)}/generate-title`),
+    post<{ ok: boolean; title?: string; needs_model?: string }>(`/api/chat/sessions/${encodeURIComponent(session)}/generate-title`),
 
   // message actions (stage 4) — all stream the new reply over the dashboard WS.
   // Retry or Regenerate over steps that may have changed something is answered with the gateway's

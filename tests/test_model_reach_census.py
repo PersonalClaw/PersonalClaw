@@ -71,12 +71,11 @@ ASKS = frozenset(
 EMBEDS_DIRECTLY = frozenset({"embedding_providers/registry.py", "providers/model_test.py"})
 
 #: Where a model provider is built from the model registry: the resolution seam (every build for
-#: anything but a person's own turn passes ``metered``), the one-shot call's last resort (wrapped by
-#: ``metered``), the embedding seam, and the owner's Settings test of a model.
+#: anything but a person's own turn passes ``metered``), the embedding seam, and the owner's
+#: Settings test of a model.
 BUILDS_MODELS = frozenset(
     {
         "providers/provider_bridge.py",
-        "llm_helpers.py",
         "embedding_providers/registry.py",
         "providers/model_test.py",
     }
@@ -319,7 +318,7 @@ def test_the_seam_census_finds_a_seam_that_does_not_ask():
         "def seam(ref):\n    if not memory_writes.model_may_read(ref):\n        return\n"
     )
     silent = ast.parse("def seam(ref):\n    return provider.embed(ref)\n")
-    # The one-shot call's last resort reads a provider entry's own model: that is not asking.
+    # A provider entry's own model is a name another object carries: reading it is not asking.
     lookalike = ast.parse("def seam(fallback):\n    return fallback.own_model\n")
     assert names_used(_functions(asks)["seam"]) & ASKS
     assert not names_used(_functions(silent)["seam"]) & ASKS

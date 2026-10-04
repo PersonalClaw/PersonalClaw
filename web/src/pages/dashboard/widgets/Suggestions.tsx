@@ -7,6 +7,7 @@ import { SlotEmptyState } from './kit'
 import { InlineLoadError } from '../../../ui/ListScaffold'
 import { spring } from '../../../design/motion'
 import type { RouteProps } from '../../../app/useQueryState'
+import { NeedsModelNote } from '../../chat/NoModelSetupState'
 
 /** Today's Suggestions — LLM prompt-starter cards personalized from memory +
  *  recent activity. One tap launches the suggestion as a fresh chat; a refresh
@@ -25,7 +26,10 @@ import type { RouteProps } from '../../../app/useQueryState'
  *
  *  So `#/dashboard` and `#/chat` showed different amounts of one list. If this ever needs to be five
  *  again, change the producer too — a consumer cap below the producer's is discarded work by
- *  construction, and this one is generated per user from their own memory. */
+ *  construction, and this one is generated per user from their own memory.
+ *
+ *  While no model is chosen for the chores the list is the standard one, and the line under it says
+ *  why and links to where one is chosen (`needs_model`), as the new-chat page's does. */
 export function Suggestions({ navigate }: RouteProps) {
   const [items, setItems] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -34,12 +38,13 @@ export function Suggestions({ navigate }: RouteProps) {
   // from your activity." — an explanation of a state the server never reported.
   const [err, setErr] = useState<unknown>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [needsModel, setNeedsModel] = useState('')
 
   const load = useCallback((force = false) => {
     setLoading(true)
     setErr(null)
     api.suggestions(force)
-      .then((d) => { setItems(d.suggestions ?? []); setRefreshing(!!d.refreshing) })
+      .then((d) => { setItems(d.suggestions ?? []); setRefreshing(!!d.refreshing); setNeedsModel(d.needs_model ?? '') })
       .catch(setErr)
       .finally(() => setLoading(false))
   }, [])
@@ -89,6 +94,7 @@ export function Suggestions({ navigate }: RouteProps) {
       >
         <RefreshCw size={12} className={loading || refreshing ? 'animate-spin' : ''} /> Refresh
       </button>
+      {needsModel && <NeedsModelNote sentence={needsModel} className="self-start" />}
     </div>
   )
 }
