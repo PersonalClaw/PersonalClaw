@@ -561,9 +561,9 @@ def notes_vault(monkeypatch):
 
     async def _serve() -> None:
         while True:
-            _kind, payload, fut = await conn._requests.get()
-            received.append(payload["arguments"])
-            fut.set_result((True, "daily/2026-09-29.md: standup at 09:30"))
+            call = await conn._requests.get()
+            received.append(call.arguments)
+            call.answer.set_result((True, "daily/2026-09-29.md: standup at 09:30"))
 
     class _Registry:
         def items(self):
@@ -579,7 +579,8 @@ def notes_vault(monkeypatch):
 
     def _provider():
         conn._requests = asyncio.Queue()
-        asyncio.get_event_loop().create_task(_serve())
+        # The connection's own worker, as a started connection has one.
+        conn._task = asyncio.get_event_loop().create_task(_serve())
         return module.McpToolProvider(lambda: _Registry())
 
     return _provider, received

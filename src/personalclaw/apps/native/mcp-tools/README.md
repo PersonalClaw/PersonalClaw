@@ -20,6 +20,13 @@ refuse it whatever you answered; an array, an object or a true/false the agent w
 read as that value where the schema wants exactly that. To stop agents using
 MCP tools, remove or disable the servers, or switch this provider off on the Tools page.
 
+A server is sent one call at a time, and a call waits up to two minutes for its answer, its wait
+behind earlier calls included. A call still waiting its turn then, or when its turn stops, is
+never sent, and the agent is told it was not sent. A call the server was given and did not answer
+in time, or whose connection ended before it answered, may have gone through: the agent is told
+that, never that it failed, so it checks before calling it again. A server started with a command
+that ends is started again by its next call.
+
 ## What this is
 
 A bundled app that owns its provider code. It ships inside PersonalClaw as a self-contained

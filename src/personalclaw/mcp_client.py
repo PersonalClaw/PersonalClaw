@@ -11,6 +11,15 @@ async-context-manager based, so each server runs as a small **actor**: one backg
 holds the transport + session context open and serves ``list_tools`` / ``call_tool`` requests
 off a queue, with health/respawn and clean shutdown (drained by the gateway's reaper on exit).
 
+A call is sent at most once, and never after its caller stopped waiting: one still queued when its
+deadline passes, or when its turn stops, is dropped unsent and says it was not sent. One the server
+was given and never answered, by the deadline or before its connection ended, says it may have gone
+through, never that it failed, since calling it again may do it twice. That holds on every transport
+and on a connection shared by many chats, because the actor is the one place a call is sent from. A
+connection its session saw end (a stdio program ending, an SSE stream closing) answers the calls on
+it then and is started again by its next call. The SDK's Streamable HTTP client reports no broken
+response stream, so over it the deadline is what answers a call left out.
+
 Transports: stdio (``command``/``args``/``env``, started by `mcp_stdio`, which knows how the program
 ended), and a server at a ``url`` over Streamable HTTP or SSE, sent its ``headers`` on every
 request — which one is the spec's ``type``, read by
@@ -201,13 +210,40 @@ def argument_refusal(tool: str, arguments: dict[str, Any], input_schema: Any) ->
     return mistyped_arguments_note(tool, problems, input_schema)
 
 
+@dataclass
+class _Call:
+    """One tool call on its way to a server: what it calls, the answer its caller waits on, and
+    whether the connection's worker has handed it to the session. From that moment it may reach the
+    server, whatever becomes of its answer."""
+
+    tool: str
+    arguments: dict[str, Any]
+    answer: asyncio.Future[tuple[bool, str]]
+    sent: bool = False
+
+
+def _not_sent_text(tool: str, why: str) -> str:
+    """What a call that never reached its server says: that, and *why*."""
+    return f"MCP tool '{tool}' was not sent: {why}. Nothing reached the server."
+
+
+def _may_have_gone_through_text(tool: str, server: str, what_followed: str) -> str:
+    """What a call says that its server was given and never answered: it may have done it, so
+    calling it again may do it twice."""
+    return (
+        f"MCP tool '{tool}' may have gone through: PersonalClaw sent it to '{server}' and "
+        f"{what_followed}. Check whether it did what it was meant to before you call it again, "
+        "or it may happen twice."
+    )
+
+
 class McpServerConn:
     """An actor owning one MCP server's live connection.
 
     The connection is established lazily on first use and held open by a
     background task. Calls are marshalled to that task so the SDK's anyio task
     scope stays on a single task (its context managers are not reentrant across
-    tasks).
+    tasks). The task sends them one at a time, each at most once (:meth:`_serve`).
     """
 
     def __init__(self, name: str, spec: dict[str, Any], scope: str = "") -> None:
@@ -216,7 +252,7 @@ class McpServerConn:
         # "" = shared (poolable server); else the owning session key (isolation).
         self.scope = scope
         self._task: asyncio.Task | None = None
-        self._requests: asyncio.Queue[tuple[str, dict, asyncio.Future]] | None = None
+        self._requests: asyncio.Queue[_Call] | None = None
         self._ready: asyncio.Event = asyncio.Event()
         self._tools: list[McpToolSpec] = []
         self._error: str = ""
@@ -383,9 +419,19 @@ class McpServerConn:
         return list(self._tools)
 
     async def call_tool(self, tool: str, arguments: dict[str, Any]) -> tuple[bool, str]:
-        """Invoke ``tool``; returns ``(ok, text_output_or_error)``. A call the egress guard refuses
-        for the run it is made for sends nothing, and its answer is the guard's sentence
-        (:meth:`_egress_refusal`)."""
+        """Invoke ``tool``; returns ``(ok, text)``. ``ok`` is ``False`` only for a call known not
+        to have done what was asked.
+
+        A call the egress guard refuses for the run it is made for sends nothing, and its answer is
+        the guard's sentence (:meth:`_egress_refusal`). Any other waits its turn on the connection,
+        which sends one call at a time (:meth:`_serve`), for ``_CALL_TIMEOUT_SECS`` in all. The
+        server's answer is the answer. Without one, the call says what is known:
+
+        * one not yet sent when its caller stops waiting (the deadline passes, or its turn stops)
+          is never sent, and says it was not sent; so does one whose connection ended first;
+        * one the server was given, and did not answer by the deadline or before its connection
+          ended, may have gone through. It says so, with ``ok`` ``True``: it is no failure, and
+          calling it again may do it twice."""
         refused = await self._egress_refusal()
         if refused:
             return False, refused
@@ -399,13 +445,22 @@ class McpServerConn:
         spec = next((t for t in self._tools if t.name == tool), None)
         if spec is not None:
             arguments = _coerce_args_to_schema(arguments, spec.input_schema)
-        assert self._requests is not None
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        await self._requests.put(("call", {"tool": tool, "arguments": arguments}, fut))
-        try:
-            ok, output = await asyncio.wait_for(fut, timeout=_CALL_TIMEOUT_SECS)
-        except asyncio.TimeoutError:
-            ok, output = False, f"MCP tool '{tool}' timed out after {_CALL_TIMEOUT_SECS:.0f}s"
+        call = _Call(tool, arguments, asyncio.get_running_loop().create_future())
+        if self._requests is None or not self.started:
+            # Its connection ended after it answered the start, so nothing is left to send it.
+            ok, output = False, _not_sent_text(tool, self._ended_first())
+        else:
+            self._requests.put_nowait(call)
+            try:
+                await asyncio.wait({call.answer}, timeout=_CALL_TIMEOUT_SECS)
+            finally:
+                # Its caller stops waiting here, at the deadline or with its turn: the worker never
+                # sends it from now on. An answered call is not changed by this.
+                call.answer.cancel()
+            if call.answer.cancelled():
+                ok, output = self._unanswered(call)
+            else:
+                ok, output = call.answer.result()
         # Dev-only event-trace tap (Self-Verification §2.1 MCP rider): record the
         # request/response pair so `replay` can serve it back as a fake MCP server for
         # deterministic offline debugging. No-op unless PERSONALCLAW_TRACE_DIR is set.
@@ -418,6 +473,37 @@ class McpServerConn:
             )
         return ok, output
 
+    def _unanswered(self, call: _Call) -> tuple[bool, str]:
+        """What *call* says when its deadline passed with no answer: it was never sent, or it was
+        and may have gone through."""
+        waited = _seconds(_CALL_TIMEOUT_SECS)
+        if call.sent:
+            return True, _may_have_gone_through_text(
+                call.tool, self.name, f"had no answer after {waited}"
+            )
+        return False, _not_sent_text(
+            call.tool,
+            f"'{self.name}' had still not answered an earlier call after {waited}, "
+            "so PersonalClaw dropped it",
+        )
+
+    def _ended_first(self) -> str:
+        """Why a call its connection ended before sending was not sent."""
+        return f"the connection to '{self.name}' ended first"
+
+    def _settle(self, call: _Call, ok: bool, text: str, *, answered: bool = False) -> None:
+        """Give *call* its answer. When its caller already stopped waiting, what the server
+        *answered* is logged instead, since nobody else hears it."""
+        if not call.answer.done():
+            call.answer.set_result((ok, text))
+        elif answered:
+            logger.warning(
+                "MCP server '%s' answered '%s' after its caller had stopped waiting: it %s",
+                self.name,
+                call.tool,
+                "succeeded" if ok else "failed",
+            )
+
     async def shutdown(self) -> None:
         """Close the connection. Its task may be starting the server's process, which a cancel
         cannot always interrupt, so the wait for it is bounded (``cancel_and_wait``)."""
@@ -427,15 +513,21 @@ class McpServerConn:
     # ── actor body ──────────────────────────────────────────────────────────
 
     async def _run(self) -> None:
-        """Hold the transport+session open, serve queued requests until cancelled.
+        """Hold the transport+session open, serve queued requests until cancelled or the
+        connection ends.
 
         The start — the transport, ``initialize`` and the first tool list — has
         ``_connect_timeout`` to answer. Its outcome is recorded once, here
         (`mcp_discovery.note_start`): every surface reads it from there. A start that its owner's
         sign-in would answer is not recorded: it is not a failure, and the probe says what it wants.
+
+        However the connection ends, every call still queued on it is answered then, as not sent:
+        nothing was left to send it, and its caller is not kept waiting for its deadline.
         """
         from personalclaw.mcp_discovery import note_start
 
+        requests = self._requests
+        assert requests is not None
         deadline = asyncio.timeout(self._connect_timeout)
         self._stdio = None
         try:
@@ -473,7 +565,7 @@ class McpServerConn:
                     raise
                 note_start(self.name, self._definition_seal(), tools=self._tools)
                 self._ready.set()
-                await self._serve(session)
+                await self._serve(session, requests)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -491,6 +583,12 @@ class McpServerConn:
             if not self._ready.is_set() and not self._sign_in_needed:
                 note_start(self.name, self._definition_seal(), failure=failure)
             self._ready.set()  # unblock waiters with the error recorded
+        finally:
+            # Last, with nothing awaited after it: a call queued while the connection was being
+            # put away is answered here too, and none is queued once the task has ended.
+            while not requests.empty():
+                left = requests.get_nowait()
+                self._settle(left, False, _not_sent_text(left.tool, self._ended_first()))
 
     def _start_failure(self, exc: BaseException, *, timed_out: bool) -> StartFailure:
         """Why this start failed, in `mcp_status`'s words. A stdio program that ended on its own
@@ -581,21 +679,68 @@ class McpServerConn:
             )
         self._tools = tools
 
-    async def _serve(self, session: Any) -> None:
-        assert self._requests is not None
+    async def _serve(self, session: Any, requests: asyncio.Queue[_Call]) -> None:
+        """Send the queued calls one at a time, until the connection ends.
+
+        A call whose caller already stopped waiting is never sent: it was told it was not. Any
+        other is marked sent as it is handed to the session, before anything can reach the server,
+        and from then on it is answered with what is known: the server's answer; that it may have
+        gone through, when the connection ends with it out or what came back cannot be read as an
+        answer; or that it was not sent, when the session's connection had already ended. A
+        connection that ended is not served again, so its next call starts the server again
+        (:meth:`ensure_started`)."""
+        import anyio
+        from mcp.shared.exceptions import McpError
+
+        ended_out = "the connection ended before an answer came"
         while not self._closing:
-            kind, payload, fut = await self._requests.get()
-            if kind != "call":
-                if not fut.done():
-                    fut.set_result((False, f"unknown request: {kind}"))
+            call = await requests.get()
+            if call.answer.done():
                 continue
+            call.sent = True
             try:
-                result = await session.call_tool(payload["tool"], payload["arguments"])
-                if not fut.done():
-                    fut.set_result((not getattr(result, "isError", False), _coerce_output(result)))
-            except Exception as exc:  # noqa: BLE001
-                if not fut.done():
-                    fut.set_result((False, str(exc)[:500]))
+                result = await session.call_tool(call.tool, call.arguments)
+            except asyncio.CancelledError:
+                # The connection is closing with the call out: shut down, or its transport failed.
+                self._settle(
+                    call, True, _may_have_gone_through_text(call.tool, self.name, ended_out)
+                )
+                raise
+            except (anyio.ClosedResourceError, anyio.BrokenResourceError):
+                # The session refuses to send on a connection that has already ended.
+                call.sent = False
+                self._settle(call, False, _not_sent_text(call.tool, self._ended_first()))
+                logger.warning(
+                    "MCP server '%s' had closed its connection; its next call starts it again",
+                    self.name,
+                )
+                return
+            except McpError as exc:
+                if _connection_closed(exc):
+                    self._settle(
+                        call, True, _may_have_gone_through_text(call.tool, self.name, ended_out)
+                    )
+                    logger.warning(
+                        "MCP server '%s' closed its connection with '%s' out; its next call "
+                        "starts it again",
+                        self.name,
+                        call.tool,
+                    )
+                    return
+                # The server's own refusal of the call.
+                self._settle(call, False, str(exc)[:500], answered=True)
+            except Exception as exc:  # noqa: BLE001 - what came back is not an answer to read
+                said = _failure_text(exc, self._remote_url(), self.name)
+                self._settle(
+                    call,
+                    True,
+                    _may_have_gone_through_text(
+                        call.tool, self.name, f"could not read its answer: {said}"
+                    ),
+                )
+            else:
+                ok = not getattr(result, "isError", False)
+                self._settle(call, ok, _coerce_output(result), answered=True)
 
 
 def _connection_closed(exc: BaseException) -> bool:
