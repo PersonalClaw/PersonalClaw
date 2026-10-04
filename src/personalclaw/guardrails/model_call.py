@@ -75,6 +75,7 @@ from personalclaw.llm.base import (
 )
 from personalclaw.llm.prompt_cache import PromptCache
 from personalclaw.llm.registry import served_on_this_machine
+from personalclaw.llm.tool_use import uses_tools
 from personalclaw.turn_streams import closing_stream
 
 if TYPE_CHECKING:
@@ -324,8 +325,7 @@ class ModelCallGuard(ModelProvider):
         counted: bool = True,
     ) -> None:
         self._inner = inner
-        # The instance's own wait, mirrored like ``supports_tools`` so the guard reads as the
-        # provider it wraps.
+        # The instance's own wait, mirrored so the guard reads as the provider it wraps.
         self.request_timeout_secs = getattr(inner, "request_timeout_secs", None)
         # The call's clock. A caller's own number is kept (a routed local attempt's short one,
         # which is what lets a stalled local model hand over to the next model quickly). With
@@ -377,9 +377,6 @@ class ModelCallGuard(ModelProvider):
         # model that runs on this machine, whose prompt never leaves it, and this for any other.
         self._scan_setting = scan_mode if scan_mode in ("warn", "redact", "block") else "warn"
         self._scan_mode = self._scan_setting
-        # Mirror the wrapped provider's tool support so the loop treats the guard
-        # exactly as it would the inner provider.
-        self.supports_tools = getattr(inner, "supports_tools", False)
         # The routing query class of the CURRENT call, set by the entry point that has
         # the prompt text (stream/complete/stream_command) and stamped onto each attempt
         # audit row. "" until a call classifies.
@@ -460,6 +457,13 @@ class ModelCallGuard(ModelProvider):
         metered turn (a loop's planner and workers, background work, workflows) and a model that
         caches only on a marker, Bedrock's or Anthropic's, re-read its whole prompt every call."""
         return getattr(self._inner, "prompt_cache", PromptCache.NONE)
+
+    @property
+    def supports_tools(self) -> bool:  # type: ignore[override]
+        """The wrapped provider's own declaration, read at each ask (``llm.tool_use``): one that
+        learns its model takes no tools (a server that refused a request for them) says so here
+        too. A copy taken when the guard was built kept answering yes for it."""
+        return uses_tools(self._inner)
 
     @property
     def compacts_in_process(self) -> bool:

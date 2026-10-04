@@ -87,6 +87,26 @@ supervisor's judge still runs on the model its use case binds (`loops.judge_use_
   re-checked, as with the kind's own launch blockers.
 - **Not the chat default.** Settings → Agent defaults' Default agent is a chat's default and never
   reaches a loop: a loop moves onto another program only when it is chosen for that loop.
+- **On a model that uses tools.** A loop's planner and workers do all their work with tools: a
+  worker writes each cycle's finding into the loop's folder, and only what is written there is
+  credited. A loop on PersonalClaw whose model can't use tools is therefore refused before any of it
+  runs, for every kind (none can make progress without them: a goal's or a research loop's finding
+  is a file, a code or design loop's work is files and commands), rather than warned about and let
+  run to claim its work. `POST /api/loops`, `POST /api/loops/validate`, a pre-launch
+  `PUT /api/loops/{id}` that moves its model, a start, a resume, a steer that would start a waiting
+  loop again, a plan's start and retry, and the agent's create and start tools answer
+  `422 loop_model_cannot_use_tools`, naming the model and where to choose another ("This loop
+  can't do its work: “…” can't use tools, and its worker does everything with them (a cycle counts
+  only for the finding it writes). Choose a model that uses tools for Loops in Settings → Models.";
+  the loop itself, or its agent's page, when the model is the loop's own or its agent's pin;
+  `loop/validation.worker_tools_blocker`). The model asked is the one the worker would run on,
+  built the way its runtime builds it with no call made
+  (`providers/provider_bridge.model_without_tools`), and asked through the one reader of what a
+  provider declares (`llm/tool_use.uses_tools`). Settings → Models refuses to bind Loops to such a
+  model (`400 model_cannot_use_tools`); Chat may still be bound to one. A loop on an agent CLI is
+  not asked: the CLI brings its own tools. A `general` loop runs as a workflow whose steps run on
+  Orchestration, so it is refused for that model, as its run's start would be
+  ([workflows.md](workflows.md)).
 
 ## One listing, two homes
 
@@ -285,6 +305,23 @@ not retried, and nothing runs it again (not a poll, not a restart) until its own
 notification (`loop/spend_cap.py`), and the loop's page shows it in place of "Drafting…" or a
 question, with a link to the Settings page and Resume. Chat, a workflow step and a subagent say the
 same sentence (`guardrails.failure.budget_refusal`).
+
+A loop let start on a model that uses tools can still come to run without them: Settings → Models
+moved Loops (or Chat, which an unbound Loops borrows) onto a model that can't, a later model of the
+chain served in place of the head, or a model refused the tools a call offered it (a local server
+answers a model that can't use them so, and its provider retries without them). Such a cycle
+**pauses** the loop rather than running on. The runtime names the model it runs on without tools
+(`tool_less_model`, `agents/native/catalog_refresh.py`, and a warning in the gateway log); the
+loop's live activity says it once for the turn ("“…” can't use tools, so it runs without them: it
+can't read or write a file, run a command or look anything up.", `chat_utils.tools_said`); the
+cycle driver asks the worker nothing more (it reads the same runtime, `manager.ran_without_tools`);
+and the loop waits as `needs_input` (`watchdog.LoopWatchdog.hold_without_tools`) with the sentence
+naming the model and where to choose another as its question (`no_tools: true`), ONE Inbox item
+and its notification ("Loop paused — its model can't use tools"), and a `no_tools` event, every
+worker's nudge loop switched off, kept. The workers that ran without tools are reset, so a Resume
+builds them from Settings → Models as it reads then, and a Resume is let through only once that
+model uses tools. The loop's page shows the pause, with a link to Settings → Models and Resume, in
+place of a question.
 
 A workflow run, and so a general loop, is held the same way (`workflows/incident_hold.py`). On its
 first step with the switch on, the run's controller withdraws the work in flight as a pause does: a

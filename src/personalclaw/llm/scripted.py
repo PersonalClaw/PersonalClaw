@@ -66,9 +66,15 @@ Script file format (version 1)
       "version": 1,                        // required, must be 1
       "context_usage_pct": 12.5,           // optional; OMITTED => None
       "on_exhausted": "repeat_last",       // "repeat_last" (default) | "error"
+      "supports_tools": true,              // optional, default true: whether the fixture says
+                                           //   it uses tools (``ModelProvider.supports_tools``)
       "turns": [                           // required, non-empty; Nth prompt -> Nth turn
         {
           "expect_prompt": "hello",        // optional substring guard on the prompt
+          "refuses_tools": false,          // optional: this turn refuses the tools it was
+                                           //   offered, as a server answers a model that can't
+                                           //   use them, and from it on the fixture says it
+                                           //   uses none
           "text": "Hi there.",             // one text chunk  (mutually exclusive
           "chunks": ["Hi ", "there."],     //   with a list of chunks)
           "thinking": ["weighing it"],     // optional thinking chunks, emitted first
@@ -141,10 +147,13 @@ HOME_ENV_VAR = "PERSONALCLAW_HOME"
 
 SCRIPT_VERSION = 1
 
-_TOP_LEVEL_KEYS = frozenset({"version", "context_usage_pct", "on_exhausted", "turns"})
+_TOP_LEVEL_KEYS = frozenset(
+    {"version", "context_usage_pct", "on_exhausted", "supports_tools", "turns"}
+)
 _TURN_KEYS = frozenset(
     {
         "expect_prompt",
+        "refuses_tools",
         "text",
         "chunks",
         "thinking",
@@ -338,8 +347,12 @@ def _parse_turn(raw_turn: Any, index: int, script_pct: float | None) -> dict[str
     duration_ms = turn.get("duration_ms", 0)
     if not isinstance(duration_ms, int) or isinstance(duration_ms, bool):
         raise ScriptedScriptError(f"{where}.duration_ms must be an integer")
+    refuses_tools = turn.get("refuses_tools", False)
+    if not isinstance(refuses_tools, bool):
+        raise ScriptedScriptError(f"{where}.refuses_tools must be a boolean")
     return {
         "expect_prompt": expect_prompt,
+        "refuses_tools": refuses_tools,
         "thinking": _parse_thinking(turn, where),
         "chunks": _parse_chunks(turn, where),
         "tool_calls": _parse_tool_calls(turn, where),
@@ -383,9 +396,12 @@ def load_script(path: Path) -> dict[str, Any]:
     if not isinstance(raw_turns, list) or not raw_turns:
         raise ScriptedScriptError(f"script {path} requires a non-empty 'turns' list")
 
+    supports_tools = script.get("supports_tools", True)
+    if not isinstance(supports_tools, bool):
+        raise ScriptedScriptError(f"script {path}.supports_tools must be a boolean")
     script_pct = _optional_pct(script, f"script {path}")
     turns = [_parse_turn(t, i, script_pct) for i, t in enumerate(raw_turns)]
-    return {"on_exhausted": on_exhausted, "turns": turns}
+    return {"on_exhausted": on_exhausted, "supports_tools": supports_tools, "turns": turns}
 
 
 class ScriptedProvider(ModelProvider):
@@ -398,12 +414,13 @@ class ScriptedProvider(ModelProvider):
     monkeypatch it like any other caller.
     """
 
-    # The script can emit tool calls, so the loop must be willing to hand it tools.
-    supports_tools: bool = True
-
     def __init__(self) -> None:
         self._script_path = resolve_script_path()
         self._script = load_script(self._script_path)
+        # The script can emit tool calls, so by default the loop is willing to hand it tools; a
+        # script that says it uses none is a model that can't, and one of its turns can refuse
+        # them as a server refuses a model without tools.
+        self._supports_tools: bool = self._script["supports_tools"]
         self._turn_index = 0
         self._pending: dict[str, str] = {}
         self._decisions: list[tuple[str, str]] = []
@@ -415,6 +432,11 @@ class ScriptedProvider(ModelProvider):
     @property
     def script_path(self) -> Path:
         return self._script_path
+
+    @property
+    def supports_tools(self) -> bool:  # type: ignore[override]
+        """What the script says (``supports_tools``), until a turn refuses its tools."""
+        return self._supports_tools
 
     @property
     def turn_index(self) -> int:
@@ -475,6 +497,8 @@ class ScriptedProvider(ModelProvider):
 
     async def _emit(self, prompt: str) -> AsyncIterator[LLMEvent]:
         turn = self._next_turn(prompt)
+        if turn["refuses_tools"]:
+            self._supports_tools = False
         for thought in turn["thinking"]:
             yield LLMEvent(kind=EVENT_THINKING_CHUNK, text=thought)
         for chunk in turn["chunks"]:

@@ -670,6 +670,16 @@ answered (8,192 tokens)…"), and its workflow step fails with that cause. The
 model-call log records each such call as `output_cap`, failed when it produced
 no text and no tool call that can run.
 
+A subagent started to read or change things on a model that can't use tools
+could only claim it had: it ends failed before any call is made for it
+("Couldn't do its task: “…” can't use tools, and it was started to work with
+them. Choose a model that uses tools for Orchestration in Settings → Models, or
+start it on one.", `subagent_tier.without_tools`), and one whose model refused
+the tools a call offered it ends the same way when its turn is over. Its
+workflow step fails with a fix about its model. A subagent of the `text` class
+asked for no tools and runs as before, and an agent CLI brings its own. A chat
+on such a model is answered without tools, as the chat says.
+
 **How a turn ended is said by its cause.** The chat runner names one ending per
 turn, and an agent CLI's endings map onto the same ones
 (`acp/session.py`, `AcpSession._dispatch_frames`):

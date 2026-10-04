@@ -63,6 +63,7 @@ from personalclaw.dashboard.chat_title import _maybe_auto_title
 from personalclaw.dashboard.chat_utils import (
     _BLOCKED_SLASH_COMMANDS,
     _SLASH_COMMANDS,
+    LOOP_WORK_APPS,
     MODEL_SUBSTITUTION_ACTIVITY_KIND,
     SLASH_FALLBACK_ACTIVITY_KIND,
     _apply_incognito_prefix,
@@ -85,6 +86,7 @@ from personalclaw.dashboard.chat_utils import (
     strip_status_sentinel,
     task_mode_denies,
     task_mode_framing,
+    tools_said,
 )
 from personalclaw.dashboard.handlers import MAX_PROMPT_BYTES, _list_provider_prompts
 from personalclaw.dashboard.state import (
@@ -859,13 +861,6 @@ def _turn_complete_line(
     return line
 
 
-#: The ``_app`` tags a loop's hidden sessions carry: ``"loop"`` on its workers (``loop/manager``)
-#: and ``"loops"`` on its planner (``loop/plan_walkthrough``). The other checks in this module key
-#: WORKER behaviour off ``"loop"`` alone, on purpose — the planner is not a cycle worker — but both
-#: are loop work, so both take the loops axis.
-_LOOP_WORK_APPS = frozenset({"loop", "loops"})
-
-
 def refused_on_a_substitute(state: DashboardState, session: _ChatSession, client: object) -> bool:
     """End an Incognito or Temporary chat's turn whose runtime would answer in place of the chat's
     own model, saying why, before anything is sent; True when it did.
@@ -902,7 +897,7 @@ def model_axis_for(session: object) -> str:
     to take the chat binding, because only the worker's tag was checked here, so a loop's
     planning was never metered.
     """
-    return "loops" if getattr(session, "_app", "") in _LOOP_WORK_APPS else ""
+    return "loops" if getattr(session, "_app", "") in LOOP_WORK_APPS else ""
 
 
 def _record_turn_usage(
@@ -2799,6 +2794,7 @@ async def run_chat(
         # (an activity line is not drawn once tool cards arrive), and stamped on the reply below
         # so a reload still says it.
         _substitution_note = model_substitution_notice(client)
+        _without_tools = tools_said(state, session, client)  # a loop's turn says it, live
         if _substitution_note:
             state.broadcast_ws(
                 "activity_event",
@@ -5162,7 +5158,7 @@ async def run_chat(
             needs_session_reset=needs_session_reset,
             is_slash=is_slash,
             tool_call_count=_turn_tool_call_count,
-            is_loop=getattr(session, "_app", "") in _LOOP_WORK_APPS,
+            is_loop=getattr(session, "_app", "") in LOOP_WORK_APPS,
         )
         if _unanswered:
             # Whatever streamed was whitespace: no answer to keep. Left in, it would settle
@@ -5285,6 +5281,8 @@ async def run_chat(
         # transcript say so instead of reading as the model trailing off.
         stamp_finish_reason(session, _stop_reason)
         stamp_model_substitution(session, _substitution_note)
+        # Its model refused the tools this turn offered it: a loop's turn says so as it ends.
+        tools_said(state, session, client, said=_without_tools)
         # An answer that ran past its agent's own word limit says so under it (`answer_rules`); one
         # cut at the output cap is not the whole answer, and its own mark says so. A limit the
         # request sets counts whoever sent it (`sender_words`).

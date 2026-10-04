@@ -510,6 +510,10 @@ WF_ERROR_CODES: dict[str, str] = {
     ),
     "WF_PRE_BINARY_MISSING": "A binary the spec requires is not on PATH.",
     "WF_PRE_MODEL_UNRESOLVED": "No model resolves for a use case the spec needs.",
+    "WF_PRE_MODEL_NO_TOOLS": (
+        "A step works with tools, and the model it would run on can't use them; the message "
+        "names the step and the model."
+    ),
     "WF_PRE_MODELS_UNVERIFIABLE": (
         "Preflight could not check model availability at all — not a claim that a model is "
         "missing."

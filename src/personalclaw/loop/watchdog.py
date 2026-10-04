@@ -29,7 +29,16 @@ from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config.loader import AppConfig
 from personalclaw.declined_calls import waits_for_you
 from personalclaw.loop import files as loop_files
-from personalclaw.loop import gates, instrument, kinds, manager, spend_cap, store, supervisor
+from personalclaw.loop import (
+    gates,
+    instrument,
+    kinds,
+    manager,
+    spend_cap,
+    store,
+    supervisor,
+    validation,
+)
 from personalclaw.loop.loop import (
     ENDED_STATUSES,
     TERMINAL_STATUSES,
@@ -408,6 +417,55 @@ class LoopWatchdog:
         )
         return True
 
+    async def hold_without_tools(self, session: Any) -> bool:
+        """A turn of worker *session* (a loop's stage worker or a task worker) ran without tools:
+        the model its runtime runs on can't use them (``manager.ran_without_tools``), so its cycle
+        wrote no finding and no next cycle could. Its loop was let start on a model that could
+        (``validation.worker_tools_blocker``); this is one that came to run without them since: a
+        rebind in Settings → Models, a later model of the chain serving in place of the head, or a
+        model that refused the tools a call offered it.
+
+        The cycle driver did not ask it again. The loop waits for its owner (``needs_input``),
+        with the sentence naming the model and what to choose instead as its question, one Inbox
+        item and its one notification, and every worker's nudge loop switched off, kept. The
+        runtimes of its workers that run without tools are retired, so a resume builds each from
+        how Settings → Models reads then, and a resume is let through only once that model uses
+        tools. Returns whether the loop was put on hold. Never raises: a hold that cannot be made
+        is logged, and the loop goes on as it would have."""
+        try:
+            return await self._hold_without_tools(session)
+        except Exception:
+            key = getattr(session, "key", "?")
+            logger.warning("loop: holding %s for a model without tools failed", key, exc_info=True)
+            return False
+
+    async def _hold_without_tools(self, session: Any) -> bool:
+        from personalclaw.constants import dashboard_history_key
+        from personalclaw.llm.tool_use import tool_less_model
+
+        key = str(getattr(session, "key", "") or "")
+        model = manager.ran_without_tools(self._state, session)
+        loop_id, _task_id = manager.worker_ids(key)
+        loop = store.get(loop_id) if loop_id and model else None
+        if loop is None or loop.status != LoopStatus.RUNNING.value:
+            return False
+        sentence = validation.ran_without_tools(loop, model)
+        loop_files.write_question(loop_id, sentence, why=validation.NO_TOOLS_WHY, no_tools=True)
+        try:
+            store.update_status(loop_id, LoopStatus.NEEDS_INPUT)
+        except (KeyError, store.TransitionError):
+            return False
+        await manager.hold_workers(self._svc, loop_id)
+        sessions = getattr(self._state, "sessions", None)
+        if sessions is not None:
+            for worker in manager.worker_session_keys(self._state, loop_id):
+                if tool_less_model(sessions.get_provider(dashboard_history_key(worker))):
+                    await sessions.reset(dashboard_history_key(worker))
+        self._consec_errors.pop(loop_id, None)
+        logger.warning("loop %s waits for a model that uses tools: %s", loop_id, sentence)
+        self._publish(loop_id, "no_tools", {"loop_id": loop_id, "reason": sentence})
+        return True
+
     # ── publishing ──
 
     #: event → (notification wire kind, title).
@@ -430,6 +488,7 @@ class LoopWatchdog:
         "needs_input": ("info", "Loop needs your input"),
         "spend_cap": ("warning", spend_cap.TITLE),
         "declined": ("info", "Loop waiting — you declined one of its steps"),
+        "no_tools": ("warning", "Loop paused — its model can't use tools"),
         # A code loop advancing an SDLC stage is visible progress worth a heads-up
         # while the user is away (only the code strategy emits stage_advance, so the
         # "stage" wording is always accurate). Ported from the legacy code watchdog.
@@ -453,6 +512,7 @@ class LoopWatchdog:
         "stagnant": "needs_input",
         "spend_cap": "needs_input",
         "declined": "needs_input",
+        "no_tools": "needs_input",
     }
 
     def _attention_dedup_key(self, loop_id: str, event: str) -> str:

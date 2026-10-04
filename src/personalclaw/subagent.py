@@ -67,8 +67,10 @@ from personalclaw.subagent_tier import (
     CallBudget,
     give_up_files_on_a_cli,
     refuse_unheld,
+    refuse_without_tools,
     run_agent,
     tier_for,
+    without_tools,
 )
 from personalclaw.textfmt import extract_options
 from personalclaw.turn_streams import closing_stream
@@ -2240,6 +2242,8 @@ class SubagentManager:
             tier.hold(client)
         elif refuse_unheld(info, agent):  # a run its runtime cannot hold to its tier
             return
+        if refuse_without_tools(info, client):  # started to act, on a model that can't use tools
+            return
         # Each call's input by its id, from the moment it is made to its result: a call its runtime
         # approved from the policy is reported with the input it ran with (`_fire_granted`).
         call_inputs: dict[str, Any] = {}
@@ -2538,7 +2542,9 @@ class SubagentManager:
         # Every call refused, or its model out of output room before it answered: it did nothing it
         # was asked, so it ends not done, with why, and its reply stays its result; what its owner
         # declined is kept as hers. Set with `done`, so nothing reads it finished without them.
-        couldnt, cause = tier.settle(info, ending, result_text)
+        couldnt, cause = tier.settle(
+            info, ending, result_text, no_tools=without_tools(info, client)
+        )
         info.done = True
         self._sessions.record_success(session_key)
         # Fold this child's cost into the run-scoped budget and stop the fan-out

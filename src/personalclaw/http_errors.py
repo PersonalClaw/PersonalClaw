@@ -1165,6 +1165,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "A model in the chain is one its provider lists for other jobs than this one; choose one "
         "of the models Settings → Models offers for it."
     ),
+    # 400: a model the Loops chain adds can't use tools, and a loop's worker and planner do all
+    # their work with them; the message names the model.
+    "model_cannot_use_tools": (
+        "A model in the chain can't use tools, and this use's work is done with them; choose a "
+        "model that uses tools."
+    ),
     # ── a model's Test (dashboard/handlers/model_registry.py — POST /api/models/test) ──
     # 409: no Test can run for that use case or on that provider's models; the message says why,
     # in the words the model's row shows instead of a Test.
@@ -1235,6 +1241,15 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "loop_merge_not_waiting": "Nothing of this loop's is waiting for you to merge.",
     "loop_merge_moved": (
         "The work changed since you reviewed it, so nothing was merged. Review it again."
+    ),
+    # ── a loop on a model that can't use tools (dashboard/handlers/loop_routes.py —
+    #    POST /api/loops, PUT/PATCH /api/loops/{id}, POST …/plan/start|retry) ──
+    # 422: the model its worker (or planner) would run on can't use tools, and a loop does all its
+    # work with them, so it was not created, changed, planned or started; the message names the
+    # model and what to choose instead.
+    "loop_model_cannot_use_tools": (
+        "The model this loop would run on can't use tools, and a loop does all its work with "
+        "them; choose a model that uses tools."
     ),
     # ── the skill search (dashboard/handlers/skills.py — GET /api/skills/search) ──
     # 404: the named catalogue is not one PersonalClaw has. 500: the one catalogue a scoped search

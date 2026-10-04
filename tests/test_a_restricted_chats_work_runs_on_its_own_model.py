@@ -64,9 +64,10 @@ NOT_ASKED = "so nothing from it is sent to any model but the one it runs on"
 
 class _Model:
     """A model the resolution seam builds for an entry: it answers, and records that it was asked.
-    A model the test holds (``world.held``) answers only once it is let go."""
+    A model the test holds (``world.held``) answers only once it is let go. It uses tools, as a
+    subagent's model must: one that can't is refused before it runs."""
 
-    supports_tools = False
+    supports_tools = True
 
     def __init__(self, entry: str, world: SimpleNamespace) -> None:
         self.entry = entry
@@ -165,6 +166,7 @@ class _Sessions:
 
         self.factory = create_provider_factory()
         self.built: list[dict[str, Any]] = []
+        self.runtimes: list[Any] = []
         self.count = 0
 
     async def get_or_create(self, key: str, agent=None, channel_id=None, approval_policy="",
@@ -179,6 +181,7 @@ class _Sessions:
         )  # fmt: skip
         await provider.start()
         _push_approval_policy(provider, approval_policy, approval_source)
+        self.runtimes.append(provider)
         return provider, True, False
 
     def get_agent(self, key: str) -> str:
@@ -500,7 +503,8 @@ async def test_an_incognito_chats_subagent_reads_memory_without_the_embedding_mo
         lambda cwd=None, memory_store=None: markdown
     )
     set_engine(None)
-    manager = SubagentManager(sessions=_Sessions(), ctx_builder=builder, is_yolo=lambda: True)
+    sessions = _Sessions()
+    manager = SubagentManager(sessions=sessions, ctx_builder=builder, is_yolo=lambda: True)
     _turn_named(name, mode)
     try:
         state = _state(manager, (name, mode))
@@ -513,11 +517,19 @@ async def test_an_incognito_chats_subagent_reads_memory_without_the_embedding_mo
     isolated.append(f"subagent:{info.id}")
 
     assert info.error == "", info.error
+    # Its runtime's tool catalog is embedded for ranking its tools: each tool's name and its own
+    # documentation, which no chat wrote. Everything else sent is the chat's.
+    from personalclaw.agents.native.tool_vectors import tool_text
+
+    (runtime,) = sessions.runtimes
+    catalog = {tool_text(d.name, d.description) for d in runtime._tool_defs}
+    assert catalog, "premise: the subagent runs with its tools"
+    said = [text for text in embeddings.sent if text not in catalog]
     if mode == "incognito":
-        assert embeddings.sent == [], "the Incognito chat's subagent reached the embedding model"
+        assert said == [], "the Incognito chat's subagent reached the embedding model"
         assert world.asked == [HERE]
     else:
-        assert embeddings.sent, "a normal chat's subagent no longer searches with its embeddings"
+        assert said, "a normal chat's subagent no longer searches with its embeddings"
         assert world.asked == [RELAY]
 
 

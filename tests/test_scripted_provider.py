@@ -276,6 +276,24 @@ def test_provider_declares_tool_support(enabled) -> None:
     assert ScriptedProvider().supports_tools is True
 
 
+def test_a_script_can_be_a_model_that_cant_use_tools(enabled) -> None:
+    enabled({"version": 1, "supports_tools": False, "turns": [{"text": "x"}]})
+    assert ScriptedProvider().supports_tools is False
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_refuses_its_tools_says_it_takes_none_from_then_on(enabled) -> None:
+    """As a server answers a model that can't use the tools a call offered it."""
+    enabled({"version": 1, "turns": [{"text": "a", "refuses_tools": True}, {"text": "b"}]})
+    provider = ScriptedProvider()
+    assert provider.supports_tools is True
+
+    await _collect(provider.complete([{"role": "user", "content": "q"}], tools=[{"name": "t"}]))
+    assert provider.supports_tools is False
+    await _collect(provider.complete([{"role": "user", "content": "q"}]))
+    assert provider.supports_tools is False
+
+
 @pytest.mark.asyncio
 async def test_tool_call_turn_emits_permission_then_call(enabled) -> None:
     enabled(_tool_script())
@@ -646,6 +664,12 @@ print(json.dumps(delta))
             {"version": 1, "context_usage_pct": "high", "turns": [{}]}, id="pct-not-a-number"
         ),
         pytest.param({"version": 1, "turns": "nope"}, id="turns-not-a-list"),
+        pytest.param(
+            {"version": 1, "supports_tools": "no", "turns": [{}]}, id="supports-tools-not-a-bool"
+        ),
+        pytest.param(
+            {"version": 1, "turns": [{"refuses_tools": 1}]}, id="refuses-tools-not-a-bool"
+        ),
     ],
 )
 def test_malformed_script_raises_loudly(

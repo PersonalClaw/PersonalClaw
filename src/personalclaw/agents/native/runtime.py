@@ -96,6 +96,7 @@ from personalclaw.llm.prompt_cache import (
     mark_cacheable_prefix,
     turn_note_message,
 )
+from personalclaw.llm.tool_use import uses_tools
 from personalclaw.routing.rates import CallPrice, summed
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.tool_providers.arguments import missing_arguments, missing_arguments_note
@@ -430,12 +431,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
     # ── lifecycle ──
     async def start(self) -> None:
         """Discover tools from every provider → model tool-schema + name index."""
-        if not getattr(self._model, "supports_tools", False):
-            # Tool-less model (e.g. some Ollama models): single-shot, no tools.
-            logger.info("native: model has no tool support; running tool-less")
-            self._tool_defs, self._tool_schema, self._tool_index = [], [], {}
-            self._tool_sanitized_index = {}
-            self._groups, self._active_defs, self._group_of_name = [], [], {}
+        if not uses_tools(self._model):
+            self._run_without_tools()
             return
         await self._build_catalog(carry=False)
 
@@ -1241,6 +1238,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                     break
 
                 owed.answered(assistant_text)
+                # A model that refused the tools this call offered it is offered none again.
+                tools_kwarg = self._tools_kept(tools_kwarg)
 
                 if usage is not None:
                     agg_in += usage.input_tokens or 0

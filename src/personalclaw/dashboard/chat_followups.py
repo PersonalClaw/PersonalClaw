@@ -222,9 +222,9 @@ async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> 
     # Nobody reads a chip in a loop's hidden session, so the call there only spent — once per
     # cycle, and once more for each turn a Pause or incident mode stopped, which is how a held loop
     # still reached the model.
-    from personalclaw.dashboard.chat_runner import _LOOP_WORK_APPS
+    from personalclaw.dashboard.chat_utils import LOOP_WORK_APPS
 
-    if getattr(session, "_app", "") in _LOOP_WORK_APPS:
+    if getattr(session, "_app", "") in LOOP_WORK_APPS:
         return
     if session._queue:
         return

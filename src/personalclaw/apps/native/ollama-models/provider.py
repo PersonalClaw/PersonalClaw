@@ -476,13 +476,18 @@ class OllamaProvider(ModelProvider):
     ``sys.modules`` (R6.5 / Property 11).
     """
 
-    # Ollama's native ``/api/chat`` accepts a ``tools`` schema and streams back
-    # ``message.tool_calls``, so the native loop can drive a tool-enabled turn
-    # via complete(). Tool support is ultimately model-dependent: a model that
-    # can't use tools makes Ollama 400 the request, which complete() catches and
-    # transparently retries tool-less (graceful degradation), caching the result
-    # on ``_tools_unsupported`` so later turns skip the failed first request.
-    supports_tools: bool = True
+    @property
+    def supports_tools(self) -> bool:  # type: ignore[override]
+        """Whether this instance's model calls tools, as its server said (:func:`_calls_tools`).
+
+        Ollama's ``/api/chat`` takes a ``tools`` schema and streams back ``message.tool_calls``,
+        but only for a model that calls tools: its record (``POST /api/show``) lists ``tools``
+        among what it serves, and the server refuses a request offering tools to one that does
+        not. So this says no once the server has said either for this model, and yes for one it
+        has not described yet: its first call is then the one that finds out, retried without
+        the tools (:meth:`_complete_chat`), and the agent's loop reads this again after it.
+        """
+        return _calls_tools(self._endpoint, self._model) is not False
 
     def __init__(
         self,
@@ -551,9 +556,6 @@ class OllamaProvider(ModelProvider):
         # window it ACTUALLY serves, so this provider never has to guess; the probe is
         # vendor-specific, which is why it lives in this app and not in core.
         self._served_windows: dict[str, int] = {}
-        # Flipped True the first time the server rejects a tools request for
-        # this model, so subsequent complete() turns skip the doomed first try.
-        self._tools_unsupported: bool = False
         # The chat requests open now, relayed so ``cancel()`` can close one where it is.
         self._requests = InFlightRequests()
 
@@ -794,15 +796,15 @@ class OllamaProvider(ModelProvider):
         ``role:"tool"`` results). Those are translated to Ollama's ``/api/chat``
         shape by :func:`_to_ollama_messages`.
 
-        When ``tools`` is supplied (and the model hasn't already refused them
-        this session), the OpenAI-shaped tool schema is forwarded; Ollama
-        streams any tool intent back as ``message.tool_calls`` (arguments as a
-        JSON object), which we emit as :data:`EVENT_TOOL_CALL`. A model that
-        can't use tools makes the server 400 the request — we catch that once,
-        cache it on ``_tools_unsupported``, and retry tool-less so the turn
-        still completes.
+        When ``tools`` is supplied (and the server has not said this model takes none), the
+        OpenAI-shaped tool schema is forwarded; Ollama streams any tool intent back as
+        ``message.tool_calls`` (arguments as a JSON object), which we emit as
+        :data:`EVENT_TOOL_CALL`. A model that can't use tools makes the server 400 the request —
+        we catch that once, keep what the server said (:func:`_heard_tools`), and retry tool-less
+        so the turn still completes. This instance then says it takes no tools
+        (:attr:`supports_tools`), which is what the agent's loop says to its owner.
         """
-        send_tools = bool(tools) and not self._tools_unsupported
+        send_tools = bool(tools) and _calls_tools(self._endpoint, model or self._model) is not False
         ollama_messages = _to_ollama_messages(messages)
 
         body: dict[str, Any] = {
@@ -839,11 +841,11 @@ class OllamaProvider(ModelProvider):
                     # once without tools so the turn still completes, and remember
                     # it so later turns don't pay the failed round-trip again.
                     if send_tools and _is_tools_unsupported_error(response.status_code, err_text):
-                        logger.info(
-                            "Ollama model %r does not support tools; retrying tool-less",
+                        logger.warning(
+                            "Ollama model %r refused the tools it was offered; retrying without",
                             model or self._model,
                         )
-                        self._tools_unsupported = True
+                        _heard_tools(self._endpoint, model or self._model, refused=True)
                         without_tools = self._complete_chat(messages, tools=None, model=model)
                         async with closing_stream(without_tools) as events:
                             async for ev in events:
@@ -1066,8 +1068,9 @@ class OllamaProvider(ModelProvider):
 #
 # Per design § A.5, Ollama supports streaming and embeddings fully. Tools are
 # advertised here (Ollama's /api/chat forwards a tools schema and streams back
-# tool_calls) but remain model-dependent: complete() degrades to a tool-less
-# turn when a given model rejects the tools request. Vision stays partial, so
+# tool_calls) but remain model-dependent: each instance says whether ITS model
+# calls them, from what the server said (`OllamaProvider.supports_tools`), and
+# complete() retries without them when a model refuses. Vision stays partial, so
 # the descriptor leaves it off; deployments pin a known-capable model and
 # declare extra capabilities on the entry.
 OLLAMA_CAPABILITY = ProviderCapability(
@@ -1188,6 +1191,44 @@ def _heard_one(endpoint: object, model: object, record: object) -> None:
     host = record.get("remote_host") if isinstance(record, dict) else None
     if host and model:
         _said().setdefault(_server_key(endpoint), {})[_model_key(model)] = str(host)
+
+
+#: What each Ollama server last said about which of its models call tools, by server
+#: (:func:`_server_key`): a model's name (:func:`_model_key`) and whether it does. A model's record
+#: (``POST /api/show``) says it by listing ``tools`` among what the model serves, and a request the
+#: server refuses for its tools says the model takes none. Read and written through
+#: :func:`_tools_said` only, as :data:`_ANSWERED_FROM` is through :func:`_said`.
+_CALLS_TOOLS: dict[str, dict[str, bool]] = {}
+
+
+def _tools_said() -> dict[str, dict[str, bool]]:
+    """The record of which models call tools, as the copy of this module ``sys.modules`` holds
+    keeps it (for :func:`_said`'s reason)."""
+    current = sys.modules.get(__name__)
+    record = getattr(current, "_CALLS_TOOLS", None)
+    return record if isinstance(record, dict) else _CALLS_TOOLS
+
+
+def _heard_tools(
+    endpoint: object, model: object, capabilities: object = None, *, refused: bool = False
+) -> None:
+    """Keep what the server at *endpoint* said about whether *model* calls tools: its record's
+    *capabilities* (``tools`` among them or not), or a request it *refused* for its tools. A record
+    that lists no capabilities (an older server) says nothing, and nothing is kept for it."""
+    if not model:
+        return
+    if refused:
+        calls = False
+    elif isinstance(capabilities, list) and capabilities:
+        calls = "tools" in [str(c) for c in capabilities]
+    else:
+        return
+    _tools_said().setdefault(_server_key(endpoint), {})[_model_key(model)] = calls
+
+
+def _calls_tools(endpoint: object, model: object) -> bool | None:
+    """Whether the server at *endpoint* said *model* calls tools, or ``None`` while it has not."""
+    return _tools_said().get(_server_key(endpoint), {}).get(_model_key(model))
 
 
 def passes_on(entry: ProviderEntry, model: str) -> bool:
@@ -1489,6 +1530,7 @@ class OllamaCatalog(ModelManager):
                 return name, None
             _heard_one(self._endpoint, name, data)
             caps = data.get("capabilities") if isinstance(data, dict) else None
+            _heard_tools(self._endpoint, name, caps)
             return name, [str(c) for c in caps] if isinstance(caps, list) else None
 
         if not names:
@@ -1667,6 +1709,9 @@ class OllamaCatalog(ModelManager):
                     raise RuntimeError(f"Ollama returned {r.status}")
                 data = await r.json()
         _heard_one(self._endpoint, model, data)
+        _heard_tools(
+            self._endpoint, model, data.get("capabilities") if isinstance(data, dict) else None
+        )
 
         details = data.get("details", {}) if isinstance(data, dict) else {}
         model_info = data.get("model_info", {}) if isinstance(data, dict) else {}

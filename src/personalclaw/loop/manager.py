@@ -96,6 +96,18 @@ def declined_in_turn(session) -> list[dict]:
     return list(getattr(session, "_last_turn_declined", None) or [])
 
 
+def ran_without_tools(state, session) -> str:
+    """The model worker *session*'s runtime runs on without tools (``llm.tool_use.
+    tool_less_model``), or ``""`` while it has them: a turn of it wrote no finding, and none could
+    if it were asked again. *state* is the dashboard's, whose session manager holds the runtime."""
+    from personalclaw.constants import dashboard_history_key
+    from personalclaw.llm.tool_use import tool_less_model
+
+    sessions = getattr(state, "sessions", None)
+    key = str(getattr(session, "key", "") or "")
+    return tool_less_model(sessions.get_provider(dashboard_history_key(key))) if sessions else ""
+
+
 async def reprompt_due(session, before: int) -> tuple[bool, str]:
     """Whether worker *session*, whose turn just ended, is asked again for its cycle's finding, and
     its task's title (``""`` for a stage worker).
@@ -110,7 +122,8 @@ async def reprompt_due(session, before: int) -> tuple[bool, str]:
     Nor is a worker whose turn she ended with a Deny (:func:`declined_in_turn`): her answer stands
     for the cycle. Asked again, the worker is told to write what she declined, or, on a fresh
     agent session, runs the cycle over and asks her the same thing (``LoopWatchdog.
-    hold_after_decline`` ends the cycle saying so)."""
+    hold_after_decline`` ends the cycle saying so). A worker whose turn ran without tools is not
+    asked here at all: the cycle driver ends its cycle first (:func:`ran_without_tools`)."""
     if worker_finding_count(session.key) > before or declined_in_turn(session):
         return False, ""
     _loop_id, task_id = worker_ids(session.key)

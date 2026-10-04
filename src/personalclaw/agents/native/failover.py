@@ -28,6 +28,7 @@ from personalclaw.guardrails.failure import (
     failed_before_replying,
 )
 from personalclaw.llm.base import ModelSubstitution
+from personalclaw.llm.tool_use import uses_tools
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,7 @@ class TurnFallback:
                     "native: fallback %s cannot be built, passed over: %r", ref, build_exc
                 )
                 continue
-            if tools and not getattr(provider, "supports_tools", False):
+            if tools and not uses_tools(provider):
                 logger.info("native: fallback %s cannot use tools, passed over", ref)
                 continue
             if images and not await failover.takes_images(ref):

@@ -360,7 +360,10 @@ there, or because nothing else is bound — the chat screen says so.
 - Tools. The provider declares `supports_tools = False`, so the agent loop runs it with an
   empty toolset. It cannot read or write a file, run a command, search the web or call an
   app, and no approval prompt appears because there is nothing to approve. Asked to create
-  a file, it replied with a Python snippet for you to run, and nothing was written.
+  a file, it replied with a Python snippet for you to run, and nothing was written. So no
+  loop is started on it, nor a workflow run whose steps work with tools, nor a subagent sent
+  to read or change things: each is refused before it starts, naming the model and where to
+  choose one that uses tools, and Settings → Models does not bind it for Loops.
 - The context PersonalClaw builds. For other models, each turn is assembled into one
   prompt: the agent's instructions, your memory and preferences, the skills chosen for the
   turn, today's date, then your message. On a fresh home that came to about 20,000

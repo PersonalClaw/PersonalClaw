@@ -638,73 +638,65 @@ def _background_output_cap() -> int:
     return int(background_limits().max_output_tokens)
 
 
-def _build_native_runtime(
-    *,
-    use_case: str,
-    session_key: str | None,
-    agent: str | None,
-    model_override: str | None,
-    cwd: str | None,
-    extra_tool_roots: list | None = None,
-    read_tool_roots: list | None = None,
-    unattended: bool = False,
-    dry_run: bool = False,
-    reasoning_effort: str = "",
-    project_id: str = "",
-    model_axis: str = "",
-    tool_groups: list | None = None,
-    unmetered: bool = False,
-    **kwargs: Any,
-) -> ModelProvider:
-    """Construct a :class:`NativeAgentRuntime` for a ``native`` agent.
+def _agent_config(agent: str | None) -> tuple[Any, Any]:
+    """The configuration a runtime for *agent* is built from, and the agent's profile in it:
+    ``(config, profile)``. The profile is None for no agent (the default agent's chat) and for one
+    config cannot name; both are None when config cannot be read.
 
-    Its inference ModelProvider is resolved through the SAME active-model
-    selection (Settings → Models). ``model_axis`` names the chat sub-category
-    whose CHAIN governs the inner model (MODEL-USE-CASES-V2): "background" for
-    a heartbeat task, "loops" for a loop's worker and planner, "orchestration"
-    for subagent spawns and the other agent turns nobody typed, else the
-    session's own use case — so a sub-category binding governs native agents too
-    (previously the inner model hardcoded "chat", making e.g. a code_tools binding
-    cosmetic). A model the caller names still serves; it rides BESIDE the axis,
-    because the axis also decides whether the inner model is metered — only the
-    non-interactive axes are wrapped by the spend guard (below, in
-    ``resolve_provider_for_use_case``). A session a person answers on one (``unmetered``: an
-    Attended loop's, ``loop.posture``) keeps the guard but not its spend ceilings: its spend is
-    its owner's, as a chat's is. Tools come from the in-process core provider.
+    Read ONCE per build: its pin decides which provider is resolved, its tool and skill lists what
+    its turns may use (the default agent's, for a chat that names none), and its triggers become
+    the runtime's hook callable. Its PROMPT is not read here: the system prompt reaches the model
+    through the turn's assembled context (``ContextBuilder.build_message``), the one place it is
+    resolved.
     """
-    from pathlib import Path
-
-    from personalclaw.agents.native.builtin_tools import (
-        PLATFORM_CATEGORIES,
-        PLATFORM_DISPLAY_NAME,
-        PLATFORM_PROVIDER_NAME,
-        NativeBuiltinToolProvider,
-    )
-    from personalclaw.agents.native.runtime import NativeAgentRuntime
-    from personalclaw.agents.provider import AgentRuntimeDefinition
-    from personalclaw.agents.skill_list import agent_skills
-    from personalclaw.agents.tool_list import agent_tools
-
-    name = agent or "PersonalClaw"
-    # The agent's profile, read ONCE: its pin decides which provider is resolved below, and its
-    # triggers become the runtime's hook callable. Its PROMPT is not read here: the system
-    # prompt reaches the model through the turn's assembled context
-    # (``ContextBuilder.build_message``), the one place it is resolved.
-    prof = None
-    cfg = None
     try:
         from personalclaw.config.loader import AppConfig
 
         cfg = AppConfig.load()
-        prof = (cfg.agents or {}).get(agent) if agent else None
     except Exception:  # noqa: BLE001 — an unreadable config leaves the agent unpinned
         logger.debug("agent profile unreadable for %r", agent, exc_info=True)
-    # The tools it may use, from the same read: its tool list, read for the agent the turn runs as
-    # (the default agent for a chat that names none), and held by the runtime on every turn. Its
-    # skill list likewise, which the runtime holds for its skill tools.
-    tools = agent_tools(agent, cfg)
-    skills = agent_skills(agent, cfg)
+        return None, None
+    return cfg, ((cfg.agents or {}).get(agent) if agent else None)
 
+
+@dataclass(frozen=True)
+class _InnerModel:
+    """The model a native runtime is served by, and what it was chosen and resolved from."""
+
+    provider: ModelProvider
+    #: The id ``complete()`` is sent.
+    model: str
+    #: A model chosen for the session that could not serve: ``(requested, who, why, fix)``.
+    missed: tuple[str, str, str, str] | None
+    #: The models chosen for it, in precedence order: ``(ref, who, how to pick another)``.
+    choices: list[tuple[str, str, str]]
+    #: The use case whose chain governs it.
+    axis: str
+    basis: ResolutionBasis
+    #: How a ref resolves on that axis, the way this model was (a turn's fallback builds by it).
+    resolve: Callable[[str | None], ModelProvider]
+
+
+def _inner_model(
+    *,
+    agent: str | None,
+    prof: Any,
+    model_override: str | None,
+    model_axis: str,
+    session_key: str | None,
+    cwd: str | None,
+    unmetered: bool,
+    kwargs: dict[str, Any],
+) -> _InnerModel:
+    """The inference model a native runtime for *agent* runs on: the session's own pick, else the
+    agent's pin, else the chain of the use case *model_axis* governs (Settings → Models).
+
+    The ONE choice of it, made for the runtime (:func:`_build_native_runtime`) and for a surface
+    that must know before a runtime exists whether that model can use tools
+    (:func:`model_without_tools`), so the two can never answer about different models. Raises
+    :class:`ProviderResolutionError` when nothing can serve.
+    """
+    name = agent or "PersonalClaw"
     # The model this runtime was ASKED for, in precedence order: the chat's own pick, then the
     # agent's pin. The first that can serve is the one it runs on, provider included: a pin naming
     # the SECOND provider of the chat chain used to be served by the chain's head with the pin's
@@ -802,7 +794,6 @@ def _build_native_runtime(
     # "Bedrock:…" ref here is an invalid AWS model identifier), the provider above being the one
     # that ref names.
     model = _strip_provider_prefix(chosen) if chosen else ""
-    hook_ids: list[str] = list(getattr(prof, "triggers", []) or []) if prof is not None else []
 
     # An agent with no model of its own (the hidden ``personalclaw-lite``
     # background agent, the goal loop worker's "inherit chat" default, or any
@@ -826,6 +817,157 @@ def _build_native_runtime(
             provider_hint=served_entry or _provider_entry_name(model_provider, use_case=inner_axis),
             use_case=inner_axis,
         )
+
+    return _InnerModel(
+        provider=model_provider,
+        model=model,
+        missed=missed,
+        choices=choices,
+        axis=inner_axis,
+        basis=basis,
+        resolve=_resolve,
+    )
+
+
+async def model_without_tools(
+    *, axis: str, agent: str = "", model: str = "", runtime: str = ""
+) -> str:
+    """The model a native session would run on, when that model can't use tools; ``""`` when it can.
+
+    For a surface that must answer before the session exists: a loop being created, planned or
+    started, a workflow run whose steps work with tools, a Loops binding. *axis* is the use case
+    whose chain governs the session's model (``loops``, ``orchestration``), *agent* the agent it
+    runs as, *model* a model chosen for it (a loop's own, a step's), and *runtime* the agent CLI it
+    is put on (``acp:<cli>``), if any. The model is chosen and built the way the runtime builds it
+    (:func:`_inner_model`), with no call made, and asked through the one reader
+    (``llm.tool_use.uses_tools``), so this and the runtime cannot disagree about it.
+
+    ``""`` too when the session runs on an agent CLI, which brings its own tools, and when no model
+    can be built for it now: that refusal is resolution's own, said when the session starts. The
+    answer is the ``"<entry>:<model>"`` ref the runtime would name.
+    """
+    from personalclaw.llm.tool_use import UNNAMED_MODEL, uses_tools
+
+    if runtime.startswith("acp") or _agent_provider_kind(agent or None) == "acp":
+        return ""
+    try:
+        inner = _inner_model(
+            agent=agent or None,
+            prof=_agent_config(agent or None)[1],
+            model_override=model or None,
+            model_axis=axis,
+            session_key=None,
+            cwd=None,
+            unmetered=True,
+            kwargs={},
+        )
+    except Exception:  # noqa: BLE001 — a model that cannot be built is resolution's to say
+        logger.debug("tool check: no model resolves on %s for %r", axis, agent, exc_info=True)
+        return ""
+    try:
+        if uses_tools(inner.provider):
+            return ""
+        entry = str(getattr(inner.provider, "served_ref", "") or "").partition(":")[0]
+        if entry and inner.model:
+            return f"{entry}:{inner.model}"
+        return inner.model or entry or UNNAMED_MODEL
+    finally:
+        try:
+            await inner.provider.shutdown()
+        except Exception:  # noqa: BLE001 — a check that built a client closes it, best effort
+            logger.debug("tool check: closing the model it built failed", exc_info=True)
+
+
+async def ref_without_tools(ref: str, *, use_case: str) -> bool:
+    """Whether *ref* (``"<entry>:<model>"``) names a model that can't use tools, built the way a
+    call on *use_case* builds it, with no call made: a binding about to be saved is asked this
+    (``PUT /api/models/active/loops``). ``False`` when it cannot be built now, which the binding's
+    other checks and its first use say in their own words."""
+    from personalclaw.llm.tool_use import uses_tools
+
+    try:
+        provider = resolve_provider_for_use_case(
+            use_case, model_override=ref, _force_model_axis=True, _model_axis_only=True
+        )
+    except Exception:  # noqa: BLE001 — a model that cannot be built is not one we can ask
+        logger.debug("tool check: %r cannot be built for %s", ref, use_case, exc_info=True)
+        return False
+    try:
+        return not uses_tools(provider)
+    finally:
+        try:
+            await provider.shutdown()
+        except Exception:  # noqa: BLE001 — a check that built a client closes it, best effort
+            logger.debug("tool check: closing the model it built failed", exc_info=True)
+
+
+def _build_native_runtime(
+    *,
+    use_case: str,
+    session_key: str | None,
+    agent: str | None,
+    model_override: str | None,
+    cwd: str | None,
+    extra_tool_roots: list | None = None,
+    read_tool_roots: list | None = None,
+    unattended: bool = False,
+    dry_run: bool = False,
+    reasoning_effort: str = "",
+    project_id: str = "",
+    model_axis: str = "",
+    tool_groups: list | None = None,
+    unmetered: bool = False,
+    **kwargs: Any,
+) -> ModelProvider:
+    """Construct a :class:`NativeAgentRuntime` for a ``native`` agent.
+
+    Its inference ModelProvider is resolved through the SAME active-model
+    selection (Settings → Models). ``model_axis`` names the chat sub-category
+    whose CHAIN governs the inner model (MODEL-USE-CASES-V2): "background" for
+    a heartbeat task, "loops" for a loop's worker and planner, "orchestration"
+    for subagent spawns and the other agent turns nobody typed, else the
+    session's own use case — so a sub-category binding governs native agents too
+    (previously the inner model hardcoded "chat", making e.g. a code_tools binding
+    cosmetic). A model the caller names still serves; it rides BESIDE the axis,
+    because the axis also decides whether the inner model is metered — only the
+    non-interactive axes are wrapped by the spend guard (below, in
+    ``resolve_provider_for_use_case``). A session a person answers on one (``unmetered``: an
+    Attended loop's, ``loop.posture``) keeps the guard but not its spend ceilings: its spend is
+    its owner's, as a chat's is. Tools come from the in-process core provider.
+    """
+    from pathlib import Path
+
+    from personalclaw.agents.native.builtin_tools import (
+        PLATFORM_CATEGORIES,
+        PLATFORM_DISPLAY_NAME,
+        PLATFORM_PROVIDER_NAME,
+        NativeBuiltinToolProvider,
+    )
+    from personalclaw.agents.native.runtime import NativeAgentRuntime
+    from personalclaw.agents.provider import AgentRuntimeDefinition
+    from personalclaw.agents.skill_list import agent_skills
+    from personalclaw.agents.tool_list import agent_tools
+
+    name = agent or "PersonalClaw"
+    cfg, prof = _agent_config(agent)
+    inner = _inner_model(
+        agent=agent,
+        prof=prof,
+        model_override=model_override,
+        model_axis=model_axis,
+        session_key=session_key,
+        cwd=cwd,
+        unmetered=unmetered,
+        kwargs=kwargs,
+    )
+    model_provider, model, missed = inner.provider, inner.model, inner.missed
+    choices, inner_axis, basis, _resolve = inner.choices, inner.axis, inner.basis, inner.resolve
+    # The tools it may use, from the same read: its tool list, read for the agent the turn runs as
+    # (the default agent for a chat that names none), and held by the runtime on every turn. Its
+    # skill list likewise, which the runtime holds for its skill tools.
+    tools = agent_tools(agent, cfg)
+    skills = agent_skills(agent, cfg)
+    hook_ids: list[str] = list(getattr(prof, "triggers", []) or []) if prof is not None else []
 
     cwd = _native_session_cwd(cwd)
     definition = AgentRuntimeDefinition(

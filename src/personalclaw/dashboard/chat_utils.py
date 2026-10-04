@@ -287,6 +287,42 @@ def model_substitution_notice(client: object) -> str:
     return substitution.notice() if isinstance(substitution, ModelSubstitution) else ""
 
 
+#: The kind on the live line a loop's turn says when its model can't use tools. Same channel and
+#: the same inline rendering as the substitution notice, and the loop's page shows it in its live
+#: activity.
+NO_TOOLS_ACTIVITY_KIND = "no_tools"
+
+#: The ``_app`` tags a loop's hidden sessions carry: ``"loop"`` on its workers (``loop/manager``)
+#: and ``"loops"`` on its planner (``loop/plan_walkthrough``). Some checks key WORKER behaviour off
+#: ``"loop"`` alone, on purpose — the planner is not a cycle worker — but both are loop work, so
+#: both take the loops axis (``chat_runner.model_axis_for``).
+LOOP_WORK_APPS = frozenset({"loop", "loops"})
+
+
+def tools_said(state: object, session: object, client: object, *, said: str = "") -> str:
+    """The model *client* runs on without tools (``NativeAgentRuntime.tool_less_model``), or "".
+
+    For a loop's session it is said on the loop's live activity, unless it is the *said* model
+    the turn already named: a loop's work is done with tools, so a turn without them is never
+    left to the gateway log alone. What the loop then does about it is the cycle driver's: it
+    reads the same runtime (``loop.manager.ran_without_tools``) and holds the loop
+    (``LoopWatchdog.hold_without_tools``).
+    """
+    from personalclaw.llm.tool_use import runs_without_tools, tool_less_model
+
+    model = tool_less_model(client)
+    if model and model != said and getattr(session, "_app", "") in LOOP_WORK_APPS:
+        state.broadcast_ws(  # type: ignore[attr-defined]
+            "activity_event",
+            {
+                "session": getattr(session, "key", ""),
+                "kind": NO_TOOLS_ACTIVITY_KIND,
+                "text": f"{runs_without_tools(model)}.",
+            },
+        )
+    return model
+
+
 async def stream_slash_command(
     client, command: str, *, prompt: str, notify
 ) -> "AsyncIterator[LLMEvent]":

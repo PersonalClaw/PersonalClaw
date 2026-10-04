@@ -460,6 +460,71 @@ def _check_action_providers(spec: dict[str, Any], result: PreflightResult, looku
             )
 
 
+# ── the tools a step works with ──────────────────────────────────────────────
+
+#: The Settings → Models use case every step's agent runs on (``subagent._run_inner``): a step
+#: that names a model keeps it, beside this axis.
+STEP_AXIS = "orchestration"
+
+
+async def tool_less_steps(spec: dict[str, Any], *, probe: Any = None) -> list[tuple[str, str]]:
+    """Each step of *spec* that works with tools and would run on a model that can't use them, as
+    ``(step, model)`` in spec order.
+
+    A ``stage`` is an agent with tools, by declaration (a tool-less step is an ``infer`` node): its
+    work step reads and writes files and runs commands, and its judge re-runs what a step cites.
+    Started on a model that can't use tools, it can only claim what it did. Its model is the one
+    its agent would run on (the step's own ``model``, else its agent's pin, else Orchestration's
+    chain), asked through ``provider_bridge.model_without_tools``, which builds it the way the step
+    will and makes no call. That is why this is not a check of :func:`preflight`, whose four
+    checks instantiate nothing. A step whose agent or model is a binding resolves only at
+    dispatch, so it is not checked here.
+
+    *probe* is ``(axis, agent, model) -> awaitable model-or-""``, injectable for a test.
+    """
+    root = _root_of(spec)
+    if root is None:
+        return []
+    if probe is None:
+        from personalclaw.providers.provider_bridge import model_without_tools
+
+        async def probe(axis: str, agent: str, model: str) -> str:
+            return await model_without_tools(axis=axis, agent=agent, model=model)
+
+    asked: dict[tuple[str, str], str] = {}
+    found: list[tuple[str, str]] = []
+    for _path, node in walk(root):
+        if node.kind is not NodeKind.STAGE:
+            continue
+        cfg = node.config or {}
+        agent, model = str(cfg.get("agent") or ""), str(cfg.get("model") or "")
+        if "{{" in agent or "{{" in model:
+            continue
+        if (agent, model) not in asked:
+            asked[(agent, model)] = await probe(STEP_AXIS, agent, model)
+        if asked[(agent, model)]:
+            found.append((node.label or node.id or "step", asked[(agent, model)]))
+    return found
+
+
+def no_tools_finding(step: str, model: str) -> Finding:
+    """What a run says when its step *step* would run on *model*, which can't use tools."""
+    from personalclaw.llm.tool_use import cannot_use_tools
+
+    return Finding(
+        code="WF_PRE_MODEL_NO_TOOLS",
+        message=(
+            f"step “{step}” works with tools, and the model it would run on can't use them: "
+            f"{cannot_use_tools(model)}"
+        ),
+        remediation=(
+            "choose a model that uses tools for Orchestration in Settings → Models, or give the "
+            "step one that does"
+        ),
+        kind="tools",
+    )
+
+
 def _root_of(spec: dict[str, Any]) -> Node | None:
     raw = (spec or {}).get("root")
     if not isinstance(raw, dict):

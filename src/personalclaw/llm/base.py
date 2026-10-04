@@ -103,8 +103,10 @@ def _capitalized(text: str) -> str:
 class ModelProvider(ABC):
     """Abstract inference backend (the model-provider axis)."""
 
-    # Whether this provider can accept + emit tool calls. openai/anthropic set
-    # True; ollama is False (degrade to tool-less single-shot in the loop).
+    # Whether the model this provider serves can accept + emit tool calls. A declaration about the
+    # MODEL: a provider may answer it model by model, and may change it once it learns its model
+    # takes none (a server that refused a request for its tools). Read through
+    # ``llm.tool_use.uses_tools`` only, so every surface asks the same question.
     supports_tools: bool = False
 
     # Graded prompt-cache support the native loop reads (via getattr, mirroring

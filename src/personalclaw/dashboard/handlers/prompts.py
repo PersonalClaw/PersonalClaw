@@ -554,6 +554,10 @@ async def api_campaign_template_launch(request: web.Request) -> web.Response:
     v = validation.validate(create_body, agent_exists=LR._agent_exists(create_body))
     if not v.can_start:
         return web.json_response({"error": "Validation failed", **v.to_dict()}, status=400)
+    # A loops-table loop, whatever its kind: its worker runs on the Loops chain.
+    no_tools = await validation.worker_tools_blocker(create_body)
+    if no_tools:
+        return LR._cannot_use_tools(no_tools)
     loop = store.create(LR._build_loop_from_body(create_body))
 
     # Launch-time re-validation (a kind may block start, e.g. brownfield-no-workspace).

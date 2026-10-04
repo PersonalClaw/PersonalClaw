@@ -297,7 +297,16 @@ async def api_loop_validate(request: web.Request) -> web.Response:
     strategy's validate_config; the composer calls it before launch."""
     body = await json_object_body(request)
     result = validation.validate(body, agent_exists=_agent_exists(body))
+    blocked = await validation.tools_blocker(body)
+    if blocked:
+        result.errors.append(blocked)
+        result.can_start = False
     return web.json_response(result.to_dict())
+
+
+def _cannot_use_tools(blocked: str) -> web.Response:
+    """The refusal of a loop whose model can't use tools (``validation.tools_blocker``)."""
+    return json_error("loop_model_cannot_use_tools", message=blocked, status=422)
 
 
 # ── classify (intake brain) ──
@@ -594,6 +603,11 @@ async def api_loop_create(request: web.Request) -> web.Response:
     v = validation.validate(body, agent_exists=_agent_exists(body))
     if not v.can_start:
         return web.json_response({"error": "Validation failed", **v.to_dict()}, status=400)
+    # Before anything is stored or started: a loop whose model can't use tools could only claim
+    # its work.
+    blocked = await validation.tools_blocker(body)
+    if blocked:
+        return _cannot_use_tools(blocked)
     if kind in PORTED_LOOP_KINDS:
         return await _create_ported_kind_as_run(request, kind, task, body)
     loop = _build_loop_from_body(body)
@@ -904,6 +918,14 @@ async def api_loop_update(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": " · ".join(edit_errs), "errors": edit_errs}, status=400
             )
+    # A change that moves the model its worker runs on, before launch, is asked what a create is.
+    if not validation.MODEL_FIELDS.isdisjoint(spec) and (
+        LoopStatus(existing.status) in PRELAUNCH_STATUSES
+    ):
+        moved = {f: spec[f] if f in spec else getattr(existing, f) for f in validation.MODEL_FIELDS}
+        blocked = await validation.worker_tools_blocker({"kind": existing.kind, **moved})
+        if blocked:
+            return _cannot_use_tools(blocked)
     updated = store.update_spec(cid, spec)
     if updated is not None:
         # The grill SAVE seam (`grill.SaveFn`). `api_loop_grill_tree` deliberately passes
@@ -973,6 +995,11 @@ async def api_loop_action(request: web.Request) -> web.Response:
         reason = validation.runtime_blocker(loop) or (blocker(loop) if blocker else None)
         if reason:
             return web.json_response({"error": reason}, status=422)
+    # A start or a resume runs the worker's next turn, on the model it would run on now.
+    if action in ("start", "resume"):
+        blocked = await validation.worker_tools_blocker(loop)
+        if blocked:
+            return _cannot_use_tools(blocked)
     state = request.app["state"]
     from personalclaw.triggers.nudge import get_instance
 
@@ -1234,6 +1261,11 @@ async def api_loop_nudge(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": f"Unknown task id for this loop: {task_id}"}, status=400
             )
+    # A steer on a loop that waits starts its worker again (`manager.nudge`), as a resume does.
+    if proj.status in (LoopStatus.NEEDS_INPUT.value, LoopStatus.BLOCKED.value):
+        blocked = await validation.worker_tools_blocker(proj)
+        if blocked:
+            return _cannot_use_tools(blocked)
     from personalclaw.triggers.nudge import get_instance
 
     svc = get_instance()
@@ -1638,9 +1670,21 @@ async def api_loop_plan_start(request: web.Request) -> web.Response:
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     refusal = _refuse_replan(cid)
+    if refusal is None:
+        refusal = await _planner_cannot_use_tools(cid)
     if refusal is not None:
         return refusal
     return _kick_plan_advance(request, cid)
+
+
+async def _planner_cannot_use_tools(cid: str) -> web.Response | None:
+    """The refusal of a walkthrough whose planner would run on a model that can't use tools: it
+    writes the plan with them, so no pass could draft a step."""
+    from personalclaw.loop import plan_walkthrough as pw
+
+    loop, agent = store.get(cid), pw.planner_agent(cid)
+    blocked = await validation.worker_tools_blocker(loop, planner=agent) if loop and agent else None
+    return _cannot_use_tools(blocked) if blocked else None
 
 
 async def api_loop_plan_retry(request: web.Request) -> web.Response:
@@ -1650,6 +1694,8 @@ async def api_loop_plan_retry(request: web.Request) -> web.Response:
     if not loop_files.valid_loop_id(cid):
         return web.json_response({"error": "Invalid loop id"}, status=400)
     refusal = _refuse_replan(cid)
+    if refusal is None:
+        refusal = await _planner_cannot_use_tools(cid)
     if refusal is not None:
         return refusal
     from personalclaw.loop import plan_walkthrough as pw

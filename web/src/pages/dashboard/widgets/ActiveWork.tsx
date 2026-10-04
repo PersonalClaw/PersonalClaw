@@ -72,10 +72,11 @@ function ActiveRow({ loop, navigate }: { loop: Loop; navigate: RouteProps['navig
   // answered on the run page — typing into this box would STEER the run (the loop nudge route's
   // run verb), which leaves the gate exactly as unanswered as before. So its Answer opens the run.
   // The same holds for a pause its scheduler made rather than a question its worker asked: work
-  // waiting for a merge, work that conflicts, a spend cap. Each is settled on the loop's own page,
-  // and a typed answer would only restart the loop onto the same pause.
+  // waiting for a merge, work that conflicts, a spend cap, a model that can't use tools. Each is
+  // settled on the loop's own page, and a typed answer would only restart the loop onto the same
+  // pause.
   const q = loop.pending_question
-  const schedulerPause = !!q && typeof q !== 'string' && !!(q.merge || q.conflict || q.spend_cap)
+  const schedulerPause = !!q && typeof q !== 'string' && !!(q.merge || q.conflict || q.spend_cap || q.no_tools)
   const answersOnItsPage = loop.status === 'needs_input' && (!!loop.run_id || schedulerPause)
 
   const send = async () => {

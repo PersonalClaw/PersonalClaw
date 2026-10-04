@@ -101,6 +101,7 @@ describe('Active Work reads the same cycle as the cockpit', () => {
     ['work that conflicts', { conflict: { task_id: 't-1', title: 'Escape the digest titles', branch: 'pclaw/task-t-1', tip: 'a1b2c3d', into: 'main', files: ['CHANGELOG.md'], path: '/home/user/wt' } }],
     ['work waiting for its merge', { merge: { into: 'main', tasks: [{ task_id: 't-1', title: 'Escape the digest titles', branch: 'pclaw/task-t-1', tip: 'a1b2c3d' }] } }],
     ['a spend cap', { spend_cap: true, settings: 'models' }],
+    ['a model that can’t use tools', { no_tools: true }],
   ])("a pause its scheduler made (%s) is settled on the loop's page, not typed into a box", async (_what, extra) => {
     loops.push(loop({ id: 'c1', kind: 'code', name: 'Fix the digest', status: 'needs_input',
       pending_question: { question: 'The loop waits for you on its page.', ...extra } }))

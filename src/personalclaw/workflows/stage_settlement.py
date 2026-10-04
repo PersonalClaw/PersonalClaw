@@ -310,6 +310,8 @@ def _subagent_failure(error: str, *, reaped: bool) -> Failure:
     * **a model out of output room** before it answered (`subagent_tier.out_of_room_ending`): the
       same task on the same model meets the cap again, so the task's size, or the model's output
       limit, is the remedy;
+    * **a model that can't use tools** (`subagent_tier.without_tools_ending`): the same step on the
+      same model has no tools again, so its model is the remedy, not its tools;
     * **every call refused** (`subagent_tier.couldnt_do_it`): retrying under the same tools reaches
       the same refusals, so the step's tools are the remedy;
     * **a start nobody approved** (`subagent_ask.never_started`) never ran a turn, so there is no
@@ -319,7 +321,7 @@ def _subagent_failure(error: str, *, reaped: bool) -> Failure:
     """
     from personalclaw.subagent import ended_a_wait_for_the_owner, ran_out_of_time
     from personalclaw.subagent_ask import never_started
-    from personalclaw.subagent_tier import couldnt_do_it, out_of_room_ending
+    from personalclaw.subagent_tier import couldnt_do_it, out_of_room_ending, without_tools_ending
 
     named = ""
     if ended_a_wait_for_the_owner(error):
@@ -339,6 +341,12 @@ def _subagent_failure(error: str, *, reaped: bool) -> Failure:
         remedy = (
             "narrow this step's task, or raise its model's output limit where its provider's "
             "settings have one, then fork this run to try again"
+        )
+    elif without_tools_ending(error):
+        cls = FailureClass.USER
+        remedy = (
+            "choose a model that uses tools for Orchestration in Settings → Models, or give this "
+            "step one that does, then fork this run to try again"
         )
     elif couldnt_do_it(error):
         cls, named = FailureClass.PERMISSION, ending_sentence.REFUSAL

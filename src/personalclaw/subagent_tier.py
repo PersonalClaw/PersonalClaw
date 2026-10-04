@@ -21,8 +21,11 @@ put to her, is refused as the run's own limits refuse a call.
 One whose model ran into its output cap before it wrote its answer did nothing it was asked either:
 two review subagents stopped at 8,192 output tokens on every call, wrote nothing, and ended
 "completed" with "_No response._". :func:`ran_out_of_room` is that ending.
-:func:`couldnt_do_it` is how a reader of either ending (a workflow step's settlement) tells it
-apart from any other failure, and :func:`out_of_room_ending` which of the two it is. A subagent
+One started to read or change things on a model that can't use tools could only claim it had:
+:func:`without_tools` is that ending, before its task is sent or, when its model refused the tools
+mid-run, where it settles. :func:`couldnt_do_it` is how a reader of any of these endings (a workflow
+step's settlement) tells it apart from any other failure, and :func:`out_of_room_ending` and
+:func:`without_tools_ending` which one it is. A subagent
 whose own limits refused SOME of its calls (its tier, or an approval nobody was there to give)
 ran, but may not have done all it was asked: :meth:`SubagentTier.limited` names those calls, and
 its trigger's history records the run as ``refused`` rather than as a success
@@ -143,15 +146,70 @@ def ran_out_of_room(output_cap: int) -> str:
     )
 
 
+#: What :func:`without_tools` says after naming the model, by which its ending is told apart.
+_STARTED_WITH_TOOLS = ", and it was started to work with them."
+
+
+def without_tools(info: SubagentInfo, client: object) -> str:
+    """The error a subagent ends with when it was started to read or change things and the model
+    its runtime sends to can't use tools (``tool_less_model``), else ``""``: without them it could
+    only claim it had. A run of the ``text`` class asked for no tools, and an agent CLI brings its
+    own."""
+    from personalclaw.llm.tool_use import cannot_use_tools, tool_less_model
+    from personalclaw.subagent import resolve_capability_class
+
+    model = tool_less_model(client)
+    capability = resolve_capability_class(
+        capability_class=info.capability_class, approval_mode=info.approval_mode
+    )
+    if not model or capability == CAPABILITY_TEXT:
+        return ""
+    return (
+        f"{_COULDNT}: {cannot_use_tools(model)}{_STARTED_WITH_TOOLS} Choose a model that uses "
+        "tools for Orchestration in Settings → Models, or start it on one."
+    )
+
+
+def refuse_without_tools(info: SubagentInfo, client: object) -> bool:
+    """End *info*'s run refused, with why, when it was started to read or change things and the
+    model its runtime sends to can't use tools (:func:`without_tools`); else leave it be and return
+    ``False``. Called before the task is sent, so no call is made for it."""
+    from personalclaw.llm.tool_use import tool_less_model
+
+    refused = without_tools(info, client)
+    if not refused:
+        return False
+    info.error, info.done = refused, True
+    Stats().inc_subagent_failed()
+    sel().log_tool_invocation(
+        session_key=info.parent_session_key,
+        source="subagent",
+        tool_name="subagent_run",
+        outcome="refused",
+        metadata={
+            "subagent_id": info.id,
+            "model": tool_less_model(client),
+            "reason": "model_cannot_use_tools",
+        },
+    )
+    return True
+
+
 def couldnt_do_it(error: str) -> bool:
-    """Whether *error* is :func:`refused_every_call`'s or :func:`ran_out_of_room`'s: the subagent
-    did nothing it was asked."""
+    """Whether *error* is :func:`refused_every_call`'s, :func:`ran_out_of_room`'s or
+    :func:`without_tools`'s: the subagent did nothing it was asked."""
     return str(error or "").startswith(_COULDNT)
 
 
 def out_of_room_ending(error: str) -> bool:
     """Whether *error* is :func:`ran_out_of_room`'s: its model, not its tools, stopped it."""
     return str(error or "").startswith(f"{_COULDNT}: {out_of_room()}")
+
+
+def without_tools_ending(error: str) -> bool:
+    """Whether *error* is :func:`without_tools`'s: its model can't use the tools it was given."""
+    text = str(error or "")
+    return text.startswith(_COULDNT) and _STARTED_WITH_TOOLS in text
 
 
 def ended_without_answering(
@@ -421,12 +479,17 @@ class SubagentTier:
         """The calls its owner declined, in the order she declined them."""
         return list(self._tally.declined.values())
 
-    def settle(self, info: SubagentInfo, ending: AgentEvent | None, reply: str) -> tuple[str, str]:
+    def settle(
+        self, info: SubagentInfo, ending: AgentEvent | None, reply: str, *, no_tools: str = ""
+    ) -> tuple[str, str]:
         """Put on *info* how its run ended: its error when it did nothing it was asked
-        (:func:`ended_without_answering`; an error it already had stands), the calls its own
-        limits refused (``refused``) and the calls its owner declined (``declined_calls``).
+        (:func:`ended_without_answering`, or *no_tools*: its model refused the tools it was
+        offered during the run, :func:`without_tools`; an error it already had stands), the calls
+        its own limits refused (``refused``) and the calls its owner declined (``declined_calls``).
         Returns the ``(error, cause)`` it ended without answering with, else ``("", "")``."""
-        couldnt, cause = ended_without_answering(self, ending, reply)
+        couldnt, cause = (
+            (no_tools, "no_tools") if no_tools else ended_without_answering(self, ending, reply)
+        )
         info.error = info.error or couldnt
         info.refused, info.declined_calls = self.limited(), self.declined_steps()
         return couldnt, cause

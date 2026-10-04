@@ -241,6 +241,111 @@ def runtime_blocker(loop) -> str | None:
     )
 
 
+def _field(loop: object, name: str) -> str:
+    """A create body's or a stored loop's *name* field, as text."""
+    raw = loop.get(name) if isinstance(loop, dict) else getattr(loop, name, "")
+    return str(raw or "").strip()
+
+
+#: The fields whose change before launch moves the model a loop's worker runs on.
+MODEL_FIELDS = frozenset({"agent", "model", "provider", "provider_agent"})
+
+
+async def tools_blocker(body: dict) -> str | None:
+    """Why the loop a create *body* describes can't do its work, or ``None``: the model it would
+    work on can't use tools.
+
+    Refused for EVERY kind, because no kind can make progress without tools, and a loop on a model
+    that can't use them would only say it had done its work:
+
+    * a loops-table kind's worker records each cycle by writing its finding into the loop's folder,
+      and the supervisor credits only what is written there, never the worker's word; its document,
+      its code and its design are files too, and its planner writes the plan the same way
+      (:func:`worker_tools_blocker`);
+    * a General loop runs as a workflow whose work step cites evidence its judge re-runs with tools,
+      and the judge sees only that tool output (``workflows.preflight.tool_less_steps``).
+
+    A loop on an agent CLI is never refused here: the CLI brings its own tools. Asked where a loop
+    is created, planned and started, and where a change before launch moves its model, so none of
+    it runs first. A worker whose model stops using tools after it started is held instead
+    (``LoopWatchdog.hold_without_tools``).
+    """
+    from personalclaw.llm.tool_use import cannot_use_tools
+    from personalclaw.workflows.service import PORTED_LOOP_KINDS, kind_tool_less_steps
+
+    kind = _field(body, "kind").lower() or "goal"
+    if kind not in PORTED_LOOP_KINDS:
+        return await worker_tools_blocker(body)
+    steps = await kind_tool_less_steps(kind)
+    if not steps:
+        return None
+    return (
+        f"This loop can't do its work: {cannot_use_tools(steps[0][1])}, and each of its steps "
+        "works with them (its judge re-runs what a step cites). Choose a model that uses tools "
+        "for Orchestration in Settings → Models."
+    )
+
+
+async def worker_tools_blocker(loop: object, *, planner: str = "") -> str | None:
+    """Why the loops-table loop *loop* (a stored loop, or the body of one) can't do its work, or
+    ``None``: the model its worker would run on, on the Loops chain, can't use tools. With
+    *planner* (its planner agent's name) the model asked about is its planner's. See
+    :func:`tools_blocker` for why every kind is refused."""
+    from personalclaw.llm.tool_use import cannot_use_tools
+    from personalclaw.loop import kinds
+    from personalclaw.providers.provider_bridge import model_without_tools
+
+    kinds.ensure_loaded()
+    strat = kinds.get_or_none(_field(loop, "kind").lower() or "goal")
+    agent = planner or _field(loop, "agent") or str(getattr(strat, "default_agent", "") or "")
+    model = _field(loop, "model")
+    found = await model_without_tools(
+        axis="loops", agent=agent, model=model, runtime=_field(loop, "provider")
+    )
+    if not found:
+        return None
+    fix = _choose_instead(loop, agent)
+    if planner:
+        return (
+            f"This loop can't be planned: {cannot_use_tools(found)}, and its planner writes the "
+            f"plan with them. {fix}"
+        )
+    return (
+        f"This loop can't do its work: {cannot_use_tools(found)}, and its worker does everything "
+        f"with them (a cycle counts only for the finding it writes). {fix}"
+    )
+
+
+def _choose_instead(loop: object, agent: str) -> str:
+    """What to choose in place of a model that can't use tools, where the loop's model came from:
+    its own, else its agent's pin, else the Loops chain in Settings → Models."""
+    if _field(loop, "model"):
+        return "Choose a model that uses tools for this loop."
+    if str(getattr((AppConfig.load().agents or {}).get(agent), "model", "") or ""):
+        return f"Pick a model that uses tools for {agent} on the Agents page."
+    return "Choose a model that uses tools for Loops in Settings → Models."
+
+
+#: What a loop held for a model without tools does next, beside the sentence that says why.
+NO_TOOLS_WHY = "Nothing runs until you resume it, and it resumes only on a model that uses tools."
+
+
+def ran_without_tools(loop: object, model: str) -> str:
+    """The question a running loop waits on once a turn of its worker ran on *model* without
+    tools (``LoopWatchdog.hold_without_tools``): the cycle could write no finding, and no next one
+    could either, so it is not asked again."""
+    from personalclaw.llm.tool_use import cannot_use_tools
+    from personalclaw.loop import kinds
+
+    kinds.ensure_loaded()
+    strat = kinds.get_or_none(_field(loop, "kind").lower() or "goal")
+    agent = _field(loop, "agent") or str(getattr(strat, "default_agent", "") or "")
+    return (
+        f"Its worker ran this cycle without tools: {cannot_use_tools(model)}, and a cycle counts "
+        f"only for the finding it writes. {_choose_instead(loop, agent)} Then resume the loop."
+    )
+
+
 def spec_edit_errors(
     body: dict,
     *,

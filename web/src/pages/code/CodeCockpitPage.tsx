@@ -12,6 +12,7 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { Button } from '../../ui/Button'
 import { TextLink } from '../../ui/TextLink'
 import { SpendCapPause } from '../../ui/SpendCapPause'
+import { NoToolsPause } from '../loops/NoToolsPause'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { IconButton } from '../../ui/IconButton'
 import { LoadError } from '../../ui/ListScaffold'
@@ -2007,8 +2008,12 @@ function TaskDetailView({ project, task, doneIds, stageOpen, knownIds, findings,
           <SpendCapPause className="mt-m" reason={project.pending_question.question}
             detail={project.pending_question.why} settings={project.pending_question.settings} />
         )}
+        {/* Its worker's model can't use tools: paused, the header's Resume carries on once it can. */}
+        {project.status === 'needs_input' && project.pending_question?.no_tools && (
+          <NoToolsPause className="mt-m" question={project.pending_question.question} why={project.pending_question.why} />
+        )}
         {/* attended question for THIS task — answer in the steer box below */}
-        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && !project.pending_question.conflict && (
+        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && !project.pending_question.no_tools && !project.pending_question.conflict && (
           <div data-type="body-s" className="mt-3 rounded-lg p-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>
               <HelpCircle size={14} /> Needs your input
@@ -3464,8 +3469,14 @@ export function ProjectFooter({ project, gateFail, stalled, onNudged, onStartNew
             detail={project.pending_question.why} settings={project.pending_question.settings}
             onResume={() => void resume()} busy={resuming} />
         )}
+        {/* Its worker's model can't use tools: paused rather than asking, naming the model, where
+            another is chosen, and Resume. */}
+        {project.status === 'needs_input' && project.pending_question?.no_tools && (
+          <NoToolsPause className="mb-s" question={project.pending_question.question}
+            why={project.pending_question.why} onResume={() => void resume()} busy={resuming} />
+        )}
         {/* Attended question — the call to action; answer in the steer box below. */}
-        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && !project.pending_question.conflict && (
+        {project.status === 'needs_input' && project.pending_question?.question && !project.pending_question.merge && !project.pending_question.spend_cap && !project.pending_question.no_tools && !project.pending_question.conflict && (
           <div role="alert" data-type="body-s" className="mb-2 rounded-lg p-2.5"
             style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5" style={withWeight({ color: 'var(--color-info)' }, 550)}>

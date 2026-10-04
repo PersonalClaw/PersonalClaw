@@ -3180,6 +3180,9 @@ class GatewayOrchestrator:
                     for attempt in range(_MAX_CYCLE_REPROMPTS):
                         if getattr(_sess, "_last_turn_errored", False):
                             break
+                        # Run without tools, it wrote nothing and could not if asked again.
+                        if _loop_manager.ran_without_tools(dstate, _sess):
+                            break
                         # Asked again only for a finding still owed (never a finished task's,
                         # never after her Deny): a check that fails asks nothing.
                         try:
@@ -3248,6 +3251,12 @@ class GatewayOrchestrator:
                     # A cycle she ended with a Deny says so, and its loop waits for her.
                     if _loop_manager.declined_in_turn(_sess) and self.loop_watchdog is not None:
                         await self.loop_watchdog.hold_after_decline(_sess, before)
+                    # A cycle run without tools wrote nothing: its loop waits for a model that can.
+                    elif (
+                        _loop_manager.ran_without_tools(dstate, _sess)
+                        and self.loop_watchdog is not None
+                    ):
+                        await self.loop_watchdog.hold_without_tools(_sess)
                 finally:
                     _sess._suppress_autonudge_rearm = False
                     # Re-arm the idle timer ONCE now the logical cycle is done. A turn that ended

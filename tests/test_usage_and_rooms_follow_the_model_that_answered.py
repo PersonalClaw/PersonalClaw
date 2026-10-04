@@ -41,9 +41,10 @@ def _price(model: str) -> float:
 
 
 class _Scripted:
-    """A provider for one registry entry: answers with who it is, or fails as told to."""
+    """A provider for one registry entry: answers with who it is, or fails as told to. It uses
+    tools, as a subagent's model must: one that can't is refused before it runs."""
 
-    supports_tools = False
+    supports_tools = True
 
     def __init__(self, entry: str, model: str, world: "_World") -> None:
         self.entry = entry

@@ -779,6 +779,29 @@ async def api_models_active_set(request: web.Request) -> web.Response:
                 error=f"its provider lists it for {', '.join(jobs or []) or 'no job'}",
             )
             return json_error("model_cannot_serve_use_case", message=refusal, status=400)
+    # Loops run on nothing but tools: a loop's worker and planner do all their work with them, so a
+    # model that can't use them is refused here, before any loop is moved onto it.
+    if use_case == "loops":
+        from personalclaw.llm.tool_use import cannot_use_tools
+        from personalclaw.providers.provider_bridge import ref_without_tools
+
+        for ref in added:
+            if await ref_without_tools(ref, use_case=use_case):
+                _sel_log(
+                    "models.active_set",
+                    "error",
+                    f"{use_case}:{ref}",
+                    request,
+                    error="its model can't use tools",
+                )
+                return json_error(
+                    "model_cannot_use_tools",
+                    message=(
+                        f"{cannot_use_tools(ref)}, so it can't run your loops: a loop's worker "
+                        "and planner do all their work with tools. Choose a model that uses tools."
+                    ),
+                    status=400,
+                )
 
     active = load_active_models()
     # 🔴 A CHAIN IS WRITTEN ONLY OVER THE COPY IT WAS BUILT FROM. The Models panel builds the

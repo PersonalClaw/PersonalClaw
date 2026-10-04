@@ -821,14 +821,24 @@ async def start_run(
     # `skip_preflight` exists for a deliberate override, and says so in the response. Its
     # credentials are checked as the run's steps will read them, its project's own first.
     if not skip_preflight:
+        from personalclaw.workflows.preflight import no_tools_finding
         from personalclaw.workflows.preflight import preflight as run_preflight
+        from personalclaw.workflows.preflight import tool_less_steps
 
         checks = run_preflight(spec, project_id=project_id)
-        if not checks.ok:
+        # A step that works with tools, on a model that can't use them, would only claim its work.
+        no_tools = [no_tools_finding(*step) for step in await tool_less_steps(spec)]
+        if not checks.ok or no_tools:
+            report = checks.to_dict()
+            report.update(
+                ok=False,
+                findings=[*report.get("findings", []), *(f.to_dict() for f in no_tools)],
+            )
             return _service_failure(
                 "WF_RUN_PREFLIGHT_FAILED",
-                "the run cannot start: " + "; ".join(f.message for f in checks.errors),
-                preflight=checks.to_dict(),
+                "the run cannot start: "
+                + "; ".join(f.message for f in (*checks.errors, *no_tools)),
+                preflight=report,
             )
         if checks.warnings:
             logger.info(
@@ -985,6 +995,22 @@ async def start_run(
 #: user a run that executes one round and escalates. That is the outcome this door's own docstring
 #: refuses, so the frozenset waits for the engine fix rather than the template.
 PORTED_LOOP_KINDS: frozenset[str] = frozenset({"general"})
+
+
+async def kind_tool_less_steps(kind: str) -> list[tuple[str, str]]:
+    """The steps of the template a ported loop *kind* runs as that work with tools and would run
+    on a model that can't use them (``preflight.tool_less_steps``), so the loop's composer hears it
+    before the run is started; ``[]`` for a kind no template replaces."""
+    from personalclaw.workflows import loop_aliases
+    from personalclaw.workflows.preflight import tool_less_steps
+
+    template = loop_aliases.resolve_kind(kind)
+    definition = await _raw_def(template) if template else None
+    if definition is None:
+        return []
+    return await tool_less_steps(
+        definition if isinstance(definition, dict) else definition.to_dict()
+    )
 
 
 async def start_kind_run(

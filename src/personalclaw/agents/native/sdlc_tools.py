@@ -77,6 +77,23 @@ def _agent_exists(body: dict) -> bool:
         return True
 
 
+async def _cannot_use_tools(loop: object) -> ToolResult | None:
+    """The refusal of a loop (a stored one, or the body of one) whose worker would run on a model
+    that can't use tools, or ``None``. What these tools create and start is a loops-table loop,
+    whatever its kind, so its worker runs on the Loops chain
+    (``validation.worker_tools_blocker``)."""
+    from personalclaw.loop import validation
+
+    refused = await validation.worker_tools_blocker(loop)
+    if not refused:
+        return None
+    return ToolResult(
+        success=False,
+        error=refused,
+        recovery_hints=["Tell the user which model can't use tools and what to choose instead."],
+    )
+
+
 async def _launch(kind: str, lid: str, deep_path: str, label: str) -> ToolResult:
     """Shared launch path for both *_start tools: re-validate a fresh start (the
     launch gate), honor the kind's launch_blocker, then run via the unified manager."""
@@ -144,6 +161,9 @@ async def _launch(kind: str, lid: str, deep_path: str, label: str) -> ToolResult
         )
     elif LoopStatus(loop.status) not in ACTION_SOURCE_STATES["resume"]:
         return ToolResult(success=False, error=f"can't start a {label} in '{loop.status}' state.")
+    # Its worker's next turn runs on the model it would run on now, and works only with tools.
+    if refused := await _cannot_use_tools(loop):
+        return refused
     state, svc = _state(), _svc()
     if state is None or svc is None:
         return ToolResult(success=False, error="execution service unavailable (gateway not ready).")
@@ -224,6 +244,8 @@ async def code_project_create(a: dict) -> ToolResult:
             error="; ".join(v.errors) or "validation failed",
             recovery_hints=["Fix the listed issues and call code_project_create again."],
         )
+    if refused := await _cannot_use_tools(body):
+        return refused
     try:
         loop = store.create(_build_loop_from_body(body))
     except Exception as exc:  # noqa: BLE001
@@ -343,6 +365,8 @@ async def goal_loop_create(a: dict) -> ToolResult:
             error="; ".join(v.errors) or "validation failed",
             recovery_hints=["Fix the listed issues and call goal_loop_create again."],
         )
+    if refused := await _cannot_use_tools(body):
+        return refused
     try:
         loop = store.create(_build_loop_from_body(body))
     except Exception as exc:  # noqa: BLE001

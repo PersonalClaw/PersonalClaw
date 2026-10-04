@@ -6909,6 +6909,9 @@ export interface LoopQuestion {
   conflict?: LoopMergeConflict
   /** The loop waits because its owner ended a cycle with a Deny (`LoopWatchdog.hold_after_decline`). */
   declined?: boolean
+  /** The loop waits because its worker ran a cycle without tools (`LoopWatchdog.hold_without_tools`):
+   *  `question` names the model and what to choose instead, and there is nothing to answer. */
+  no_tools?: boolean
 }
 
 /** A cycle its owner ended with a Deny, which wrote no finding (`files.get_declined_cycles`): the

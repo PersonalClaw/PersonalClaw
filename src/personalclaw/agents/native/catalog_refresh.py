@@ -13,6 +13,10 @@ rebuilds the catalog when they differ, keeping what the session chose: the group
 and off, and the tools it called. A change reaches the next turn and never the middle of one, since
 the tool block is part of the prompt the provider caches. So a call can still name a tool that left
 while its turn was under way, and that call is refused, never run.
+
+A session whose model can't use tools has no catalog, and follows no surface: it is run without
+tools from its start, or from the call its model refused the tools on (:meth:`_run_without_tools`),
+and the model is named for every surface that says so (:attr:`tool_less_model`).
 """
 
 from __future__ import annotations
@@ -22,8 +26,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.llm.events import TOOL_META_REFUSED_BY
+from personalclaw.llm.tool_use import UNNAMED_MODEL, runs_without_tools, uses_tools
 
 if TYPE_CHECKING:
+    from personalclaw.agents.provider import AgentRuntimeDefinition
     from personalclaw.tool_providers.base import ToolProvider
 
 logger = logging.getLogger(__name__)
@@ -41,7 +47,14 @@ class CatalogRefresh:
     _tool_surface: Callable[[], list[ToolProvider]] | None
     _tool_providers: list[ToolProvider]
     _tool_defs: list[Any]
+    _tool_schema: list[dict]
     _tool_index: dict[str, ToolProvider]
+    _tool_sanitized_index: dict[str, str]
+    _active_defs: list[Any]
+    _group_of_name: dict[str, str]
+    _session_key: str
+    _definition: AgentRuntimeDefinition
+    _model: Any
     _provider_of: dict[str, str]
     _groups: list[Any]
     _group_seed: list[str] | None
@@ -49,12 +62,40 @@ class CatalogRefresh:
     #: What the tool surface was when the catalog was built, or None while no catalog was built:
     #: never started, or a model with no tools, which has none to follow.
     _surface_stamp: tuple[object, ...] | None = None
+    #: The model this session runs on WITHOUT tools ("<entry>:<model>"), or "" while it has them:
+    #: what a loop's page, a subagent's ending and the gateway log name.
+    tool_less_model: str = ""
 
     if TYPE_CHECKING:
 
         async def _build_catalog(self, *, carry: bool) -> None:
             """Build the catalog from ``_tool_providers`` (the runtime's ``_build_catalog``)."""
             ...
+
+        @property
+        def served_model_ref(self) -> str:
+            """The ``"<entry>:<model>"`` the session sends to (the runtime's own)."""
+            ...
+
+    def _run_without_tools(self) -> None:
+        """Run without tools from now on, and say so (:attr:`tool_less_model`): the model this
+        session sends to can't use them. The catalog is emptied and follows no surface, so no tool
+        comes back on a later turn."""
+        model = self.served_model_ref or self._definition.model or UNNAMED_MODEL
+        self.tool_less_model = model
+        logger.warning("native: %s (%s)", runs_without_tools(model), self._session_key)
+        self._tool_defs, self._tool_schema, self._tool_index = [], [], {}
+        self._tool_sanitized_index, self._surface_stamp = {}, None
+        self._groups, self._active_defs, self._group_of_name = [], [], {}
+
+    def _tools_kept(self, tools: Any) -> Any:
+        """The tools a turn's next call is offered after a call that offered it *tools*: none
+        once the model has refused them (it now says it takes none), and the session runs without
+        them from then on (:meth:`_run_without_tools`); else *tools*, unchanged."""
+        if tools and not uses_tools(self._model):
+            self._run_without_tools()
+            return None
+        return tools
 
     def _stamp_surface(self) -> None:
         """Note the surface a catalog is about to be built from. Taken BEFORE the providers are

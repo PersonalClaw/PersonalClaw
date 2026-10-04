@@ -37,6 +37,9 @@ export const RUN_LIFECYCLE = [
   'reprompt',
   // A cycle its owner ended with a Deny: the loop waits for her (`LoopWatchdog.hold_after_decline`).
   'declined',
+  // A cycle its worker ran without tools: the loop waits for a model that uses them
+  // (`LoopWatchdog.hold_without_tools`).
+  'no_tools',
   // LOOPS-EVOLUTION R4/R14 middleware events. These MUST be listed here: EventSource
   // silently DROPS event types it has no listener for, so an unregistered event is not a
   // rendering bug you can see — it is an event that never arrives.

@@ -38,6 +38,7 @@ import { loopToGoalLoop } from './goalAdapter'
 import { RunPhaseTrail } from './RunPhaseTrail'
 import { foldReducer, emptyRunFlags, type RunFlags } from './runFold'
 import { RepromptNotice } from './RepromptNotice'
+import { NoToolsPause } from './NoToolsPause'
 import { activePhaseIndex, phaseMinCycles, phaseForCycle } from './loopPhases'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { belongsToLoop } from '../workflows/containerKey'
@@ -370,8 +371,9 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
       // contract instead of a per-cockpit switch.
       setRunFlags((f) => foldReducer(f, event, data))
       loadReport.current()
-      // A cycle she ended with a Deny: the loop now waits for her, so its question is read at once.
-      if (event === 'declined') reloadLoop.current()
+      // A cycle she ended with a Deny, or one its worker ran without tools: the loop now waits for
+      // her, so its question is read at once.
+      if (event === 'declined' || event === 'no_tools') reloadLoop.current()
     },
   })
 
@@ -850,7 +852,11 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
             <SpendCapPause reason={question.question} detail={question.why} settings={question.settings}
               onResume={() => act('resume')} />
           )}
-          {c.status === 'needs_input' && question && !question.spend_cap && (
+          {/* Its worker's model can't use tools: paused, with nothing to answer but a model to choose. */}
+          {c.status === 'needs_input' && question?.no_tools && (
+            <NoToolsPause question={question.question} why={question.why} onResume={() => act('resume')} />
+          )}
+          {c.status === 'needs_input' && question && !question.spend_cap && !question.no_tools && (
             <div data-type="body-s" className="rounded-md px-m py-2.5" style={{ background: 'color-mix(in srgb, var(--color-info) 12%, transparent)' }}>
               {/* A wait after her Deny is the loop's, not a question its agent asked. */}
               <div className="flex items-center gap-1.5 text-info mb-1" style={fvs(500)}><HelpCircle size={14} /> {question.declined ? 'Waiting for you after your Deny' : 'The agent needs your input'}</div>

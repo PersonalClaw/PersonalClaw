@@ -129,6 +129,12 @@ def _walkthrough_for(loop_id: str):
         return loop, None
 
 
+def planner_agent(loop_id: str) -> str:
+    """The agent loop *loop_id*'s planner runs as, or ``""`` for a kind with no walkthrough."""
+    _loop, wt = _walkthrough_for(loop_id)
+    return str(getattr(wt, "planner_agent", "") or "") if wt is not None else ""
+
+
 #: What every loop planner's session key starts with (:func:`planner_session_key`).
 PLANNER_SESSION_PREFIX = "loop-plan-"
 

@@ -454,7 +454,8 @@ def _price(model: str) -> float:
 
 
 class _Scripted:
-    supports_tools = False
+    #: It uses tools, as a subagent's model must: one that can't is refused before it runs.
+    supports_tools = True
 
     def __init__(self, entry: str, model: str, calls: list[str]) -> None:
         self.entry = entry
