@@ -16,9 +16,10 @@ This module owns the three host-side answers:
    escalates, and refuses ``acceptEdits`` / ``dontAsk`` / ``bypassPermissions``
    unless the caller declares an explicit unattended session (§2.3, which owns
    the auto-deny-with-reason half that makes that safe).
-2. :func:`command_probe` — the deny-list must see the REAL command. A permission
-   frame carries a truncated human title (``"unknown"`` on codex), so a
-   deny pattern evaluated on the title alone silently misses ``git push --force``.
+2. :func:`screen_tool_call` — the deny-list must see the REAL command, on every
+   path that approves or asks about a call. A permission frame carries a truncated
+   human title (``"unknown"`` on codex), so a deny pattern evaluated on the title
+   alone silently misses ``git push --force`` (:func:`command_probe`).
 3. :data:`NOT_GATEABLE` — the residual set the host provably cannot gate, per
    provider, each entry carrying the observation that proved it. The honest half
    of §2.2: a gate that silently fails to cover a tool is worse than a documented
@@ -54,7 +55,8 @@ This module owns the three host-side answers:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
@@ -209,19 +211,41 @@ def _ceiling_permits_self_approval() -> bool:
         return False
 
 
-def screen_tool_call(hooks: Any, title: str, tool_input: Any, cwd: str | None = None) -> Any:
-    """The hook chain's verdict on a CLI's tool call, made on the command that would RUN as well as
-    on its title, which may not carry it (:func:`command_probe`). The probe is deny-only, so only
-    the title's verdict can auto-approve."""
-    from personalclaw.hooks import TOOL_DENY
-    from personalclaw.task_modes import extract_bash_command
+def screen_tool_call(
+    hooks: Any, title: str, tool_input: Any, cwd: str | os.PathLike[str] | None = None
+) -> Any:
+    """The hook chain's verdict on a tool call put to an approval gate, made on the command that
+    would RUN as well as on its title, which may not carry it (:func:`command_probe`).
 
-    probe = command_probe(title, extract_bash_command(tool_input))
-    for name in (probe, title) if probe else (title,):
-        result = hooks.on_tool_call(name, cwd=cwd)
-        if result.action == TOOL_DENY:
-            break
-    return result
+    The one screen every path that approves or asks about a call asks first, whatever its approval
+    mode: the chat's runner, a channel that runs a conversation itself, a subagent's gate, the
+    background helper and the evaluation runner. What it refuses is refused there, before any grant
+    could approve it or a person be asked. *hooks* is the caller's hook manager, or ``None`` for
+    the gateway's own, which reads the hook settings at each call (``hooks.live_hook_manager``).
+
+    The command is read from the call's input as text or as a list of words
+    (``task_modes.command_words``), and the probe is deny-only, so only the title's verdict can
+    auto-approve. A refusal made on the command says so (``on_command``).
+    """
+    from personalclaw.hooks import TOOL_DENY, live_hook_manager
+
+    chain = hooks if hooks is not None else live_hook_manager()
+    probe = command_probe(title, command_of(tool_input))
+    if probe:
+        verdict = chain.on_tool_call(probe, cwd=cwd)
+        if verdict.action == TOOL_DENY:
+            return replace(verdict, on_command=True)
+    return chain.on_tool_call(title, cwd=cwd)
+
+
+def command_of(tool_input: Any) -> str:
+    """The command a call's input says it runs, as the screen reads it: its ``command`` given as
+    text (``task_modes.extract_bash_command``) or as a list of words (``task_modes.command_words``);
+    ``""`` when it names none. Deny-only like the screen, so it reads a ``command`` whatever the
+    tool: reading more can only refuse more."""
+    from personalclaw.task_modes import command_words, extract_bash_command
+
+    return extract_bash_command(tool_input) or command_words(tool_input)
 
 
 def command_probe(title: str, command: str) -> str:
@@ -230,9 +254,11 @@ def command_probe(title: str, command: str) -> str:
     The permission frame's ``title`` is a truncated human string — ``"unknown"``
     when the adapter sends no title at all (`G18`) — while the real shell command
     lives in the cached ``tool_call`` input. Returns the command in the
-    ``"Running: "`` form the hook chain already normalizes (so ``is_denied`` and
-    ``is_sensitive_bash_command`` see it), or ``""`` when there is nothing new to
-    check (no command, or the title already carries it verbatim).
+    ``"Running: "`` form the hook chain reads as a command (so ``denied_command``,
+    ``is_denied`` and ``is_sensitive_bash_command`` see it), or ``""`` when there is
+    nothing new to check: no command, or a title that is that very form. A title that
+    only contains the command (the bare command, the command in backticks) is not read
+    as one by the hook chain, so it is probed too.
 
     Deliberately one-directional: callers consult this form for a DENY verdict
     only and never for auto-approve, so widening the surface cannot happen here.
@@ -240,9 +266,8 @@ def command_probe(title: str, command: str) -> str:
     cmd = " ".join(str(command or "").split())
     if not cmd:
         return ""
-    if cmd in str(title or ""):
-        return ""
-    return f"Running: {cmd}"
+    probe = f"Running: {cmd}"
+    return "" if " ".join(str(title or "").split()) == probe else probe
 
 
 class ResidualState(str, Enum):

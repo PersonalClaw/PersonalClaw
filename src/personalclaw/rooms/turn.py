@@ -726,6 +726,10 @@ async def run_member_turn(
                 session_key=key,
                 agent=member_name,
                 on_ungated=posture.ungated_hold(member, profile, record=notes.append),
+                # A call the deny-list refuses is refused before you are asked; the room says so.
+                on_refused=lambda event, why: notes.append(
+                    posture.ToolRefusal(member_name, str(event.title or ""), why)
+                ),
             )
 
     cursors.advance(room_id, member_name, len(messages))

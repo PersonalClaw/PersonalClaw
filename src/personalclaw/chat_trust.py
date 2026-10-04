@@ -24,7 +24,9 @@ switches off there.
   own runner makes for a call put to its gate: an operator's hook pattern, what the call declares,
   the chat's Trust, Trust reads and YOLO, each grant held to the allowed hosts and the operator
   ceiling. The channel approves no call on an answer of its own: one this does not answer is
-  asked.
+  asked. Before either, the channel refuses a call the deny-list refuses, as the chat's runner
+  does, through the same screen (``acp.permission_authority.screen_tool_call``): that call is
+  never approved and never asked about.
 
 This is core code below the HTTP surface, so the chat is reached through the gateway's dashboard
 state (``inbox_providers.native_source``). A gateway with no dashboard has no chat to show a trust
@@ -109,9 +111,10 @@ def chat_grant(session_key: str, event: Any) -> str:
     Each grant is held to the chat runner's two rules (``approval_grants.stands_for_call``, which
     audits a refusal): none answers a call that reaches a host off the allowed hosts, and the
     operator ceiling bounds every one. Nothing answers a call the hook chain refuses, read on the
-    command that would run as well as on the call's title, which need not carry it. The settings
-    and the chat are read at every call, so a pattern the owner removes, or the chat's Trust
-    switched off in the dashboard, makes the next call ask.
+    command that would run as well as on the call's title, which need not carry it; the channel
+    refuses that call before it asks this (``screen_tool_call``), so ``""`` here means asked. The
+    settings and the chat are read at every call, so a pattern the owner removes, or the chat's
+    Trust switched off in the dashboard, makes the next call ask.
     """
     from personalclaw import approval_grants, trust_mode
     from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY
@@ -163,13 +166,11 @@ def _hook_verdict(event: Any) -> str:
     cannot be read is a refusal here: no grant answers a call that may be one it refuses, so the
     call is asked."""
     from personalclaw.acp.permission_authority import screen_tool_call
-    from personalclaw.hooks import TOOL_DENY, live_hook_manager
+    from personalclaw.hooks import TOOL_DENY
 
     try:
         verdict = screen_tool_call(
-            live_hook_manager(),
-            str(getattr(event, "title", "") or ""),
-            getattr(event, "tool_input", ""),
+            None, str(getattr(event, "title", "") or ""), getattr(event, "tool_input", "")
         )
     except Exception:  # noqa: BLE001 - see the docstring: an unread chain approves nothing
         logger.warning("could not read the hook chain for a channel's call; asking", exc_info=True)

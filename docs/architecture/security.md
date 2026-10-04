@@ -235,8 +235,12 @@ grants, is refused before its message is sent, and the owner is told why.
   case-insensitively: the native bash tool (which Tools → Try it and a script's
   `call_tool` reach through `/api/tools/invoke`, asking the tool's pre-flight
   before any confirmation), a command an agent CLI asks the host to run
-  (`hooks.on_tool_call`, probed on the command behind a title that does not carry
-  it, in chat, subagents and background calls), a loop's or a workflow's check
+  (`acp.permission_authority.screen_tool_call`, the hook chain's verdict read on the
+  command the call's input gives, as text or as a list of words, whatever its title
+  says: the one screen every path that approves or asks about a call asks first,
+  whatever its approval mode, in a chat, a channel's own conversation, a subagent, a
+  room, a background call under every mode and an evaluation, and PersonalClaw's own
+  agent's gate for a call its approval policy answers unasked), a loop's or a workflow's check
   (`loop.gates.run_verify_command`), a workflow step or effect teardown, a bash
   action however it started (and a payload value its command runs as a command,
   `sh -c "$CMD"`), an app's setup hook, and the action dispatch denylist
@@ -251,12 +255,18 @@ grants, is refused before its message is sent, and the owner is told why.
   command path), whatever answered the call's ask, and one WARNING line in the
   gateway log.
   `tests/test_every_command_path_asks_the_denylist.py` fails a spawn site that
-  runs a written command without asking. What a text pattern cannot see is
+  runs a written command without asking, and
+  `tests/test_every_approval_path_asks_the_deny_list_first.py` a place that approves
+  a call without asking the screen. What a text pattern cannot see is
   [limitations §15](../security/limitations.md#15-the-shell-denylist-reads-a-commands-text).
 - **Suspicious-pattern watchers** — `SUSPICIOUS_BASH_PATTERNS` (52 patterns)
   flag rather than block.
 - **Tool-name denies** — `BUILTIN_DENY_PATTERNS` (fnmatch over tool names)
-  with a documented `_DENY_EXCEPTIONS` escape hatch.
+  with a documented `_DENY_EXCEPTIONS` escape hatch, and the operator's own
+  `hooks.auto_deny_tools`, both read by the hook chain at each call through the same
+  screen (`screen_tool_call`): on an agent CLI's call and on PersonalClaw's own agent's,
+  whatever grant would answer it, and on Tools → Try it and a scheduled script's tool call
+  by the tool's name.
 - **Credential screen** — `is_sensitive_bash_command`, run by the native bash tool
   (before its deny list), a bash action and the ACP permission hook. It refuses a command
   that names a file only its owner reads (`SensitivePaths` without the `$HOME`
@@ -788,7 +798,8 @@ the ceiling did not bound.
   makes for a call put to its gate (an operator's hook pattern, what the call's tool declares,
   the chat's Trust, Trust reads and YOLO), with each grant held to the allowed hosts and to this
   ceiling (`approval_grants.stands_for_call`). It keeps no pattern, setting or approval mode of
-  its own that approves a call, and one nobody approves is asked on its own prompt. Under
+  its own that approves a call, refuses first a call the deny-list refuses (`screen_tool_call`),
+  and one nobody approves is asked on its own prompt. Under
   `{"approval": {"value": "ask"}}` none of them stands, and each refusal is audited
   (`approval.grant_refused`, naming the grant). A switch the owner presses (the chat's mode
   pill, a card's wider scope) is refused with `409 approval_grant_refused`, whose message names

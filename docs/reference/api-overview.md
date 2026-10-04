@@ -173,7 +173,8 @@ has cost someone a debugging session.
   name over the same providers an agent turn has, to the one provider serving that name,
   so a `provider` in the body is not read, and an external MCP server's tool
   (`mcp/<server>/<tool>`) runs through the provider that serves it to agents. A name the
-  agent's hard deny-list refuses is refused here too, with `403 tool_denied_by_policy`.
+  agent's hard deny-list refuses (its built-in patterns, or a pattern in
+  `hooks.auto_deny_tools`) is refused here too, with `403 tool_denied_by_policy`.
 - **A tool name has one provider.** `bash`, `read_file` and the other platform tools are
   the platform's, names under `mcp/` are the MCP Tool Servers app's, a provider core ships
   outranks an installed app's, and otherwise the provider that claimed a name first keeps

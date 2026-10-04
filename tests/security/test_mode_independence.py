@@ -489,16 +489,17 @@ class TestDenyPrecedesTheApprovalGate:
     the source order but breaks the behaviour (or vice versa) still trips a rail."""
 
     def test_structural_deny_call_precedes_the_approval_gate_call(self):
-        """AST, not regex: inside ``_guard_and_invoke``, ``security.is_denied(...)`` must
-        appear before ``self._requires_approval(...)``. Swap the two blocks and this reds
-        on the line numbers alone."""
+        """AST, not regex: inside ``_guard_and_invoke``, the deny-list's answer
+        (``deny_list_refusal(...)``, which asks the screen every approval path asks) must appear
+        before ``self._requires_approval(...)``. Swap the two blocks and this reds on the line
+        numbers alone."""
         fn = _guard_and_invoke_node()
-        deny_line = _first_call_line(fn, "is_denied")
+        deny_line = _first_call_line(fn, "deny_list_refusal")
         gate_line = _first_call_line(fn, "_requires_approval")
-        assert deny_line is not None, "no is_denied() call in _guard_and_invoke at all"
+        assert deny_line is not None, "no deny_list_refusal() call in _guard_and_invoke at all"
         assert gate_line is not None, "no _requires_approval() call in _guard_and_invoke at all"
         assert deny_line < gate_line, (
-            f"DENY-AFTER-APPROVAL ORDERING REGRESSION: security.is_denied() is at line "
+            f"DENY-AFTER-APPROVAL ORDERING REGRESSION: deny_list_refusal() is at line "
             f"{deny_line} but the approval gate _requires_approval() is at line {gate_line} "
             f"in {RUNTIME_SRC.name}::_guard_and_invoke. The deny check MUST precede the "
             f"approval gate: the gate returns the _NEEDS_APPROVAL sentinel, and the gated "
@@ -512,7 +513,12 @@ class TestDenyPrecedesTheApprovalGate:
     ):
         """The behavioural half. ``default`` mode + ``requires_approval=True`` means the
         gate WOULD fire; the driver approves everything. The tool must still never be
-        invoked, because the deny ran first."""
+        invoked, because the deny ran first: the operator's hook deny pattern names it."""
+        from personalclaw.config.loader import config_dir
+
+        (config_dir() / "config.json").write_text(
+            json.dumps({"hooks": {"auto_deny_tools": ["danger_tool"]}}), encoding="utf-8"
+        )
         tool = _DenyTargetTool()
         model = _ScriptedModel(
             [
@@ -532,7 +538,6 @@ class TestDenyPrecedesTheApprovalGate:
             definition=_defn(),
             model_provider=model,
             tool_providers=[tool],
-            extra_deny_patterns=["danger_tool"],
         )
         rt.set_approval_policy("")  # default: the per-tool gate is live
         await rt.start()
@@ -577,7 +582,7 @@ class TestDenyPrecedesTheApprovalGate:
         )
         rt = NativeAgentRuntime(
             definition=_defn(), model_provider=model, tool_providers=[tool]
-        )  # no extra_deny_patterns
+        )  # no deny pattern names it
         rt.set_approval_policy("")
         await rt.start()
 
@@ -592,8 +597,10 @@ class TestDenyPrecedesTheApprovalGate:
     def test_the_runtime_asks_the_tool_and_keeps_no_copy_of_its_screen(self):
         """The command-level baseline screen (``security.denied_command``) is the bash tool's. The
         runtime reaches it before the approval gate by asking the tool (``_preflight`` →
-        ``ToolProvider.preflight``), never by calling the screen itself: a second copy in the
-        pipeline would be a policy that drifts from the one the tool enforces when it runs."""
+        ``ToolProvider.preflight``) and the hook chain every approval path asks
+        (``screen_tool_call``, which reads the same function), never by calling the screen itself:
+        a second copy in the pipeline would be a policy that drifts from the one the tool enforces
+        when it runs."""
         runtime_fn = _guard_and_invoke_node()
         assert _first_call_line(runtime_fn, "denied_command") is None
         assert (

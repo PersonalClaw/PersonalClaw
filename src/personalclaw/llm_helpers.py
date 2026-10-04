@@ -88,6 +88,7 @@ async def stream_and_collect(
     session_key: str = "",
     agent: str = "",
     on_ungated: "Callable[[UngatedCall], HostAnswer] | None" = None,
+    on_refused: "Callable[[LLMEvent, str], None] | None" = None,
 ) -> str:
     """Stream a message through an LLM provider and collect the full response.
 
@@ -96,8 +97,10 @@ async def stream_and_collect(
     Args:
         provider: The LLM provider to stream through.
         message: The prompt to send.
-        approval_policy: How to handle tool permission requests.
-        hooks: HookManager for HOOK_BASED approval policy.
+        approval_policy: How to handle tool permission requests. Under every one, a call the
+            deny-list refuses is refused first (``_resolve_permission``).
+        hooks: The HookManager the deny-list is read from (the gateway's own when ``None``), and
+            whose auto-approve patterns answer a call under HOOK_BASED.
         on_chunk: Optional callback invoked with each text chunk (for progress).
         on_tool_approval: Optional async callback for interactive approval.
         on_complete: Optional callback invoked with the terminal ``EVENT_COMPLETE``
@@ -120,6 +123,8 @@ async def stream_and_collect(
             (``acp.ungated``): the caller says where it shows it, and answers whether the turn
             stops for it and the posture it judged that by (``acp.ungated.HostAnswer``). Every such
             call is audited as ``ungated`` whether or not a caller is told.
+        on_refused: Told of each asked call the deny-list refused, with the refusal's reason, for
+            a caller that shows its turn's refusals. Each is audited whether or not one is told.
 
     Returns:
         The complete response text.
@@ -159,6 +164,7 @@ async def stream_and_collect(
                             on_tool_approval,
                             session_key=session_key,
                             agent=agent,
+                            on_refused=on_refused,
                         )
                         if not approved:
                             continue
@@ -316,8 +322,15 @@ async def _resolve_permission(
     on_tool_approval: "Callable[[LLMEvent], Awaitable[bool | ToolDecision]] | None" = None,
     session_key: str = "",
     agent: str = "",
+    on_refused: "Callable[[LLMEvent, str], None] | None" = None,
 ) -> bool:
     """Resolve a tool permission request. Returns True if approved.
+
+    The deny-list comes first, whatever *policy* says: a call the hook chain refuses, read on the
+    command that would run as well as on its title (``screen_tool_call``, with *hooks*, or the
+    gateway's own when none is handed over), is refused before any policy approves it or anyone is
+    asked about it, and *on_refused* is told why. Only *hooks* themselves can auto-approve, and
+    only under ``hook_based``.
 
     Each decision is audited once, here, saying who decided it (``decided_by``). Both ways this
     approves without asking — a hook's auto-approve verdict and the run's own policy — are grants,
@@ -343,9 +356,23 @@ async def _resolve_permission(
 
     title = str(event.title or "")[:80]
     caller = session_key or "background"
+    # The deny-list is a floor (the shell denylist's, for a CLI's request): nobody is asked about
+    # what cannot run, and no policy approves it.
+    tool_result = screen_tool_call(hooks, str(event.title or ""), event.tool_input)
+    if tool_result.action == TOOL_DENY:
+        await provider.reject_tool(event.request_id)
+        control = tool_result.audit()
+        _log(
+            "refused" if control else "denied",
+            error=tool_result.reason,
+            metadata={"decided_by": control.get("control", "hook_deny"), **control},
+        )
+        if on_refused is not None:
+            on_refused(event, tool_result.reason or "a hook refused it")
+        return False
+
     # A command reaching a host off the allowed hosts is answered by a person or not at all
-    # (`run_bounds`): no hook pattern and no policy approves it. A hook's refusal (the shell
-    # denylist's, for a CLI's request) still comes first: nobody is asked about what cannot run.
+    # (`run_bounds`): no hook pattern and no policy approves it.
     from personalclaw.run_bounds import off_list
 
     reaches_off_list = off_list(event, session_key)
@@ -356,18 +383,7 @@ async def _resolve_permission(
         )
         return False
 
-    if policy == ToolApprovalPolicy.HOOK_BASED and hooks:
-        # The hook's shell checks are made on the command that would RUN (`screen_tool_call`).
-        tool_result = screen_tool_call(hooks, str(event.title or ""), event.tool_input)
-        if tool_result.action == TOOL_DENY:
-            await provider.reject_tool(event.request_id)
-            control = tool_result.audit()
-            _log(
-                "refused" if control else "denied",
-                error=tool_result.reason,
-                metadata={"decided_by": control.get("control", "hook_deny"), **control},
-            )
-            return False
+    if policy == ToolApprovalPolicy.HOOK_BASED and hooks is not None:
         if (
             not reaches_off_list
             and tool_result.action == TOOL_AUTO_APPROVE

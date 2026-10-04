@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from personalclaw import cancellation, run_bounds, run_processes, turn_streams
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
-from personalclaw.agents.native.approval import REJECT, ApprovalGate, refusal_of
+from personalclaw.agents.native.approval import REJECT, ApprovalGate, deny_list_refusal, refusal_of
 from personalclaw.agents.native.attempt_audit import inference_attempt
 from personalclaw.agents.native.catalog_refresh import CatalogRefresh
 from personalclaw.agents.native.compaction import InProcessCompaction, compaction_summary
@@ -221,7 +221,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         session_key: str = "",
         max_turns: int = 100,
         hook_fire: HookFire | None = None,
-        extra_deny_patterns: list[str] | None = None,
         unattended: bool = False,
         dry_run: bool = False,
         reasoning_effort: str = "",
@@ -301,7 +300,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # The current turn and the model it started on: a turn's cleanup restores only its own.
         self._turn_seq = 0
         self._turn_home: tuple[Any, str] | None = None
-        self._extra_deny = list(extra_deny_patterns or [])
 
         # Conversation history — owned by the loop (complete() is stateless).
         self._messages: list[dict] = []
@@ -1973,13 +1971,12 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 "retry it expecting a real effect."
             )
 
-        # Hard deny-list (never prompts) — terminal, no retry invitation.
-        deny = security.is_denied(tool_name, self._extra_deny)
-        if deny:
-            _, observation = security.classify_denial(security.DENY_KIND_POLICY, deny, tool_name)
+        # The deny-list (never prompts) — terminal, no retry invitation, whatever this run's
+        # approval policy would answer: on the tool's name and on a command it would run.
+        refused, asked = await deny_list_refusal(tool_name, args, meta, self._cwd, self._preflight)
+        if refused is not None:
             meta.update(_FAILED)
-            meta[TOOL_META_REFUSED_BY] = "deny_list"
-            return observation
+            return refused
 
         # Task-mode gate (ask/plan/build) — runs HERE, before approval, so a
         # Trust/YOLO auto-approve can't slip a mutation past a read-only posture.
@@ -2050,8 +2047,10 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         bounds = run_bounds.native_check(self, tool_name, args)  # where it reaches past its bounds
         if bounds or self._requires_approval(tool_name):
             # A call its tool will refuse is answered with why before anyone is asked (and before
-            # an unattended run is refused it for its bounds): no answer could let it run.
-            refused = await self._preflight(tool_name, args, meta) or bounds.refuse(meta)
+            # an unattended run is refused it for its bounds): no answer could let it run. A call
+            # whose command the tool was already asked about above is not asked again.
+            own = None if asked else await self._preflight(tool_name, args, meta)
+            refused = own or bounds.refuse(meta)
             return _NEEDS_APPROVAL if refused is None else refused
         if self._asks_first(tool_name):
             # The tool asks before it runs, and the session's approval policy answered for it.

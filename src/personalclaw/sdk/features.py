@@ -32,6 +32,10 @@ the chat answers (``link_channel(chat, thread, channel_id, provider=…)``,
 ``SessionManager.get_channel_provider``). A channel app that links a chat to one of its threads
 declares it.
 
+``TOOL_CALL_SCREEN``: a channel that runs a conversation itself asks the deny-list about each call
+before it approves or asks about it (``personalclaw.sdk.channel.screen_tool_call``), and refuses a
+call it refuses. A channel app that asks it declares it.
+
 ``TURNS_NAME_THEIR_CHANNEL``: a turn a channel writes for a conversation it runs itself names the
 channel (``personalclaw.sdk.channel.save_conversation_turn(…, source_channel=…)``), a line it takes
 into a chat itself records where it came from (``arrived_on(thread, sender, channel)``), and memory
@@ -46,6 +50,7 @@ from personalclaw.apps.core_features import (
     DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
+    TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     core_has,
 )
@@ -57,6 +62,7 @@ __all__ = [
     "DIGEST_REPLIES",
     "GUARDED_DOWNLOAD",
     "LINKS_NAME_THEIR_CHANNEL",
+    "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",
     "core_has",
 ]

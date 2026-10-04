@@ -23,6 +23,7 @@ from personalclaw.sdk.features import (
     DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
+    TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     core_has,
 )
@@ -35,6 +36,7 @@ OFFERED_ONCE = {
     "digest-replies",
     "guarded-download",
     "links-name-their-channel",
+    "tool-call-screen",
     "turns-name-their-channel",
 }
 
@@ -47,6 +49,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "DIGEST_REPLIES",
         "GUARDED_DOWNLOAD",
         "LINKS_NAME_THEIR_CHANNEL",
+        "TOOL_CALL_SCREEN",
         "TURNS_NAME_THEIR_CHANNEL",
         "core_has",
     }
@@ -55,6 +58,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert DIGEST_REPLIES == "digest-replies"
     assert GUARDED_DOWNLOAD == "guarded-download"
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
+    assert TOOL_CALL_SCREEN == "tool-call-screen"
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
     for name in (
         APPROVAL_ANSWERS,
@@ -62,6 +66,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
+        TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
     ):
         assert name in CORE_FEATURES
@@ -232,6 +237,26 @@ def _links_name_their_channel_holds() -> None:
     assert sessions.get_channel_link("dashboard:chat-linked") == ("5550123", "5550123")
 
 
+def _tool_call_screen_holds() -> None:
+    """The screen a channel asks refuses a command the shell denylist refuses, read on the command
+    behind a title that does not carry it, whether the input gives it as text or as a list of
+    words, and lets an ordinary command through to be approved or asked about."""
+    import json
+
+    from personalclaw.config.loader import config_dir
+    from personalclaw.hooks import TOOL_DENY
+    from personalclaw.sdk.channel import screen_tool_call
+
+    (config_dir() / "config.json").write_text(
+        json.dumps({"security": {"denied_commands": ["pcfixture-cloudctl"]}}), encoding="utf-8"
+    )
+    for denied in ("pcfixture-cloudctl status", ["pcfixture-cloudctl", "status"]):
+        verdict = screen_tool_call(None, "Run command", json.dumps({"command": denied}))
+        assert verdict.action == TOOL_DENY and "pcfixture-cloudctl" in verdict.reason
+    ordinary = screen_tool_call(None, "Run command", json.dumps({"command": ["echo", "hello"]}))
+    assert ordinary.action != TOOL_DENY
+
+
 def _turns_name_their_channel_holds() -> None:
     """A turn a channel saves names the channel on each line, a line it takes into a chat itself
     records where it came from, and only the lines its owner sent there are read as the owner's
@@ -331,6 +356,7 @@ WITNESSES = {
     DIGEST_REPLIES: _digest_replies_hold,
     GUARDED_DOWNLOAD: _guarded_download_holds,
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
+    TOOL_CALL_SCREEN: _tool_call_screen_holds,
     TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,
 }
 

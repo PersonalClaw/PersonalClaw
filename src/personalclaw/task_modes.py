@@ -28,6 +28,7 @@ No decision here reads a tool's name for what it does.
 from __future__ import annotations
 
 import json
+import shlex
 from dataclasses import dataclass
 
 from personalclaw.command_effects import CommandEffects, command_effects
@@ -184,6 +185,22 @@ def extract_bash_command(tool_input: object) -> str:
     except (json.JSONDecodeError, TypeError):
         pass
     return tool_input
+
+
+def command_words(tool_input: object) -> str:
+    """A ``command`` an agent CLI hands as a list of words (its shell's argv, ``["git", "show"]``),
+    joined as a shell would read them; ``""`` for any other input, a command given as text among
+    them (:func:`extract_bash_command` reads that one). Unscoped like it: a reader, not a gate."""
+    data = tool_input
+    if isinstance(tool_input, str):
+        try:
+            data = json.loads(tool_input)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+    words = data.get("command") if isinstance(data, dict) else None
+    if not isinstance(words, list) or not words:
+        return ""
+    return shlex.join(str(word) for word in words)
 
 
 # ── Task-mode tool gate ──

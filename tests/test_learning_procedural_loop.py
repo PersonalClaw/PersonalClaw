@@ -368,8 +368,16 @@ async def test_the_runtime_labels_denied_failed_and_success_distinctly():
     assert await _outcomes(tool=_Tool()) == [("echo", "success")]
     assert await _outcomes(tool=_Tool(ok=False)) == [("echo", "failed")]
     # The deny-list is one of five denial paths; all five return an observation from
-    # `security.classify_denial`, which is why the runtime keys on that one function.
-    assert await _outcomes(tool=_Tool(), extra_deny_patterns=["echo"]) == [("echo", "denied")]
+    # `security.classify_denial`, which is why the runtime keys on that one function. Here it is
+    # the operator's hook deny pattern naming the tool.
+    import json
+
+    from personalclaw.config.loader import config_dir
+
+    (config_dir() / "config.json").write_text(
+        json.dumps({"hooks": {"auto_deny_tools": ["echo"]}}), encoding="utf-8"
+    )
+    assert await _outcomes(tool=_Tool()) == [("echo", "denied")]
 
 
 def test_the_drained_outcome_reaches_procedural_memory_as_denied(svc):

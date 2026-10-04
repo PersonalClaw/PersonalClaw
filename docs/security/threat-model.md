@@ -303,8 +303,9 @@ Content and requests arriving from outside the owner's trust boundary:
   grant held to the allowed hosts and to the operator ceiling (`approval_grants.stands_for_call`).
   Under `{"approval": {"value": "ask"}}` an operator's hook pattern, the chat's Trust and YOLO
   approve nothing there, a command reaching a host off the allowed hosts is always asked about,
-  and no grant answers a call the hook chain refuses. A call nobody approves is asked on the
-  channel's own prompt. The app keeps no pattern, setting or approval mode of its own that
+  and no grant answers a call the hook chain refuses: the channel refuses that call itself, before
+  it asks core or anyone (`screen_tool_call`, read on the command that would run). A call nobody
+  approves is asked on the channel's own prompt. The app keeps no pattern, setting or approval mode of its own that
   approves a call.
 
 *Inbound MCP and external remote access (fail-closed inbound, fencing at

@@ -275,6 +275,9 @@ class ToolHookResult:
     #: the control, and the rule it applied, which the call's one audit row names (:meth:`audit`).
     control: str = ""
     rule: str = ""
+    #: Whether the verdict was made on the command the call would run rather than on its title
+    #: (``acp.permission_authority.screen_tool_call``).
+    on_command: bool = False
 
     def audit(self) -> dict[str, str]:
         """What a control's denial adds to the call's audit row: the control and its rule, masked

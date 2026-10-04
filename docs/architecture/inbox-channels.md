@@ -426,8 +426,11 @@ Incognito or Temporary one is never listed). Allow for this chat pressed there i
 into one as opening it from the history does, archived or not, or a new one while its first turn
 still runs. The chat's Permission mode then shows Trust and switches it off, and the grant writes
 the `tool_approval:trust` row another channel's Allow for this chat writes, naming the channel. At
-each call the channel asks `chat_trust.chat_grant` who approves it without asking, and approves no
-call on an answer of its own. The answer is the decision the chat's runner makes for a call put to
+each call the channel first asks the deny-list, through the screen the chat's runner asks
+(`acp.permission_authority.screen_tool_call`), and refuses a call it refuses, read on the command
+that would run as well as on its title: that call is never approved and never put on the
+channel's prompt. Then it asks `chat_trust.chat_grant` who approves the call without asking, and
+approves no call on an answer of its own. The answer is the decision the chat's runner makes for a call put to
 its gate, in its order: an operator's pattern in the hook settings (`hook_pattern`, at the "a hook
 decides" level), what the call's tool declares (`declared_read`, or `work_asks` for the call that
 starts a subagent, whose start asks, or starts on the spawn setting under the ceiling where the

@@ -434,7 +434,14 @@ async def test_approval_reject_skips_invoke():
 
 @pytest.mark.asyncio
 async def test_denylist_blocks_before_invoke():
-    # "rm -rf" style — use a tool name the deny-list rejects.
+    # A tool the operator's hook deny patterns name (`hooks.auto_deny_tools`), read as they are now.
+    import json
+
+    from personalclaw.config.loader import config_dir
+
+    (config_dir() / "config.json").write_text(
+        json.dumps({"hooks": {"auto_deny_tools": ["echo"]}}), encoding="utf-8"
+    )
     model = _ScriptedModel(
         [
             [
@@ -449,7 +456,6 @@ async def test_denylist_blocks_before_invoke():
         definition=_defn(),
         model_provider=model,
         tool_providers=[tool],
-        extra_deny_patterns=["echo"],
     )
     await rt.start()
     seen = await _drain(rt, "go")

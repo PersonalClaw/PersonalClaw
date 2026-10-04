@@ -4156,6 +4156,16 @@
   ],
   "returns": "None"
  },
+ "personalclaw.sdk.channel.screen_tool_call": {
+  "kind": "function",
+  "params": [
+   {"annotation": "Any", "kind": "positional_or_keyword", "name": "hooks"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "title"},
+   {"annotation": "Any", "kind": "positional_or_keyword", "name": "tool_input"},
+   {"annotation": "str | os.PathLike[str] | None", "default": "None", "kind": "positional_or_keyword", "name": "cwd"}
+  ],
+  "returns": "Any"
+ },
  "personalclaw.sdk.channel.sel": {
   "kind": "function",
   "params": [],
@@ -4864,10 +4874,11 @@
  },
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'turns-name-their-channel'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'tool-call-screen', 'turns-name-their-channel'})"},
  "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
  "personalclaw.sdk.features.GUARDED_DOWNLOAD": {"kind": "value", "type": "str", "value": "'guarded-download'"},
  "personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'links-name-their-channel'"},
+ "personalclaw.sdk.features.TOOL_CALL_SCREEN": {"kind": "value", "type": "str", "value": "'tool-call-screen'"},
  "personalclaw.sdk.features.TURNS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'turns-name-their-channel'"},
  "personalclaw.sdk.features.core_has": {
   "kind": "function",

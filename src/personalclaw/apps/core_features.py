@@ -56,6 +56,13 @@ GUARDED_DOWNLOAD = "guarded-download"
 #: without it has neither function, so an app that imports them does not load.
 CHAT_TRUST = "chat-trust"
 
+#: A channel that runs a conversation itself refuses a call the deny-list refuses before it
+#: approves or asks about it: ``screen_tool_call(hooks, title, tool_input)`` is the hook chain's
+#: verdict on the call, read on the command it would run (given as text or as a list of words) as
+#: well as on its title, the one screen every approval path in core asks first. A core without it
+#: has no ``screen_tool_call``, so an app that imports it does not load.
+TOOL_CALL_SCREEN = "tool-call-screen"
+
 #: A chat's link to a channel thread names the channel the thread is on, and that is where the
 #: chat answers: ``link_channel(chat, thread, channel_id, provider=…)`` on the dashboard state a
 #: channel is handed links a chat there (moving it off any thread it was on; the owner's own DM it
@@ -82,6 +89,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
+        TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
     }
 )

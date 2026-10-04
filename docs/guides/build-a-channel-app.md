@@ -193,6 +193,13 @@ owner can neither see nor revoke.
   request_id=...)`. `trust` makes it the chat's Trust and writes the audit row; an answer for the
   call alone changes nothing beyond it. When it returns `False` the press decides nothing: keep
   the approval waiting.
+- **Refuse what the deny-list refuses, before anything else.** At each call, first ask
+  `personalclaw.sdk.channel.screen_tool_call(hooks, event.title, event.tool_input)` (your context
+  builder's `hooks`, or `None` for PersonalClaw's own). It is the hook chain's verdict, read on the
+  command the call would run as well as on its title, the screen PersonalClaw's own chat asks. A
+  verdict whose `action` is `TOOL_DENY` refuses the call: reject it, say in the conversation that
+  it was not run, and write its row (`refused`, with the control and rule `verdict.audit()` names,
+  when one of the shell's own controls refused it). Never put it on your prompt.
 - **Ask at every call, and approve on nothing else.** Before you prompt, ask
   `personalclaw.sdk.channel.chat_grant(session_key, event)`. It names who approves the call
   without asking, by the decision the chat's own runner makes: an operator's pattern in the hook
@@ -218,9 +225,10 @@ owner can neither see nor revoke.
   (`personalclaw.sdk.features.TURNS_NAME_THEIR_CHANNEL`): a PersonalClaw without it takes no
   `source_channel`, and refuses to install or update the app.
 
-A channel that uses these declares the core feature in its `app.json`:
-`"requiresCoreFeatures": ["chat-trust"]` (`personalclaw.sdk.features.CHAT_TRUST`). A PersonalClaw
-without it has neither function, and refuses to install or update the app.
+A channel that uses these declares the core features in its `app.json`:
+`"requiresCoreFeatures": ["chat-trust", "tool-call-screen"]` (`personalclaw.sdk.features.CHAT_TRUST`,
+`TOOL_CALL_SCREEN`). A PersonalClaw without them has none of these functions, and refuses to
+install or update the app.
 
 ### The owner's answer to the Morning triage digest
 

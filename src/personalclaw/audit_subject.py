@@ -15,7 +15,6 @@ that names a call writes its title the same way, at a log line's bound (:func:`l
 from __future__ import annotations
 
 import json
-import shlex
 from typing import Any
 
 #: The longest text one field of an audit row keeps, its cut marker included.
@@ -134,16 +133,13 @@ def subject_of(tool_name: str, tool_kind: str, tool_input: object) -> str:
     """
     try:
         from personalclaw.run_bounds import FILE_WRITES
-        from personalclaw.task_modes import SHELL_TITLE_PREFIXES, shell_command
+        from personalclaw.task_modes import SHELL_TITLE_PREFIXES, command_words, shell_command
 
         name, kind = str(tool_name or ""), str(tool_kind or "")
         subject = kind_of_subject(name, kind)
         args = _arguments(tool_input)
         if subject == COMMAND:
-            command = shell_command(name, kind, tool_input)
-            words = args.get("command")
-            if not command and isinstance(words, list) and words:
-                command = shlex.join(str(word) for word in words)
+            command = shell_command(name, kind, tool_input) or command_words(tool_input)
             if not command and name.lower().startswith(SHELL_TITLE_PREFIXES):
                 command = name.split(":", 1)[1].strip()
             return command

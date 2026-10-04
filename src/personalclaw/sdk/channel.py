@@ -19,6 +19,12 @@ from personalclaw.acp.errors import (
     AcpProcessDied,
     AcpTimeoutError,
 )
+
+# ── The deny-list, before any approval ──
+# A channel that runs a conversation itself asks the screen every approval path asks first
+# (`screen_tool_call`): a call the hook chain refuses, read on the command that would run as well
+# as on its title, is refused there, never approved and never asked about.
+from personalclaw.acp.permission_authority import screen_tool_call
 from personalclaw.acp.types import (  # noqa: F401
     CANCELLED_STOP_REASONS,
     STOP_REASON_CANCELLED,
@@ -427,6 +433,7 @@ __all__ = [
     "save_credential",
     "save_session_to_history",
     "save_use_case_settings",
+    "screen_tool_call",
     "sel",
     "session_restrictions",
     "set_automation_paused",

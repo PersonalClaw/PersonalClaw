@@ -70,7 +70,6 @@ from personalclaw.dashboard.chat_utils import (
     _broadcast_auto_tool,
     _broadcast_compaction_result,
     _dequeue_next_message,
-    _extract_bash_command,
     _history_key_for,
     _maybe_consolidate,
     _maybe_inject_persona,
@@ -4107,81 +4106,58 @@ async def run_chat(
                     )
                     continue
                 _pre_tool_hooks_fired = False
-                # Deny-list on the REAL command, not the display title. An ACP
-                # permission frame's title is a truncated human string ("unknown" when
-                # the adapter sends none — G18), so evaluating the deny patterns on the
-                # title alone silently misses `git push --force` while the card still
-                # offers it for approval. The command lives in the cached tool_call
-                # input; probe it in the "Running: " form the hook chain normalizes.
-                # DENY-only by construction (command_probe's contract): an auto-approve
-                # pattern matching the command form must not widen anything.
-                if state.context_builder:
-                    _cmd_probe = acp_permission_authority.command_probe(
-                        event.title, _extract_bash_command(event.tool_input or "")
+                # The deny-list, on the REAL command as well as the display title
+                # (`screen_tool_call`, the one screen every approval path asks): an ACP
+                # permission frame's title is a truncated human string ("unknown" when the
+                # adapter sends none — G18), so the patterns read on the title alone silently
+                # miss `git push --force` while the card still offers it. Refused before
+                # anything could approve or ask about it; only the title's verdict can
+                # auto-approve. The verdict and its reason go to the transcript and to the model
+                # as the call's result.
+                tool_result = acp_permission_authority.screen_tool_call(
+                    state.context_builder.hooks if state.context_builder else None,
+                    event.title,
+                    event.tool_input,
+                    cwd=_file_change_base(session),
+                )
+                if tool_result.action == TOOL_DENY:
+                    _cmd = tool_result.on_command
+                    _deny_reason = tool_result.reason or (
+                        "security policy" if _cmd else "policy hook"
                     )
-                    if _cmd_probe:
-                        _cmd_verdict = state.context_builder.hooks.on_tool_call(
-                            _cmd_probe, cwd=_file_change_base(session)
-                        )
-                        if _cmd_verdict.action == TOOL_DENY:
-                            _cmd_reason = getattr(_cmd_verdict, "reason", "") or "security policy"
-                            await _refuse_call(event, why=_cmd_reason)
-                            note_refusal(session, event, _cmd_reason)
-                            # A control of the shell's own (its denylist, a credential path) is a
-                            # `refused` row naming the control and its rule.
-                            _control = _cmd_verdict.audit()
-                            sel().log_tool_invocation(
-                                session_key=session_key,
-                                agent=_agent_label(session),
-                                source="dashboard",
-                                tool_name=event.title,
-                                tool_kind=event.tool_kind,
-                                outcome="refused" if _control else "denied",
-                                request_id=event.request_id,
-                                tool_input=event.tool_input,
-                                error="denylist_command",
-                                metadata={
-                                    **_offered,
-                                    "reason": _cmd_reason,
-                                    "decided_by": _control.get("control", "deny_list"),
-                                    **_control,
-                                },
-                            )
-                            continue
+                    await _refuse_call(
+                        event, why=_deny_reason, **({} if _cmd else {"kind": "hook"})
+                    )
+                    note_refusal(session, event, _deny_reason)
+                    # A control of the shell's own (its denylist, a credential path) is a
+                    # `refused` row naming the control and its rule.
+                    _control = tool_result.audit()
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=event.title,
+                        tool_kind=event.tool_kind,
+                        outcome="refused" if _control else "denied",
+                        request_id=event.request_id,
+                        tool_input=event.tool_input,
+                        error="denylist_command" if _cmd else "hook_deny",
+                        metadata={
+                            **_offered,
+                            **({"reason": _deny_reason} if _cmd else {}),
+                            "decided_by": _control.get(
+                                "control", "deny_list" if _cmd else "hook_deny"
+                            ),
+                            **_control,
+                        },
+                    )
+                    continue
                 # An unattended turn is refused a call past its run's bounds (`run_bounds`).
                 if _unattended_turn and await chat_refusals.refuse_past_bounds(
                     state, session, session_key, event, _refuse_call, agent=_agent_label(session)
                 ):
                     continue
                 if state.context_builder:
-                    tool_result = state.context_builder.hooks.on_tool_call(
-                        event.title, cwd=_file_change_base(session)
-                    )
-                    if tool_result.action == TOOL_DENY:
-                        # Carry the deny reason into the transcript so it's visible
-                        # why the call was blocked (recoverable hook policy), and to the
-                        # model as the call's result.
-                        _deny_reason = getattr(tool_result, "reason", "") or "policy hook"
-                        await _refuse_call(event, why=_deny_reason, kind="hook")
-                        note_refusal(session, event, _deny_reason)
-                        _control = tool_result.audit()
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=_agent_label(session),
-                            source="dashboard",
-                            tool_name=event.title,
-                            tool_kind=event.tool_kind,
-                            outcome="refused" if _control else "denied",
-                            request_id=event.request_id,
-                            tool_input=event.tool_input,
-                            error="hook_deny",
-                            metadata={
-                                **_offered,
-                                "decided_by": _control.get("control", "hook_deny"),
-                                **_control,
-                            },
-                        )
-                        continue
                     # An operator's auto-approve pattern is a grant at the `hook_based` level:
                     # a `hook_based` ceiling lets it stand, an `ask` one sends the call on to ask.
                     if tool_result.action == TOOL_AUTO_APPROVE and approval_grants.stands_for_call(

@@ -596,7 +596,9 @@ def approval_channel(
     out of the decision, because a hook verdict of ``TOOL_AUTO_APPROVE`` approves without
     asking and would remove the human from the one surface whose defining property is that
     they are in it. With ``hooks=None`` that branch is skipped and the gate below is the whole
-    decision. (A run with NO gate at all is ``guardrails.policy.no_one_to_ask``'s question.)
+    decision, past the deny-list, which refuses first under every policy and is never a
+    question for the human (``llm_helpers._resolve_permission``; the turn notes that refusal
+    itself). (A run with NO gate at all is ``guardrails.policy.no_one_to_ask``'s question.)
 
     The gate asks the two questions a solo session asks, in that order:
 

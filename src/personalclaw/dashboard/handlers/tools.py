@@ -447,9 +447,10 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     drops it at schema assembly. Core-locked tools and the locked platform provider are
     exempt (``tool_prefs.is_disabled`` handles that), so the primitives stay reachable.
 
-    It includes the agent's hard deny-list: a tool name ``security.is_denied`` refuses is
-    refused here with ``403 tool_denied_by_policy``, as the runtime refuses it before asking
-    for any approval.
+    It includes the agent's hard deny-list: a tool name the deny-list refuses (its built-in
+    patterns and the operator's hook deny patterns, ``screen_tool_call`` on the name) is refused
+    here with ``403 tool_denied_by_policy``, as the runtime refuses it before asking for any
+    approval.
 
     It also includes the risk tier (#506). A call whose EFFECTIVE risk resolves as
     ``destructive``, or a shell command the screen could not check (``unchecked``), is refused
@@ -586,13 +587,17 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
             **checked,
         )
 
-    # The agent's hard deny-list, by tool NAME, the check `NativeAgentRuntime._guard_and_invoke`
-    # makes before any approval is asked for. It was never made here, and external MCP servers
-    # are where its names live: a cron script (or "Try it", once it could reach them) ran an
-    # `mcp/<server>/delete_stack` that no agent can run, whatever it is approved for.
-    from personalclaw import security
+    # The agent's hard deny-list, by tool NAME: the screen `NativeAgentRuntime._guard_and_invoke`
+    # asks before any approval is asked for (`screen_tool_call`), its built-in patterns and the
+    # operator's hook deny patterns. It was never made here, and external MCP servers are where
+    # its names live: a cron script (or "Try it", once it could reach them) ran an
+    # `mcp/<server>/delete_stack` that no agent can run, whatever it is approved for. A command
+    # the call runs is the tool's own pre-flight's to screen, below.
+    from personalclaw.acp.permission_authority import screen_tool_call
+    from personalclaw.hooks import TOOL_DENY
 
-    denied = security.is_denied(tool_name)
+    screened = screen_tool_call(None, tool_name, None)
+    denied = screened.reason if screened.action == TOOL_DENY else ""
     if denied:
         try:
             _sel().log_tool_invocation(

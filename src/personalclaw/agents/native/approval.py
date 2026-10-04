@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,45 @@ def refusal_of(decision: str) -> tuple[str, str]:
     from personalclaw import security
 
     return security.DENY_KIND_USER, "the user declined this tool call"
+
+
+async def deny_list_refusal(
+    tool_name: str,
+    args: dict,
+    meta: dict,
+    cwd: str | os.PathLike[str] | None,
+    tools_own: Callable[[str, dict, dict], Awaitable[str | None]],
+) -> tuple[str | None, bool]:
+    """The deny-list's answer on a native call, whatever its run's approval policy would answer (a
+    chat's Trust or YOLO, a standing grant): the one screen every approval path asks
+    (``acp.permission_authority.screen_tool_call``). On the tool's name first: the built-in tool
+    patterns and the operator's hook deny patterns. Then, for a call that runs a command, what its
+    own tool refuses of it (*tools_own*, asked with the call: the platform shell screens what it
+    runs) is the tool's refusal, in its words and naming its control, and the screen answers the
+    rest on the command.
+
+    Returns what the model is told of a refusal, ``None`` to go on, and whether *tools_own* was
+    asked, so it is not asked again. A refusal the screen makes names its control and rule in
+    *meta*."""
+    from personalclaw import security
+    from personalclaw.acp.permission_authority import command_of, screen_tool_call
+    from personalclaw.hooks import TOOL_DENY
+    from personalclaw.llm.events import TOOL_META_REFUSED_BY, TOOL_META_REFUSED_RULE
+
+    screened = screen_tool_call(None, tool_name, None, cwd)
+    asked = screened.action != TOOL_DENY and bool(command_of(args))
+    if asked:
+        if (own := await tools_own(tool_name, args, meta)) is not None:
+            return own, asked
+        screened = screen_tool_call(None, tool_name, args, cwd)
+    if screened.action != TOOL_DENY:
+        return None, asked
+    control = screened.audit()
+    meta[TOOL_META_REFUSED_BY] = control.get("control", "deny_list")
+    if control:
+        meta[TOOL_META_REFUSED_RULE] = control["rule"]
+    _, observation = security.classify_denial(security.DENY_KIND_POLICY, screened.reason, tool_name)
+    return observation, asked
 
 
 class ApprovalGate:
