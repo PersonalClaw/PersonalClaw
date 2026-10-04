@@ -174,7 +174,9 @@ async def api_doctor_fix_apply(request: web.Request) -> web.Response:
     """POST /api/doctor/fix/{fix_id} — apply a confirm-gated fix.
 
     Requires ``{confirm: true}`` (the two-step armed pattern) so a stray request can't
-    mutate. Every application is SEL-audited inside ``apply_fix``.
+    mutate. Every application is SEL-audited inside ``apply_fix``. No app reaches this, whatever
+    its manifest declares (``apps/permissions.ROUTE_AUTHZ``): a fix changes the owner's setup, and
+    the confirmation is hers to give.
     """
     if not _resilience_cfg().doctor_enabled:
         return json_error("doctor_disabled", status=404)
@@ -567,7 +569,10 @@ async def api_doctor_remediation(request: web.Request) -> web.Response:
 
 
 async def api_doctor_remediation_run(request: web.Request) -> web.Response:
-    """POST /api/doctor/remediation/run — run the engine now (confirm-gated). SEL-audited."""
+    """POST /api/doctor/remediation/run — run the engine now (confirm-gated). SEL-audited.
+
+    The owner's alone (``apps/permissions.ROUTE_AUTHZ``): its jobs delete what is past its
+    retention, the security log's entries among it."""
     if not _resilience_cfg().doctor_enabled:
         return json_error("doctor_disabled", status=404)
     body = await json_object_body(request)

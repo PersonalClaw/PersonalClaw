@@ -199,6 +199,10 @@ def test_the_route_census_is_not_vacuous() -> None:
     assert len(routes) >= 100, f"only {len(routes)} write routes under the families — vacuous"
     assert ("PUT", "/api/mcp/servers/{name}") in routes
     assert ("POST", "/api/triggers") in routes
+    # A repair to your setup and an update of the code that runs it are in the census as well.
+    assert ("POST", "/api/doctor/fix/{fix_id}") in routes
+    assert ("POST", "/api/doctor/remediation/run") in routes
+    assert ("POST", "/api/update") in routes
 
 
 def test_the_read_census_is_not_vacuous() -> None:

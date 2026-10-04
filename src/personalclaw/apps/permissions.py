@@ -581,6 +581,16 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #: definition of yours is your yes to the CLI it names (``agents.runner_grants``). Every write is
 #: the owner's, so no app can start your agent CLIs by calling them, or allow one; the reads stay
 #: the allowlist's.
+#:
+#: **A repair to your setup is yours, and so is the code that runs it.** A Doctor fix changes your
+#: setup once you confirm it: which models your uses run on, PersonalClaw's server in your agent's
+#: config, the files the dashboard is served from. The route asks for your confirmation for that
+#: reason, and an app that sent it would be confirming for you. The maintenance pass the Doctor
+#: runs on demand deletes what is past its retention, your security log's entries among it. An
+#: update replaces the code this gateway runs and restarts it, as the owner-only restart does, and
+#: checking for one with automatic checks off, cancelling one and dismissing how one ended are yours
+#: too. Both families' reads stay the allowlist's: an app you granted the Doctor still reads its
+#: report, its fixes and its maintenance plan, and runs its two simulators, which write nothing.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -626,6 +636,8 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
         "your first-run setup — the model your chats start on, the model servers it looks for on "
         "your network, and how far you got"
     ),
+    "/api/doctor": "the Doctor — its fixes and its maintenance change your setup",
+    "/api/update": "updating PersonalClaw — the code this gateway runs",
 }
 
 #: The families whose READS are declared route by route as well as their writes — your
@@ -1021,6 +1033,41 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "sweeping your local network for model servers — the opt-in scan that runs only when you "
         "ask for it, and what it finds"
     ),
+    # ── the Doctor (its reads stay the allowlist's: an app you granted it reads the report) ──
+    "POST /api/doctor/fix/{fix_id}": OwnerOnly(
+        "applying a Doctor fix — a repair that changes your setup once you confirm it, such as "
+        "which models your uses run on or PersonalClaw's server in your agent's config"
+    ),
+    "POST /api/doctor/remediation/run": OwnerOnly(
+        "running PersonalClaw's maintenance now — it deletes history, inbox items and "
+        "security-log entries past their retention, moves learned skills that go unused toward "
+        "archived, and embeds your knowledge with your embedding model"
+    ),
+    "POST /api/doctor/simulate/surfacing": AppMay(
+        "scores your skills against the text it is sent, the way a turn does, with your "
+        "embedding model when one is bound; it changes no skill and no setting"
+    ),
+    "POST /api/doctor/simulate/automation": AppMay(
+        "describes what one of your automations would do; nothing runs, no credential is "
+        "resolved, no model is called and nothing is written"
+    ),
+    # ── updating PersonalClaw (the update status read stays the allowlist's) ──
+    "POST /api/update": OwnerOnly(
+        "updating PersonalClaw — it replaces the code this gateway runs, and restarts it"
+    ),
+    "POST /api/update/check": OwnerOnly(
+        "checking for an update now — PersonalClaw looks up its releases online even when you "
+        "switched automatic checks off"
+    ),
+    "POST /api/update/cancel": OwnerOnly(
+        "cancelling an update you started — PersonalClaw stays on the release it runs"
+    ),
+    "POST /api/update/dismiss": OwnerOnly(
+        "dismissing how your last update ended — a failed or cancelled update, taken out of view"
+    ),
+    "POST /api/update/simulate": OwnerOnly(
+        "a simulated update — your dashboard shows the progress of an update that is not running"
+    ),
     # ── packs ──
     "POST /api/packs/bundled/{name}/install": OwnerOnly(_INSTALLS_PACK),
     "POST /api/packs/one-link": OwnerOnly(_INSTALLS_PACK),
@@ -1207,6 +1254,15 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "POST /api/skills/ephemeral/{session}/promote": OwnerOnly(_WRITES_SKILL),
     "POST /api/skills/proposals/{id}/accept": OwnerOnly(
         "accepting a proposed skill — it installs instructions your agents follow"
+    ),
+    # Your choice between your copy of a skill that comes with PersonalClaw and its newer version.
+    "POST /api/skills/bundled/update": OwnerOnly(
+        "replacing your copy of a skill that comes with PersonalClaw with its newer version — "
+        "instructions your agents follow"
+    ),
+    "POST /api/skills/bundled/keep": OwnerOnly(
+        "keeping your copy of a skill that comes with PersonalClaw over its newer version — that "
+        "version is not offered to you again"
     ),
     "POST /api/skills/{name}/verify": AppMay(
         "compares an installed skill with the hashes it installed with; it changes nothing"

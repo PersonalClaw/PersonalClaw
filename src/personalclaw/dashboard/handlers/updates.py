@@ -666,7 +666,9 @@ async def api_update_apply(request: web.Request) -> web.Response:
     :func:`start_checkout_update`, the one update the staged auto-update runs as well. Progress is
     broadcast as ``update_progress`` WS events with steps ``pulling`` → ``installing`` →
     ``building`` → ``restarting`` (→ ``error``/``failed``, or ``cancelled`` when Cancel stopped it,
-    :func:`api_update_cancel`).
+    :func:`api_update_cancel`). No app reaches this or the check, cancel and dismiss beside it,
+    whatever its manifest declares (``apps/permissions.ROUTE_AUTHZ``): an update replaces the code
+    the gateway runs.
     """
     state: DashboardState = request.app["state"]
 

@@ -109,6 +109,16 @@ goal loop, install, enable or update an app or a pack, connect or disconnect a c
 channel, or sign out one of your devices. Its scheduled work is the `crons` its manifest
 declares, which install consent lists.
 
+A repair to your setup is yours too. An app may not apply a Doctor fix (each one changes your
+setup once you confirm it, such as which models your uses run on or PersonalClaw's server in
+your agent's config) or run the Doctor's maintenance, which deletes history, inbox items and
+security-log entries past their retention. It may not update PersonalClaw, check for an update
+while automatic checks are off, cancel an update you started or dismiss how one ended, and it
+may not take or decline the newer version of a skill that comes with PersonalClaw. An app you
+granted the Doctor still reads its report, its fixes and its maintenance plan, and runs its
+surfacing and automation simulators, which write nothing; an app you granted `/api/update`
+still reads the update status.
+
 What your agents are told is in the same class, because an agent carries out its
 instructions with your tools under your approval settings. An app may not create, edit,
 sync or delete one of your agents (its system prompt, tools, skills, model or approval
