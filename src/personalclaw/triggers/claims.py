@@ -132,9 +132,9 @@ def write_claim(claim: Any, *, base_dir: Path | str | None = None) -> None:
 
 
 #: What the claim of a run by hand is held as (:func:`hand_run_holder`): Run now, the review's Run
-#: now, an answer, a view's refresh or a webhook's fire, all through the attended dispatch
-#: (`trigger_runs._dispatch_store_action`). A fire's claim is held by the tick or the event that
-#: admitted it.
+#: now or an answer, all through the attended dispatch (`trigger_runs._dispatch_store_action`). A
+#: fire's claim is held by what admitted it: the tick, an event, a webhook's request, a view's
+#: render.
 _BY_HAND = "hand:"
 
 

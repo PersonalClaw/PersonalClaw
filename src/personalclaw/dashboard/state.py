@@ -1036,6 +1036,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
 
         _trust.register_on_disable(self._on_yolo_disabled)
         self.no_crons: bool = False  # --no-crons flag: cron execution disabled
+        # The gateway's dispatch for an automation's fire, attached at boot: a webhook's fire and
+        # a view's refresh run through it as every fire does (`gateway._fire_store_trigger`).
+        self.fire_trigger: Callable[..., Any] | None = None
         self._hook_store: Any = None  # Lazy-init ScriptHookStore
         # Task refine state (background LLM spec generation)
         self._refine_status: str = "idle"  # idle, running, done, error, cancelled

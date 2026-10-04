@@ -7,8 +7,9 @@ a hook, a workflow's action step, a tile's refresh and the triage digest asked i
 a command or an action with nobody answering too, and did not:
 
 * a webhook's fire from an outside caller, a view's refresh, and a Run now an agent starts
-  (`automation_run`) from a session nobody is in, all through the hand-run dispatch
-  (`trigger_runs._dispatch_store_action`), ran the action as it was written;
+  (`automation_run`) from a session nobody is in, then all through the hand-run dispatch
+  (`trigger_runs._dispatch_store_action`), ran the action as it was written (a webhook's fire and
+  a view's refresh now run through the dispatch every fire runs through, which asks it);
 * a loop's check and a workflow's verify gate (`loop.gates.run_verify_command`), a workflow's setup
   or teardown step (`workflows.provisioning.run_step`), an effect's teardown
   (`workflows.effects.run_teardown`) and the agent's own bash tool in a session nobody is in asked
@@ -34,6 +35,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 
+import fire_dispatch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
@@ -136,6 +138,18 @@ def work(tmp_path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _one_home(monkeypatch):
+    """One home for the trigger routes and the gateway's dispatch, as a running gateway has: the
+    suite gives the trigger routes a store of their own, and the dispatch every fire runs through
+    writes where the gateway's home is."""
+    from personalclaw.config.loader import config_dir
+
+    home = config_dir()
+    monkeypatch.setattr("personalclaw.dashboard.handlers.triggers.config_dir", lambda: home)
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: home)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_webhook_rates():
     from personalclaw.inbound import caps
 
@@ -194,10 +208,12 @@ def _newest_run(tid: str, runs=None) -> str:
 
 
 class _State:
-    """The dashboard state the fire-and-forget handlers track their tasks on."""
+    """The dashboard state the fire-and-forget handlers track their tasks on, carrying the gateway's
+    fire dispatch a webhook's fire and a view's refresh run through."""
 
     def __init__(self) -> None:
         self._background_tasks: set[asyncio.Task] = set()
+        fire_dispatch.attach(self)
 
 
 async def _a_webhooks_fire(command: str, rec: _Recorder, _sh: _Shell, _work: Path):

@@ -27,6 +27,7 @@ from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
+import fire_dispatch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -133,6 +134,18 @@ def _no_shell(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _one_home(monkeypatch):
+    """One home for the trigger routes and the gateway's dispatch, as a running gateway has: the
+    suite gives the trigger routes a store of their own, and the dispatch every fire runs through
+    writes where the gateway's home is."""
+    from personalclaw.config.loader import config_dir
+
+    home = config_dir()
+    monkeypatch.setattr("personalclaw.dashboard.handlers.triggers.config_dir", lambda: home)
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: home)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_webhook_rates():
     from personalclaw.inbound import caps
 
@@ -194,7 +207,8 @@ def _a_fire(path: str, rec: _Recorder, state: _State, _work: Path) -> tuple[str,
 
 
 def _a_webhooks_fire(path: str, rec: _Recorder, state: _State, _work: Path):
-    """An outside caller fires a webhook automation (`trigger_runs._dispatch_store_action`)."""
+    """An outside caller fires a webhook automation, which runs through the dispatch every fire
+    runs through (`gateway._fire_store_trigger`, handed to the dashboard as a gateway hands it)."""
     from personalclaw.dashboard.handlers import triggers
     from personalclaw.inbound import clients
 
@@ -217,7 +231,7 @@ def _a_webhooks_fire(path: str, rec: _Recorder, state: _State, _work: Path):
 
     async def _fire() -> None:
         app = web.Application()
-        app["state"] = state
+        app["state"] = fire_dispatch.attach(state)
         app.router.add_post("/api/triggers/{id}/fire", trigger_runs.api_trigger_fire)
         async with TestClient(TestServer(app)) as http:
             resp = await http.post(

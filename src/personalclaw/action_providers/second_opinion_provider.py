@@ -21,7 +21,7 @@ mismatch that makes a trigger validate, save, and then fail at fire time.
         "stuck_at": "the same assertion fails …",     # required
         "origin_runner": "gemini-cli",                # required — the exclusion key
         "ask": "…",                  # optional; defaults to "smallest change that unblocks"
-        "workspace": "/abs/path",    # the stalled work's folder; else the payload's
+        "workspace": "/abs/path",    # the stalled work's folder; required for an automation
         "session_key": "...",        # optional; the stalled session, named in the audit rows
         "sandbox": "docker",         # optional; the stalled run's sandbox tier, which the proposer
                                      # inherits (unnamed: the tier its agent's runtime is set up
@@ -36,7 +36,9 @@ mismatch that makes a trigger validate, save, and then fail at fire time.
     }
 
 **A workflow step's handoff is its own run's.** An automation names the stalled session and the
-folders of its handoff as the owner set it up. A workflow step's arguments may not, since a template
+folders of its handoff as the owner set it up, in its config, and nothing that fires it does: a
+fire's payload is event data (a webhook's body, an app's event, a lifecycle hook's moment, whose
+``cwd`` is PersonalClaw's own folder). A workflow step's arguments may not, since a template
 can be written or edited by a model: its handoff works and writes its brief in the step's own run's
 folder, and is recorded under the run's identity, and a step that names a session, a workspace or a
 brief folder is refused before anything is written, in the words its template is refused with when
@@ -132,17 +134,15 @@ class SecondOpinionActionProvider(ActionProvider):
                 "has none"
             )
         else:
-            workspace = str(
-                action_config.get("workspace")
-                or payload.get("workspace")
-                or payload.get("cwd")
-                or ""
-            ).strip()
+            # The folders and the stalled session are the automation's own, in its config as its
+            # owner set it up. Never its fire's payload: that is event data (a webhook's body, an
+            # app's event), and a lifecycle hook's carries `cwd`, PersonalClaw's own folder.
+            workspace = str(action_config.get("workspace") or "").strip()
             brief_dir = str(action_config.get("brief_dir") or "").strip()
-            # The stalled session is its caller's to name, in the config. Never the payload's: a
-            # payload is event data, and the audit rows name this session.
             session_key = str(action_config.get("session_key") or "").strip()
-            no_folder = "it needs a 'workspace', the folder the stalled work is in"
+            no_folder = (
+                "it needs a 'workspace' in its own settings, the folder the stalled work is in"
+            )
         if not workspace:
             return ActionResult(
                 success=False,

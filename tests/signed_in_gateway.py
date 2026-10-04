@@ -16,6 +16,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import aiohttp
+import fire_dispatch
 import pytest
 
 #: Every shortcut a test process might inherit; each one admits a request before the gateway's own
@@ -86,6 +87,10 @@ async def signed_in_gateway(
     monkeypatch.setattr(handlers_core_mod, "_DIST_DIR", dist)
 
     runner, state = await server_mod.start_dashboard(sessions=MagicMock(count=0), port=0)
+    # What the gateway hands its dashboard at boot: the dispatch every automation's fire runs
+    # through, a webhook's and a view's included, in the same home.
+    monkeypatch.setattr("personalclaw.gateway.config_dir", lambda: home)
+    fire_dispatch.attach(state)
     port = runner.addresses[0][1]
     # What the gateway exports to every child it starts (`gateway_base.publish`).
     monkeypatch.setenv("PERSONALCLAW_PORT", str(port))

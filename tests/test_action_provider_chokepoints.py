@@ -48,12 +48,12 @@ import pytest
 #: `test_the_catalog_site_does_not_execute` below.
 EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     ("personalclaw.hooks", "the lifecycle-hook fire path"),
-    ("personalclaw.gateway", "the clock/file/event trigger fire path"),
-    # Run now, the restart review's Run now, your answer to a run's question, a webhook's fire, a
-    # view's refresh, and a Run now an agent's tool or an app starts. Yours is attended and carries
-    # `manual_refusal`; every other run has nobody answering it, so the module is a denylist seam
-    # below as well (`test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist`).
-    ("personalclaw.dashboard.handlers.trigger_runs", "the run-by-hand-or-from-outside path"),
+    ("personalclaw.gateway", "the clock/file/event/webhook/view trigger fire path"),
+    # Run now, the restart review's Run now, your answer to a run's question, and a Run now an
+    # agent's tool or an app starts. Yours is attended and carries `manual_refusal`; every other
+    # run has nobody answering it, so the module is a denylist seam below as well
+    # (`test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist`).
+    ("personalclaw.dashboard.handlers.trigger_runs", "the run-by-hand path"),
     # Approving an inbox proposal whose apply case is `action` dispatches a provider
     # directly (not through `triggers.tools.run`), so it is a real execution site. User-clicked,
     # so it carries `manual_refusal` — the manual Run path's gate — rather than the unattended
@@ -243,9 +243,10 @@ def test_each_user_clicked_seam_is_a_documented_denylist_exemption(module_name):
 
 
 def test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist():
-    """🔴 The run-by-hand-or-from-outside dispatch was exempt as the Run button's path, while a
-    webhook's outside caller, a view's refresh and an agent's `automation_run` reached the same
-    dispatch with nobody answering. The properties that make it a denylist seam now:
+    """🔴 The run-by-hand dispatch was exempt as the Run button's path, while an agent's
+    `automation_run` (and, then, a webhook's outside caller and a view's refresh, which now run
+    through the dispatch every fire runs through) reached the same dispatch with nobody answering.
+    The properties that make it a denylist seam now:
 
     * `_dispatch_store_action` asks `enforce_action`, threading the identity it judges the run
       under, before its provider runs;
@@ -284,7 +285,8 @@ def test_the_hand_dispatch_holds_every_run_but_yours_to_the_denylist():
                 continue
             callers += 1
             assert "runs_for" in {k.arg for k in node.keywords}, ast.unparse(node)
-    assert callers >= 5, f"found only {callers} callers; the scan is not seeing them"
+    # Run now, an answer, and the restart review's Run now.
+    assert callers >= 3, f"found only {callers} callers; the scan is not seeing them"
 
 
 @pytest.mark.parametrize("module_name,label", EXECUTION_SITES)

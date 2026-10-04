@@ -200,19 +200,25 @@ def test_renders_returns_BOTH_refreshes_and_cache_hits(store, tmp_path):
     assert payloads2 == [] and len(cached2) == 2
 
 
-def test_a_refresh_is_counted_as_its_triggers_fire_and_a_cache_hit_is_not(store, tmp_path):
-    """A refresh is the trigger firing, so its run count and last-fired time move where the render
-    decides it; a render served from cache fired nothing and moves neither."""
-    from personalclaw.triggers.service import to_iso
+def test_a_refresh_is_counted_where_its_fire_is_admitted_not_where_it_is_decided(store, tmp_path):
+    """A refresh is the trigger firing, so it is counted where every fire is, at the admission
+    that lets it go ahead (`service.admit_fire`, which the render's caller asks): the decision to
+    refresh counts nothing, so a refresh its automation's own rules hold spends nothing."""
+    import asyncio
+
+    from personalclaw.triggers.service import admit_fire, to_iso
 
     _view(store, tid="view:a", ttl_secs=300)
-    V.renders(store, surface="dashboard.inbox", now=NOW, base_dir=tmp_path)
+    (payload,), _cached = V.renders(store, surface="dashboard.inbox", now=NOW, base_dir=tmp_path)
+    assert store.get("view:a").trigger.run_count == 0
+
+    trigger = store.get(payload["trigger_id"]).trigger
+    admission = asyncio.run(admit_fire(store, trigger, now=NOW, base_dir=tmp_path))
+
+    assert admission.allowed, admission.row
     fired = store.get("view:a").trigger
     assert fired.run_count == 1
     assert fired.last_fired_at == to_iso(NOW)
-
-    V.renders(store, surface="dashboard.inbox", now=NOW + 10, base_dir=tmp_path)
-    assert store.get("view:a").trigger.run_count == 1
 
 
 def test_ONE_bad_binding_does_not_break_the_RENDER(store, tmp_path, monkeypatch):

@@ -3,11 +3,11 @@
 A fire can reach its dispatch and find nothing it can run: no app running here provides its action,
 a ``{{secret:…}}`` its action uses does not resolve (`triggers.secrets`), or the trigger names no
 action at all. Both dispatches refuse it before anything runs — `gateway._fire_store_trigger` for a
-fire (clock, event, file, web watch, chained) and `dashboard.handlers.trigger_runs.
-_dispatch_store_action` for a run by hand or from outside (Run now, a webhook's fire, a view's
-refresh) — and :func:`refuse` keeps the refusal where its owner looks, as the other refusals on
-those paths are kept. It used to be a warning in the log and a bare return: the automation looked
-healthy on the Triggers page and never ran.
+fire (clock, event, file, web watch, chained, a webhook's request, a view's render) and
+`dashboard.handlers.trigger_runs._dispatch_store_action` for a run by hand (Run now, an answer,
+the restart review's Run now) — and :func:`refuse` keeps the refusal where its owner looks, as the
+other refusals on those paths are kept. It used to be a warning in the log and a bare return: the
+automation looked healthy on the Triggers page and never ran.
 
 * Its row in the run history reads ``refused``, saying why (`run_record.record_refusal`).
 * Its last run, which the Triggers page shows, is that refusal, with the same sentence.

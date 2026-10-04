@@ -1381,6 +1381,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # running; nothing was stopped or cleared.
     "update_not_cancellable": "The update can no longer be cancelled, so it will finish.",
     "update_in_progress": "An update is running, so there is nothing to dismiss yet.",
+    # ── firing a webhook automation (inbound/webhook.py — POST /api/triggers/{id}/fire) ──
+    # 429 or 409: the automation's own rules held this fire, as they hold its every fire (its
+    # hourly cap, its spacing, its quiet hours, its budget, a run still going); 429 when it fired
+    # as often as its owner allows. Nothing ran; the message says which, and its history why.
+    "fire_held": "The automation's own rules held this fire, so it did not run.",
 }
 
 

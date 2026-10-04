@@ -9,6 +9,7 @@ accept path, that the payload the action receives is fenced.
 """
 
 import asyncio
+import time
 
 import pytest
 from aiohttp import web
@@ -66,10 +67,15 @@ def _make_webhook(tmp_path, slug="my-hook", capabilities=None, *, enabled=True, 
 
 
 class _State:
-    """The minimal DashboardState surface the fire handler touches: a real task set to await."""
+    """The minimal DashboardState surface the fire handler touches: a real task set to await, and
+    the gateway's fire dispatch, here one that records each fire it is handed."""
 
     def __init__(self):
         self._background_tasks = set()
+        self.fired: list[dict] = []
+
+    async def fire_trigger(self, trigger, payload, *, event="trigger.fired", context=""):
+        self.fired.append({"trigger": trigger, "payload": payload, "event": event})
 
 
 async def _client(state):
@@ -87,16 +93,9 @@ async def _fire(client, trigger_id, token, *, body="ping"):
 
 
 @pytest.mark.asyncio
-async def test_a_scoped_token_fires_the_webhook(tmp_path, monkeypatch):
+async def test_a_scoped_token_fires_the_webhook(tmp_path):
     """The accept path: a client scoped to THIS trigger fires its action fire-and-forget (202)."""
     trigger_id = _make_webhook(tmp_path)
-    captured: dict = {}
-
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
-        captured.update(trigger=trigger, payload=payload, event=event)
-        return True, "ran"
-
-    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
     _rec, token = clients_mod.create_client(
         "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
     )
@@ -107,25 +106,19 @@ async def test_a_scoped_token_fires_the_webhook(tmp_path, monkeypatch):
         assert resp.status == 202
         assert (await resp.json())["accepted"] is True
         await asyncio.gather(*state._background_tasks)
-        assert captured["event"] == "webhook.fire"
-        assert captured["trigger"].id == "webhook:my-hook"
+        (fired,) = state.fired
+        assert fired["event"] == "webhook.fire"
+        assert fired["trigger"].id == "webhook:my-hook"
     finally:
         await client.close()
 
 
 @pytest.mark.asyncio
-async def test_an_accepted_fire_is_counted_on_its_trigger_and_a_refused_one_is_not(
-    tmp_path, monkeypatch
-):
+async def test_an_accepted_fire_is_counted_on_its_trigger_and_a_refused_one_is_not(tmp_path):
     """A webhook's fire is its trigger firing: its run count and last-fired time move where the
-    fire is accepted, as a clock fire's do at its admission. A refused one fired nothing."""
+    fire is accepted, at its admission, as a clock fire's do. A refused one fired nothing."""
     trigger_id = _make_webhook(tmp_path)
     refused_id = _make_webhook(tmp_path, slug="not-allowed", capabilities={})
-
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
-        return True, "ran"
-
-    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
     _rec, token = clients_mod.create_client(
         "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
     )
@@ -148,16 +141,9 @@ async def test_an_accepted_fire_is_counted_on_its_trigger_and_a_refused_one_is_n
 
 
 @pytest.mark.asyncio
-async def test_the_inbound_body_reaches_the_action_fenced(tmp_path, monkeypatch):
+async def test_the_inbound_body_reaches_the_action_fenced(tmp_path):
     """The untrusted body is wrapped as data before it reaches the agent — never as instructions."""
     trigger_id = _make_webhook(tmp_path)
-    captured: dict = {}
-
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
-        captured.update(payload=payload)
-        return True, "ran"
-
-    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
     _rec, token = clients_mod.create_client(
         "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
     )
@@ -168,7 +154,7 @@ async def test_the_inbound_body_reaches_the_action_fenced(tmp_path, monkeypatch)
         resp = await _fire(client, trigger_id, token, body=body)
         assert resp.status == 202
         await asyncio.gather(*state._background_tasks)
-        fenced = captured["payload"]["body"]
+        fenced = state.fired[0]["payload"]["body"]
         assert body in fenced  # the payload is preserved verbatim…
         assert "untrusted_content" in fenced  # …inside the fence…
         # …and the "treat as data" preamble precedes it, or a model reads it as instruction.
@@ -187,14 +173,7 @@ async def test_a_trigger_not_allowed_to_run_its_action_is_refused_before_it_is_a
     Refused before the 202, so the caller learns the fire did not happen, and audited; the
     action is not named to an outside caller."""
     trigger_id = _make_webhook(tmp_path, capabilities={})
-    dispatched: list = []
-
-    async def _fake_dispatch(trigger, payload, *, event="manual.run", state=None, runs_for=None):
-        dispatched.append(trigger.id)
-        return True, "ran"
-
     audited: list[dict] = []
-    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _fake_dispatch)
     monkeypatch.setattr("personalclaw.inbound.audit.audit", lambda *a, **k: audited.append(dict(k)))
     _rec, token = clients_mod.create_client(
         "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
@@ -208,7 +187,7 @@ async def test_a_trigger_not_allowed_to_run_its_action_is_refused_before_it_is_a
         assert "not allowed to run its action" in message
         assert "Run Prompt" not in message and "run-prompt" not in message
         await asyncio.gather(*state._background_tasks)
-        assert dispatched == []
+        assert state.fired == []
         assert [a.get("status") for a in audited] == [403]
     finally:
         await client.close()
@@ -369,5 +348,86 @@ async def test_incident_mode_suspends_the_fire(tmp_path, monkeypatch):
     client = await _client(state)
     try:
         assert (await _fire(client, trigger_id, token)).status == 503
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_fire_while_its_last_run_is_still_going_runs_nothing_and_says_so(tmp_path):
+    """🔴 Red before: a fire beside a run in flight ran its action again, whatever the automation's
+    overlap rule said. Its admission holds it as every fire's does, and the sender is told."""
+    from personalclaw.triggers import claims
+    from personalclaw.triggers.scheduling import Claim
+
+    trigger_id = _make_webhook(tmp_path)
+    claims.write_claim(
+        Claim(trigger_id="webhook:my-hook", holder="webhook:1", claimed_at=time.time()),
+        base_dir=tmp_path,
+    )
+    _rec, token = clients_mod.create_client(
+        "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
+    )
+    state = _State()
+    client = await _client(state)
+    try:
+        resp = await _fire(client, trigger_id, token)
+        assert resp.status == 409
+        error = (await resp.json())["error"]
+        assert error["code"] == "fire_held" and "still running" in error["message"]
+        await asyncio.gather(*state._background_tasks)
+        assert state.fired == []
+    finally:
+        await client.close()
+    assert TriggerStore(base_dir=tmp_path).get("webhook:my-hook").trigger.run_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_process_that_runs_no_automations_fires_nothing_and_says_so(tmp_path):
+    """Nothing here can run the fire, so nothing is counted for it, and the sender is told."""
+    trigger_id = _make_webhook(tmp_path)
+    _rec, token = clients_mod.create_client(
+        "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
+    )
+    state = _State()
+    state.fire_trigger = None  # type: ignore[assignment,method-assign]
+    client = await _client(state)
+    try:
+        resp = await _fire(client, trigger_id, token)
+        assert resp.status == 503
+        assert "not running its automations" in (await resp.json())["error"]["message"]
+    finally:
+        await client.close()
+    assert TriggerStore(base_dir=tmp_path).get("webhook:my-hook").trigger.run_count == 0
+
+
+@pytest.mark.asyncio
+async def test_two_requests_arriving_together_fire_it_once(tmp_path, monkeypatch):
+    """Two requests at once are admitted one after the other, as two events are: the second sees
+    the claim the first took, so the automation's overlap rule holds however its admission is
+    timed (here its owner's calendar takes a moment to say it is on duty)."""
+    from personalclaw.triggers import calendar
+
+    async def _slow_calendar(moment, config):
+        await asyncio.sleep(0.05)
+        return calendar.DutyVerdict(on_duty=True)
+
+    monkeypatch.setitem(calendar._DUTY_GATES, "slow-calendar", _slow_calendar)
+    trigger_id = _make_webhook(tmp_path)
+    store = TriggerStore(base_dir=tmp_path)
+    row = store.get("webhook:my-hook").trigger
+    row.gates = {"duty_gate": {"provider": "slow-calendar"}}
+    store.upsert(row)
+    _rec, token = clients_mod.create_client(
+        "wh", surfaces=["webhook"], scope={"trigger": trigger_id}
+    )
+    state = _State()
+    client = await _client(state)
+    try:
+        first, second = await asyncio.gather(
+            _fire(client, trigger_id, token), _fire(client, trigger_id, token)
+        )
+        assert sorted([first.status, second.status]) == [202, 409]
+        await asyncio.gather(*state._background_tasks)
+        assert len(state.fired) == 1
     finally:
         await client.close()

@@ -118,13 +118,12 @@ relative to `PersonalClaw/src/personalclaw/`.
   action is read-only by what it declares (`ActionProvider.effect`), never
   by its name: `call-app-route` reads only when the app declares the route
   `readOnly`, and an action that declares nothing is a change. Both
-  dispatches check it — the one by hand or from outside
-  (`_dispatch_store_action`: Run now, the restart review's Run now, a view
-  refresh, a webhook fire, which also holds every run but one you start
-  yourself to the action denylist, as the other holds every fire) and the
-  unattended one (`gateway._fire_store_trigger`: clock, event, file,
-  web_watch, chained) — and a refusal names the missing action and how the
-  owner allows it; an unattended refusal is a `skipped_gate` row in the
+  dispatches check it — the one by hand (`_dispatch_store_action`: Run now,
+  an answer, the restart review's Run now, which also holds every run but one
+  you start yourself to the action denylist, as the other holds every fire)
+  and the unattended one (`gateway._fire_store_trigger`: clock, event, file,
+  web_watch, chained, webhook, view) — and a refusal names the missing action
+  and how the owner allows it; an unattended refusal is a `skipped_gate` row in the
   trigger's Runs history. Both also resolve what the trigger runs, the
   provider before the grant and its `{{secret:…}}` references after it
   (`secrets.resolve_for`), and mask each value filled in out of what the
@@ -200,8 +199,16 @@ relative to `PersonalClaw/src/personalclaw/`.
   on its page, which shows its address, where that answers and what to send,
   with `personalclaw inbound webhook create <automation-id>`, or through
   Settings' client route; deleting the automation revokes them. The body is
-  fenced as data, and the fire is the trigger's own, held to its switch, its
-  grant and the action denylist. The doors' shared rules are
+  fenced as data, and the fire is the trigger's own: it is admitted as the
+  clock's and an event's fires are (`service.admit_fire`: its hourly cap,
+  spacing, quiet hours, budget and overlap, its typed row when it holds one)
+  and runs through the dispatch every fire runs through, which the gateway
+  hands the dashboard (`DashboardState.fire_trigger`), so its run is a fire's:
+  its failures count toward the streak that pauses it. A fire its rules hold
+  answers `fire_held` (`429` for its cap and spacing, `409` otherwise). Two
+  requests arriving together are admitted one after the other, as two events
+  are (`service.request_admission`). A `view` trigger's refresh is admitted and
+  dispatched the same way. The doors' shared rules are
   [security.md](security.md#webhooks).
 - **Callbacks the agent registers** (`webhook_callbacks.py`) — the chat's
   `hook_register` saves context for a later `POST /api/hooks/agent` (the
@@ -363,8 +370,9 @@ observe-mode capability, reported by the Doctor's would-execute simulator.
 **A run's history row says when it ran, for how long, and how it went, and its
 trigger keeps count.** Every run that reached its action is recorded by one
 recorder (`triggers/run_record.py`, `record_run`), a fire from the clock, an
-event, a watched file or page, a chain or a quiet session, and a run by hand
-(Run now, the review's Run now, a webhook, a view's refresh) alike. The row
+event, a watched file or page, a webhook's call, a view's refresh, a chain or a
+quiet session, and a run by hand (Run now, an answer, the review's Run now)
+alike. The row
 carries `started_at` (when the action started), `finished_at` (when it
 returned) and `duration_ms`; a scheduled fire's row used to be written at
 record time with both times the same and 0 ms. In the same write the trigger's
@@ -374,12 +382,11 @@ stamp moves: `last_success_at`, `last_failure_at` with the reason in
 decision; a run by hand is tagged `manual` and leaves the trigger's health
 alone. A fire's `run_count` and `last_fired_at` move where the fire is decided,
 before its action runs (`run_record.count_fire`): at the admission for the
-clock and events; in the file poll, the web poll, the chain and the
-quiet-session poll for the kinds no admission walks, which used to leave
-`run_count` at 0 so the panel read "never run"; and where a webhook is
-accepted or a view starts its refresh. A chain its guards refuse is not
-counted; its `skipped_gate` row says why. Run now and the review's Run now
-spend neither.
+clock, events, a webhook's call and a view's refresh; in the file poll, the
+web poll, the chain and the quiet-session poll for the kinds no admission
+walks, which used to leave `run_count` at 0 so the panel read "never run". A
+fire the admission holds, or a chain its guards refuse, is not counted; its
+skipped row says why. Run now and the review's Run now spend neither.
 An action that did its work at its no-model floor returns `outcome="degraded"`
 and its run records `degraded` (the runs feed reads `Outcome.DEGRADED`, shown
 in warning tone): the morning digest whose synthesis was unavailable still
@@ -746,9 +753,9 @@ sends no report — the action's own note is the notification, and it carries
 the `statusUrl` itself (`ActionContext.status_url`). A failed notify still
 reports.
 
-**Every run reports on its route.** A scheduled fire and every run the attended
+**Every run reports on its route.** A fire and every run the attended
 dispatch makes (`trigger_runs._dispatch_store_action`: Run now, the restart
-review's Run now, an answered park, a webhook fire, a view refresh) report
+review's Run now, an answered park) report
 through one reporter, `delivery.report_run`, with the same words, route and
 dedup. The route was the scheduled fire's alone, so a Run now of a trigger set
 to report to a chat channel told that channel nothing.

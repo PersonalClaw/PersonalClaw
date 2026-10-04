@@ -842,10 +842,9 @@ def deliver(state: Any, delivery: Delivery, *, delivered_ids: Any = None) -> boo
 #
 # ONE reporter for every run a trigger makes: a scheduled fire (`gateway._fire_store_trigger`), the
 # end of work a fire only started (`gateway._report_to_its_trigger`), and every run the dispatch
-# every hand-run and outside fire shares makes (`trigger_runs._dispatch_store_action`: Run now, the
-# restart review's Run now, an answered park, a webhook fire, a view refresh). It lived on the
-# gateway, where that dispatch could not reach it, so a Run now of a trigger set to report to a
-# chat channel reported nowhere.
+# every run by hand shares makes (`trigger_runs._dispatch_store_action`: Run now, the restart
+# review's Run now, an answered park). It lived on the gateway, where that dispatch could not reach
+# it, so a Run now of a trigger set to report to a chat channel reported nowhere.
 
 #: The event ids this process has delivered (`is_duplicate`'s seen-set). Process-local, which is
 #: the honest scope: the retry window is a transport concern, and an in-memory set is right for one

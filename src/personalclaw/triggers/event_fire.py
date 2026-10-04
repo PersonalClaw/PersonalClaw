@@ -141,7 +141,7 @@ class EventRouter:
     async def _deliver(self, event: BusEvent) -> list[str]:
         from personalclaw.config.loader import config_dir
         from personalclaw.triggers.provider import armable
-        from personalclaw.triggers.service import admit_fire, budget_spent
+        from personalclaw.triggers.service import admit_fire, retire_if_spent
         from personalclaw.triggers.store import TriggerStore
 
         store = TriggerStore(base_dir=self._base_dir or config_dir())
@@ -162,12 +162,8 @@ class EventRouter:
             if not admission.allowed:
                 continue
             self._fire_times.append(now)
-            if budget_spent(trigger):
-                # The last allowance: the trigger retires, visibly, exactly as the fire that spends
-                # a one-shot clock's slot retires it.
-                trigger.enabled = False
-                store.upsert(trigger)
-                logger.info("event trigger %s spent its max_fires budget; switched off", trigger.id)
+            # The last allowance: the trigger retires, visibly.
+            retire_if_spent(store, trigger)
             payload, context = fire_payload(trigger.id, event)
             self._track(
                 asyncio.create_task(
@@ -181,19 +177,16 @@ class EventRouter:
         self, trigger: Any, payload: dict[str, Any], *, context: str, event: BusEvent, base_dir: Any
     ) -> None:
         """Run one admitted fire through the store dispatch, then give its claim back."""
-        from personalclaw.triggers.executor import release_claim_for
+        from personalclaw.triggers.service import run_admitted
 
-        try:
-            await self._dispatch(
-                trigger, payload, event=f"{event.source}.{event.event_type}", context=context
-            )
-        except Exception:  # noqa: BLE001 - the dispatch records its own outcome; never re-raise
-            logger.warning("event trigger %s: dispatch raised", trigger.id, exc_info=True)
-        finally:
-            # `admit_fire` wrote a claim so `overlap` can enforce; a run that has settled must hand
-            # it back, or the trigger reads as running and refuses its next event for the claim's
-            # full lifetime.
-            release_claim_for(trigger.id, base_dir=base_dir)
+        await run_admitted(
+            self._dispatch,
+            trigger,
+            payload,
+            event=f"{event.source}.{event.event_type}",
+            context=context,
+            base_dir=base_dir,
+        )
 
     def _storm_allows(self, now: float) -> bool:
         self._fire_times = [t for t in self._fire_times if now - t < STORM_WINDOW_SECS]

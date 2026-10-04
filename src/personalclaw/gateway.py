@@ -1442,8 +1442,10 @@ class GatewayOrchestrator:
     ) -> None:
         """Run one store-backed trigger's declared action through the action-provider registry.
 
-        THE dispatch for every store-backed fire — clock, file, web_watch, webhook, chained, event —
-        so each executes the same action the same way. A failed action is logged rather than raised:
+        THE dispatch for every store-backed fire — clock, file, web_watch, webhook, view, chained,
+        event — so each executes the same action the same way; the dashboard reaches it for a
+        webhook's request and a view's render (`DashboardState.fire_trigger`). A failed action is
+        logged rather than raised:
         the outcome belongs to the executor's typed classification, and a raise here would strand
         the rest of the drain.
 
@@ -4735,6 +4737,9 @@ class GatewayOrchestrator:
         self._publish_runtime_base()
         if self.dashboard_state:
             self.dashboard_state.no_crons = self._no_crons  # dashboard mode
+            # A webhook's fire and a view's refresh start in the dashboard's handlers, and are
+            # fires all the same: they run through the dispatch every fire runs through.
+            self.dashboard_state.fire_trigger = self._fire_store_trigger
             # The scheduler's refresh callback is gone. It fired only from
             # `_record_run`, reachable only from the retired timer and the manual-run path —
             # and that path's HANDLER already pushes both kinds in its own `finally`. Scheduled

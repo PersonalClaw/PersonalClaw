@@ -59,8 +59,10 @@ fire every automation in the same second.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -703,8 +705,9 @@ async def admit_fire(
     """Walk ONE trigger through S86's fire path and record what it decided (§3).
 
     THE admission, shared by every caller that decides a fire: the clock tick for a due trigger,
-    and the event router (`triggers.event_fire`) for a matched event. One function so an event fire
-    and a clock fire are refused by the same gates for the same reasons — a second copy of this
+    the event router (`triggers.event_fire`) for a matched event, and the dashboard's two doors a
+    fire comes in by, a webhook's request and a view's render (`trigger_runs`). One function so
+    every fire is refused by the same gates for the same reasons — a second copy of this
     context is how a gate input gets supplied on one path and forgotten on the other, which is the
     exact shape of the four "defaulted and never supplied" defects the comments below record.
 
@@ -1078,6 +1081,64 @@ def budget_spent(trigger: Any) -> bool:
     """
     remaining = _budget_remaining(trigger)
     return remaining is not None and remaining <= 0
+
+
+#: The admissions of the fires that come in by a request (a webhook's call, a view's render), one at
+#: a time per event loop, so two arriving together see each other's claim and count: the property
+#: the clock's tick has by being one walk and the event router by its own lock. Per loop, since a
+#: lock belongs to the loop that first waits on it.
+_REQUEST_ADMISSIONS: weakref.WeakKeyDictionary[Any, asyncio.Lock] = weakref.WeakKeyDictionary()
+
+
+def request_admission() -> asyncio.Lock:
+    """The lock a fire that comes in by a request is resolved and admitted under."""
+    loop = asyncio.get_running_loop()
+    lock = _REQUEST_ADMISSIONS.get(loop)
+    if lock is None:
+        lock = _REQUEST_ADMISSIONS[loop] = asyncio.Lock()
+    return lock
+
+
+def retire_if_spent(store: Any, trigger: Any) -> bool:
+    """Switch *trigger* off, left visible, when the fire its admission just granted spent the last
+    of its `max_fires` budget. Whether it did.
+
+    "Tell me the NEXT time X" is a one-shot: a spent trigger left on would write a `skipped_budget`
+    row for every fire after it and read as live on the Triggers page. Asked by every caller that
+    admits a fire outside the clock's tick (an event, a webhook's request, a view's render), as
+    the fire that takes a one-shot clock's slot retires it.
+    """
+    if not budget_spent(trigger):
+        return False
+    trigger.enabled = False
+    store.upsert(trigger)
+    logger.info("trigger %s spent its max_fires budget; switched off", trigger.id)
+    return True
+
+
+async def run_admitted(
+    dispatch: Any,
+    trigger: Any,
+    payload: dict[str, Any],
+    *,
+    event: str,
+    context: str = "",
+    base_dir: Any = None,
+) -> None:
+    """Run one fire `admit_fire` granted through *dispatch*, the gateway's store dispatch
+    (`GatewayOrchestrator._fire_store_trigger`), then give back the claim the admission took.
+
+    Never raises: the dispatch records its own outcome. The claim is handed back once the run has
+    settled, or its trigger reads as running and refuses its next fire for the claim's lifetime.
+    """
+    from personalclaw.triggers.executor import release_claim_for
+
+    try:
+        await dispatch(trigger, payload, event=event, context=context)
+    except Exception:  # noqa: BLE001 - the dispatch records its own outcome; never re-raise
+        logger.warning("trigger %s: dispatch raised", trigger.id, exc_info=True)
+    finally:
+        release_claim_for(trigger.id, base_dir=base_dir)
 
 
 def _own_time(trigger: Any) -> float:

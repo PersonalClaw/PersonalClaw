@@ -272,9 +272,16 @@ most 90 days. The automation's page and Settings → Devices list it and revoke 
 External Access lists it, switches it off and revokes it. Deleting the automation revokes its
 sender tokens (`TriggerStore.delete`): one made again under the same id (an automation that
 never ran, a restore, an import) gets the same address, and a token made for the first must not
-fire it. The
-fire is then held as any fire of the automation: its own switch and its grant, the body fenced as
-data, the action denylist for a run nobody answers.
+fire it. The fire is then held as any fire of the automation is, because it is one: its own switch
+and its grant; its admission (`triggers/service.py::admit_fire`), the one the clock's and an
+event's fires walk, so its hourly cap, spacing, quiet hours, budget and overlap hold it
+(`429` or `409 fire_held`, saying which, and a skipped row in its history); and the dispatch every
+fire runs through (`gateway._fire_store_trigger`, which the gateway hands the dashboard), so the
+body is screened and fenced as data, the action denylist and the autonomy ladder judge what it
+runs as work nobody answers, the day's budget pauses it, and its run is recorded as a fire, whose
+failures count toward the streak that pauses the automation. Nothing the body says chooses where
+the work happens: an action's folder, project, chat or session is its automation's own, from its
+settings, or the run's for a workflow step, and never the fire's payload.
 
 **The webhook token** is `hooks.webhook_token` in `config.json`, a `{{secret:…}}` reference there,
 resolved from the credential store at the check (`config/secret_refs.py`), and compared in
@@ -386,7 +393,7 @@ made in: speech an app's request asks for is held to the dollar caps, as the app
 
 Every dispatch that runs an action with nobody answering it asks `enforce_action` before the
 action's provider runs: a stored trigger's fire through the gateway (clock, event, file, web
-watch, chained), a webhook's fire from an outside caller, a view's refresh, a lifecycle hook, a
+watch, chained, a webhook's fire from an outside caller, a view's refresh), a lifecycle hook, a
 workflow run's action step (whoever started the run), a dashboard tile's refresh and the triage
 digest's auto-execution. The run-by-hand dispatch (`trigger_runs._dispatch_store_action`) asks it
 for every run but one you start yourself (Run now, your answer to the question a run stopped on,

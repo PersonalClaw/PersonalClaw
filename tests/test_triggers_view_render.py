@@ -49,11 +49,16 @@ def home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def state():
-    """A minimal state carrying the fire-and-forget task set the handler tracks tasks on."""
+    """A minimal state carrying the fire-and-forget task set the handler tracks tasks on, and the
+    gateway's fire dispatch every refresh runs through, here one that records each it is handed."""
 
     class _State:
         def __init__(self) -> None:
             self._background_tasks: set[asyncio.Task] = set()
+            self.fired: list[tuple[str, str]] = []
+
+        async def fire_trigger(self, trigger, payload, *, event="trigger.fired", context=""):
+            self.fired.append((trigger.id, event))
 
     return _State()
 
@@ -98,18 +103,10 @@ def _run(coro):
 # ── a bound trigger past TTL refreshes AND schedules a dispatch ──
 
 
-def test_a_bound_view_trigger_past_TTL_is_REFRESHED_and_dispatched(home, state, monkeypatch):
+def test_a_bound_view_trigger_past_TTL_is_REFRESHED_and_dispatched(home, state):
     """🔴 The wiring. A bound `view` trigger's first render refreshes it — the endpoint returns it in
-    `refreshed` AND schedules a dispatch through the shared store-action path."""
+    `refreshed` AND schedules a dispatch through the dispatch every fire runs through."""
     _view(home, ttl_secs=300)
-
-    seen: list[tuple[str, str]] = []
-
-    async def _spy(trigger, payload, *, event="manual.run", state=None, runs_for=None):
-        seen.append((trigger.id, event))
-        return True, "ran"
-
-    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _spy)
 
     resp = _run(
         trigger_runs.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"}))
@@ -119,9 +116,9 @@ def test_a_bound_view_trigger_past_TTL_is_REFRESHED_and_dispatched(home, state, 
     assert data["served_cache"] == []
 
     # The dispatch was SCHEDULED as a background task, not awaited inline — drain the loop's pending
-    # tasks so the spy records the fire, proving it fires via the shared path with the view label.
+    # tasks so the dispatch records the fire, proving it fires via the shared path with its label.
     _run(_drain(state))
-    assert seen == [("view:tile", "view.rendered")]
+    assert state.fired == [("view:tile", "view.rendered")]
 
 
 async def _drain(state) -> None:
@@ -134,18 +131,10 @@ async def _drain(state) -> None:
 # ── two renders inside the TTL: the second serves cache, no second dispatch ──
 
 
-def test_two_renders_inside_the_TTL_serve_CACHE_with_no_second_dispatch(home, state, monkeypatch):
+def test_two_renders_inside_the_TTL_serve_CACHE_with_no_second_dispatch(home, state):
     """🔴 The point of the kind: two renders inside the window cost nothing. The first refreshes and
     dispatches; the second serves cache and schedules NO dispatch."""
     _view(home, ttl_secs=300)
-
-    calls = {"n": 0}
-
-    async def _spy(trigger, payload, *, event="manual.run", state=None, runs_for=None):
-        calls["n"] += 1
-        return True, "ran"
-
-    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _spy)
 
     first = _body(
         _run(trigger_runs.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"})))
@@ -162,7 +151,7 @@ def test_two_renders_inside_the_TTL_serve_CACHE_with_no_second_dispatch(home, st
 
     # Only the first render dispatched; the cache hit scheduled nothing.
     _run(_drain(state))
-    assert calls["n"] == 1
+    assert len(state.fired) == 1
 
 
 # ── a surface with no bound triggers is a 200 with empty lists ──
@@ -192,7 +181,7 @@ def test_a_MISSING_surface_is_200_with_empty_lists(home, state):
 # ── fire-and-forget: the response returns before the LLM turn completes ──
 
 
-def test_the_render_returns_WITHOUT_awaiting_the_dispatch(home, state, monkeypatch):
+def test_the_render_returns_WITHOUT_awaiting_the_dispatch(home, state):
     """🔴 A synchronous render must never block on an LLM turn. The dispatch is scheduled and the
     decision returns immediately; if the endpoint awaited the action, this never-completing spy
     would hang the request instead of answering `refreshed`."""
@@ -200,12 +189,11 @@ def test_the_render_returns_WITHOUT_awaiting_the_dispatch(home, state, monkeypat
 
     started = asyncio.Event()
 
-    async def _never_finishes(trigger, payload, *, event="manual.run", state=None, runs_for=None):
+    async def _never_finishes(trigger, payload, *, event="trigger.fired", context=""):
         started.set()
         await asyncio.Event().wait()  # blocks forever — an LLM turn the request must not await
-        return True, "ran"
 
-    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _never_finishes)
+    state.fire_trigger = _never_finishes
 
     async def _drive():
         # The endpoint returns even though the dispatch never completes.
@@ -221,3 +209,30 @@ def test_the_render_returns_WITHOUT_awaiting_the_dispatch(home, state, monkeypat
         task.cancel()
 
     _run(_drive())
+
+
+# ── a refresh is a fire: its automation's own rules hold it ──
+
+
+def test_a_refresh_its_automations_rules_hold_serves_cache_and_says_why(home, state):
+    """🔴 Red before: a refresh ran whatever its automation's own rules said. Its admission holds it
+    as it holds every fire, here a refresh of it still running, and the render says why."""
+    import time
+
+    from personalclaw.triggers import claims
+    from personalclaw.triggers.scheduling import Claim
+
+    _view(home, ttl_secs=300)
+    claims.write_claim(
+        Claim(trigger_id="view:tile", holder="view:1", claimed_at=time.time()), base_dir=home
+    )
+
+    data = _body(
+        _run(trigger_runs.api_trigger_view_render(_req(state, body={"surface": "artifact.notes"})))
+    )
+
+    assert data["refreshed"] == []
+    (served,) = data["served_cache"]
+    assert served["trigger_id"] == "view:tile" and served["reason"]
+    _run(_drain(state))
+    assert state.fired == []

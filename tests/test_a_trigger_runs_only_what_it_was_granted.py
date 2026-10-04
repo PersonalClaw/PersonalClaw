@@ -301,15 +301,13 @@ def test_the_restart_review_keeps_its_card_when_the_grant_is_missing(home, ran):
     assert [card.trigger_id for card in review.pending(base_dir=home)] == ["nightly"]
 
 
-def test_a_view_refresh_does_not_run_an_ungranted_action(home, monkeypatch):
+def test_a_view_refresh_does_not_run_an_ungranted_action(home):
     """🔴 Red on main: a `view` trigger bound to a surface refreshed into `bash` with no grant."""
     dispatched: list[str] = []
 
-    async def _spy(trigger, payload, *, event="manual.run", state=None, runs_for=None):
+    async def _spy(trigger, payload, *, event="trigger.fired", context=""):
         dispatched.append(trigger.id)
-        return True, "ran"
 
-    monkeypatch.setattr(trigger_runs, "_dispatch_store_action", _spy)
     _store(home).upsert(
         Trigger(
             id="view:tile",
@@ -321,7 +319,7 @@ def test_a_view_refresh_does_not_run_an_ungranted_action(home, monkeypatch):
             workflow=copy.deepcopy(_BASH),
         )
     )
-    state = types.SimpleNamespace(_background_tasks=set())
+    state = types.SimpleNamespace(_background_tasks=set(), fire_trigger=_spy)
     app = web.Application()
     app["state"] = state
     request = make_mocked_request("POST", "/api/triggers/view/render", app=app)
@@ -346,9 +344,9 @@ def test_a_view_refresh_does_not_run_an_ungranted_action(home, monkeypatch):
 
 
 def test_the_dispatch_itself_refuses_so_no_caller_can_forget(home, ran):
-    """🔴 Red on main. Every caller by hand or from outside — Run now, the review's Run now, a view
-    refresh, a webhook fire — reaches the action through `_dispatch_store_action`, so the refusal
-    lives there too, not only in the callers that remembered to ask first."""
+    """🔴 Red on main. Every run by hand — Run now, an answer, the review's Run now — reaches the
+    action through `_dispatch_store_action`, so the refusal lives there too, not only in the
+    callers that remembered to ask first."""
     _schedule(home)
 
     done, note = asyncio.run(

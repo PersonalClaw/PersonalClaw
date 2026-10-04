@@ -75,7 +75,9 @@ export function WebhookDoorSection({ automationId, automationName, door, onChang
       <p data-type="body-s" className="text-on-surface-var">
         A program fires it by posting to this address with a sender token made for it, as the header{' '}
         <code className="font-mono">Authorization: Bearer &lt;sender token&gt;</code>. What it posts, up
-        to {kb} KB, reaches what it runs as data, never as instructions.
+        to {kb} KB, reaches what it runs as data, never as instructions. Each post is this
+        automation firing, held to the rules its other fires keep: past its hourly cap, in its quiet
+        hours or while a run of it is still going, nothing runs, and its history says why.
       </p>
 
       {made && (

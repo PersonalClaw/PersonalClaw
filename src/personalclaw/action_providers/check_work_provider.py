@@ -16,7 +16,8 @@ confined under the given root (`check_work._resolve` refuses an escape).
 
     {
         "text": "the claims to verify",   # required — a stage's findings, a summary
-        "root": "/where/the/work/landed", # optional; defaults to the run's workspace
+        "root": "/where/the/work/landed", # a step's defaults to its run's folder; an
+                                          # automation names its own
         "max_checks": 4                   # optional; the core's 2-4 ceiling
     }
 
@@ -37,6 +38,7 @@ from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
     ActionResult,
+    is_workflow_step,
 )
 from personalclaw.tool_providers.base import RiskLevel
 
@@ -72,17 +74,24 @@ class CheckWorkActionProvider(ActionProvider):
                 success=False,
                 error="check-work requires 'text' — the claims to verify",
             )
-        # The run workspace is where an upstream stage's files land, so it is the
-        # default ground truth; an explicit `root` overrides it for work done elsewhere.
-        root = str(action_config.get("root", "") or "").strip() or str(
-            ctx.payload.get("workspace", "") or ""
-        )
+        # An explicit `root` is where the work landed. A workflow step's default is its run's
+        # folder, where an upstream stage's files land, which the engine puts on the step's
+        # dispatch. An automation's fire carries event data, which names no folder to read, so an
+        # automation checks only the `root` its owner names.
+        root = str(action_config.get("root", "") or "").strip()
+        step = is_workflow_step(ctx)
+        if not root and step:
+            root = str(ctx.payload.get("workspace", "") or "")
         if not root:
             return ActionResult(
                 success=False,
                 error=(
                     "check-work has nothing to check against: no 'root' was given and "
-                    "this run has no workspace"
+                    + (
+                        "this run has no workspace"
+                        if step
+                        else "an automation checks only the folder its own 'root' names"
+                    )
                 ),
             )
         try:

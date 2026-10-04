@@ -97,8 +97,8 @@ same way, in the same words. A fire that comes while PersonalClaw is still start
 for them rather than being refused.
 
 - `src/personalclaw/triggers/cannot_run.py` — the sentences, and `refuse`, which both dispatches
-  call: `gateway._fire_store_trigger` for a fire, `trigger_runs._dispatch_store_action` for a run
-  by hand or from outside.
+  call: `gateway._fire_store_trigger` for a fire (a webhook's call and a view's refresh included),
+  `trigger_runs._dispatch_store_action` for a run by hand.
 - `src/personalclaw/triggers/run_record.py` — `record_refusal`: the `refused` row, the automation's
   last run, and whether its owner has heard of this refusal yet.
 - `src/personalclaw/action_providers/registry.py` — `action_origin`, the app that registered an
@@ -111,9 +111,10 @@ Triggers page "Stopped by the system after repeated failures". A run counts as f
 went wrong: the command it ran, or the agent (**Invoke Agent**, **Run Prompt**) or workflow run
 (**Run workflow**) it started, whose failure comes later than the fire that started it. Until that
 work ends its run reads `launched` and counts for nothing; when it ends, its row and the automation's
-last run say how it went. A run that succeeds starts the count over. A run you start by hand, a run
-a restart cut off, a run you stopped (it reads `stopped`, and sends no note), a refusal and a skip
-count for neither.
+last run say how it went. A run that succeeds starts the count over. A webhook's call and a view's
+refresh are the automation firing, so their failures count as any fire's do. A run you start by
+hand (**Run now**), a run a restart cut off, a run you stopped (it reads `stopped`, and sends no
+note), a refusal and a skip count for neither.
 
 Switching it back on resumes it: it fires on its own again. The failures that stopped it are still
 its last runs, so one more failure stops it again, and says so again; a run that succeeds starts the
@@ -318,13 +319,18 @@ needs your yes. Its page there shows two things:
 
 What the program posts, up to 64 KB, reaches what the automation runs as data, never as
 instructions. The fire answers `202` once it is accepted, and the run appears in the automation's
-run history like any other. A refusal says why, in a sentence: `401` for no token or one
-PersonalClaw does not know (and for one that was revoked or ran its lifetime, saying so), `403`
-for a token made for another automation, a request from another machine, or an action you have
-not allowed yet, `404` when the automation is switched off or not there, `429` when a sender
-posts faster than its rate, and `503` during an incident. Every request the address answers is in
-the inbound audit (Settings → External Access counts each sender token's), and every refusal and
-accepted fire is in the Security log.
+run history like any other fire's. A program's call is the automation firing, not you pressing
+**Run now**: it keeps every rule the automation's other fires keep. Its hourly cap and its spacing
+count it, its quiet hours, its budget and a run of it still going hold it, its failures count
+toward the streak that pauses it, and what it runs is held as any fire's is. A call its own rules
+hold runs nothing, answers `429` when the automation has fired as often as you allow for now and
+`409` otherwise, saying which, and leaves a skipped row in its run history saying why. A refusal
+says why, in a sentence: `401` for no token or one PersonalClaw does not know (and for one that
+was revoked or ran its lifetime, saying so), `403` for a token made for another automation, a
+request from another machine, or an action you have not allowed yet, `404` when the automation is
+switched off or not there, `429` when a sender posts faster than its rate, and `503` during an
+incident. Every request the address answers is in the inbound audit (Settings → External Access
+counts each sender token's), and every refusal and accepted fire is in the Security log.
 
 An agent can also register a **callback** with `hook_register`, for an outside system to call back
 later at `http://127.0.0.1:<port>/api/hooks/agent` with your **webhook token**, which you set with

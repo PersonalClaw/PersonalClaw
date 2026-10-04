@@ -1,9 +1,9 @@
 """A trigger's run, recorded once: the row its history shows, and what the trigger keeps of it.
 
 Every run of a trigger's action is recorded by :func:`record_run`, whatever started it: the clock,
-an event, a watched file or page, the end of other work, a quiet session, or a run by hand (Run
-now, the restart review's Run now, a webhook, a view's refresh). One recorder, so the row and the
-trigger cannot tell two stories about one run:
+an event, a watched file or page, a webhook's request, a view's render, the end of other work, a
+quiet session, or a run by hand (Run now, an answer, the restart review's Run now). One recorder,
+so the row and the trigger cannot tell two stories about one run:
 
 * **The row** (`ScheduleRun`): when the action started and when it returned, how long that took,
   what the run recorded (`schedule_history.status_for_result`), the line a person reads, the
@@ -38,8 +38,9 @@ it uses, an action at all (`triggers.cannot_run`) — is recorded by :func:`reco
 
 The fire METERS, ``run_count`` (what ``max_fires`` spends) and ``last_fired_at`` (what spacing
 measures from), move where a fire is DECIDED, before its action runs (:func:`count_fire`):
-`service.admit_fire` for the clock and events, and :func:`note_fire` for the fires no admission
-walks, which the watched-file and watched-page polls, the chain and the quiet-session poll decide.
+`service.admit_fire` for the clock, events, a webhook's requests and a view's renders, and
+:func:`note_fire` for the fires no admission walks, which the watched-file and watched-page polls,
+the chain and the quiet-session poll decide.
 Counting at the end instead would let fires in flight all pass a budget of one. A fire nothing
 counted used to leave its trigger at ``run_count: 0``, so its panel read "never run" beside the
 runs its history listed. A run by hand spends neither.
@@ -234,8 +235,9 @@ async def record_run(
     budget. *late* is why the run stands in for a slot that did not run on time (the tick's
     `missed.late_outcome`, or the review's Run now).
 
-    *by_hand* is a run a person or an outside caller started
-    (`trigger_runs._dispatch_store_action`). Its row is tagged ``manual``, which the hourly cap
+    *by_hand* is a run someone asked for (`trigger_runs._dispatch_store_action`: Run now, an
+    answer, the restart review's Run now), never one the trigger fired, a webhook's request and a
+    view's render included. Its row is tagged ``manual``, which the hourly cap
     (`ScheduleRunStore.count_since`) and the failure streak (`autopause.consecutive_failures_from`)
     both pass over, and it leaves the trigger's health, state and switch alone. A fire's row is
     tagged with its exit type, and the fire walks the autopause decision
@@ -376,8 +378,8 @@ async def record_refusal(
 ) -> bool:
     """Record a run of *trigger* refused before its action ran, because something the action needs
     is gone (`triggers.cannot_run`): no app running here provides it, a secret it uses does not
-    resolve, or the trigger names no action; or, for a run by hand or from outside, because the
-    action denylist refused its action. *why* is the sentence that says which.
+    resolve, or the trigger names no action; or, for a run by hand, because the action denylist
+    refused its action. *why* is the sentence that says which.
 
     The row reads ``refused``, saying *why*, and the trigger's stamps move as they do for a run
     that went wrong (:func:`stamp_run`), so its last run is this one, refused, with *why* as its

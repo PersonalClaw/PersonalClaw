@@ -6,14 +6,21 @@
 Every one of these makes a trigger's action happen NOW: the owner's Run button (and the
 ``automation_run`` tool and ``personalclaw cron trigger``, which post to it), a webhook's scoped
 caller, the answer to a question a run stopped on, a render surface refreshing its ``view``
-triggers, a lifecycle hook's rehearsal, and opening a schedule's last result as a chat. Only some
-are attended: the owner's own Run now and answer, and the restart review's Run now. A webhook's
-fire, a view's refresh, and a Run now an agent's tool or an app starts run with nobody answering
-the action. Every one that runs a store trigger's action (run, fire, answer, the view refresh, and
-the restart review's Run now in ``triggers``) goes through ONE dispatch,
-:func:`_dispatch_store_action`, which checks the trigger's grant, holds a run nobody answers to the
-action denylist as a trigger's own fire is held to it, and records the run through the recorder an
-autonomous fire uses (:func:`personalclaw.triggers.run_record.record_run`, as a run by hand).
+triggers, a lifecycle hook's rehearsal, and opening a schedule's last result as a chat.
+
+Two kinds of run, two paths:
+
+* **A fire**, the automation firing on its own: a webhook's request and a view's refresh. Nobody
+  asked for that run by name, and nobody answers what it runs. Each is admitted as the clock's and
+  an event's fires are (`service.admit_fire`) and runs through the dispatch every fire runs
+  through, the gateway's (`DashboardState.fire_trigger`), so it keeps every rule a fire keeps and
+  its history records it as a fire.
+* **A run by hand**, one someone asked for: Run now (the owner's, or an agent's tool or an app
+  asking for it), the answer to a question a run stopped on, and the restart review's Run now in
+  ``triggers``. These go through ONE dispatch, :func:`_dispatch_store_action`, which checks the
+  trigger's grant, holds a run nobody answers to the action denylist as a trigger's own fire is
+  held to it, and records the run through the recorder a fire uses
+  (:func:`personalclaw.triggers.run_record.record_run`, as a run by hand).
 
 Split out of :mod:`personalclaw.dashboard.handlers.triggers`, which keeps the list, create, edit,
 toggle and history routes and registers these beside them. The helpers they share (the store
@@ -117,7 +124,12 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
     fences the body it sent as untrusted data, and runs the action without waiting for it. It signs
     its caller in itself, so the dashboard's sign-in lets it through (`token_auth`).
 
-    The gate, in order, the inbound surfaces' own:
+    A fire, not a run by hand: nobody answers what it runs. It is admitted as the clock's and an
+    event's fires are (`service.admit_fire`), runs through the dispatch every fire runs through
+    (the gateway's, `DashboardState.fire_trigger`), and is recorded as its automation's fire, so its
+    hourly cap counts it and its failure streak pauses it.
+
+    The gate, in order, the inbound surfaces' own, then the automation's:
 
     1. **incident** (→ 503): an active incident holds everything that starts work from outside.
     2. **this machine** (→ 403): a request from another address is refused, and told how to reach
@@ -131,17 +143,26 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
        (`scope.trigger == <id>`); `check_bindings` refuses a disagreeing pin and the equality below
        an absent one, so a client with no pin fires nothing (fail-closed).
     5. **rate** (→ 429), per sender, so one noisy program cannot starve another.
-    6. **resolve** (→ 404): only a webhook automation that is switched on fires; an unknown id,
+    6. **body** (→ 413): capped, declared and read.
+    7. **resolve** (→ 404): only a webhook automation that is switched on fires; an unknown id,
        another kind and a paused one get one answer, so the caller learns only that nothing fired.
-       Asked after the token and the pin, so a caller learns nothing of other automations. Then the
-       automation's own grant (→ 403).
-    7. **fence + fire** (→ 202): the body, capped, is fenced (`framing.fence_payload`) so it reaches
-       the agent as data and never as instructions, and the action runs fire-and-forget, as a
-       view's refresh does: a sender must not wait on an agent's turn.
+       Asked after the token and the pin, so a caller learns nothing of other automations, and
+       once the body is in, so the admission below works on the automation as it is stored now.
+       Then the automation's own grant (→ 403).
+    8. **its automation's rules** (→ 429, 409): the admission every fire walks, in its order
+       (`triggers.firepath`): its spacing and hourly cap, its quiet hours, its budget, a run of it
+       still going. A fire it holds runs nothing, and its history keeps the typed row. Steps 7 and
+       8 are taken one request at a time (`service.request_admission`), so two requests arriving
+       together see each other's claim and count.
+    9. **fence + fire** (→ 202): the body, capped, is fenced (`framing.fence_payload`) so it reaches
+       the agent as data and never as instructions, and the action runs fire-and-forget: a sender
+       must not wait on an agent's turn. The dispatch screens it, as it screens every fire's.
 
     Every answer is one row of the inbound audit, a refusal and an accepted fire one of the Security
     log too (`webhook.answer`, `webhook.accepted`).
     """
+
+    import time as _time
 
     from personalclaw.dashboard.handlers.triggers import _STORE, _split_id, _trigger_store
     from personalclaw.inbound import caps as caps_mod
@@ -235,46 +256,7 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
         )
     clients_mod.touch_last_seen(client_id)
 
-    # 6) Resolve. Only a webhook automation of the owner's that is switched on fires. A paused one,
-    #    and one written elsewhere (shown here, run where it was written), answer exactly as an
-    #    unknown one does: 404 is what the inbound gate answers for a surface that is switched off
-    #    (`inbound.gate.admission_problem`). The audit row says which.
-    from personalclaw.triggers.ownership import is_owner_authored
-
-    kind, raw = _split_id(trigger_id)
-    store = _trigger_store()
-    row = store.get(raw) if kind == _STORE else None
-    if row is None or row.trigger.kind != "webhook":
-        why = "unknown or non-webhook trigger"
-    elif not is_owner_authored(row.trigger):
-        why = "the trigger was written elsewhere and runs there"
-    elif not row.trigger.fires_automatically:
-        why = "the trigger is switched off or paused"
-    else:
-        why = ""
-    if why or row is None:
-        return door.answer(
-            json_error("not_found", message=door.NOTHING_TO_FIRE, status=404, headers=_NO_STORE),
-            route=route,
-            refused=why,
-            client_id=client_id,
-        )
-
-    # 6b) The automation's own grant (`triggers.grants`): a sender token lets a caller fire THIS
-    #     automation, and says nothing about what its action may run. Refused here rather than after
-    #     a 202, so the caller learns the fire did not happen; the action is not named to an outside
-    #     caller, and the owner sees the grant on the Triggers page.
-    from personalclaw.triggers import grants
-
-    if grants.missing(row.trigger):
-        return door.answer(
-            json_error("forbidden", message=door.NOT_ALLOWED, status=403, headers=_NO_STORE),
-            route=route,
-            refused="the trigger's action is not allowed to run",
-            client_id=client_id,
-        )
-
-    # 7) Fence the untrusted body, then fire the trigger's action fire-and-forget.
+    # 6) The body, capped: as declared, then as read.
     declared = request.content_length or 0
     if declared > caps.body_bytes:
         return door.answer(
@@ -303,6 +285,91 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
             bytes_in=len(body_bytes),
         )
 
+    # 7) and 8) are asked under one lock per process (`service.request_admission`): two requests
+    #    arriving together are resolved and admitted one after the other, as two events are, so the
+    #    second sees the claim and the count the first left. The body is in before it is taken, so
+    #    a slow sender holds nothing.
+    from personalclaw.triggers import grants
+    from personalclaw.triggers.ownership import is_owner_authored
+    from personalclaw.triggers.service import (
+        admit_fire,
+        request_admission,
+        retire_if_spent,
+        run_admitted,
+    )
+
+    state: DashboardState = request.app["state"]
+    async with request_admission():
+        # 7) Resolve. Only a webhook automation of the owner's that is switched on fires. A paused
+        #    one, and one written elsewhere (shown here, run where it was written), answer exactly
+        #    as an unknown one does: 404 is what the inbound gate answers for a surface that is
+        #    switched off (`inbound.gate.admission_problem`). The audit row says which. Read once
+        #    the body is in, so the admission below writes the automation as it is stored now, not
+        #    as it was before a slow sender finished.
+        kind, raw = _split_id(trigger_id)
+        store = _trigger_store()
+        row = store.get(raw) if kind == _STORE else None
+        if row is None or row.trigger.kind != "webhook":
+            why = "unknown or non-webhook trigger"
+        elif not is_owner_authored(row.trigger):
+            why = "the trigger was written elsewhere and runs there"
+        elif not row.trigger.fires_automatically:
+            why = "the trigger is switched off or paused"
+        else:
+            why = ""
+        if why or row is None:
+            return door.answer(
+                json_error(
+                    "not_found", message=door.NOTHING_TO_FIRE, status=404, headers=_NO_STORE
+                ),
+                route=route,
+                refused=why,
+                client_id=client_id,
+            )
+
+        # 7b) The automation's own grant (`triggers.grants`): a sender token lets a caller fire
+        #     THIS automation, and says nothing about what its action may run. Refused here rather
+        #     than after a 202, so the caller learns the fire did not happen; the action is not
+        #     named to an outside caller, and the owner sees the grant on the Triggers page.
+        if grants.missing(row.trigger):
+            return door.answer(
+                json_error("forbidden", message=door.NOT_ALLOWED, status=403, headers=_NO_STORE),
+                route=route,
+                refused="the trigger's action is not allowed to run",
+                client_id=client_id,
+            )
+
+        # 8) Its automation's own rules, through the admission every fire walks, which counts a
+        #    fire it lets go ahead (`run_record.count_fire`) and writes the typed row of one it
+        #    holds. Not asked in a process that cannot run the fire, so nothing is counted there.
+        dispatch = state.fire_trigger
+        if dispatch is None:
+            return door.answer(
+                json_error(
+                    "service_unavailable", message=door.NOT_RUNNING, status=503, headers=_NO_STORE
+                ),
+                route=route,
+                refused="no automations run in this process",
+                client_id=client_id,
+            )
+        now = _time.time()
+        admission = await admit_fire(
+            store, row.trigger, now=now, base_dir=store.base_dir, holder=f"webhook:{int(now)}"
+        )
+        if not admission.allowed:
+            return door.answer(
+                door.held(admission.decision.gate, headers=_NO_STORE),
+                route=route,
+                refused=admission.decision.reason or admission.decision.gate,
+                client_id=client_id,
+                bytes_in=len(body_bytes),
+            )
+        retire_if_spent(store, row.trigger)
+
+    # 9) Fence the untrusted body, then fire the action fire-and-forget: a webhook sender must not
+    #    block on an agent's turn. Tracked on `state._background_tasks` so the task is not
+    #    garbage-collected mid-run, the idiom every fire-and-forget handler here follows; the claim
+    #    the admission took is given back when the run settles.
     fenced = framing.fence_payload(
         body_bytes.decode("utf-8", errors="replace"),
         surface=door.SURFACE,
@@ -311,29 +378,8 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
         caps=caps,
     )
     payload = {"trigger_id": raw, "body": fenced, "source": "webhook.fire"}
-
-    # A webhook's fire is its trigger firing, as a clock's is, so it is counted where it is
-    # decided (`run_record.note_fire`); its run is recorded through the hand-run dispatch below.
-    import time as _time
-
-    from personalclaw.triggers.run_record import note_fire
-
-    note_fire(store, raw, at=_time.time())
-
-    # Fire-and-forget: a webhook sender must not block on an LLM turn. Tracked on
-    # `state._background_tasks` so the task is not garbage-collected mid-run — the idiom
-    # `api_trigger_view_render` and the webhook-agent handler already follow. The fire is the
-    # trigger's own, with nobody answering it, so it is held to the action denylist as its clock
-    # fire would be (`runs_for`).
-    state: DashboardState = request.app["state"]
     task = asyncio.create_task(
-        _dispatch_store_action(
-            row.trigger,
-            payload,
-            event="webhook.fire",
-            state=state,
-            runs_for=approval_answer.trigger(raw),
-        )
+        run_admitted(dispatch, row.trigger, payload, event="webhook.fire", base_dir=store.base_dir)
     )
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
@@ -561,9 +607,9 @@ async def _dispatch_store_action(
     executed, and a short status string for the run result.
 
     `event` labels the source to the action provider the way `gateway._fire_store_trigger` does
-    (`file.changed`, `trigger.chained`): a manual Run keeps the default `manual.run`, a pull-on-view
-    refresh passes `view.rendered`. It is a label only — the dispatch is the ONE store-action path,
-    not a per-caller fork.
+    (`file.changed`, `trigger.chained`): a Run now keeps the default `manual.run`, an answer passes
+    `manual.answer` and the restart review's Run now `review.run_now`. It is a label only — the
+    dispatch is the ONE path a run by hand takes, not a per-caller fork.
 
     🔴 BOTH ACTION SHAPES, because a real store holds both (#395). This read the FLAT
     `workflow["provider"]` only, and every trigger the API/CLI/app-reconciler/digest writes nests
@@ -590,18 +636,17 @@ async def _dispatch_store_action(
     chat channel told that channel nothing. An action that only started its work reports when that
     work ends, as it does for a fire (`delivery.says_nothing_now`).
 
-    🔴 NOTHING RUNS WITHOUT ITS GRANT. Every run by hand or from outside reaches its action here —
-    Run now, the restart review's Run now, a view refresh, a webhook fire — and none of them walks
-    `service.admit_fire`, where the fence lives for a clock fire. So the grant is checked HERE, the
-    one place they share, and a refusal is `(False, <what is missing and how to allow it>)`.
-    Measured on `main`: every one of those four ran an ungranted `bash` action.
+    🔴 NOTHING RUNS WITHOUT ITS GRANT. Every run by hand reaches its action here — Run now, an
+    answer, the restart review's Run now — and none of them walks `service.admit_fire`, where the
+    fence lives for a fire. So the grant is checked HERE, the one place they share, and a refusal
+    is `(False, <what is missing and how to allow it>)`. Measured on `main` before it was checked
+    here: an ungranted `bash` action ran from each of them.
 
     🔴 A RUN NOBODY ANSWERS IS HELD TO THE ACTION DENYLIST. `runs_for` is whose run it is
     (`approval_answer.Principal`): you, for a Run now you pressed, your answer to the question a
-    run stopped on, or the restart review's Run now; or the agent, the app or the trigger whose
-    work it is otherwise, a webhook's fire and a view's refresh being the trigger's own. Every run
-    but yours has nobody answering its action, so it is asked what a trigger's own fire is asked
-    (`guardrails.denylist.enforce_action`) under the identity of whoever it is for
+    run stopped on, or the restart review's Run now; or the agent or the app whose Run now it is.
+    Every run but yours has nobody answering its action, so it is asked what a trigger's own fire
+    is asked (`guardrails.denylist.enforce_action`) under the identity of whoever it is for
     (:func:`_judged_as`), and refused before anything runs when the rule says so: among its rules,
     an action that would stop, restart, update or reinstall the PersonalClaw it runs in. A caller
     that does not say whose run it is (`None`) is judged as the trigger's own fire, nobody's to
@@ -620,8 +665,7 @@ async def _dispatch_store_action(
     action = inline or workflow
     provider_name = str(action.get("provider") or "")
     # A run with nothing it can run is refused as a fire with nothing is (`triggers.cannot_run`):
-    # its row, its last run, and its owner told once. Returned and nothing more, a webhook's fire
-    # and a view's refresh, which start this fire-and-forget, left no trace of it at all.
+    # its row, its last run, and its owner told once.
     provider = None
     if provider_name:
         _ensure_default_providers_registered()
@@ -651,13 +695,10 @@ async def _dispatch_store_action(
     # fire is recorded by (`run_record.record_run`), as a run by hand: tagged `manual`, its stamps
     # moved, and neither the fire meters (`run_count`, the `max_fires` budget a Run button must not
     # spend, or a user testing an automation could lock themselves out of it) nor its health. A
-    # `view.rendered` refresh and a webhook's fire flow through this same dispatch, so they leave
-    # the same run evidence a Run now does.
-    from personalclaw.triggers import delivery, fire_facts
+    # run by hand is no event's, so it is handed no account of one (`ActionContext.fire_facts`).
+    from personalclaw.triggers import delivery
     from personalclaw.triggers.delivery import status_url
 
-    # What started it, as the gateway's fire tells its run (a webhook's body, a view's open).
-    facts = await fire_facts.describe(trigger, payload)
     # The same `status_url` the autonomous path hands the provider, so a hand-run notify links back
     # to its trigger exactly as a scheduled one does.
     ctx = ActionContext(
@@ -669,8 +710,6 @@ async def _dispatch_store_action(
         # A person's answer to this trigger's park (`api_trigger_answer`), on the one dispatch it
         # starts: the browse action you confirmed a sign-in for goes on to the run.
         answer=answer,
-        fire_facts=facts.text,
-        fire_files=facts.files,
         secret_references=trigger_secrets.handed(provider, config),
     )
     trigger_id = str(getattr(trigger, "id", "") or "")
@@ -705,7 +744,7 @@ async def _dispatch_store_action(
         # The same floor a scheduled fire gets (`firepath.action_timeout`): this passed none, so a
         # `bash` Run now was cut off at 30s where its scheduled fire had 300s. And the same egress
         # tier: what the action reaches is held to the identity a fire of this trigger runs under,
-        # since a Run now, a webhook's fire and a view's refresh are runs of the automation too.
+        # since a Run now is a run of the automation too.
         # And what it writes itself as it runs is masked of each value filled in, as a fire's is.
         with egress_held_to(unattended_dispatch_key(f"trigger:{trigger_id}")), handed(filled):
             result = await provider.execute(config, ctx, timeout=action_timeout(provider_name))
@@ -755,8 +794,8 @@ def _judged_as(runs_for: approval_answer.Principal | None, trigger_id: str) -> s
     what unattended work is refused in a session nobody is in (a schedule's, an Unattended loop's,
     a subagent's turn), and not in a chat you are in (``guardrails.policy.is_unattended_session``).
     Anyone else's has no session and nobody answering it: an app's is judged as an app's
-    dispatch, and a webhook's fire, a view's refresh or a caller that did not say whose run it is
-    as the trigger's own fire (``unattended_dispatch_key``)."""
+    dispatch, and a caller that did not say whose run it is as the trigger's own fire
+    (``unattended_dispatch_key``)."""
     from personalclaw.guardrails.policy import unattended_dispatch_key
 
     if runs_for == approval_answer.YOU:
@@ -785,10 +824,10 @@ async def _refused(trigger: Any, why: str, *, state: Any) -> tuple[bool, str]:
 def _hold_claim(trigger_id: str, *, holder: str, now: float) -> Any:
     """Take the trigger's claim for a hand run; the root it was written under, or None.
 
-    None when a run already holds it — a view refresh or a webhook fire beside a tick's run keeps
-    the tick's claim rather than replacing it, so the tick's own release stays the one that frees
-    it — or when it could not be written. Never raises: the claim is bookkeeping about the run, and
-    a run that could not note itself still runs, as it did before it noted anything.
+    None when a run already holds it — an answer's run beside a tick's run keeps the tick's claim
+    rather than replacing it, so the tick's own release stays the one that frees it — or when it
+    could not be written. Never raises: the claim is bookkeeping about the run, and a run that
+    could not note itself still runs, as it did before it noted anything.
     """
     try:
         from personalclaw.dashboard.handlers.triggers import _trigger_store
@@ -901,6 +940,12 @@ async def api_trigger_view_render(request: web.Request) -> web.Response:
     reason: the gateway module must never import it as a loop (the `test_triggers_chain` runtime map
     and `test_NO_background_loop_polls_this_kind` guard depend on it).
 
+    A FIRE. A refresh is the automation firing because a surface rendered, with nobody answering
+    what it runs, whoever opened the surface: it is admitted as every fire is
+    (`service.admit_fire`: the incident, its hourly cap, its quiet hours, a refresh still running)
+    and runs through the dispatch every fire runs through (`DashboardState.fire_trigger`), so it is
+    recorded as its automation's fire. One the admission holds serves cache, saying why.
+
     FIRE-AND-FORGET. A synchronous HTTP render must never block on an LLM turn, so each refresh is
     scheduled on the event loop and the decision (what refreshed, what served cache) returns
     immediately — the same background-task idiom the webhook-agent and MCP-probe handlers use.
@@ -913,6 +958,12 @@ async def api_trigger_view_render(request: web.Request) -> web.Response:
 
     from personalclaw.dashboard.handlers.triggers import _trigger_store
     from personalclaw.triggers import pull_on_view as _view
+    from personalclaw.triggers.service import (
+        admit_fire,
+        request_admission,
+        retire_if_spent,
+        run_admitted,
+    )
 
     state: DashboardState = request.app["state"]
     body = await json_object_body(request)
@@ -921,30 +972,49 @@ async def api_trigger_view_render(request: web.Request) -> web.Response:
         return web.json_response({"refreshed": [], "served_cache": []})
 
     store = _trigger_store()
-    payloads, cached = _view.renders(store, surface=surface, now=_time.time())
-
-    refreshed: list[str] = []
-    for payload in payloads:
-        row = store.get(str(payload.get("trigger_id") or ""))
-        if row is None:
-            continue
-        # Schedule the dispatch and return — never await the LLM turn in the request. Tracked on
-        # `state._background_tasks` so a fire-and-forget refresh is not garbage-collected mid-run,
-        # the idiom every other fire-and-forget handler here follows. A refresh is the trigger
-        # firing because a surface rendered, with nobody answering its action, so it is held to
-        # the action denylist as the trigger's own fire (`runs_for`), whoever opened the surface.
-        task = asyncio.create_task(
-            _dispatch_store_action(
-                row.trigger,
-                payload,
-                event="view.rendered",
-                state=state,
-                runs_for=approval_answer.trigger(row.trigger.id),
-            )
+    dispatch = state.fire_trigger
+    if dispatch is None:
+        # Nothing here can run a refresh, so none is decided: each binding serves what it has, and
+        # keeps its window for a render that can refresh it.
+        return web.json_response(
+            {
+                "refreshed": [],
+                "served_cache": [
+                    {"trigger_id": t.id, "reason": "no automations run in this process"}
+                    for t in _view.bound_triggers(store, surface=surface)
+                ],
+            }
         )
-        state._background_tasks.add(task)
-        task.add_done_callback(state._background_tasks.discard)
-        refreshed.append(row.trigger.id)
+    now = _time.time()
+    refreshed: list[str] = []
+    # Decided and admitted one render at a time, as a webhook's requests are
+    # (`service.request_admission`).
+    async with request_admission():
+        payloads, cached = _view.renders(store, surface=surface, now=now)
+        for payload in payloads:
+            row = store.get(str(payload.get("trigger_id") or ""))
+            if row is None:
+                continue
+            admission = await admit_fire(
+                store, row.trigger, now=now, base_dir=store.base_dir, holder=f"view:{int(now)}"
+            )
+            if not admission.allowed:
+                reason = admission.decision.reason or admission.decision.gate
+                cached.append({"trigger_id": row.trigger.id, "reason": reason})
+                continue
+            retire_if_spent(store, row.trigger)
+            # Schedule the run and return — never await the LLM turn in the request. Tracked on
+            # `state._background_tasks` so a fire-and-forget refresh is not garbage-collected
+            # mid-run, the idiom every other fire-and-forget handler here follows; the claim the
+            # admission took is given back when the run settles.
+            task = asyncio.create_task(
+                run_admitted(
+                    dispatch, row.trigger, payload, event="view.rendered", base_dir=store.base_dir
+                )
+            )
+            state._background_tasks.add(task)
+            task.add_done_callback(state._background_tasks.discard)
+            refreshed.append(row.trigger.id)
 
     return web.json_response({"refreshed": refreshed, "served_cache": cached})
 
