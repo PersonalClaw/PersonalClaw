@@ -229,8 +229,8 @@ def test_the_four_emit_points(home):
 
 
 def test_event_ids_are_stable_across_reopen(home):
-    """`LoopJournal.open` recovers `seq`, so a second emit (a later poll, a restart) continues the
-    sequence rather than re-minting event ids the file already holds."""
+    """A second emit (a later poll, a restart) builds a new writer, which continues the
+    sequence from the journal rather than re-minting event ids the file already holds."""
     loop = _loop("code")
     _write_finding(loop.id, 1, "implement")
     loop_files.record_cycle_findings(loop.id)
@@ -238,6 +238,6 @@ def test_event_ids_are_stable_across_reopen(home):
     loop_files.record_cycle_findings(loop.id)
 
     ids = [e["event_id"] for e in loop_journal.ledger(loop.id)]
-    assert len(ids) == len(set(ids)), "duplicate event ids — seq was not recovered on reopen"
+    assert len(ids) == len(set(ids)), "duplicate event ids — a new writer restarted the sequence"
     seqs = [e["seq"] for e in loop_files.read_jsonl(loop.id, loop_journal.JOURNAL_FILE)]
     assert seqs == sorted(seqs) and seqs[0] == 1

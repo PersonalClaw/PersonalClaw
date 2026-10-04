@@ -126,12 +126,18 @@ def _ledger_filename(node_path: str) -> str:
     return hashlib.sha256(node_path.encode("utf-8")).hexdigest()[:16] + ".json"
 
 
+def ledger_file(loop_id: str, filename: str) -> Path | None:
+    """Where the loop keeps its journal or event log *filename*, or None for an invalid id, which
+    has no folder and gets nothing written (``LedgerStore.ledger_file``)."""
+    d = loop_dir(loop_id)
+    return d / filename if d is not None else None
+
+
 def append_jsonl(loop_id: str, filename: str, record: dict[str, Any]) -> None:
     """Append to the loop's journal or event log. Plain append: append-only by contract."""
-    d = loop_dir(loop_id)
-    if d is None:
+    path = ledger_file(loop_id, filename)
+    if path is None:
         return
-    path = d / filename
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
@@ -425,7 +431,7 @@ def record_cycle_findings(loop_id: str) -> int:
         for e in read_jsonl(loop_id, EVENTS_FILE)
         if e.get("kind") == STEP_COMPLETED
     }
-    journal = LoopJournal.open(loop_id)
+    journal = LoopJournal(loop_id)
     # Canonicalize model-authored stage labels against the plan ONCE, at the single
     # write into the durable store — every projection then matches by construction
     # (the raw label survives as stage_label for display/debugging). Function-local
@@ -461,7 +467,7 @@ def record_breaker_trip(loop_id: str, cycle: int, reason: str) -> None:
     """A stall → a `breaker_trip` ledger event (PP-5)."""
     from personalclaw.loop.journal import LoopJournal
 
-    LoopJournal.open(loop_id).breaker_trip(cycle, reason)
+    LoopJournal(loop_id).breaker_trip(cycle, reason)
 
 
 def record_declined_cycle(
@@ -470,7 +476,7 @@ def record_declined_cycle(
     """A cycle its owner ended with a Deny → a `step_skipped` ledger event by the user."""
     from personalclaw.loop.journal import LoopJournal
 
-    LoopJournal.open(loop_id).declined(cycle, task_id=task_id, reason=reason, steps=steps)
+    LoopJournal(loop_id).declined(cycle, task_id=task_id, reason=reason, steps=steps)
 
 
 def get_declined_cycles(loop_id: str) -> list[dict]:
@@ -494,7 +500,7 @@ def record_watcher_reaped(loop_id: str, *, cycles: int, reason: str) -> None:
     """A reap → a `watcher_reaped` ledger event (PP-5): a running watcher cut off early."""
     from personalclaw.loop.journal import LoopJournal
 
-    LoopJournal.open(loop_id).watcher_reaped(cycles=cycles, reason=reason)
+    LoopJournal(loop_id).watcher_reaped(cycles=cycles, reason=reason)
 
 
 def get_findings(loop_id: str) -> list[dict]:
@@ -666,7 +672,7 @@ def get_nudges(loop_id: str) -> list[dict]:
 def write_verdict(loop_id: str, cycle: int, verdict: dict) -> None:
     from personalclaw.loop.journal import LoopJournal
 
-    LoopJournal.open(loop_id).verdict({"cycle": cycle, **verdict})
+    LoopJournal(loop_id).verdict({"cycle": cycle, **verdict})
 
 
 def get_verdicts(loop_id: str) -> list[dict]:

@@ -616,7 +616,7 @@ def test_the_rails_project_the_same_kinds_the_loop_rails_do(run_home, monkeypatc
 
     # One of each kind on ONE loop, so a rail that read the wrong one picks up the other's row
     # rather than finding nothing — which is what makes the two assertions below discriminating.
-    journal = LoopJournal.open(loop_id)
+    journal = LoopJournal(loop_id)
     journal.cycle(1, {"cycle": 1, "summary": "the finding"})
     journal.verdict({"cycle": 1, "verdict": "PASS", "marginal_value": 0.5})
 

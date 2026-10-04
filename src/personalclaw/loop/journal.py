@@ -76,21 +76,13 @@ def _node_id(finding: dict[str, Any], cycle: int) -> str:
 class LoopJournal(LedgerWriter):
     """The loop engine's ledger: the shared writer plus the loop's typed emitters.
 
-    Constructed per emit through :meth:`open`, which recovers `seq` from the existing journal so a
-    poll (or a restart) never re-mints an `event_id` the file already holds — the property that
-    makes a re-emit an idempotent no-op.
+    Constructed per emit (``LoopJournal(loop_id)``). The writer numbers every record from the
+    loop's journal itself, so a poll (or a restart) never re-mints an `event_id` the file already
+    holds — the property that makes a re-emit an idempotent no-op.
     """
 
     #: The loop store owns `loop/<id>/`, so it is what this ledger appends through.
     _store: ClassVar[LedgerStore] = loop_files  # type: ignore[assignment]
-
-    @classmethod
-    def open(cls, loop_id: str) -> "LoopJournal":
-        """Build a journal for `loop_id`, seq recovered from its existing journal."""
-        j = cls(run_id=loop_id)
-        for rec in loop_files.read_jsonl(loop_id, JOURNAL_FILE):
-            j.seq = max(j.seq, int(rec.get("seq", 0) or 0))
-        return j
 
     # ── the four PP-5 emit points ──
 

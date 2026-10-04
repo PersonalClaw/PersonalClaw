@@ -11,10 +11,13 @@ boundary is a second answer to "how big is too big", and the two would drift.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, ClassVar, Protocol
 
+from personalclaw import record_files
 from personalclaw.ledger.hashing import stable_json
 from personalclaw.ledger.kinds import LEDGER_KINDS, STEP_CACHED, STEP_COMPLETED
 from personalclaw.ledger.outcomes import OutcomeLedger
@@ -38,12 +41,27 @@ def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _seq_of(record: dict[str, Any]) -> int:
+    """A journal line's number, 0 for a line without a usable one: an unreadable number must not
+    leave the run's journal unwritable."""
+    try:
+        return int(record.get("seq", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 class LedgerStore(Protocol):
     """The run-scoped file store a ledger appends through.
 
-    Narrow on purpose — four calls, all keyed by an opaque id. A producer that can satisfy these
+    Narrow on purpose — five calls, all keyed by an opaque id. A producer that can satisfy these
     can carry a ledger; nothing here knows about workflows, loops or tasks.
     """
+
+    def ledger_file(self, run_id: str, filename: str) -> Path | None:
+        """Where the ledger *run_id* keeps *filename*, or None for an id that names no ledger (the
+        store writes nothing for one). The writer numbers each record from the journal there,
+        under the lock beside it."""
+        ...
 
     def append_jsonl(self, run_id: str, filename: str, record: dict[str, Any]) -> None: ...
 
@@ -65,51 +83,73 @@ class LedgerWriter(OutcomeLedger):
     """
 
     run_id: str
-    #: Monotonic sequence for deterministic event ids (`<run>-evt-<seq>`), which makes a
-    #: re-emit an idempotent no-op instead of a duplicate.
+    #: The number this writer gave its last record (`write`): one past the highest the journal
+    #: held then. Deterministic event ids (`<run>-evt-<seq>`) make a re-emit an idempotent no-op
+    #: instead of a duplicate.
     seq: int = 0
     _cache: dict[str, dict[str, Any]] | None = field(default=None, repr=False)
+    #: The journal as this writer's own last append left it (`record_files.stamp`). While the
+    #: file is still exactly that, nobody has appended since, and `seq` is still its highest.
+    _left: tuple[int, int, int] | None = field(default=None, repr=False)
 
     #: Bound by each subclass to its own store module. Declared without a default so a producer
     #: that forgets fails loudly on its first write rather than quietly journaling somewhere else.
     _store: ClassVar[LedgerStore]
 
-    # ── low-level append ──
-
-    def _append(self, filename: str, record: dict[str, Any]) -> dict[str, Any]:
-        self.seq += 1
-        record = dict(record)
-        record.setdefault("ts", now())
-        record["seq"] = self.seq
-        record["event_id"] = f"{self.run_id}-evt-{self.seq}"
-        safe = redact(record)
-        self._store.append_jsonl(self.run_id, filename, safe)
-        return safe
+    # ── append ──
 
     def write(self, kind: str, **fields: Any) -> dict[str, Any]:
         """Write one journal record. The resume cache reads `journal.jsonl`; ledger
         consumers read `events.jsonl`. Ledger kinds land in BOTH — one write, two
-        readers, no reconciliation step to get wrong."""
+        readers, no reconciliation step to get wrong.
+
+        Numbered from the journal itself, under the lock both appends hold: a record takes the
+        number after the highest the journal holds, so its id is its own in the run whoever writes
+        it and whenever, and two writers at once take two numbers. A writer is built wherever there
+        is a line to add to a run (the engine's, a provider's beside it, an answer to a digest after
+        its run ended), and a count each one kept for itself started again at 1."""
         record = {"kind": kind, **fields}
-        written = self._append(JOURNAL_FILE, record)
-        if kind in LEDGER_KINDS:
-            self._store.append_jsonl(self.run_id, EVENTS_FILE, written)
+        journal = self._store.ledger_file(self.run_id, JOURNAL_FILE)
+        held = record_files.locked(journal) if journal is not None else contextlib.nullcontext()
+        with held:
+            self.seq = self._highest_seq(journal) + 1
+            record.setdefault("ts", now())
+            record["seq"] = self.seq
+            record["event_id"] = f"{self.run_id}-evt-{self.seq}"
+            written = redact(record)
+            self._store.append_jsonl(self.run_id, JOURNAL_FILE, written)
+            if kind in LEDGER_KINDS:
+                self._store.append_jsonl(self.run_id, EVENTS_FILE, written)
+            self._left = record_files.stamp(journal) if journal is not None else None
         if self._cache is not None and kind in (STEP_COMPLETED, STEP_CACHED):
             key = written.get("cache_key")
             if key:
                 self._cache[str(key)] = written
         return written
 
+    def _highest_seq(self, journal: Path | None) -> int:
+        """The highest number the journal holds, read under its lock (`write`).
+
+        Read again unless the file is exactly as this writer's own last append left it, which
+        means that append is still its newest line: a writer's first record, another writer's
+        append in between, and a rewritten file all read it. An id the store keeps no file for
+        has only this writer's own count."""
+        if journal is None:
+            return self.seq
+        if self._left is not None and record_files.stamp(journal) == self._left:
+            return self.seq
+        return max(
+            (_seq_of(rec) for rec in self._store.read_jsonl(self.run_id, JOURNAL_FILE)),
+            default=0,
+        )
+
     # ── resume cache ──
 
     def _load_cache(self) -> dict[str, dict[str, Any]]:
         """Fold the journal into a cache-key → record map. Last write wins, which is
-        correct: a later record for the same key came from a later attempt.
-
-        Recovers `seq` in the same pass, which is why this lives with the writer rather than with
-        the workflow-flavoured lookup: a rebuilt writer that restarted its sequence at 1 would
-        re-mint event ids the file already holds, and `event_id` is what makes a re-emit idempotent.
-        """
+        correct: a later record for the same key came from a later attempt. Kept current by
+        :meth:`write` from then on, which is why it lives with the writer rather than with the
+        workflow-flavoured lookup."""
         if self._cache is None:
             cache: dict[str, dict[str, Any]] = {}
             for rec in self._store.read_jsonl(self.run_id, JOURNAL_FILE):
@@ -117,7 +157,6 @@ class LedgerWriter(OutcomeLedger):
                     key = rec.get("cache_key")
                     if key:
                         cache[str(key)] = rec
-                self.seq = max(self.seq, int(rec.get("seq", 0) or 0))
             self._cache = cache
         return self._cache
 

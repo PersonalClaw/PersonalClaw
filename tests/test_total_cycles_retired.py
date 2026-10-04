@@ -106,7 +106,7 @@ def test_the_count_moves_with_the_ledger() -> None:
     assert loop_files.cycles_completed(loop.id) == 3
     assert store.get_redacted(loop.id)["total_cycles"] == 3
 
-    loop_journal.LoopJournal.open(loop.id).cycle(4, {"cycle": 4, "summary": "s4"})
+    loop_journal.LoopJournal(loop.id).cycle(4, {"cycle": 4, "summary": "s4"})
 
     assert loop_files.cycles_completed(loop.id) == 4, "the accessor did not follow the ledger"
     assert store.get_redacted(loop.id)["total_cycles"] == 4, "the detail view is not derived"
@@ -125,7 +125,7 @@ def test_the_count_does_not_move_with_an_unrelated_ledger_kind() -> None:
     loop = _loop_with_cycles(3)
     before = loop_files.cycles_completed(loop.id)
 
-    loop_journal.LoopJournal.open(loop.id).verdict({"cycle": 3, "verdict": "pass", "done": False})
+    loop_journal.LoopJournal(loop.id).verdict({"cycle": 3, "verdict": "pass", "done": False})
 
     assert loop_files.cycles_completed(loop.id) == before, (
         "a `judge_verdict` changed the CYCLE count — the count is not defined over "
@@ -137,8 +137,8 @@ def test_the_count_does_not_move_with_an_unrelated_ledger_kind() -> None:
 def test_the_two_projections_agree() -> None:
     """`cycles_completed()` (ledger `run_totals`) vs `len(get_findings())` (the views' path)."""
     loop = _loop_with_cycles(5)
-    loop_journal.LoopJournal.open(loop.id).verdict({"cycle": 5, "verdict": "pass"})
-    loop_journal.LoopJournal.open(loop.id).breaker_trip(5, "stalled")
+    loop_journal.LoopJournal(loop.id).verdict({"cycle": 5, "verdict": "pass"})
+    loop_journal.LoopJournal(loop.id).breaker_trip(5, "stalled")
 
     via_aggregate = loop_files.cycles_completed(loop.id)
     via_projection = len(loop_files.get_findings(loop.id))

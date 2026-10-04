@@ -300,9 +300,7 @@ def measure_from_events(question: OutcomeQuestion, events: list[dict[str, Any]])
     turns into :data:`INCONCLUSIVE`: no answer inside the horizon is a real closure, and it is a
     different fact from an answer of zero.
 
-    "After" is FILE POSITION, not `seq`: the log is append-only, so position is append order, and
-    a second writer built for the same run restarts its sequence at 1 (a live hazard — two writers
-    in one process re-mint each other's `event_id`s). Position cannot be fooled by that.
+    "After" is FILE POSITION: the log is append-only, so position is append order.
 
     A boolean `value_field` reads as 1.0/0.0 on purpose: "approved" is a measurement. An answer the
     question lists as unscored reads as None too — it has no number — and `answer_from_events` is

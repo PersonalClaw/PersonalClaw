@@ -53,7 +53,7 @@ def _loop_ledger(loop_id: str = "abc12345", cycles: int = 2) -> str:
     """Write a real LOOP ledger with `LoopJournal.cycle` — the producer that books no cost."""
     from personalclaw.loop.journal import LoopJournal
 
-    journal = LoopJournal.open(loop_id)
+    journal = LoopJournal(loop_id)
     for cycle in range(1, cycles + 1):
         journal.cycle(
             cycle,

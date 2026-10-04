@@ -495,6 +495,16 @@ flywheel, shipped in bug reports, and rendered in a UI — a credential reaching
 it is leaked to all three. Outputs past ~64KB, or matching a binary magic
 prefix, spill to a file and leave a typed `result_omitted` stub.
 
+**Every record has an id of its own in its run.** More than the controller
+writes to a run's journal: a step's provider beside it, an answer to a digest
+after the run ended, the outcome resolver days later, and the controller a
+restart builds for the run. Each record is numbered from the journal itself,
+under the lock beside it that both appends hold (`LedgerWriter.write`): its
+`seq` is one past the highest the journal holds, and its `event_id` is
+`<run>-evt-<seq>`, so two writers at once take two numbers and the file holds
+its records in the order of their numbers. A loop's ledger and a dashboard
+tile's are numbered the same way.
+
 The run row and a step's stored output are kept as written, so every read that
 shows them masks them with the same redactor: the run list, the run page's status
 and its live snapshot (`handlers.shown_status`), every live event

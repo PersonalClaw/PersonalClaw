@@ -41,7 +41,7 @@ line between them is a question about node identity: everything below needs a no
 * the typed emitters — their arguments are engine types;
 * the resume cache's KEY and its lookup (`CacheKey`, `lookup`, `invalidate_prefix`) — an epoch is
   a rewind counter and `SUCCESS_STATES` is an engine enum. The generic half, folding the file into
-  a key→record map, is the writer's, because that same pass recovers `seq`;
+  a key→record map, is the writer's, because the writer keeps it current as it appends;
 * `spec_region_hash`, which knows that `children`/`body`/`cases`/`default` are a node's children.
 
 `LEDGER_KINDS` and every kind constant are re-exported unchanged, so the drift tests that assert

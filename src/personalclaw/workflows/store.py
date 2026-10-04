@@ -714,10 +714,15 @@ def read_output(run_id: str, node_path: str) -> Any:
     return None
 
 
+def ledger_file(run_id: str, filename: str) -> Path:
+    """Where the run keeps its journal or event log *filename* (``LedgerStore.ledger_file``)."""
+    return run_dir(run_id) / filename
+
+
 def append_jsonl(run_id: str, filename: str, record: dict[str, Any]) -> None:
     """Append to the journal or event log. Plain append rather than atomic_write: these
     files are append-only by contract and a rewrite would be O(size) per event."""
-    path = run_dir(run_id) / filename
+    path = ledger_file(run_id, filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
@@ -726,7 +731,7 @@ def append_jsonl(run_id: str, filename: str, record: dict[str, Any]) -> None:
 def read_jsonl(run_id: str, filename: str) -> list[dict[str, Any]]:
     """Read an append-only log, skipping corrupt lines. A half-written final line is
     expected after a crash — dropping it is correct, refusing the whole file is not."""
-    path = run_dir(run_id) / filename
+    path = ledger_file(run_id, filename)
     if not path.is_file():
         return []
     out: list[dict[str, Any]] = []

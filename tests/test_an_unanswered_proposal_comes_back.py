@@ -482,6 +482,32 @@ async def test_her_reply_on_the_channel_answers_a_carried_proposal(home: Any) ->
     assert said.startswith(f"{news}. archive") and "done" in said
 
 
+async def test_every_row_on_the_digests_run_has_a_number_of_its_own(home: Any) -> None:
+    """Wednesday's digest records what it carried while its run is going; she answers two of the
+    carried proposals on the card after it ended. Every row on Wednesday's run has its own id,
+    numbered in the order it was written, and the card's journal lists her answers in the order
+    she gave them."""
+    from personalclaw.workflows import store
+
+    now = datetime.now(UTC)
+    _mails(home, at=now - timedelta(days=3))
+    await _digest(home, "run-mon", began=now - timedelta(days=2), window_hours=96)
+    await _digest(home, "run-wed", began=now)
+    card = await _card()
+    news, venue = _ordinal_of(card, "rail travel"), _ordinal_of(card, "spring talk venue")
+
+    await _tap("run-wed", f"{news} no")
+    await _tap("run-wed", f"{venue} no")
+
+    rows = store.read_jsonl("run-wed", "journal.jsonl")
+    assert [row["kind"] for row in rows].count("proposal_carried") == 3
+    ids = [row["event_id"] for row in rows]
+    assert len(ids) == len(set(ids)), f"one id for two rows: {ids}"
+    assert [row["seq"] for row in rows] == list(range(1, len(rows) + 1))
+    journal = (await _card())["journal"]
+    assert [row["ordinal"] for row in journal if row["kind"] == "triage_reply"] == [news, venue]
+
+
 # ── for how long ─────────────────────────────────────────────────────────────────────────────
 
 

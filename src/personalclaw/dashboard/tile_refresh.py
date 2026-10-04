@@ -78,7 +78,7 @@ def tile_key(view_id: str, ref: str) -> str:
 
 
 class _TileLedgerStore:
-    """The four-call file store :class:`~personalclaw.ledger.LedgerStore` wants, over
+    """The five-call file store :class:`~personalclaw.ledger.LedgerStore` wants, over
     ``<home>/dashboard_tiles/<tile_key>/``.
 
     Read tolerates a missing or corrupt file (the storage convention) — a tile whose ledger
@@ -90,14 +90,17 @@ class _TileLedgerStore:
 
         return config_dir() / LEDGER_DIRNAME / run_id
 
+    def ledger_file(self, run_id: str, filename: str) -> Path:
+        return self._dir(run_id) / filename
+
     def append_jsonl(self, run_id: str, filename: str, record: dict[str, Any]) -> None:
-        d = self._dir(run_id)
-        d.mkdir(parents=True, exist_ok=True)
-        with open(d / filename, "a", encoding="utf-8") as f:
+        p = self.ledger_file(run_id, filename)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
             f.write(stable_json(record) + "\n")
 
     def read_jsonl(self, run_id: str, filename: str) -> list[dict[str, Any]]:
-        p = self._dir(run_id) / filename
+        p = self.ledger_file(run_id, filename)
         if not p.exists():
             return []
         rows: list[dict[str, Any]] = []
@@ -146,24 +149,6 @@ class TileLedger(LedgerWriter):
     """
 
     _store: ClassVar[LedgerStore] = _STORE  # type: ignore[assignment]
-
-    @classmethod
-    def resumed(cls, run_id: str) -> "TileLedger":
-        """A writer whose ``seq`` CONTINUES this tile's existing journal.
-
-        🔴 Found on a real drive, not reasoned about. A fresh writer per refresh restarts
-        ``seq`` at 1 and re-mints ``<tile>-evt-1`` every time: two refreshes, two rows, one
-        event id. ``event_id`` is what makes a re-emit an idempotent no-op, and duplicate ids
-        are the exact tell for "N writers over one ledger" — a reader would have to conclude
-        something was racing.
-
-        ``_load_cache`` is the writer's OWN recovery pass (it restores ``seq`` in the same read),
-        so it is used rather than re-deriving the maximum here: a second copy of that logic is
-        precisely what the ledger extraction forbids.
-        """
-        writer = cls(run_id=run_id)
-        writer._load_cache()
-        return writer
 
     def refreshed(
         self,
@@ -444,7 +429,7 @@ async def refresh_tile(
             return RefreshResult(refreshed=False, reason="within_ttl", row=last_row(view_id, ref))
 
     started = time.monotonic()
-    ledger = TileLedger.resumed(tile_key(view_id, ref))
+    ledger = TileLedger(tile_key(view_id, ref))
 
     from personalclaw.artifacts.registry import get_provider
 
