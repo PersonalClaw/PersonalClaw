@@ -12,12 +12,24 @@ Structure:
 A store given a working folder's partition keeps its index in that folder's ``memory_index.db``,
 where the partition's vector store keeps the folder's memories too. Nothing here ever deletes that
 file (see "The keyword index" below).
+
+**The documents are rewritten from the file as it is then.** preferences.md and projects.md have
+several writers: the owner in Settings → Memory or the Files editor, the agent's file tools, and a
+consolidation, which reads both, waits for its model (seconds, for a real one) and rewrites them.
+So a consolidation's rewrite is applied to each file as it is when the model has answered, never
+written over it from the copy it read (:meth:`MemoryStore.rewrite`, :func:`apply_rewrite`),
+and every writer of the documents reads and writes them under one lock
+(:func:`hold_documents`), so none lands between another's read and its write.
 """
 
+import fcntl
 import logging
+import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, TypeVar
 
@@ -62,6 +74,105 @@ def workspace_dir() -> Path:
 
 def memory_dir() -> Path:
     return workspace_dir() / MEMORY_DIR_NAME
+
+
+# ── The documents' writers ──
+
+#: The memory documents' lock (``concurrency.lock_path``): one for every memory's preferences.md
+#: and projects.md, in the home's ``locks/`` rather than beside them, where it would be listed and
+#: copied with the memory.
+_DOCUMENTS_LOCK = "memory-documents"
+
+
+@contextmanager
+def hold_documents() -> Iterator[None]:
+    """Hold the memory documents' lock, waiting for it, while a document is read and written.
+
+    Every writer of preferences.md and projects.md holds it across its read and its write: a
+    consolidation applying its rewrite (:meth:`MemoryStore.rewrite`), the Memory page's
+    save, :meth:`MemoryStore.add_preference`, the boot that creates the files, a partition's
+    documents moving into another, and the Files editor's save and the agent's ``write_file`` and
+    ``edit_file`` (``write_locks``). ``flock`` on a file opened for this hold, so it excludes
+    another thread as it does another process (the ``personalclaw consolidate`` command), and the
+    OS frees it if the holder dies. Not re-entrant: nothing done while it is held may take it
+    again. A command the agent's shell runs, or another program, takes no lock.
+    """
+    from personalclaw.concurrency import lock_path
+
+    with lock_path(_DOCUMENTS_LOCK).open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def is_document(path: Path | str) -> bool:
+    """Whether *path* is a memory document, a preferences.md or projects.md in a memory folder,
+    named directly or through a link. Known by where every store keeps them, so a file of that name
+    in a folder of that name elsewhere counts too, which only makes its write wait for a memory
+    document's."""
+    real = Path(os.path.realpath(path))
+    return real.name in (PREFERENCES_FILE, PROJECTS_FILE) and real.parent.name == MEMORY_DIR_NAME
+
+
+def apply_rewrite(read: str, now: str, rewrite: str) -> str | None:
+    """*rewrite*, which its writer made of the text *read*, applied to the text as it is *now*;
+    None when that would undo a change made since.
+
+    The three are compared line by line. Each part of the file the rewrite changes (a line
+    rewritten, removed or added) is changed when *now* still holds that part as it was read, and at
+    least one line neither changed lies between it and each change made since. A part both changed
+    the same way is kept once. A part both changed differently, or changed right next to each
+    other, gives None: lines side by side often belong together (a project and its notes beside
+    it), and of two additions in one place neither can be put first, so the file is left whole as
+    it is. The result ends each line with a newline. The text *read* is what *rewrite* is applied
+    against, so a file still as it was read is *rewrite* exactly.
+    """
+    if now == read:
+        return rewrite
+    if rewrite == read:
+        return now
+    merged = _merged_lines(read.splitlines(), now.splitlines(), rewrite.splitlines())
+    return None if merged is None else "".join(line + "\n" for line in merged)
+
+
+def _merged_lines(read: list[str], now: list[str], rewrite: list[str]) -> list[str] | None:
+    """*now* with the changes *rewrite* made to *read*, or None (:func:`apply_rewrite`)."""
+    out: list[str] = []
+    r0 = n0 = w0 = 0
+    for r1, r2, n1, n2, w1, w2 in _kept_by_both(read, now, rewrite):
+        was, theirs, generated = read[r0:r1], now[n0:n1], rewrite[w0:w1]
+        if theirs == was:
+            out += generated
+        elif generated in (was, theirs):
+            out += theirs
+        else:
+            return None
+        out += now[n1:n2]
+        r0, n0, w0 = r2, n2, w2
+    return out
+
+
+def _kept_by_both(
+    read: list[str], now: list[str], rewrite: list[str]
+) -> Iterator[tuple[int, int, int, int, int, int]]:
+    """Each run of *read*'s lines that *now* and *rewrite* both still hold, in order, as its start
+    and end in each of the three, and last an empty run at their ends."""
+    in_now = SequenceMatcher(None, read, now, autojunk=False).get_matching_blocks()
+    in_rewrite = SequenceMatcher(None, read, rewrite, autojunk=False).get_matching_blocks()
+    i = j = 0
+    while i < len(in_now) and j < len(in_rewrite):
+        a, n, size_n = in_now[i]
+        b, w, size_w = in_rewrite[j]
+        start, end = max(a, b), min(a + size_n, b + size_w)
+        if start < end:
+            yield start, end, n + start - a, n + end - a, w + start - b, w + end - b
+        if a + size_n < b + size_w:
+            i += 1
+        else:
+            j += 1
+    yield len(read), len(read), len(now), len(now), len(rewrite), len(rewrite)
 
 
 # ── The keyword index ──
@@ -385,13 +496,16 @@ class MemoryStore:
     def init(self) -> None:
         """Create directory structure and default files. Each folder is 0700, as every folder a
         home file is written into is (``atomic_write.make_private_dirs``): the store's own folder
-        (a working folder's partition), its memory folder and the daily history."""
+        (a working folder's partition), its memory folder and the daily history. Under the
+        documents' lock (:func:`hold_documents`), so a document another writer makes at that moment
+        is not written over."""
         for folder in (self._workspace, self._memory_dir, self._history_dir):
             make_private_dirs(folder)
-        if not self._preferences_file.exists():
-            atomic_write(self._preferences_file, _DEFAULT_PREFERENCES)
-        if not self._projects_file.exists():
-            atomic_write(self._projects_file, _DEFAULT_PROJECTS)
+        with hold_documents():
+            if not self._preferences_file.exists():
+                atomic_write(self._preferences_file, _DEFAULT_PREFERENCES)
+            if not self._projects_file.exists():
+                atomic_write(self._projects_file, _DEFAULT_PROJECTS)
 
     # ── Preferences ──
 
@@ -402,15 +516,18 @@ class MemoryStore:
         return ""
 
     def write_preferences(self, content: str) -> None:
-        """Write user preferences and update FTS index."""
+        """Write user preferences and update FTS index. A writer that read the file first writes
+        under the documents' lock (:func:`hold_documents`), held across both."""
         self._persist(self._preferences_file, content)
 
     def add_preference(self, preference: str) -> None:
-        """Append a preference line, avoiding duplicates."""
-        content = self.read_preferences()
-        if preference not in content:
-            content += f"- {preference}\n"
-            self.write_preferences(content)
+        """Append a preference line, avoiding duplicates, to the file as it is: read and written
+        under the documents' lock."""
+        with hold_documents():
+            content = self.read_preferences()
+            if preference not in content:
+                content += f"- {preference}\n"
+                self.write_preferences(content)
 
     # ── Projects ──
 
@@ -421,7 +538,8 @@ class MemoryStore:
         return ""
 
     def write_projects(self, content: str) -> None:
-        """Write active projects, adding header if missing, and update FTS index."""
+        """Write active projects, adding header if missing, and update FTS index. A writer that
+        read the file first writes under the documents' lock (:func:`hold_documents`)."""
         date = datetime.now().strftime("%Y-%m-%d")
         # Don't double-wrap if content already has the header
         if content.strip().startswith("# Active Projects"):
@@ -429,6 +547,41 @@ class MemoryStore:
         else:
             full = f"# Active Projects\n\n_Updated: {date}_\n\n{content}\n"
         self._persist(self._projects_file, full)
+
+    def rewrite(self, which: str, read: str, rewritten: str, *, by: str) -> None:
+        """Apply *rewritten*, the text *by* made of the document *which* (``"preferences"`` or
+        ``"projects"``) from its text *read* before it waited (a consolidation's model call), to the
+        document as it is now.
+
+        Read again and written under the documents' lock (:func:`hold_documents`), with nothing
+        awaited, so no writer lands in between. A document still as it was read is written as
+        *rewritten*. One changed since (the owner saved it in Settings → Memory or the Files editor,
+        the agent wrote it) has the rewrite applied around those changes (:func:`apply_rewrite`),
+        and one changed where the rewrite changes it, or right beside it, is left as it is: what
+        was written since is the later word. The log says which of the two it was.
+        """
+        path, write = {
+            "preferences": (self._preferences_file, self.write_preferences),
+            "projects": (self._projects_file, self.write_projects),
+        }[which]
+        with hold_documents():
+            now = path.read_text(encoding="utf-8") if path.exists() else ""
+            merged = apply_rewrite(read, now, rewritten)
+            if merged is not None and merged.splitlines() != now.splitlines():
+                write(merged)
+        if merged is None:
+            logger.warning(
+                "%s: %s was changed after it was read, where the rewrite changes it or right "
+                "beside it, so it is left as it is and the rewrite of it is not applied",
+                by,
+                path.name,
+            )
+        elif now != read:
+            logger.info(
+                "%s: %s was changed after it was read, and the rewrite was applied around that",
+                by,
+                path.name,
+            )
 
     # ── Combined read/write (used by consolidator) ──
 
@@ -503,18 +656,20 @@ class MemoryStore:
         not added again, so taking the same documents twice changes nothing."""
         if other is self:
             return
-        mine = self.read_preferences()
-        held = set(mine.splitlines())
-        new = [ln for ln in other.read_preferences().splitlines() if ln.startswith("- ")]
-        new = [ln for ln in dict.fromkeys(new) if ln not in held]
-        if new:
-            self.write_preferences(mine.rstrip("\n") + "\n" + "\n".join(new) + "\n")
-        theirs = other.read_projects().strip()
-        if theirs and theirs != _DEFAULT_PROJECTS.strip():
-            body = theirs.removeprefix("# Active Projects").strip()
-            current = self.read_projects()
-            if body and body not in current:
-                self._persist(self._projects_file, current.rstrip("\n") + "\n\n" + body + "\n")
+        # Each document read and written under the documents' lock (`hold_documents`).
+        with hold_documents():
+            mine = self.read_preferences()
+            held = set(mine.splitlines())
+            new = [ln for ln in other.read_preferences().splitlines() if ln.startswith("- ")]
+            new = [ln for ln in dict.fromkeys(new) if ln not in held]
+            if new:
+                self.write_preferences(mine.rstrip("\n") + "\n" + "\n".join(new) + "\n")
+            theirs = other.read_projects().strip()
+            if theirs and theirs != _DEFAULT_PROJECTS.strip():
+                body = theirs.removeprefix("# Active Projects").strip()
+                current = self.read_projects()
+                if body and body not in current:
+                    self._persist(self._projects_file, current.rstrip("\n") + "\n\n" + body + "\n")
         if not other._history_dir.is_dir():
             return
         for path in sorted(other._history_dir.glob("*.md")):

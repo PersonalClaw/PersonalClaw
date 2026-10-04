@@ -1053,9 +1053,11 @@ not taken out, since the pass cannot tell an edit to its task from a new task:
 the line stays as it is now, and the gateway log says so. A pass that finished
 nothing does not write the file. The pass, the Files editor's save, the agent's
 `write_file` and `edit_file` and the boot that creates the file each read and
-write it under one lock (`heartbeat.queue_lock`, a lock file in the home's
-`locks/`, not in the workspace), so none lands between another's read and its
-write. A file-backed artifact's write-through checks and writes the file in one
+write it under one lock (`heartbeat.hold_queue`, a lock file in the home's
+`locks/`, not in the workspace; the Files editor and the agent's tools take it
+through `write_locks.write_lock`, which also holds the memory documents' lock
+for preferences.md and projects.md), so none lands between another's read and
+its write. A file-backed artifact's write-through checks and writes the file in one
 step on the event loop, where the pass's edit runs too, so those two cannot
 interleave either. A command the agent's shell runs takes no lock; it can meet a
 pass only in the instant the pass rewrites the file.

@@ -550,7 +550,10 @@ Around the engine:
 - **`dashboard/chat_title.py`** — auto-title plus optional auto-tagging in ONE
   background LLM call (config `dashboard.auto_tag_sessions`); an Incognito or
   Temporary chat is titled by its mode instead, with no model call;
-  `chat_retag.py` is the batch re-tag job (cancellable, board-triggered).
+  `chat_retag.py` is the batch re-tag job (cancellable, board-triggered). A
+  name the chat is given while the model answers (a rename, a channel's name
+  for its conversation) is the later word: the auto-title is not applied over
+  it, and Generate title keeps it and answers with it.
 - **`dashboard/chat_folders.py` / `chat_tags.py`** — organization; persisted
   in `folders.json` / `tags.json`.
 - **`dashboard/chat_channel.py`** — channel link/handoff routes

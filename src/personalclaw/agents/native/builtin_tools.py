@@ -43,7 +43,6 @@ from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal
 from personalclaw.file_scope import refusal as scope_refusal
 from personalclaw.file_scope import store_named_in
 from personalclaw.file_view import BINARY_SNIFF_BYTES, is_binary
-from personalclaw.heartbeat import queue_locked
 from personalclaw.knowledge_providers.dir_source import note_path
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.security import (
@@ -63,6 +62,7 @@ from personalclaw.tool_providers.base import (
     ToolResult,
 )
 from personalclaw.tool_providers.projection import project_and_retain, project_output
+from personalclaw.write_locks import write_locked
 
 if TYPE_CHECKING:
     from personalclaw.triggers.secrets import UnresolvedSecret
@@ -1192,8 +1192,9 @@ class NativeBuiltinToolProvider(ToolProvider):
             path.write_text(written, encoding="utf-8")
             return None
 
-        # HEARTBEAT.md is rewritten by the heartbeat pass too: both hold its lock (`queue_lock`).
-        err = await asyncio.get_event_loop().run_in_executor(None, queue_locked(path, _write))
+        # HEARTBEAT.md and the memory documents are rewritten by the gateway too (a heartbeat pass,
+        # a consolidation): every writer of them holds their lock (`write_locks.write_lock`).
+        err = await asyncio.get_event_loop().run_in_executor(None, write_locked(path, _write))
         if err and err.startswith("mask: "):
             return ToolResult(success=False, error=err.removeprefix("mask: "))
         if err == "is a directory":
@@ -1270,8 +1271,9 @@ class NativeBuiltinToolProvider(ToolProvider):
                 + _marker_note(new, edited, text)
             )
 
-        # HEARTBEAT.md is rewritten by the heartbeat pass too: both hold its lock (`queue_lock`).
-        ok, msg = await asyncio.get_event_loop().run_in_executor(None, queue_locked(path, _edit))
+        # HEARTBEAT.md and the memory documents are rewritten by the gateway too (a heartbeat pass,
+        # a consolidation): every writer of them holds their lock (`write_locks.write_lock`).
+        ok, msg = await asyncio.get_event_loop().run_in_executor(None, write_locked(path, _edit))
         if ok:
             return ToolResult(success=True, output=msg)
         if msg.startswith("mask: "):

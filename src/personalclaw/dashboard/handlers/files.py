@@ -1619,15 +1619,15 @@ async def api_file_write(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": "not found"}, status=404)
     try:
-        from personalclaw import heartbeat
+        from personalclaw.write_locks import write_lock
 
         # 🔴 A PAGE'S COPY IS SAVED ONLY OVER THE FILE IT WAS BUILT FROM. Read, compared and
         # replaced with no await in between, so nothing in this process lands between the check
         # and the write. A file that no longer reads back whole — it grew past the read cap, or is
         # binary now — was no page's copy: `whole_text` is None and no base matches it.
-        # HEARTBEAT.md is written from a worker thread too (the agent's file tools), so its read
-        # and write are held under the queue's lock, as every writer of it holds them.
-        with heartbeat.queue_lock(path):
+        # HEARTBEAT.md and the memory documents are written from a worker thread too (the agent's
+        # file tools), so their read and write are held under the lock every writer of them holds.
+        with write_lock(path):
             head = read_head(path)
             stale = stale_write_refusal(request, whole_text(head), what=f"the file {path!r}")
             if stale is not None:

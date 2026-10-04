@@ -312,7 +312,12 @@ async def _title_once(state: DashboardState, session: _ChatSession) -> None:
     title = parse_title(text)
     logger.info("Auto-title: agent returned %r for session %s", title, session.key)
     if title:
-        _apply_title(state, session, title)
+        # Asked for while the chat had no name: a name it was given while the model answered
+        # (your rename, the name a channel gave its conversation) is the later word, and stays.
+        if session._titled:
+            logger.info("Auto-title: %s was named while its title was asked for", session.key)
+        else:
+            _apply_title(state, session, title)
         if want_tags:
             _apply_auto_tags(state, session, _parse_tags_line(text))
 
@@ -332,6 +337,7 @@ async def api_chat_session_generate_title(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "title": title})
 
     logger.info("Manual title generation requested for session %s", name)
+    asked_over = session.title
     try:
         title = await _generate_title_via_provider(
             session.messages,
@@ -343,6 +349,11 @@ async def api_chat_session_generate_title(request: web.Request) -> web.Response:
         user_msgs = [m for m in session.messages if m.get("role") == "user"]
         title = user_msgs[0].get("content", "")[:60] if user_msgs else ""
 
+    # A rename made while the title was generated is the later word: it stays, and the answer
+    # says the name the chat has.
+    if session.title != asked_over:
+        logger.info("Title generation: %s was renamed while its title was generated", name)
+        return web.json_response({"ok": True, "title": session.title})
     if title:
         _apply_title(state, session, title)
 

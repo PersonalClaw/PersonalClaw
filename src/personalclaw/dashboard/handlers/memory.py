@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 from aiohttp import web
@@ -17,6 +18,7 @@ from personalclaw.config.transactions import mutate_config_async
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
+from personalclaw.memory import hold_documents
 from personalclaw.request_validation import bool_field, json_object_body, require_string
 from personalclaw.security import (
     MaskConflict,
@@ -86,18 +88,23 @@ async def _memory_doc(
     which: str,
     read: Callable[[Any], str],
     write: Callable[[Any, str], None],
+    *,
+    held: Callable[[], AbstractContextManager[Any]],
 ) -> web.Response:
     """GET/PUT of one markdown memory document: the read carries ``revision`` beside
     ``content``, and the PUT — which replaces the whole document — must name it in ``If-Match``.
 
     🔴 THE DOCUMENT IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. These files are written by
-    the gateway as well as the page — the history consolidator rewrites preferences and projects
-    and appends to history, and the agent's ``memory_remember`` tool appends a preference — so an
-    editor opened before one of those writes used to save its old copy straight over it, and what
-    the agent had just learned was gone without a word. The comparison reads with the SAME reader
-    the GET uses (for history, the multi-day composite it returns), and nothing is awaited
-    between the comparison and the write. The success response carries what is stored now, and
-    its revision, because the write can reshape it (``write_projects`` adds the header).
+    the gateway as well as the page — a consolidation rewrites preferences and projects and
+    appends to history, and the agent's file tools can write them — so an editor opened before one
+    of those writes used to save its old copy straight over it, and what the agent had just
+    learned was gone without a word. The comparison reads with the SAME reader the GET uses (for
+    history, the multi-day composite it returns), and nothing is awaited between the comparison
+    and the write, both under *held*: the lock every writer of preferences and projects holds
+    across its read and write (``memory.hold_documents``), so a writer on another thread or in
+    another process lands before the comparison or after the write, never between. The success
+    response carries what is stored now, and its revision, because the write can reshape it
+    (``write_projects`` adds the header).
     """
     mem = _memory_of(request)
     if request.method == "PUT":
@@ -122,11 +129,12 @@ async def _memory_doc(
                 message=f"content must be a string: the whole text of the {which} memory.",
                 status=400,
             )
-        stale = stale_write_refusal(request, read(mem), what=f"the {which} memory")
-        if stale is not None:
-            return stale
-        write(mem, content)
-        stored = read(mem)
+        with held():
+            stale = stale_write_refusal(request, read(mem), what=f"the {which} memory")
+            if stale is not None:
+                return stale
+            write(mem, content)
+            stored = read(mem)
         return web.json_response({"ok": True, "content": stored, "revision": revision_of(stored)})
     content = read(mem)
     return web.json_response({"content": content, "revision": revision_of(content)})
@@ -144,6 +152,7 @@ async def api_memory_preferences(request: web.Request) -> web.Response:
         "preferences",
         lambda mem: mem.read_preferences(),
         lambda mem, content: mem.write_preferences(content),
+        held=hold_documents,
     )
 
 
@@ -154,13 +163,20 @@ async def api_memory_projects(request: web.Request) -> web.Response:
         "projects",
         lambda mem: mem.read_projects(),
         lambda mem, content: mem.write_projects(content),
+        held=hold_documents,
     )
 
 
 async def api_memory_history(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/history — recent daily summaries."""
+    # The daily history is not a document a consolidation rewrites (it appends to it, reading and
+    # writing the day's file with nothing awaited between), so it is not held under their lock.
     return await _memory_doc(
-        request, "history", lambda mem: mem.read_recent_history(), _write_today_history
+        request,
+        "history",
+        lambda mem: mem.read_recent_history(),
+        _write_today_history,
+        held=nullcontext,
     )
 
 

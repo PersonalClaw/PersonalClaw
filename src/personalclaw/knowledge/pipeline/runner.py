@@ -206,6 +206,13 @@ async def ingest_item(
                 )
                 return _withheld(store, item_id, graph, exc.nothing_made, _emit, step)
 
+        # The item as it is now, not as it was read before the graph ran: fetching a page or
+        # reading a file takes a while, and the owner may have renamed the item or written its
+        # text meanwhile. What the writes below keep or fill is decided from this read, with
+        # nothing awaited before they are made, so a generated title or text never replaces one
+        # set while it was made.
+        item = store.get_item(item_id) or item
+
         # Persist each pooled node output into the extracted-content pool.
         store.clear_extracted_contents(item_id)
         for out in result.pooled_outputs():
@@ -805,7 +812,9 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
         # Once we've scraped the page's real title, promote it to the displayed title
         # so the Library shows "Example Domain" instead of "https://example.com".
         # Compare normalized URLs so a title seeded with any URL form (raw, trailing
-        # slash, tracking params) is still recognized as a placeholder to replace.
+        # slash, tracking params) is still recognized as a placeholder to replace. A title a
+        # person set is never replaced, whatever it equals, as for the AI title: the page's
+        # stays on the item as its own (``url_title``).
         from personalclaw.knowledge.store import normalize_url
 
         cur_title = ((item or {}).get("title") or "").strip()
@@ -813,7 +822,8 @@ def _persist_structural_metadata(store, item_id: str, item, result) -> None:
         title_is_url_placeholder = not cur_title or normalize_url(cur_title) == normalize_url(
             cur_url
         )
-        if scraped_title and title_is_url_placeholder:
+        set_by_person = (item or {}).get("title_source") == "user"
+        if scraped_title and title_is_url_placeholder and not set_by_person:
             fields["title"] = scraped_title
 
     if fields:

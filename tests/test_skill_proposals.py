@@ -174,7 +174,7 @@ def test_history_consolidation_enqueues_not_writes(home, monkeypatch):
             "procedure_md": "do the thing",
         }
     }
-    mgr._process_auto_skills(result, "sess:consolidate")
+    mgr._process_auto_skills(result, "sess:consolidate", skills_read={})
     pend = proposals.list_pending()
     assert any(p.slug == "from-consolidation" for p in pend)
     # NOT written live.

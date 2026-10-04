@@ -8,7 +8,7 @@ ended; an edit made meanwhile was put back; and every line the pass had not fini
 again in its format, not the owner's (their header, a heading, a note, a `* ` marker, CRLF).
 
 The pass, the Files editor's save and the agent's file tools read and write the file under one
-lock (`heartbeat.queue_lock`), so none lands inside another's read and write.
+lock (`heartbeat.hold_queue`), so none lands inside another's read and write.
 """
 
 from __future__ import annotations
@@ -259,7 +259,7 @@ def _holding_the_queue_lock(
     holding = threading.Event()
 
     def write() -> None:
-        with hb.queue_lock(path):
+        with hb.hold_queue():
             text = path.read_text(encoding="utf-8")
             holding.set()
             time.sleep(hold)

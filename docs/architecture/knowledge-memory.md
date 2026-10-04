@@ -255,7 +255,13 @@ bytes from a request, and fails on one that neither scans them nor says why not.
   words. A title a person set (typed at creation, kept in the create form, the
   file's own name included, or edited later) is recorded as hers
   (`items.title_source = 'user'`) and never replaced; the suggestion stays on
-  the item as `ai_title`.
+  the item as `ai_title`. A bookmark's scraped page title is held to the same
+  rule: it replaces only the URL a bookmark is titled with until its page is
+  known, never a title a person set, and stays on the item as `url_title`. What
+  the graph's results fill on the item (that title, the text of an item that had
+  none, the structural metadata) is decided from the item as it is once the graph
+  and the content scan are done (`ingest_item` reads it again), so a title or
+  text typed while a page was fetched or a file read is kept.
 - **What comes in as HTML is stored as its words.** The library renders a body
   as markdown only (the web app's one renderer shows embedded HTML as text — see
   [security.md](security.md#stored-and-remote-text-on-the-page)), so every way
@@ -582,7 +588,33 @@ item vector).
   `tests/test_recall_ranking_disclosure.py` censuses the dataclass fields, and a
   second census requires every handler calling a ranking scorer to serve the
   disclosure.
-- **`memory.py`** — structured key/value memory with FTS5.
+- **`memory.py`** — structured key/value memory with FTS5, and the markdown
+  documents: each memory's `preferences.md` and `projects.md` and its daily history.
+  - **A consolidation never undoes an edit made while it ran.** It reads
+    `preferences.md` and `projects.md`, waits for its model (seconds, for a real one)
+    and gets back a rewrite of each, while the owner may save them in Settings → Memory
+    or the Files editor, and the agent write them with its file tools. So a rewrite is
+    applied to each file as it is when the model has answered
+    (`MemoryStore.rewrite`, `memory.apply_rewrite`), line by line: each
+    part it changes (a line rewritten, removed or added) is changed where the file still
+    holds it as the model read it, with at least one line nobody changed between it
+    and each change made since. A part both changed the same way is kept once. Where
+    both changed the same lines, or lines right beside each other (a project and its
+    notes belong together, and two additions in one place cannot be ordered), the file
+    is left exactly as it is, that file's rewrite is not applied in this pass, and the
+    gateway log says so. A file nobody changed while the model ran is the rewrite, as
+    the model wrote it.
+  - **One lock for every writer of the two files.** The consolidation, the Memory
+    page's save, `add_preference` (the sandboxed agent's `memory_remember`, the
+    plain-text memory's writes), the boot that creates the files, a partition's
+    documents moving into a project's, and the Files editor's save and the agent's
+    `write_file` and `edit_file` (`write_locks.write_lock`, which also holds
+    HEARTBEAT.md's lock for it) read and write them under `memory.hold_documents`, a
+    lock file in the home's `locks/`, so none lands between another's read and its
+    write; the `personalclaw consolidate` command takes it from its own process. A
+    command the agent's shell runs, or another program, takes no lock: it can meet a
+    consolidation only in the instant the consolidation writes, never across its model
+    call.
 - **`memory_record.py`** — the typed `MemoryRecord` with a `kind`
   discriminator, the one shape the subsystem speaks. The key taxonomy is
   prefix-based: `pref.*` / `project.*` keys are semantic facts; `lesson.*`

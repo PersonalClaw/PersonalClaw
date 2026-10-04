@@ -33,7 +33,7 @@ task held to it could still change things, so "read-only" would be a promise not
 the list it read before them: it reads the file again when they are done and takes each finished
 task's line out of that text, leaving every other byte as it is (:func:`run_tasks`). The pass, the
 Files editor's save, the agent's ``write_file`` and ``edit_file`` and the boot that creates the
-file each read and write it under one lock (:func:`queue_lock`), so none lands between another's
+file each read and write it under one lock (:func:`hold_queue`), so none lands between another's
 read and its write.
 
 **Store maintenance is not here at all.** Memory FTS
@@ -56,7 +56,7 @@ from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Coroutine, TypeVar
+from typing import TYPE_CHECKING, Callable, Coroutine
 
 from personalclaw import owed_chores, shutdown_event
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
@@ -109,10 +109,16 @@ _LOCK_KEY = "heartbeat-queue"
 
 
 @contextmanager
-def _locked() -> Iterator[None]:
-    """Hold the queue's lock, waiting for it. ``flock`` on a file opened for this hold, so it
-    excludes another thread as it does another process, and the OS frees it if the holder dies.
-    Not re-entrant: nothing done while it is held may take it again."""
+def hold_queue() -> Iterator[None]:
+    """Hold the queue's lock, waiting for it, while HEARTBEAT.md is read and written.
+
+    The gateway's writers of the file hold it around their read and their write: a pass taking out
+    the tasks it finished (:func:`run_tasks`), the boot that creates the file, and the Files
+    editor's save and the agent's ``write_file`` and ``edit_file`` (``write_locks.write_lock``).
+    So none lands between another's read and its write and undoes it. ``flock`` on a file opened
+    for this hold, so it excludes another thread as it does another process, and the OS frees it if
+    the holder dies. Not re-entrant: nothing done while it is held may take it again.
+    """
     from personalclaw.concurrency import lock_path
 
     with lock_path(_LOCK_KEY).open("w") as handle:
@@ -126,41 +132,6 @@ def _locked() -> Iterator[None]:
 def is_queue_file(path: Path | str) -> bool:
     """Whether *path* is HEARTBEAT.md, named directly or through a link."""
     return os.path.realpath(path) == os.path.realpath(heartbeat_path())
-
-
-@contextmanager
-def queue_lock(path: Path | str) -> Iterator[None]:
-    """Hold the queue's lock while *path* is read and written, when *path* is HEARTBEAT.md.
-
-    The gateway's writers of the file hold it around their read and their write: a pass taking out
-    the tasks it finished (:func:`run_tasks`), the Files editor's save, the agent's ``write_file``
-    and ``edit_file``, and the boot that creates the file. So none lands between another's read and
-    its write and undoes it. A file-backed artifact's write-through checks and writes the file in
-    one step on the event loop, where a pass edits it too, so the two cannot interleave either. A
-    command the agent's shell runs, or another program, takes no lock: it can meet a pass only in
-    the instant the pass rewrites the file, never across the minutes its turns take. Any other
-    path is not the queue, and nothing is held for it.
-    """
-    if not is_queue_file(path):
-        yield
-        return
-    with _locked():
-        yield
-
-
-_T = TypeVar("_T")
-
-
-def queue_locked(path: Path | str, write: Callable[[], _T]) -> Callable[[], _T]:
-    """*write*, run under :func:`queue_lock` for *path*: the form for a writer that reads and
-    writes the file on a worker thread (the agent's ``write_file`` and ``edit_file``), so the lock
-    is held on that thread, around both."""
-
-    def locked() -> _T:
-        with queue_lock(path):
-            return write()
-
-    return locked
 
 
 #: One HEARTBEAT.md task as the gateway's unattended background turn: `(task, deliver) -> response`.
@@ -241,7 +212,7 @@ def ensure_heartbeat_file() -> Path:
     """Create HEARTBEAT.md with its header when it is missing, so the agent finds the queue. Under
     the queue's lock, so a file another writer makes at that moment is not written over."""
     path = heartbeat_path()
-    with _locked():
+    with hold_queue():
         if not path.exists():
             atomic_write(path, _HEADER)
     return path
@@ -312,7 +283,7 @@ def _take_out(path: Path, finished: Counter[tuple[str, str]]) -> None:
     minutes, and the owner or the agent may have written it since. Each finished task's line is
     found in that text by the task it holds (the same reading :func:`_extract_tasks` makes), and
     every other line keeps its bytes: endings, spacing, markers, headings and notes. Read, edited
-    and written in one step under the queue's lock (:func:`queue_lock`), with nothing awaited, so
+    and written in one step under the queue's lock (:func:`hold_queue`), with nothing awaited, so
     no writer in the gateway lands in between.
 
     A finished task no line holds any more was edited or removed while it ran. Nothing is taken
@@ -320,7 +291,7 @@ def _take_out(path: Path, finished: Counter[tuple[str, str]]) -> None:
     from a new task, and the log says so.
     """
     left = Counter(finished)
-    with _locked():
+    with hold_queue():
         try:
             # Bytes, not text mode: a text-mode read turns a CRLF ending into LF.
             current = path.read_bytes().decode("utf-8")

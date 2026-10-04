@@ -1827,6 +1827,14 @@ class HistoryConsolidator:
                 keys.append(render_snippet_block("consolidation-key-new-skill"))
                 if self._auto_refine_enabled:
                     keys.append(render_snippet_block("consolidation-key-refined-skill"))
+            # A refinement rewrites a skill's SKILL.md whole, so it is written only over the
+            # skill as it is here, before the model is called (`_process_auto_skills`).
+            loader = self._skills_loader
+            skills_read = (
+                {s["key"]: loader.load_skill(s["key"]) for s in loader.list_auto_skills()}
+                if loader is not None and auto_skills_eligible and self._auto_refine_enabled
+                else {}
+            )
 
             numbered = "\n\n".join(f"{i+1}. {k}" for i, k in enumerate(keys))
             # The envelope (intro + section ordering + closing instruction) is the
@@ -1886,15 +1894,17 @@ class HistoryConsolidator:
             # Markdown writes (skipped when migrated to structured memory). The model read both
             # files masked (a chore's prompt is masked, ``chores.run_chore``), so a rewrite keeps
             # each hidden value on the line it kept, and one that moves or rewrites one is not
-            # applied.
+            # applied. Each rewrite is of the file as it was read before the model was called, and
+            # the owner or the agent may have written it since: it is applied to the file as it is
+            # now, and not where it meets a change made meanwhile (``MemoryStore.rewrite``).
             if not self._migrated:
-                if prefs := _kept_lines(result.get("preferences_update"), current_prefs):
-                    if prefs.strip() != current_prefs.strip():
-                        memory.write_preferences(prefs)
-
-                if projects := _kept_lines(result.get("projects_update"), current_projects):
-                    if projects.strip() != current_projects.strip():
-                        memory.write_projects(projects)
+                for which, read, rewrite in (
+                    ("preferences", current_prefs, result.get("preferences_update")),
+                    ("projects", current_projects, result.get("projects_update")),
+                ):
+                    unmasked = _kept_lines(rewrite, read)
+                    if unmasked and unmasked.strip() != read.strip():
+                        memory.rewrite(which, read, unmasked, by=f"Consolidation of {key}")
 
             if self._svc.has_vector and (raw_lessons := result.get("lessons")):
                 self._save_lessons(raw_lessons, folder)
@@ -1919,7 +1929,7 @@ class HistoryConsolidator:
             # Guarded by flag + eligibility — failures are logged, never fatal.
             if auto_skills_eligible:
                 try:
-                    self._process_auto_skills(result, key)
+                    self._process_auto_skills(result, key, skills_read=skills_read)
                 except Exception:
                     logger.warning("Auto-skill processing failed for %s", key, exc_info=True)
 
@@ -2419,7 +2429,9 @@ class HistoryConsolidator:
         if written:
             logger.info("Recorded %d proactive commitment(s) for agent %s", written, agent)
 
-    def _process_auto_skills(self, result: dict, key: str) -> None:
+    def _process_auto_skills(
+        self, result: dict, key: str, *, skills_read: Mapping[str, str | None]
+    ) -> None:
         """Extract + write auto-generated skills from the consolidation result.
 
         Handles both ``new_skill`` and ``refined_skill`` result keys.  Each
@@ -2427,6 +2439,10 @@ class HistoryConsolidator:
         against existing skills (for new creation) before being written
         through ``SkillsLoader``.  Every successful write emits a SEL audit
         event via ``sel().log_tool_invocation``.
+
+        A refinement is written only over the skill as *skills_read* holds it, read before the
+        model was called: one changed since (saved on the Skills page, refined by another chat's
+        pass) keeps the later words (``changed_while_refining``).
         """
         if self._skills_loader is None:
             return
@@ -2574,6 +2590,17 @@ class HistoryConsolidator:
                     tool_kind="skills",
                     outcome="rejected",
                     metadata={"name": name, "reason": "empty_after_redaction"},
+                )
+                return
+            # With no await between this check and the write below.
+            if self._skills_loader.load_skill(name) != skills_read.get(name):
+                logger.warning("Auto-skill refine of %s not applied: it changed meanwhile", name)
+                sel().log_tool_invocation(
+                    session_key=key,
+                    tool_name="auto_skill_refine",
+                    tool_kind="skills",
+                    outcome="rejected",
+                    metadata={"name": name, "reason": "changed_while_refining"},
                 )
                 return
             # Refresh the human-facing reuse_count snapshot from the sidecar

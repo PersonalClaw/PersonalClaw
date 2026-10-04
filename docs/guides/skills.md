@@ -277,7 +277,13 @@ same list:
   `skills.auto_create_from_sessions` is on (it is **off** by default): a session
   with a non-trivial multi-step procedure gets one synthesized. They carry
   `source: auto` provenance in their frontmatter, which is exactly how you tell
-  them from anything you wrote.
+  them from anything you wrote. With `skills.auto_refine_on_deviation` also on
+  (off by default), a consolidation that finds a better procedure for an
+  auto-created skill a session used rewrites that skill's `SKILL.md`, but only
+  when the skill is still as it was when the consolidation began: an edit you save
+  on the Skills page while it runs, or a refinement accepted meanwhile, is kept,
+  and the consolidation's refinement is dropped (the audit log records it as
+  `changed_while_refining`).
 
 `personalclaw skills curate` ages the `auto/` library by last use
 (active → stale → archived); an archived skill stays on disk but is kept off the
