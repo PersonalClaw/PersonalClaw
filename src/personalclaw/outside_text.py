@@ -10,9 +10,10 @@ The doors that come in here: a stored trigger's fire (its payload's words, its c
 what started it, ``triggers.fire_facts.hand_on``), a lifecycle trigger's event and what its action
 prints (``hooks.hand_on``, ``hooks.take_in``), a pasted prompt card, the context a callback saved
 for its turn, a scheduled run's result opened as a chat, a group channel's recent messages and the
-post that started a thread, and a refiner's evidence. ``tests/test_outside_text_doors_census.py``
-lists every place in core that fences text for a model, and fails a new one that does it without
-coming through here.
+post that started a thread, a refiner's evidence, and a helper's report, to the chat it reports to
+and through ``subagent_status`` (``subagent_report.handed_on``). The census in
+``tests/test_outside_text_doors_census.py`` lists every place in core that fences text for a model,
+and fails a new one that does it without coming through here.
 
 Text PersonalClaw fenced where it arrived (a watched page's items, an event's value, a webhook's
 body) keeps that fence when the fence holds all of it (:func:`is_whole_fence`), so the richer

@@ -179,7 +179,9 @@ class TestMcpCoreUserActions:
         with patch("personalclaw.mcp_subagents._get") as mock_get:
             mock_get.return_value = {"result": "A" * 5000}
             result = self._simulate_tool_call("subagent_status", {"agent_id": "abc123"})
-        assert len(result) == 5000
+        # All of it, handed on as the helper's words: fenced with the helper as its source.
+        assert "A" * 5000 in result
+        assert result.startswith("<untrusted_content source=subagent:abc123 ")
         mock_get.assert_called_with("/api/spawn/abc123")
 
     def test_spawn_status_not_found(self):

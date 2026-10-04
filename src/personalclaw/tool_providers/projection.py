@@ -745,6 +745,11 @@ def _record_savings(compressor: str, chars_in: int, chars_out: int) -> None:
         logger.debug("savings accounting failed", exc_info=True)
 
 
+#: Where :func:`project_and_retain` starts the note naming a retained result's handle, after the
+#: preview: a caller that fences the preview as text from outside keeps the note outside the fence.
+RETAINED_NOTE_START = "\n\n[projected "
+
+
 def project_and_retain(
     text: str,
     *,
@@ -788,7 +793,7 @@ def project_and_retain(
     # Name all three recovery access modes so the model can pull the dropped slice the
     # way that fits: a char range, a 1-indexed line range, or a grep.
     out = proj.text + (
-        f"\n\n[projected {proj.content_type} output: showing {len(proj.text)} of "
+        f"{RETAINED_NOTE_START}{proj.content_type} output: showing {len(proj.text)} of "
         f"{proj.original_length} chars — full result: "
         f'tool_result_get(result_id="{raw_ref}", line_start=…, line_end=…) '
         f"or grep=…]"

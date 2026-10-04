@@ -532,12 +532,16 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         d = _get(f"/api/spawn/{agent_id}")
         if d.get("error"):
             return tool_failure(f"{d['error']}")
+        result = d.get("result")
+        if not result:
+            return "_No result._"
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
+        from personalclaw.subagent_report import for_a_model
 
-        result = d.get("result") or "_No result._"
         result, _ = redact_exfiltration_urls(result)
         result, _ = redact_credentials(result)
-        return result
+        # The helper's words, handed on as every text from outside is: screened, then fenced.
+        return for_a_model(agent_id, result)
 
     return f"Unknown tool: {name}"
 

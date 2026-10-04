@@ -4,9 +4,10 @@ with its source, whatever door it comes through.
 Each door here hands a model words nobody vetted: what a workflow run said it produced to the
 automation that runs after it, an Inbox message's sender to the automation it fires, a watched
 page's items, a pasted prompt card, the context an agent saved for a callback, a scheduled run's
-result opened as a chat, a group channel's recent messages, the post that started a thread, and a
-line someone else sent in a conversation's history. Every one now goes through one door
-(``outside_text.admit``), and each test below drives a door the way the product does:
+result opened as a chat, a group channel's recent messages, the post that started a thread, a
+line someone else sent in a conversation's history, and a helper's report to the chat that asked
+for it. Every one now goes through one door (``outside_text.admit``), and each test below drives a
+door the way the product does:
 
 * the ordinary texts of the injection screen's labelled table
   (``tests/test_the_injection_screen_passes_ordinary_text_and_refuses_a_take_over.py``: code,
@@ -457,3 +458,31 @@ def test_a_line_someone_else_sent_that_the_screen_refuses_never_reaches_the_mode
         line = _theirs(text)
         assert_withheld(line, text, what=name)
         assert line.startswith("SENT BY SOMEONE OTHER THAN THE USER"), line
+
+
+# ── a helper's report, to the chat that asked for it ──────────────────────────────────────────
+
+
+def test_a_helper_s_report_reaches_a_model_fenced_as_the_helper_s_words():
+    """🔴 Red on integration: the report started its chat's turn as plain text in the turn's own
+    message, and `subagent_status` handed it back as plain text."""
+    from personalclaw import subagent_report
+
+    for name, text in ORDINARY.items():
+        for handed in (
+            subagent_report.for_its_chat("a1b2c3d4", text, "dashboard:chat-a"),
+            subagent_report.for_a_model("a1b2c3d4", text),
+        ):
+            assert_fenced(handed, text, source="subagent:a1b2c3d4", what=name)
+
+
+def test_a_helper_s_report_the_screen_refuses_never_reaches_a_model():
+    """🔴 Red on integration: the report reached its chat whatever it held."""
+    from personalclaw import subagent_report
+
+    for name, text in REFUSED_TEXTS.items():
+        for handed in (
+            subagent_report.for_its_chat("a1b2c3d4", text, "dashboard:chat-a"),
+            subagent_report.for_a_model("a1b2c3d4", text),
+        ):
+            assert_withheld(handed, text, what=name)

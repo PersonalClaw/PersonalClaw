@@ -41,6 +41,7 @@ from personalclaw import (
     session_keys,
     shutdown_event,
     subagent_notes,
+    subagent_report,
 )
 from personalclaw.acp.errors import AcpError, AcpProcessDied
 from personalclaw.approval_brief import attach_approval_brief
@@ -4018,13 +4019,10 @@ class GatewayOrchestrator:
             # (`AnnounceRefused`): news a trigger's own note does not carry.
             _refusal = ""
 
-            # Build ONE announce covering every completion in the batch. A
-            # burst of 8 completions becomes a single parent turn listing all 8,
-            # rather than 8 turns serialized behind the parent's Semaphore(1).
-            def _detail(member: "SubagentInfo") -> str:
-                # Subagent result → the parent transcript. A blind head-cut here was a
-                # real failure class; route long output through project_and_retain
-                # (Context Economy §2.5a) for a type-projected digest + raw_ref handle.
+            def _detail(member: "SubagentInfo", chat: str = "") -> str:
+                """What *member* said, or why it failed: as the model of the chat *chat* is handed
+                it, its report through the door it takes there (`subagent_report.for_its_chat`),
+                or, with no chat, as the person's note says it."""
                 from personalclaw.triggers.settle import why_it_failed, with_why_it_was_held_back
 
                 # A run held back (`SubagentInfo.held_back`) says why first, as on its trigger: a
@@ -4034,23 +4032,23 @@ class GatewayOrchestrator:
                 elif member.error:
                     m_detail = f"Error: {why_it_failed(member)}"
                 else:
-                    m_detail = member.result or "_No response._"
-                    if len(m_detail) > 3000:
-                        from personalclaw.tool_providers.projection import project_and_retain
-
-                        m_detail, _m = project_and_retain(
-                            m_detail, session_key=parent_key, cap=3000
-                        )
-                    m_detail = with_why_it_was_held_back(member, m_detail)
+                    report = member.result or "_No response._"
+                    m_detail = with_why_it_was_held_back(
+                        member,
+                        (
+                            subagent_report.for_its_chat(member.id, report, chat)
+                            if chat
+                            else subagent_report.for_a_person(member.id, report)
+                        ),
+                    )
                 m_detail, _ = redact_exfiltration_urls(m_detail)
                 m_detail, _ = redact_credentials(m_detail)
                 return m_detail
 
-            # Once per member: a long result is retained as it is projected, and the notice below
-            # reads the same text the announce carries.
+            # What each member said, as the person's note below says it.
             details = {m.id: _detail(m) for m in batch}
 
-            def _one_block(member: "SubagentInfo") -> str:
+            def _one_block(member: "SubagentInfo", said: str) -> str:
                 m_status = subagent_notes.ended(member)
                 m_task, _ = redact_exfiltration_urls(member.task)
                 m_task, _ = redact_credentials(m_task)
@@ -4060,18 +4058,23 @@ class GatewayOrchestrator:
                     f"{f' ({member.agent})' if member.agent else ''}"
                     f" {m_status}\n"
                     f"Task: {m_task}\n\n"
-                    f"{details[member.id]}"
+                    f"{said}"
                 )
 
-            blocks = [_one_block(m) for m in batch]
-            n_failed = sum(1 for m in batch if subagent_notes.ended(m) == "failed")
-            if len(batch) == 1:
-                announce = "[Subagent completion event]\n" + blocks[0]
-            else:
-                announce = (
+            def _announce(chat: str) -> str:
+                """ONE completion event covering every member, as the chat *chat* is handed it:
+                a burst of 8 completions is one turn listing all 8, rather than 8 turns serialized
+                behind the parent's Semaphore(1). Built only for a chat it is handed to, since
+                each report is kept there as it is handed on."""
+                blocks = [_one_block(m, _detail(m, chat)) for m in batch]
+                if len(batch) == 1:
+                    return "[Subagent completion event]\n" + blocks[0]
+                n_failed = sum(1 for m in batch if subagent_notes.ended(m) == "failed")
+                return (
                     f"[Subagent completion batch — {len(batch)} agents, "
                     f"{n_failed} failed]\n\n" + "\n\n---\n\n".join(blocks)
                 )
+
             # The note a PERSON reads is not that event: it is named by the run and says what
             # happened (`subagent_notes`). An automation's run links back to the automation. It is
             # about the members no trigger spoke for; when every one was, it goes out only to say
@@ -4101,12 +4104,13 @@ class GatewayOrchestrator:
                 _injection_session = self.dashboard_state.get_session(_session_name)
 
                 # Redact LLM-generated output before any external surface
-                announce, _ = redact_exfiltration_urls(announce)
-                announce, _ = redact_credentials(announce)
                 body, _ = redact_exfiltration_urls(body)
                 body, _ = redact_credentials(body)
 
                 if _injection_session:
+                    # Not for a chat that is gone: its reports would be kept for a deleted chat.
+                    announce, _ = redact_exfiltration_urls(_announce(parent_key))
+                    announce, _ = redact_credentials(announce)
 
                     if _injection_session.running:
                         # Session is busy — wait for current turn to finish,
@@ -4204,6 +4208,7 @@ class GatewayOrchestrator:
                 # automation's, metered, and booked as background spend.
                 _thread_channel = self.sessions.get_channel(parent_key)
                 _announce_source = "channel" if _thread_channel else "background"
+                announce = _announce(parent_key)
                 _injected = False
                 _channel_failure_reasons: list[str] = []
                 _sleep_before_retry = False
@@ -4389,6 +4394,7 @@ class GatewayOrchestrator:
                 acquired = False
                 cron_response: str | None = None
                 try:
+                    announce = _announce(parent_key)
                     # The scheduled job's session reading its subagent's result: a supervising
                     # turn nobody typed, so it rides the orchestration axis its subagent rode —
                     # the axis is what meters it under the daily cap.

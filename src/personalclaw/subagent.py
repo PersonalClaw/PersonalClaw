@@ -47,7 +47,6 @@ from personalclaw.llm.events import (
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
 from personalclaw.session import SessionManager
-from personalclaw.session_workspace import result_path as _ws_result_path
 from personalclaw.stats import Stats
 from personalclaw.subagent_ask import spawn_ask, spawn_refusal
 from personalclaw.subagent_kill import sigkill_session
@@ -2096,19 +2095,12 @@ class SubagentManager:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def _cleanup_delivered(self, info: SubagentInfo) -> None:
-        """Clean up the agent folder + workspace result file after a delivered
-        completion (unchanged from the per-completion path, just factored out)."""
+        """Remove the agent's own folder once its completion is delivered. Its report outlives
+        it, kept in the chat it was handed to (`subagent_report.keep`)."""
         try:
             delete_agent_folder(info.id)
         except Exception:
             logger.debug("Failed to clean up agent folder for %s", info.id, exc_info=True)
-        try:
-            parent_key = info.parent_session_key
-            if parent_key.startswith("dashboard:"):
-                session_name = parent_key.removeprefix("dashboard:")
-                _ws_result_path(session_name, info.id).unlink(missing_ok=True)
-        except Exception:
-            logger.debug("Failed to clean workspace result for %s", info.id, exc_info=True)
 
     async def _fire_event(self, etype: str, info: SubagentInfo, extra: dict | None = None) -> None:
         if self._on_event:
@@ -2548,16 +2540,15 @@ class SubagentManager:
 
             cleaned, _ = redact_exfiltration_urls(cleaned)
             cleaned, _ = redact_credentials(cleaned)
+        # Its report, whole: each reader takes what it needs of it, its chat a projection of a long
+        # one with a handle to all of it (`subagent_report`). Only the streamed copy is capped.
         info.result = cleaned or "_No response._"
-        # Cap disk file and trim memory — gateway decides how much to show based on mode.
         if info.result_path:
             from pathlib import Path
 
             from personalclaw.context_management import cap_result_file, evict_completed_agents
 
             cap_result_file(Path(info.result_path))
-            if len(info.result) > 3000:
-                info.result = info.result[:3000]
             evict_completed_agents(self._agents)
         # Every call refused, or its model out of output room before it answered: it did nothing it
         # was asked, so it ends not done, with why, and its reply stays its result; what its owner

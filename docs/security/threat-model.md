@@ -297,7 +297,8 @@ Content and requests arriving from outside the owner's trust boundary:
   action prints (`hooks.hand_on`, `hooks.take_in`), a pasted prompt card, a
   callback's saved context, a scheduled run's result opened as a chat, a group
   channel's recent messages and a thread's first post, a line someone else sent
-  in a conversation's history, and a refiner's evidence.
+  in a conversation's history, a refiner's evidence, and a helper's report, to
+  the chat it reports to and through `subagent_status` (`subagent_report.py`).
   `tests/test_outside_text_doors_census.py` lists every place core fences text
   for a model; the doors that still fence without the screen (a page the agent
   fetches or browses, a file attached in a chat, an Inbox message, what a

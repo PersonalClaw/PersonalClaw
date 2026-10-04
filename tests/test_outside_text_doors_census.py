@@ -96,6 +96,10 @@ DOORS: dict[tuple[str, str], Door] = {
     ("learning/refiner.py", "fenced_evidence"): Door(
         "a run ledger's evidence, for the refiner's prompt", via="admit"
     ),
+    ("subagent_report.py", "handed_on"): Door(
+        "a helper's report: to the chat it reports to, and as subagent_status reads it",
+        via="admit",
+    ),
 }
 
 #: Text fenced where it arrives, and the door that screens it before any model reads it.
@@ -333,7 +337,7 @@ def test_the_census_reads_the_whole_tree():
     finds today."""
     found = scan(_tree())
     assert len(found["fence"]) >= 45 and len(found["screen"]) >= 5, found
-    assert len(DOORS) >= 13
+    assert len(DOORS) >= 14
 
 
 #: How many doors still fence text from outside without the screen. It may only fall: a door sent

@@ -5,7 +5,6 @@ import json
 import logging
 import re
 import time
-from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -171,6 +170,16 @@ async def api_spawn_status(request: web.Request) -> web.Response:
                 return web.json_response(disk_data)
         except Exception:
             logger.debug("Persistence fallback failed for %s", agent_id, exc_info=True)
+        # A report handed to its chat outlives the agent's folder, kept in that chat: read by the
+        # chat that asks for it, and by no other (`subagent_report.kept`).
+        from personalclaw.approval_answer import work_of_request
+        from personalclaw.subagent_report import kept
+
+        report = await asyncio.to_thread(kept, work_of_request(request), agent_id)
+        if report:
+            return web.json_response(
+                {"id": agent_id, "done": True, "result": _redact(report), "error": ""}
+            )
         return web.json_response({"error": "not found"}, status=404)
     data = {
         "id": info.id,
@@ -180,18 +189,8 @@ async def api_spawn_status(request: web.Request) -> web.Response:
     }  # type: dict[str, object]
     data["started"] = info.started
     if info.done:
-        # Read full result from disk (info.result is truncated to 3000 chars)
-        result = info.result
-        if info.result_path and not is_sensitive_path(info.result_path):
-            try:
-                result = await asyncio.to_thread(
-                    Path(info.result_path).read_text,
-                    encoding="utf-8",
-                    errors="replace",
-                )
-            except OSError:
-                pass
-        data["result"] = _redact(result)
+        # Its report, whole (`SubagentInfo.result`).
+        data["result"] = _redact(info.result)
         data["error"] = _redact(info.error) if info.error else ""
     else:
         data["turns"] = info.turns

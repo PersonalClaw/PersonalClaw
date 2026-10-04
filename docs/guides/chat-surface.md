@@ -199,6 +199,13 @@ under Subagents in the chat's Activity panel by their step names. An ask still w
 PersonalClaw restarts is asked again, or, if its window passed meanwhile, the chat is told the
 batch never started.
 
+When a subagent finishes, its report comes back to the chat: whole, or, when it is long, shown to
+the agent in part with a way to read the rest. The whole report is kept in the chat, where the
+agent's `subagent_status` reads it again later, a restart included, until the chat is deleted or
+goes a week unused. A report is the subagent's words, not yours, so the agent reads it as text from
+outside: one the injection screen refuses never reaches the agent, which is told it was withheld
+and why, as your note about the run is.
+
 ### What a private chat leaves behind
 
 In a **Temporary** or **Incognito** chat the agent sets up no work that lasts after the chat: it
