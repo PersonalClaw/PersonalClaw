@@ -204,8 +204,15 @@ def study_locked_dir(study_id: str) -> Path:
 
 
 def results_path() -> Path:
-    """``evals/results.tsv`` — the append-only cross-run ledger."""
-    return evals_root() / "results.tsv"
+    """``evals/results.tsv`` — the append-only cross-run ledger.
+
+    Naming it creates nothing: its writer makes the folder (:func:`append_result`), and a read of
+    a ledger nobody has written yet is an empty one (:func:`read_results`). A read that made the
+    folder failed wherever the home cannot gain an entry: a bash step's sandbox on Linux holds the
+    home's top level read-only, and the bundled optimize-harness template's first step, which
+    reads this ledger, died there on every home that had no ``evals/`` yet.
+    """
+    return config_dir() / "evals" / "results.tsv"
 
 
 # ── the append-only results ledger ───────────────────────────────────────────

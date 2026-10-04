@@ -119,7 +119,7 @@
             "PC_OPT_MAX_ITERATIONS": "{{inputs.max_iterations}}"
           },
           "with": {
-            "command": "python3 -m personalclaw.evals.optimize preflight </dev/null",
+            "command": "personalclaw optimize-harness preflight </dev/null",
             "timeout": 120
           }
         }
@@ -170,7 +170,7 @@
                   "PC_OPT_LIVE_TARGET": "{{inputs.live_target}}"
                 },
                 "with": {
-                  "command": "python3 -m personalclaw.evals.optimize scope-check </dev/null",
+                  "command": "personalclaw optimize-harness scope-check </dev/null",
                   "timeout": 120
                 }
               }
@@ -207,7 +207,7 @@
                   "PC_OPT_MAX_ITERATIONS": "{{inputs.max_iterations}}"
                 },
                 "with": {
-                  "command": "python3 -m personalclaw.evals.optimize adjudicate </dev/null",
+                  "command": "personalclaw optimize-harness adjudicate </dev/null",
                   "timeout": 120
                 }
               }

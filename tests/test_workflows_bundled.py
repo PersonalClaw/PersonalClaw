@@ -124,7 +124,8 @@ EXPECTED = {
     # The budgeted harness search. The only bundled template
     # whose loop body pairs a `stage` with a `bash` action: the propose half needs a model and
     # the adjudicate half must not have one, because a gate a model can talk its way past is
-    # not a gate. Its bash nodes shell into `personalclaw.evals.optimize`, whose subcommand
+    # not a gate. Its bash nodes run this install's `personalclaw optimize-harness <step>`, the
+    # CLI command over `personalclaw.evals.optimize`, whose subcommand
     # names and `PC_OPT_*` env keys are asserted against that module in
     # `tests/test_evals_optimize.py` — a renamed subcommand fails the TEMPLATE, not just the
     # module, which is the only way a template's shell-out stays honest.

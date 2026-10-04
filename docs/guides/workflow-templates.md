@@ -76,6 +76,12 @@ config; it then reports its own required field missing for a value that is
 visibly present in the spec, every downstream binding fails, and the run dies
 reporting "deadlocked". Validation refuses the shape now so that cannot happen.
 
+A step that runs PersonalClaw itself says `personalclaw <command>`, never
+`python3 -m personalclaw…`. In a `bash` step that name is this install's own
+program, wherever it is installed, while the `python3` on `PATH` has no PersonalClaw
+in a `uv tool` install or the desktop app, so a step written that way fails there on
+its first run.
+
 ## Macros: the patterns, as one-liners
 
 Four ship, and they expand into core nodes **at definition time** — so what is

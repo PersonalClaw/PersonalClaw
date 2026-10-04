@@ -27,7 +27,7 @@
           "type": "string",
           "x-meta": {
             "label": "Command",
-            "help": "Shell command run via /bin/sh -c. Receives PERSONALCLAW_HOOK_EVENT + PERSONALCLAW_HOOK_CONTEXT env vars and the event JSON on STDIN. Exit code 2 blocks a PreToolUse call."
+            "help": "Shell command run via /bin/sh -c, where personalclaw runs this install's own CLI. Receives PERSONALCLAW_HOOK_EVENT + PERSONALCLAW_HOOK_CONTEXT env vars and the event JSON on STDIN. Exit code 2 blocks a PreToolUse call."
           }
         },
         "timeout": {

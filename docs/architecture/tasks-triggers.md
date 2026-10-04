@@ -203,7 +203,10 @@ relative to `PersonalClaw/src/personalclaw/`.
 `create_task`, `invoke_agent`, `notify`, `run_prompt`, `run_script`,
 `run_workflow`, `send_message` (each `*_provider.py`, with `base.py` +
 `registry.py`). Template variables are exported as environment variables for
-the bash action.
+the bash action, and `personalclaw` in its command is this install's own CLI,
+whatever `PATH` holds (`bash_provider.own_cli_function`): a schedule or hook that
+runs `personalclaw <command>` runs the same install as the gateway that started it,
+in a `uv tool` install and the desktop app too.
 
 **`run-prompt` runs its saved Prompt, else its own message, else `loop.md`.**
 An automation the chat makes carries its instruction as the action's `message`

@@ -166,7 +166,7 @@ _PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
 #: still listing the choice in the ``{chat,run,…}`` metavar. The result is the opposite of
 #: the intent: an internal sentinel on the first surface a CLI user reads, and the command
 #: advertised rather than hidden. Genuinely hiding one takes BOTH halves below.
-HIDDEN_COMMANDS = frozenset({"mcp-core", "availability-probe", "content-scan"})
+HIDDEN_COMMANDS = frozenset({"mcp-core", "availability-probe", "content-scan", "optimize-harness"})
 
 
 def _add_hidden_parser(
@@ -1355,6 +1355,11 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
     # where the scan's parse holds no lock the gateway needs — uploads/content_scan.py)
     _add_hidden_parser(sub, "content-scan")
 
+    # optimize-harness (one step of the bundled optimize-harness template, run by its bash steps
+    # with the step's inputs in the PC_OPT_* environment — evals/optimize.py; never typed by a user)
+    optimize_parser = _add_hidden_parser(sub, "optimize-harness")
+    optimize_parser.add_argument("step", nargs="?", default="")
+
     # learn
     learn_parser = sub.add_parser(
         "learn",
@@ -1661,9 +1666,10 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # The gateway's availability-probe and content-scan children answer before any of the setup
-    # below runs: that setup loads config and attaches a RotatingFileHandler to the gateway's own
-    # gateway.log, and a child must not become a second writer rotating the parent's log.
+    # The gateway's availability-probe, content-scan and optimize-harness children answer before
+    # any of the setup below runs: that setup loads config and attaches a RotatingFileHandler to
+    # the gateway's own gateway.log, and a child must not become a second writer rotating the
+    # parent's log.
     if args.command == "availability-probe":
         from personalclaw.providers.availability_probe import main as _availability_probe
 
@@ -1672,6 +1678,10 @@ def main() -> None:
         from personalclaw.uploads.content_scan import main as _content_scan
 
         sys.exit(_content_scan())
+    if args.command == "optimize-harness":
+        from personalclaw.evals.optimize import main as _optimize_step
+
+        sys.exit(_optimize_step([args.step]))
 
     # ``gateway --seed <fixture>`` populates $PERSONALCLAW_HOME from a hand-authored
     # fixture BEFORE the gateway starts — lets a dev spin up a pre-populated

@@ -2,7 +2,8 @@
 
 Runs ``/bin/sh -c <command>`` with ``PERSONALCLAW_HOOK_EVENT`` and
 ``PERSONALCLAW_HOOK_CONTEXT`` env vars, the structured event dict piped to
-STDIN as JSON, process-group isolation, and timeout-driven SIGKILL. Each command is a run of
+STDIN as JSON, process-group isolation, and timeout-driven SIGKILL. In the command,
+``personalclaw`` is this install's own CLI (:func:`own_cli_function`). Each command is a run of
 its own (``run_processes``): what it leaves running, a server that detached included, ends when
 it exits.
 """
@@ -12,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -114,6 +116,34 @@ def _run_values(command: str, env: dict[str, str]) -> list[str]:
     """The payload values *command* runs as commands (:data:`_RUN_VARIABLE`), so they are
     screened as what will RUN, as the command itself is."""
     return [env[name] for name in _RUN_VARIABLE.findall(command) if env.get(name)]
+
+
+#: The name a command runs this install's own PersonalClaw by (:func:`own_cli_function`).
+OWN_CLI_NAME = "personalclaw"
+
+
+def own_cli_function() -> str:
+    """The shell function that makes ``personalclaw`` in a command run this install's own CLI.
+
+    A command runs in ``/bin/sh`` on the gateway's ``PATH``, and in an isolated install nothing
+    there is this install: a ``uv tool`` install (the documented default) keeps PersonalClaw in an
+    environment of its own, so the ``python3`` on ``PATH`` has no PersonalClaw and a
+    ``personalclaw`` there is another install's or none, and the desktop app is a frozen bundle
+    with no interpreter and nothing on ``PATH``. So the command's shell is handed a function of that
+    name first, running ``self_update.cli_argv`` (the one command every child that runs this
+    install's CLI uses), and a step, hook or schedule that says ``personalclaw <command>`` runs the
+    same install as the gateway that started it: alone, in a pipeline, a subshell or a
+    substitution. A program the command starts (``env``, ``nohup``, ``xargs``, another
+    ``sh -c``) looks the name up on ``PATH`` as it looks up any other, and
+    ``command personalclaw`` asks ``PATH`` on purpose.
+
+    Defined ahead of the command rather than written into it, so the text that is screened,
+    audited and shown is the command as its author wrote it.
+    """
+    from personalclaw.self_update import cli_argv
+
+    program = " ".join(shlex.quote(part) for part in cli_argv())
+    return f'{OWN_CLI_NAME}() {{ {program} "$@"; }}\n'
 
 
 def config_problem(config: dict[str, Any]) -> str:
@@ -238,7 +268,7 @@ class BashActionProvider(ActionProvider):
                 run_processes.RUN_VARIABLE: run.mark,
             },
         )
-        argv = ["/bin/sh", "-c", command]
+        argv = ["/bin/sh", "-c", own_cli_function() + command]
         try:
             wrapped_argv, cleanup_path = wrap_argv(argv)
         except SandboxEnforcementUnavailable as exc:

@@ -394,6 +394,8 @@ class TestDualGate:
         from personalclaw.evals import store
 
         path = store.results_path()
+        # The ledger's folder, made as its writer makes it: naming the path creates nothing.
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             "\t".join(store.RESULTS_COLUMNS)
             + "\n"
@@ -703,9 +705,10 @@ class TestTemplateCallSites:
         assert commands, "no bash nodes found — the extraction is broken, not the template"
         invoked = set()
         for command in commands:
-            assert "personalclaw.evals.optimize" in command, command
+            # This install's own CLI, which a bash step's `personalclaw` names, and its command.
             parts = command.split()
-            invoked.add(parts[parts.index("personalclaw.evals.optimize") + 1])
+            assert parts[:2] == ["personalclaw", "optimize-harness"], command
+            invoked.add(parts[2])
         assert invoked, "extracted no subcommand names"
         assert invoked <= set(optimize.COMMANDS), invoked - set(optimize.COMMANDS)
         assert {"preflight", "scope-check", "adjudicate"} <= invoked

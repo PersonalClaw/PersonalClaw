@@ -232,6 +232,22 @@ reaches the provider as an empty config — it then reports its own required fie
 missing for a value visibly present in the spec, and every downstream binding
 fails. Validation refuses the shape at authoring time.
 
+**A `bash` step runs PersonalClaw as `personalclaw`.** Its command runs in `/bin/sh`
+on the gateway's `PATH`, and in an isolated install nothing there is this install: a
+`uv tool` install keeps PersonalClaw in an environment of its own, so the `python3`
+on `PATH` has no PersonalClaw, and the desktop app is a frozen bundle with no
+interpreter at all. So the bash action hands the command's shell a function named
+`personalclaw` that runs this install's own CLI, the command every child of the
+gateway that runs the CLI uses (`bash_provider.own_cli_function`, through
+`self_update.cli_argv`), and a step that says `personalclaw <command>` runs the same
+install as the gateway that started it, alone or in a pipeline, a subshell or a
+substitution. A program the command starts (`env`, `nohup`, `xargs`, another
+`sh -c`) looks the name up on `PATH` like any other, and `command personalclaw` asks
+`PATH` on purpose. The bundled `optimize-harness` template's three steps are
+`personalclaw optimize-harness <step>`, a CLI command its help does not list.
+Nothing the package ships runs PersonalClaw through an interpreter found on `PATH`
+(`tests/test_bare_interpreter_census.py`).
+
 **Every `WF_*` code has a registry row: `workflows/error_codes.py`
 (`WF_ERROR_CODES`).** That is where to look one up. `WF_*` is the third of this repo's
 three code vocabularies — `lowercase_snake` is the HTTP wire envelope

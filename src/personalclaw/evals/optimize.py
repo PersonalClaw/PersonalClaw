@@ -925,7 +925,7 @@ def propose_winner(outcome: SearchOutcome, *, workflow_name: str) -> dict[str, A
     return {**result, "halt_reason": outcome.halt_reason.value}
 
 
-# ── the module entry point the bundled template's bash nodes call ─────────────
+# ── the entry point the bundled template's bash nodes call ────────────────────
 
 #: Env key → payload field, for the bundled template's ``bash`` nodes. CLOSED, and the
 #: template is asserted against it (``tests/test_evals_optimize.py``): a ``PC_OPT_*`` key the
@@ -1171,8 +1171,11 @@ COMMANDS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 }
 
 
-def main(argv: Sequence[str] | None = None, stdin: Any = None) -> int:
-    """``python -m personalclaw.evals.optimize <subcommand>``.
+def main(argv: Sequence[str], stdin: Any = None) -> int:
+    """``personalclaw optimize-harness <subcommand>``, the CLI command the bundled template's bash
+    steps run, so a step reaches this install's own code wherever it is installed (a bash step's
+    ``personalclaw`` is this install's CLI, ``bash_provider.own_cli_function``). The CLI hands
+    the subcommand on as *argv*.
 
     The payload comes from stdin as JSON, or — when stdin is empty, which is how the bundled
     template calls it — from the ``PC_OPT_*`` environment (:func:`payload_from_env`).
@@ -1181,7 +1184,7 @@ def main(argv: Sequence[str] | None = None, stdin: Any = None) -> int:
     is a bash action whose output the engine parses, and a traceback there is an opaque
     failed node rather than a reason.
     """
-    args = list(sys.argv[1:] if argv is None else argv)
+    args = list(argv)
     name = args[0] if args else ""
     handler = COMMANDS.get(name)
     if handler is None:
@@ -1195,12 +1198,10 @@ def main(argv: Sequence[str] | None = None, stdin: Any = None) -> int:
     try:
         payload = json.loads(raw) if raw else payload_from_env()
         result = handler(payload if isinstance(payload, dict) else {})
-    except (OptimizeRefusedError, LiveMutationError, ValueError) as exc:
+    except (OptimizeRefusedError, LiveMutationError, ValueError, OSError) as exc:
+        # OSError too: a sandbox that cannot be made or a witness that cannot be written is a
+        # reason the step can name, and a traceback would leave the node's output empty.
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1
     print(json.dumps(result, sort_keys=True, default=str))
     return 0
-
-
-if __name__ == "__main__":  # pragma: no cover - process entry point
-    raise SystemExit(main())
