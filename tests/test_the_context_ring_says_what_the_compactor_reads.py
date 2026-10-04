@@ -141,13 +141,13 @@ async def test_a_restart_at_the_threshold_keeps_the_window_and_clears_the_readin
     tmp_path, monkeypatch
 ):
     state = _state(tmp_path, monkeypatch, _client(_answer, pct=71.0, window=SERVED))
-    state.sessions.set_compact_callback = MagicMock()
+    state.sessions.set_restart_callback = MagicMock()
     session = state.get_or_create_session("chat-1")
     await _turn(state, session, "what is the failure pattern?")
-    state.wire_session_compact_callback()
-    restarted = state.sessions.set_compact_callback.call_args[0][0]
+    state.wire_session_restart_callback()
+    restarted = state.sessions.set_restart_callback.call_args[0][0]
 
-    await restarted("dashboard:chat-1", 71.0)
+    await restarted("dashboard:chat-1", 71.0, "PersonalClaw cannot compact this agent's context")
 
     assert _usage_frames(state)[-1] == {"session": "chat-1", "pct": None, "window": SERVED}
     assert session.context_usage == {"pct": None, "window": SERVED}

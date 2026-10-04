@@ -263,11 +263,22 @@ async def test_a_chat_on_no_channel_is_told_in_the_dashboard_alone(tmp_path, mon
 # ── the session manager's restart at the threshold, said on every conversation's channel ─────
 
 
+#: Why the session manager restarted an agent CLI's session (`session._why_restarted`).
+REASON = "PersonalClaw cannot compact this agent's context"
+
+
 def _restart_notice(state):
     """The one notice the session manager raises when it restarts a session at the threshold
-    (`SessionManager.set_compact_callback`), as the dashboard registers it."""
-    state.wire_session_compact_callback()
-    return state.sessions.set_compact_callback.call_args[0][0]
+    (`SessionManager.set_restart_callback`), as the dashboard registers it."""
+    state.wire_session_restart_callback()
+    return state.sessions.set_restart_callback.call_args[0][0]
+
+
+def _restarted(pct: int) -> str:
+    return (
+        f"Restarted the agent's session at {pct}% of its context window: {REASON}. It continues "
+        "from what was said here, without the results of its earlier tool calls."
+    )
 
 
 @pytest.mark.asyncio
@@ -277,9 +288,9 @@ async def test_a_restart_is_said_in_the_chat_and_on_its_channel(tmp_path, monkey
     state = _state(tmp_path, monkeypatch)
     session = _from_telegram(state)
 
-    await _restart_notice(state)(f"dashboard:{session.key}", 92.0)
+    await _restart_notice(state)(f"dashboard:{session.key}", 92.0, REASON)
 
-    notice = "Auto-compacted at 92% of the context window."
+    notice = _restarted(92)
     assert _told(telegram) == [(TELEGRAM_CHAT, notice, TELEGRAM_CHAT)]
     assert _said(session)[-1] == notice
 
@@ -292,9 +303,9 @@ async def test_a_restart_is_said_in_a_channels_own_thread(tmp_path, monkeypatch,
     state = _state(tmp_path, monkeypatch)
     state._links[SLACK_THREAD] = (SLACK_THREAD, SLACK_CHANNEL)
 
-    await _restart_notice(state)(SLACK_THREAD, 88.0)
+    await _restart_notice(state)(SLACK_THREAD, 88.0, REASON)
 
-    notice = "Auto-compacted at 88% of the context window."
+    notice = _restarted(88)
     assert _told(connected["slack"]) == [(SLACK_CHANNEL, notice, SLACK_THREAD)]
     assert _told(connected["telegram"]) == []
 
@@ -318,6 +329,6 @@ async def test_a_restart_goes_to_no_channel_it_cannot_place(
     if link is not None:
         state._links[key] = link
 
-    await _restart_notice(state)(key, 90.0)
+    await _restart_notice(state)(key, 90.0, REASON)
 
     assert all(_told(d) == [] for d in connected.values())

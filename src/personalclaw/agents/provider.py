@@ -194,9 +194,10 @@ class AgentProvider(ABC):
 
     @property
     def compacts_automatically(self) -> bool:
-        """Will this provider compact its own history on its own at the Settings threshold?
-        False by default. See :attr:`personalclaw.llm.base.ModelProvider.compacts_automatically`
-        — declared identically on both ABCs, like :attr:`compacts_in_process` above."""
+        """Does this provider compact its own history on its own, so the session manager leaves
+        a session over the Settings threshold to it? False by default. See
+        :attr:`personalclaw.llm.base.ModelProvider.compacts_automatically` — declared
+        identically on both ABCs, like :attr:`compacts_in_process` above."""
         return False
 
     @property

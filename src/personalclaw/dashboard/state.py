@@ -159,7 +159,13 @@ _DEFAULT_PORT = DASHBOARD_PORT
 _SSE_INTERVAL_SECS = 5
 _NOTIFICATIONS_FILE = "notifications.jsonl"
 _MAX_PERSISTED_NOTIFICATIONS = 200
-_AUTO_COMPACT_NOTICE = "Auto-compacted at {pct:.0f}% of the context window."
+#: What a conversation is told when the session manager restarts its session at the context
+#: threshold, with the manager's reason (``SessionManager.set_restart_callback``). A restart, not
+#: a compaction: the agent's runtime ended, and its next turn starts from the conversation.
+_RESTART_NOTICE = (
+    "Restarted the agent's session at {pct:.0f}% of its context window: {reason}. It continues "
+    "from what was said here, without the results of its earlier tool calls."
+)
 
 # Bare chat-N label matcher used by DashboardState.resolve_session() for prefix fallback.
 # Gates the prefix lookup to prevent broad matches (e.g. bare "chat" binding to any session).
@@ -1199,18 +1205,19 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
 
         return self._last_spoken.get(str(session_key or ""), "")
 
-    def wire_session_compact_callback(self) -> None:
+    def wire_session_restart_callback(self) -> None:
         """Register the one notice the session manager raises when it restarts a session at the
-        context threshold: said in the session's dashboard chat when it is one, and on the
-        channel thread it is linked to (:meth:`tell_linked_channel`), whoever runs its turns."""
+        context threshold, with its reason: said in the session's dashboard chat when it is one,
+        and on the channel thread it is linked to (:meth:`tell_linked_channel`), whoever runs
+        its turns."""
 
-        async def _on_compacted(session_key: str, pct: float) -> None:
-            message = _AUTO_COMPACT_NOTICE.format(pct=pct)
+        async def _on_restarted(session_key: str, pct: float, reason: str) -> None:
+            message = _RESTART_NOTICE.format(pct=pct, reason=reason)
             if session_key.startswith(DASHBOARD_SESSION_PREFIX):
                 self._say_restarted(session_key.removeprefix(DASHBOARD_SESSION_PREFIX), message)
             await self.tell_linked_channel(session_key, message)
 
-        self.sessions.set_compact_callback(_on_compacted)
+        self.sessions.set_restart_callback(_on_restarted)
 
     def _say_restarted(self, session_name: str, message: str) -> None:
         """The restart notice in a dashboard chat, and its context gauge cleared."""
@@ -1221,11 +1228,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             session.append("assistant", message, "msg msg-a")
         except Exception:
             logging.getLogger(__name__).exception(
-                "Failed to append compact notice to session %s", session_name
+                "Failed to append the restart notice to session %s", session_name
             )
         try:
-            # ``None``, not 0.0: a compaction shrank the window but nothing has
-            # re-measured it yet, so the honest chip is absent rather than "0%".
+            # ``None``, not 0.0: the restarted session holds less than the old one did, but
+            # nothing has measured it yet, so the honest chip is absent rather than "0%".
             self.say_context_usage(session, None)
         except Exception:
             logging.getLogger(__name__).exception(
@@ -1237,7 +1244,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     ) -> None:
         """Tell a chat's context ring how full its context is, and keep it for session detail.
 
-        *pct* is the provider's own measurement — the number the session manager compacts on —
+        *pct* is the provider's own measurement — the number the session manager acts on —
         or ``None`` when it has measured nothing. *window* is the turn's resolved
         ``context_headroom.Window``; its ``tokens`` go out as the frame's ``window``, ``None``
         when nothing declared or served one, which is the one state in which the ring sends the

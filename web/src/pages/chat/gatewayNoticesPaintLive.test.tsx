@@ -5,10 +5,14 @@ import { render, screen, waitFor, act } from '@testing-library/react'
 //
 // `/compact`'s outcome ("Conversation compacted: freed 10% of the conversation …"), the pass a turn
 // runs on its own history, and the notice that a session was restarted at the context threshold
-// ("Auto-compacted at 71% of the context window.") are written to the transcript by the gateway and
-// sent to the open chat as a `chat_message` frame. The page dropped every such frame that was not an
+// ("Restarted the agent's session at 71% of its context window: …") are written to the transcript by
+// the gateway and sent to the open chat as a `chat_message` frame. The page dropped every such frame that was not an
 // error, so each line appeared only after a reload. It paints them now, joined to the answer the way
 // a reload joins consecutive assistant messages, and once however many transports carry it.
+
+// The gateway's restart notice (`dashboard/state.py` `_RESTART_NOTICE`), as an agent CLI's chat gets it.
+const RESTARTED =
+  "Restarted the agent's session at 71% of its context window: PersonalClaw cannot compact this agent's context. It continues from what was said here, without the results of its earlier tool calls."
 
 const h = vi.hoisted(() => {
   const detail = {
@@ -137,8 +141,8 @@ describe('a notice the gateway adds to the chat', () => {
     await openRunning()
     pushFrame('chat_chunk', { content: 'An answer.', seq: 1 })
     pushFrame('chat_done', { outcome: 'complete' })
-    pushFrame('chat_message', { role: 'assistant', content: 'Auto-compacted at 71% of the context window.' })
-    await waitFor(() => expect(occurrences('Auto-compacted at 71% of the context window.')).toBe(1))
+    pushFrame('chat_message', { role: 'assistant', content: RESTARTED })
+    await waitFor(() => expect(occurrences(RESTARTED)).toBe(1))
   })
 })
 
@@ -158,7 +162,7 @@ describe('the context ring', () => {
     pushFrame('context_usage', { pct: 71, window: 32768 })
     pushFrame('chat_done', { outcome: 'complete' })
     await waitFor(() => expect(ringTitle()).toBe('Context: 71% used'))
-    pushFrame('chat_message', { role: 'assistant', content: 'Auto-compacted at 71% of the context window.' })
+    pushFrame('chat_message', { role: 'assistant', content: RESTARTED })
     pushFrame('context_usage', { pct: null })
     await waitFor(() => expect(ringTitle()).toContain('not measured yet'))
     expect(ringTitle()).toContain('32,768-token window')

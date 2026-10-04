@@ -537,7 +537,7 @@ function LifecycleSection({ session, setSession, agentOptions, discovered }: {
   return (
     <Section title="Context & lifecycle" hint="Keep long sessions productive and control how warm sessions are kept ready.">
       <RowGroup>
-        <NumberRow label="Auto-compact threshold" hint="Context-usage % that triggers compaction. Lower = more frequent." value={Number(session.autocompact_pct ?? 90)} min={5} max={90} step={1} suffix="%" onCommit={(n, l) => patch('autocompact_pct', n, undefined, l)} saved={saved} />
+        <NumberRow label="Auto-compact threshold" hint="Context use at which a chat compacts. An agent CLI that compacts itself does so at its own limit; any other is restarted from the chat's history." value={Number(session.autocompact_pct ?? 90)} min={5} max={90} step={1} suffix="%" onCommit={(n, l) => patch('autocompact_pct', n, undefined, l)} saved={saved} />
         <NumberRow label="Idle timeout" hint="Auto-close an idle session after this long. 0 = never." value={Number(session.timeout_secs ?? 0)} min={0} max={86400} step={60} suffix="s" onCommit={(n, l) => patch('timeout_secs', n, undefined, l)} saved={saved} />
         <AutoArchiveRow days={Number(session.auto_archive_days ?? 30)} onCommit={(n, l) => patch('auto_archive_days', n, undefined, l)} saved={saved} />
 

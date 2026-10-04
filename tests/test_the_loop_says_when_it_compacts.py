@@ -3,7 +3,7 @@
 The loop compacts its own history when the context crosses the Settings threshold, and again when
 a model rejects a prompt as too long — and said nothing either time. The conversation lost its
 middle without a word: the notice the dashboard posts when it restarts a session
-(`DashboardState.wire_session_compact_callback`) is never reached by a loop that compacts itself,
+(`DashboardState.wire_session_restart_callback`) is never reached by a loop that compacts itself,
 because the session manager leaves that loop alone. `/compact` answered "Conversation compacted:
 freed 42% of the conversation (…)"; the same pass run on its own now says exactly that, where it
 happened, and keeps the answer that streamed before it.

@@ -89,6 +89,7 @@ class AcpConnectionPool:
         agent_name: str = "",
         mcp_servers: list | None = None,
         session_meta: dict | None = None,
+        compacts_itself: bool = False,
     ) -> "ModelProvider | None":
         """Open a NEW session on a shared, per-runtime :class:`AcpConnection`, returning
         an :class:`AcpSessionProvider`. The connection is spawned + ``initialize``-d once
@@ -124,6 +125,7 @@ class AcpConnectionPool:
                 agent_name=agent_name,
                 session_key=session_key,
                 mcp_servers=mcp_servers,
+                compacts_itself=compacts_itself,
             )
         except Exception:
             logger.warning("acp pool: open_session failed for %s", runtime_id, exc_info=True)

@@ -35,6 +35,7 @@
    {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "login_command"},
    {"annotation": "dict[str, str] | None", "default": "None", "kind": "keyword_only", "name": "requires_executable"},
    {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "self_sandboxing"},
+   {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "compacts_itself"},
    {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "env_passthrough"},
    {"annotation": "dict[str, object] | None", "default": "None", "kind": "keyword_only", "name": "session_meta"},
    {"annotation": "tuple[str, ...]", "default": "()", "kind": "keyword_only", "name": "credential_files"}
@@ -2835,10 +2836,10 @@
     ],
     "returns": "None"
    },
-   "set_compact_callback": {
+   "set_restart_callback": {
     "kind": "method",
     "params": [
-     {"annotation": "Callable[[str, float], Awaitable[None]] | None", "kind": "positional_or_keyword", "name": "cb"}
+     {"annotation": "Callable[[str, float, str], Awaitable[None]] | None", "kind": "positional_or_keyword", "name": "cb"}
     ],
     "returns": "None"
    },

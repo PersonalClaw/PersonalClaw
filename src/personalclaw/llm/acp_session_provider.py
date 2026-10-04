@@ -53,6 +53,7 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         model: str = "",
         agent_name: str = "",
         unattended: bool = False,
+        compacts_itself: bool = False,
     ) -> None:
         self._conn = connection
         self._session = session
@@ -63,6 +64,9 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
         # Defaults False so a pooled session a caller forgot to classify keeps AAP-5's
         # clamp; only an explicitly unattended session may keep an auto-approve mode.
         self._unattended = bool(unattended)
+        # What the runtime's app declared about its CLI (``acp_agent.options_compacts_itself``),
+        # answered here as the N=1 provider answers it.
+        self._compacts_itself = bool(compacts_itself)
 
     # ── identity ────────────────────────────────────────────────────────────────
     @property
@@ -202,6 +206,13 @@ class AcpSessionProvider(AcpToolOutcomesMixin, AcpTurnMeter, AgentProvider):
     # ── status / control ────────────────────────────────────────────────────────
     def context_usage_pct(self) -> float | None:
         return self._session.context_usage_pct()
+
+    @property
+    def compacts_automatically(self) -> bool:
+        """The app's declaration, the SAME answer the N=1 provider gives
+        (``AcpAgentProvider.compacts_automatically``): a session on a shared connection is
+        left alone at the threshold exactly when one on its own process would be."""
+        return self._compacts_itself
 
     def is_alive(self) -> bool:
         return self._conn.is_process_alive()
@@ -359,6 +370,7 @@ async def open_acp_session_provider(
     session_key: str | None = "",
     mcp_servers: list | None = None,
     unattended: bool = False,
+    compacts_itself: bool = False,
 ) -> "AcpSessionProvider":
     """Open a new session on an already-live (spawned + ``initialize``-d) connection and
     wrap it in an :class:`AcpSessionProvider`. Multiple calls on the same connection =
@@ -384,4 +396,5 @@ async def open_acp_session_provider(
         model=model,
         agent_name=agent_name,
         unattended=unattended,
+        compacts_itself=compacts_itself,
     )

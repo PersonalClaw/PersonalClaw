@@ -870,7 +870,9 @@ class SessionConfig:
         default=90.0,
         metadata=_meta(
             "Auto-Compact Threshold",
-            "Context usage percentage at which auto-compaction triggers (5-90).",
+            "Context usage percentage (5-90) at which a chat compacts. An agent CLI that "
+            "compacts itself does so at its own limit; any other agent CLI's session is "
+            "restarted here, from the chat's history.",
         ),
     )
     pool_size: int = field(

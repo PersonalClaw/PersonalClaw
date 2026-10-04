@@ -12,10 +12,13 @@ chat's title, follow-ups, suggestions, a folder's icon, history compression and 
 consolidation are each one fresh call (``chores.run_chore``). A heartbeat task runs in a
 session of its own that ends with it (``heartbeat_tasks_provider.task_session_key``).
 
-At >= 90% context usage, fires a background task that sends /compact
-to the ACP agent (which natively summarizes older turns), then resets the
-session. The user's response is never blocked — compaction is fully
-fire-and-forget.
+At the Settings threshold (``session.autocompact_pct``, 90% of the context window by default) a
+session whose runtime compacts its own conversation is left to do it: the native loop while its
+own passes still free space, and an agent CLI whose app declares that the CLI compacts itself
+(``register_acp_cli_entry(compacts_itself=True)``). Nothing here can compact a conversation an
+agent CLI holds, so any other session is restarted, in the background so no answer waits for it:
+its runtime is ended, the next turn starts a fresh one from the conversation's own history, and
+the conversation is told so, and why (``set_restart_callback``).
 
 Circuit breaker: after 5 consecutive failures on a session, the session
 is force-reset instead of retrying forever.
@@ -98,8 +101,8 @@ _MAX_POOL = 10
 _MAX_POOL_PROCESSES = 150
 
 
-# Context usage at which a turn's log line is a warning. Compaction itself happens at the
-# Settings threshold, `context_compaction.autocompact_pct()`.
+# Context usage at which a turn's log line is a warning. What happens to the session itself is
+# decided at the Settings threshold, `context_compaction.autocompact_pct()`.
 _CONTEXT_WARN_PCT = 70.0
 
 # Circuit breaker: force-reset after this many consecutive failures
@@ -313,6 +316,19 @@ def _rebuild_reason(sess: "_Session", asked: dict[str, Any]) -> str:
     return ""
 
 
+def _why_restarted(provider: ModelProvider) -> str:
+    """Why a session over the context threshold is restarted rather than compacted, as the
+    restart notice says it (``SessionManager.set_restart_callback``).
+
+    Asked only of a runtime that does not compact itself (``compacts_automatically`` False). The
+    native loop owns its history, so it answers False only once its own passes stopped helping;
+    any other runtime keeps its conversation where nothing here can compact it. ``is True``, so a
+    test double's truthy attribute cannot read as an in-process loop."""
+    if getattr(provider, "compacts_in_process", False) is True:
+        return "compacting its context no longer frees enough room"
+    return "PersonalClaw cannot compact this agent's context"
+
+
 def _record_runner_lease(runtime_id: str, holder: str) -> None:
     """Record that session *holder* started a chat on the external runner *runtime_id*.
 
@@ -425,9 +441,11 @@ class SessionManager:
         self._lock = asyncio.Lock()
         self._start_sem = asyncio.Semaphore(4)  # max 4 concurrent cold-starts
         self._cleanup_task: asyncio.Task | None = None
-        self._compacting: set[str] = set()
+        # Sessions being restarted at the context threshold (``_restart_session``): a turn that
+        # asks for one of them is given a fresh runtime, never the one being ended.
+        self._restarting: set[str] = set()
         self._background_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
-        self._on_compacted: Callable[[str, float], Awaitable[None]] | None = None
+        self._on_restarted: Callable[[str, float, str], Awaitable[None]] | None = None
         # Fired with the session key just before an idle session is reset,
         # so a consumer (the consolidator) can extract skills from the ending
         # session. Wired at gateway startup to consolidator.consolidate_session.
@@ -626,7 +644,11 @@ class SessionManager:
 
         try:
             from personalclaw.acp.connection_pool import get_acp_pool
-            from personalclaw.llm.acp_agent import options_env, options_session_meta
+            from personalclaw.llm.acp_agent import (
+                options_compacts_itself,
+                options_env,
+                options_session_meta,
+            )
             from personalclaw.llm.acp_session_provider import concurrent_sessions_enabled
             from personalclaw.llm.registry import get_default_registry
 
@@ -661,6 +683,7 @@ class SessionManager:
                 channel_id=channel_id,
                 model=model or "",
                 agent_name=agent or "",
+                compacts_itself=options_compacts_itself(options),
             )
             if provider is None:
                 return None
@@ -969,7 +992,7 @@ class SessionManager:
         (ACP agent has full native history — skip thread history injection).
 
         For new sessions, tries the warm pool first for instant startup.
-        If the session is mid-compaction, creates a fresh one instead.
+        If the session is being restarted at the context threshold, creates a fresh one.
         Acquires the per-session semaphore before returning — caller MUST
         call ``release(key)`` when done.
 
@@ -991,7 +1014,7 @@ class SessionManager:
         reuse: tuple[ModelProvider, bool, "_Session"] | None = None
         try:
             async with self._lock:
-                if key in self._sessions and key not in self._compacting:
+                if key in self._sessions and key not in self._restarting:
                     sess = self._sessions[key]
                     # If the provider's process died (crash, SIGKILL, etc.),
                     # remove the stale entry so we fall through to cold-start
@@ -1231,7 +1254,7 @@ class SessionManager:
             async with self._lock:
                 # Re-check: another coroutine may have created this key while we
                 # were starting the provider (race on same key).
-                if key in self._sessions and key not in self._compacting:
+                if key in self._sessions and key not in self._restarting:
                     # Another task won the race — shut down our provider, use theirs.
                     await provider.shutdown()
                     sess = self._sessions[key]
@@ -1366,15 +1389,19 @@ class SessionManager:
         logger.debug("Reset session: %s (pid=%s)", key, pid)
 
     def check_context_usage(self, key: str, provider: ModelProvider) -> float | None:
-        """Check context usage after a turn, and restart the session at the Settings threshold.
+        """Count a turn, read its context usage, and restart the session over the threshold.
 
         The threshold is ``session.autocompact_pct`` as config.json reads now — the same value
-        the native loop compacts its own history at, so one setting governs both. A provider
-        that still compacts itself (``compacts_automatically``) is left to do so: restarting it
-        here would always come first and throw away the history it was about to compact.
+        the native loop compacts its own history at, so one setting governs both. A runtime
+        that compacts itself (``compacts_automatically``) is left to do so: the native loop
+        while its own passes still help, and an agent CLI its app declares compacts its own
+        conversation. A restart would throw away what it keeps: the loop's history, the CLI's
+        session with the results of every tool call in it. Any other session is restarted
+        (:meth:`_restart_session`), since nothing else frees its context.
+
         Returns the context usage percentage immediately — never blocks — or ``None`` when
-        the provider measured none. An unmeasured session neither compacts nor logs a
-        percentage: there is no percentage to log.
+        the provider measured none. An unmeasured session is neither restarted nor logs a
+        percentage: there is no percentage to act on.
         """
         from personalclaw.context_compaction import autocompact_pct
 
@@ -1391,24 +1418,25 @@ class SessionManager:
             if provider.compacts_automatically:
                 logger.info("Session %s context at %.0f%% — it compacts its own history", key, pct)
             else:
-                self._trigger_compaction(key, f"context at {pct:.0f}%", pct)
+                self._trigger_restart(key, pct, _why_restarted(provider))
         elif pct >= _CONTEXT_WARN_PCT:
             logger.warning("Session %s context at %.0f%%", key, pct)
         else:
             logger.info("Session %s context at %.0f%%", key, pct)
         return pct
 
-    def set_compact_callback(self, cb: Callable[[str, float], Awaitable[None]] | None) -> None:
-        """Register a callback fired after a session is compacted.
+    def set_restart_callback(self, cb: Callable[[str, float, str], Awaitable[None]] | None) -> None:
+        """Register what tells a conversation its session was restarted at the context threshold.
 
-        The callback receives the session key and the context pct that
-        triggered the compaction. Used by the dashboard to post a visible
-        notice and reset the context indicator after an otherwise silent
-        auto-compaction.
+        The callback receives the session key, the context usage that crossed the threshold
+        and why the session was restarted rather than compacted (:func:`_why_restarted`), and
+        runs once the old runtime has ended. The dashboard registers the one notice
+        (``DashboardState.wire_session_restart_callback``), said in the conversation and on the
+        channel thread it is linked to.
         """
-        if self._on_compacted is not None and cb is not None:
-            logger.warning("Compact callback already registered; replacing existing handler")
-        self._on_compacted = cb
+        if self._on_restarted is not None and cb is not None:
+            logger.warning("Restart callback already registered; replacing existing handler")
+        self._on_restarted = cb
 
     def set_session_expire_callback(self, cb: Callable[[str], Awaitable[object]] | None) -> None:
         """Register a callback fired with the session key just before an idle
@@ -1418,23 +1446,25 @@ class SessionManager:
         """
         self._on_session_expire = cb
 
-    def _trigger_compaction(self, key: str, reason: str, pct: float) -> None:
-        if key not in self._compacting:
-            logger.warning("Session %s compacting — %s", key, reason)
-            self._compacting.add(key)
-            t = asyncio.create_task(self._compact_session(key, pct))
-            self._background_tasks.add(t)
-            t.add_done_callback(self._background_tasks.discard)
-        else:
-            logger.info("Session %s compaction already in progress", key)
+    def _trigger_restart(self, key: str, pct: float, reason: str) -> None:
+        if key in self._restarting:
+            logger.info("Session %s restart already in progress", key)
+            return
+        logger.warning("Session %s context at %.0f%%: restarting it, %s", key, pct, reason)
+        self._restarting.add(key)
+        t = asyncio.create_task(self._restart_session(key, pct, reason))
+        self._background_tasks.add(t)
+        t.add_done_callback(self._background_tasks.discard)
 
-    async def _compact_session(self, key: str, pct: float) -> None:
-        """Kill and replace a session that hit the context threshold.
+    async def _restart_session(self, key: str, pct: float, reason: str) -> None:
+        """End a session whose context crossed the threshold and that cannot compact itself.
 
-        The fresh session gets context re-injected via build_session_context()
-        on the next user message, so no /compact call is needed.
-        Forgets the stored session id to prevent false resumes with stale data. A channel link
-        stays: deleting the whole entry stopped a channel chat's answers reaching the channel.
+        The conversation's next turn starts a fresh runtime, and the conversation's own history
+        restores it: the turns that were said, not the results of earlier tool calls. The stored
+        session id is forgotten, so neither that turn nor a start after an idle reap or a gateway
+        restart loads back the session this one replaced, which holds the full context the
+        restart exists to leave. A channel link stays: deleting the whole entry stopped a channel
+        chat's answers reaching the channel.
         """
         try:
             async with self._lock:
@@ -1442,16 +1472,16 @@ class SessionManager:
             if session:
                 self._session_map.forget_session_id(key)
                 await session.provider.shutdown()
-                logger.info("Recycled session %s (context overflow)", key)
-                if self._on_compacted is not None:
+                logger.info("Restarted session %s at %.0f%% of its context window", key, pct)
+                if self._on_restarted is not None:
                     try:
-                        await self._on_compacted(key, pct)
+                        await self._on_restarted(key, pct, reason)
                     except Exception:
-                        logger.exception("Compact callback failed for %s", key)
+                        logger.exception("Restart callback failed for %s", key)
         except Exception:
-            logger.exception("Session recycle failed for %s", key)
+            logger.exception("Session restart failed for %s", key)
         finally:
-            self._compacting.discard(key)
+            self._restarting.discard(key)
 
     def mark_agent_stale(self, *names: str, unnamed: bool = False) -> list[str]:
         """Mark every live session running one of ``names`` to rebuild its runtime at its next turn.

@@ -204,24 +204,29 @@ class TestChatSessionStopState:
         assert d["stopping"] is True
 
 
-class TestCompactCallbackWiring:
-    """Tests for DashboardState.wire_session_compact_callback.
+#: The reason the session manager gives for restarting an agent CLI's session (``_why_restarted``).
+REASON = "PersonalClaw cannot compact this agent's context"
 
-    Covers the async closure that fires after SessionManager recycles a
-    dashboard session: posts a visible notice and broadcasts context_usage
-    reset.  Non-dashboard session keys and missing sessions short-circuit.
+
+class TestRestartCallbackWiring:
+    """Tests for DashboardState.wire_session_restart_callback.
+
+    Covers the async closure that fires after SessionManager restarts a
+    dashboard session at the context threshold: posts the restart notice with
+    its reason and broadcasts context_usage reset.  Non-dashboard session keys
+    and missing sessions short-circuit.
     """
 
     def _captured_callback(self, state: DashboardState):
         """Install the callback and return the closure passed to sessions."""
-        state.wire_session_compact_callback()
-        state.sessions.set_compact_callback.assert_called_once()
-        return state.sessions.set_compact_callback.call_args[0][0]
+        state.wire_session_restart_callback()
+        state.sessions.set_restart_callback.assert_called_once()
+        return state.sessions.set_restart_callback.call_args[0][0]
 
     def test_wire_installs_callback_on_sessions(self, state: DashboardState) -> None:
-        state.wire_session_compact_callback()
-        state.sessions.set_compact_callback.assert_called_once()
-        cb = state.sessions.set_compact_callback.call_args[0][0]
+        state.wire_session_restart_callback()
+        state.sessions.set_restart_callback.assert_called_once()
+        cb = state.sessions.set_restart_callback.call_args[0][0]
         assert callable(cb)
 
     @pytest.mark.asyncio
@@ -230,8 +235,8 @@ class TestCompactCallbackWiring:
         baseline = len(session.messages)
         cb = self._captured_callback(state)
 
-        await cb("heartbeat", 90.0)
-        await cb("cron:daily-digest", 95.0)
+        await cb("heartbeat", 90.0, REASON)
+        await cb("cron:daily-digest", 95.0, REASON)
 
         assert len(session.messages) == baseline
 
@@ -240,7 +245,7 @@ class TestCompactCallbackWiring:
         cb = self._captured_callback(state)
 
         # No session named chat-ghost exists.  Must not raise.
-        await cb("dashboard:chat-ghost", 90.0)
+        await cb("dashboard:chat-ghost", 90.0, REASON)
 
     @pytest.mark.asyncio
     async def test_callback_appends_assistant_notice(self, state: DashboardState) -> None:
@@ -248,14 +253,17 @@ class TestCompactCallbackWiring:
         before = len(session.messages)
         cb = self._captured_callback(state)
 
-        await cb("dashboard:chat-1", 92.0)
+        await cb("dashboard:chat-1", 92.0, REASON)
 
         assert len(session.messages) == before + 1
         added = session.messages[-1]
         assert added["role"] == "assistant"
         assert added["cls"] == "msg msg-a"
-        assert "92" in added["content"]
-        assert "Auto-compacted" in added["content"]
+        # A restart, said as one, with its reason: never "Auto-compacted", which it is not.
+        assert added["content"] == (
+            f"Restarted the agent's session at 92% of its context window: {REASON}. It "
+            "continues from what was said here, without the results of its earlier tool calls."
+        )
 
     @pytest.mark.asyncio
     async def test_callback_rounds_pct_in_notice(self, state: DashboardState) -> None:
@@ -263,7 +271,7 @@ class TestCompactCallbackWiring:
         state.get_or_create_session("chat-1")
         cb = self._captured_callback(state)
 
-        await cb("dashboard:chat-1", 91.7)
+        await cb("dashboard:chat-1", 91.7, REASON)
 
         added = state.get_session("chat-1").messages[-1]
         assert "92%" in added["content"]
@@ -276,13 +284,13 @@ class TestCompactCallbackWiring:
         state.get_or_create_session("chat-1")
         cb = self._captured_callback(state)
 
-        await cb("dashboard:chat-1", 92.0)
+        await cb("dashboard:chat-1", 92.0, REASON)
 
         payloads = [json.loads(c.args[0]) for c in ws.send_str.call_args_list]
         context = [p for p in payloads if p.get("type") == "context_usage"]
         assert len(context) == 1
-        # ``pct: None``, not 0.0. A compaction shrank the window but nothing has
-        # re-measured it, so the honest chip is ABSENT until the next turn reports —
+        # ``pct: None``, not 0.0. The restarted session holds less, but nothing has
+        # measured it, so the honest chip is ABSENT until the next turn reports —
         # 0.0 would have the UI state "0% used", a number no backend supplied.
         assert context[0]["data"] == {"session": "chat-1", "pct": None}
 
@@ -302,7 +310,7 @@ class TestCompactCallbackWiring:
         )
         cb = self._captured_callback(state)
 
-        await cb("dashboard:chat-1", 92.0)
+        await cb("dashboard:chat-1", 92.0, REASON)
 
         payloads = [json.loads(c.args[0]) for c in ws.send_str.call_args_list]
         context = [p for p in payloads if p.get("type") == "context_usage"]
@@ -322,6 +330,6 @@ class TestCompactCallbackWiring:
 
             mp.setattr(state, "broadcast_ws", boom)
 
-            await cb("dashboard:chat-1", 92.0)
+            await cb("dashboard:chat-1", 92.0, REASON)
 
         assert session.messages[-1]["role"] == "assistant"

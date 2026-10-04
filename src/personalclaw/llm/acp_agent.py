@@ -115,6 +115,16 @@ def options_session_meta(options: dict) -> dict:
     return dict(meta) if isinstance(meta, dict) else {}
 
 
+def options_compacts_itself(options: dict) -> bool:
+    """Whether an ``acp:<cli>`` entry's app declared that its CLI compacts its own conversation
+    (``register_acp_cli_entry(compacts_itself=True)``). Read through here by every path that
+    opens a session from an entry, like :func:`options_session_meta`: the runtime factory and a
+    concurrent session's shared connection. Only a declared ``True`` counts: a session whose
+    runtime is not known to compact itself is restarted at the threshold rather than left to
+    overflow."""
+    return options.get("compacts_itself") is True
+
+
 class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentProvider):
     """Generic ACP-over-stdio agent runtime.
 
@@ -485,10 +495,14 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
         unattended: bool = False,
         runtime_id: str = "",
         session_meta: dict | None = None,
+        compacts_itself: bool = False,
     ) -> None:
         if not command:
             raise ValueError("AcpAgentProvider requires a non-empty command list")
         self._command: list[str] = list(command)
+        # What this runtime's app declared about its CLI (``options_compacts_itself``): read by the
+        # session manager at the context threshold, through ``compacts_automatically``.
+        self._compacts_itself: bool = bool(compacts_itself)
         # The CONFIGURED runtime id (the ``acp:<cli>`` ProviderEntry name) this
         # provider was built for. Read by ``provider_id``; empty falls back to
         # basename inference. See that property for why the configured value wins.
@@ -728,6 +742,18 @@ class AcpAgentProvider(AcpToolOutcomesMixin, AcpTurnMeter, ModelProvider, AgentP
 
     def context_usage_pct(self) -> float | None:
         return self._client.last_prompt_stats.context_pct
+
+    @property
+    def compacts_automatically(self) -> bool:
+        """Whether the CLI compacts its own conversation when its context fills, as this
+        runtime's app declared (``register_acp_cli_entry(compacts_itself=True)``).
+
+        True keeps the session manager from restarting the session at the Settings threshold:
+        the CLI's own compaction keeps the session going, with the results of its earlier tool
+        calls. False, the default for a CLI its app says nothing about, is a session that is
+        restarted there, because nothing in this process can compact a conversation the CLI
+        holds."""
+        return self._compacts_itself
 
     async def compact(self, context: str = "") -> None:
         """Trigger a native ``/compact`` slash command on the spawned agent.
@@ -978,6 +1004,8 @@ def _factory(
       for agents (e.g. claude) that persist tool results to JSONL.
     * ``session_meta`` — optional ``_meta`` every session/new + session/load carries
       (:func:`options_session_meta`).
+    * ``compacts_itself`` — the app's declaration that its CLI compacts its own conversation
+      (:func:`options_compacts_itself`).
     * ``channel_id`` — optional channel id passed via env.
 
     The credential, if declared on the entry, is currently not consumed —
@@ -1108,6 +1136,7 @@ def _factory(
         reasoning_effort=reasoning_effort,
         unattended=unattended,
         session_meta=options_session_meta(options),
+        compacts_itself=options_compacts_itself(options),
         # The CONFIGURED runtime id, so ``provider_id`` names the runtime the user
         # picked (``acp:claude-code``) instead of inferring it from the launch
         # command's basename (``acp:claude-agent-acp``, or ``acp:npx`` under the npx

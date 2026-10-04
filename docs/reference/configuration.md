@@ -114,7 +114,7 @@ Models, or per agent on the Agents page.
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
 | `session.timeout_secs` | integer (0–86400) | `3600` | Settings → Chat | Idle session timeout in seconds. |
-| `session.autocompact_pct` | number (5–90) | `90.0` | Settings → Chat | Context usage percentage at which auto-compaction triggers. |
+| `session.autocompact_pct` | number (5–90) | `90.0` | Settings → Chat | Context usage percentage at which a chat compacts. An agent CLI whose app says it compacts itself does so at its own limit; any other agent CLI's session is restarted here, from the chat's history, and the chat says so. |
 | `session.pool_size` | integer (0–10) | `0` | Settings → Chat | Pre-spawned ACP agent processes kept warm for instant session start. `0` disables. Only useful for ACP agents (subprocess spawn is the cost); the native runtime needs no pool. |
 | `session.pool_agent` | string | `""` | Settings → Chat | Agent name for warm-pool processes. Empty uses `default_agent`. |
 | `session.pool_ttl_secs` | integer (0–7200) | `1800` | Settings → Chat | Max age for pooled processes; stale ones are discarded at claim time. `0` disables. |

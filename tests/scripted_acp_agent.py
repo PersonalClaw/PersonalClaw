@@ -40,6 +40,10 @@ In both of those, a prompt that follows a refused one is answered without the co
     answers (:data:`LATE_ANSWER`); every later turn answers at once (:data:`NEXT_ANSWER`).
 ``answers``
     Answers every prompt at once (:data:`PLAIN_ANSWER`), asking nothing.
+``fills-context``
+    Answers every prompt at once, :data:`FIRST_REVIEW` first and :data:`LATER_REVIEW` after, and
+    reports its context as :data:`FULL_CONTEXT_PCT` full after each answer (the metadata
+    notification that carries ``contextUsagePercentage``), asking nothing.
 
 Every scenario advertises ``loadSession`` and answers ``session/load``, so a resume of a session
 it served is recorded like any other request.
@@ -68,6 +72,10 @@ NEXT_ANSWER = "This is the answer to the second question."
 PLAIN_ANSWER = "The alerts are the carrier adapter timing out; here is what to check first."
 #: What ``dies-mid-turn`` prints before it exits.
 DYING_STDERR = "engine: the connection to its service was reset"
+#: How full ``fills-context`` says its context is after each answer, and what it answers.
+FULL_CONTEXT_PCT = 95.0
+FIRST_REVIEW = "The change bumps the version in pyproject.toml and nothing else."
+LATER_REVIEW = "Next, check that the changelog names the new version."
 
 _OPTIONS = {
     "deny-continues": [
@@ -269,6 +277,17 @@ class Agent:
         elif method == "session/prompt" and self.scenario == "answers":
             self.prompt_id = req_id
             self.say(PLAIN_ANSWER)
+            self.end_turn("end_turn")
+        elif method == "session/prompt" and self.scenario == "fills-context":
+            self.prompt_id = req_id
+            self.say(LATER_REVIEW if self.prompts_seen else FIRST_REVIEW)
+            self.prompts_seen += 1
+            self.send(
+                {
+                    "method": "_vendor.dev/metadata",
+                    "params": {"sessionId": SESSION_ID, "contextUsagePercentage": FULL_CONTEXT_PCT},
+                }
+            )
             self.end_turn("end_turn")
         elif method == "session/prompt" and self.refused:
             self.prompt_id = req_id

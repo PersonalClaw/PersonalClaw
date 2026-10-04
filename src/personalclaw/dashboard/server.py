@@ -602,8 +602,8 @@ async def start_dashboard(
     if state.subagents is not None:
         state.subagents.hook_store = state._hook_store
 
-    # Visible notice + pct reset when auto-compaction fires on a dashboard session
-    state.wire_session_compact_callback()
+    # The notice, and the context ring cleared, when a session is restarted at the threshold
+    state.wire_session_restart_callback()
 
     app = web.Application(
         client_max_size=_single_post_ceiling()

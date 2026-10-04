@@ -49,6 +49,7 @@ def register_acp_cli_entry(
     login_command: list[str] | None = None,
     requires_executable: dict[str, str] | None = None,
     self_sandboxing: bool = False,
+    compacts_itself: bool = False,
     env_passthrough: list[str] | None = None,
     session_meta: dict[str, object] | None = None,
     credential_files: tuple[str, ...] = (),
@@ -141,6 +142,20 @@ def register_acp_cli_entry(
         the CLI's own sandbox still applies, and so do the host's PreToolUse deny
         gate and four-tier approval, which are where ACP tool authority actually
         lives.
+    compacts_itself:
+        Optional declaration that this CLI compacts its own conversation, on its own, when its
+        context fills: a summary replaces its older turns and the session goes on. Set it and
+        core leaves the runtime's sessions alone at the Settings threshold
+        (``session.autocompact_pct``), so a session keeps what the CLI holds, the results of
+        its earlier tool calls included. Leave it and core restarts a session that crosses the
+        threshold, since core cannot compact a conversation that lives inside the CLI: the next
+        turn starts a fresh session from the chat's own history, and the chat is told so.
+
+        Same fact/policy split as ``self_sandboxing``: whether a CLI compacts itself, and at
+        what limit, is vendor knowledge and lives ONLY in the bundle, read from the CLI's own
+        behaviour rather than assumed. No ACP handshake says it, so the bundle is where it is
+        said. Core reads it on every path that opens a session from this entry (the runtime
+        factory and a pooled connection, ``acp_agent.options_compacts_itself``).
 
     A CLI's own agent-config directory is deliberately NOT a parameter here.
     ACP-AGENT-PARITY §2.1 measured all three shipped CLIs honouring the
@@ -219,6 +234,10 @@ def register_acp_cli_entry(
     if self_sandboxing:
         # Bundle states the fact (this CLI sandboxes itself); core picks the policy.
         options["sandbox_mode"] = "off"
+    if compacts_itself:
+        # The same split: the bundle says the CLI compacts itself, and the session manager
+        # leaves its sessions alone at the threshold (``AcpAgentProvider.compacts_automatically``).
+        options["compacts_itself"] = True
 
     entry = ProviderEntry(
         name=name,

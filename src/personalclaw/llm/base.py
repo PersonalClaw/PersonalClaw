@@ -232,13 +232,14 @@ class ModelProvider(ABC):
 
     @property
     def compacts_automatically(self) -> bool:
-        """Whether this provider will compact its own history ON ITS OWN once the context
-        crosses the Settings threshold (``session.autocompact_pct``).
+        """Whether this provider compacts its own history on its own, so a session whose context
+        crosses the Settings threshold (``session.autocompact_pct``) is left to it.
 
         False by default. The session manager restarts a session at that threshold only
-        when this is False: a provider that compacts itself would otherwise lose the history
-        it was about to compact to a restart at the same value. The native loop answers True
-        while its automatic pass still helps; an out-of-process agent answers False.
+        when this is False: a provider that compacts itself would otherwise lose what it keeps
+        to the restart. The native loop answers True while its automatic pass still helps, and
+        compacts at that same threshold; an agent CLI answers what its app declares
+        (``register_acp_cli_entry(compacts_itself=...)``), and compacts at its own limit.
         """
         return False
 

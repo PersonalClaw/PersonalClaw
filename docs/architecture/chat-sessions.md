@@ -594,10 +594,20 @@ chat, channel thread, loop worker, webhook, subagent).
    and the chat says so where it happened, in `/compact`'s words
    ("Conversation compacted: freed 42% of the conversation (…)"): a
    `compaction_status` of `automatic` (`llm/events.COMPACTION_AUTOMATIC`),
-   which keeps the answer streamed before it. Every compaction notice (a
-   `/compact`'s result, the loop's own pass, and the session manager's
-   restart of a session at the threshold) is also said on the channel thread
-   the conversation is linked to, where its replies go
+   which keeps the answer streamed before it. An agent CLI keeps its
+   conversation inside its own process, where PersonalClaw cannot compact it.
+   One whose app declares that the CLI compacts itself
+   (`register_acp_cli_entry(compacts_itself=True)`: Claude Code and Codex) is
+   left to do that at its own limit, and its session goes on with the results
+   of its earlier tool calls. Any other session over the threshold, and a
+   native one whose passes stopped freeing room, is restarted by the session
+   manager (`SessionManager.check_context_usage`): its runtime ends, the next
+   turn starts a fresh one from the chat's own history (the turns that were
+   said, without tool results), and the chat says so with the reason:
+   "Restarted the agent's session at 92% of its context window: PersonalClaw
+   cannot compact this agent's context. …". Every such notice (a `/compact`'s
+   result, the loop's own pass, and a restart at the threshold) is also said
+   on the channel thread the conversation is linked to, where its replies go
    (`DashboardState.tell_linked_channel`): a chat that came from a channel on
    that channel, and a channel's own thread on the channel that issued its id.
    A compaction keeps the first messages and the latest ones verbatim and folds

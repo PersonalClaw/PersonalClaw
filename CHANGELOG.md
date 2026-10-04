@@ -8,6 +8,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+- **An agent CLI that compacts its own conversation keeps its session at the Auto-compact threshold, with the results of its earlier tool calls, and a session restarted there says it was restarted and why instead of "Auto-compacted" (SDK: `register_acp_cli_entry(compacts_itself=...)`, used by `claude-code-agent` and `codex-agent`; `SessionManager.set_compact_callback` is now `set_restart_callback`, which no first-party app calls).**
 - **An app is judged as the app whatever chat of yours it names: its speech and images are held to the spend caps for work nobody watches, what it writes to your memory is filed under the app, and the audit log names it.**
 - **The OpenAI-compatible endpoint's speech and transcriptions are held to the spend caps its chat turns are: counted in Usage under the client and against the day's dollar cap, and refused past it before anything is spoken or transcribed.**
 - **On the local-network bypass an app's page or backend is held to the permissions it declared, as it is everywhere else, instead of being admitted as you.**

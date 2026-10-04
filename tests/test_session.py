@@ -746,103 +746,102 @@ class TestStopTurn:
         await mgr.close_all()
 
 
-class TestCompactCallback:
-    """Tests for the compact callback wiring on SessionManager.
+class TestRestartCallback:
+    """Tests for the restart callback wiring on SessionManager.
 
-    Covers set_compact_callback registration, pct threading through
-    check_context_usage -> _trigger_compaction -> _compact_session, and
-    callback fault isolation.
+    Covers set_restart_callback registration, the pct and the reason threaded through
+    check_context_usage -> _trigger_restart -> _restart_session, and callback fault isolation.
     """
 
     @pytest.mark.asyncio
-    async def test_set_compact_callback_registers_handler(self, cfg):
+    async def test_set_restart_callback_registers_handler(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         cb = AsyncMock()
 
-        mgr.set_compact_callback(cb)
+        mgr.set_restart_callback(cb)
 
-        assert mgr._on_compacted is cb
+        assert mgr._on_restarted is cb
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_set_compact_callback_none_clears(self, cfg):
+    async def test_set_restart_callback_none_clears(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        mgr.set_compact_callback(AsyncMock())
+        mgr.set_restart_callback(AsyncMock())
 
-        mgr.set_compact_callback(None)
+        mgr.set_restart_callback(None)
 
-        assert mgr._on_compacted is None
+        assert mgr._on_restarted is None
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_set_compact_callback_warns_on_replace(self, cfg, caplog):
+    async def test_set_restart_callback_warns_on_replace(self, cfg, caplog):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        mgr.set_compact_callback(AsyncMock())
+        mgr.set_restart_callback(AsyncMock())
 
         with caplog.at_level(logging.WARNING, logger="personalclaw.session"):
-            mgr.set_compact_callback(AsyncMock())
+            mgr.set_restart_callback(AsyncMock())
 
-        assert any("Compact callback already registered" in r.message for r in caplog.records)
+        assert any("Restart callback already registered" in r.message for r in caplog.records)
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_compact_session_invokes_callback_with_key_and_pct(self, cfg):
+    async def test_restart_session_invokes_callback_with_key_pct_and_reason(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("dashboard:chat-1")
         cb = AsyncMock()
-        mgr.set_compact_callback(cb)
+        mgr.set_restart_callback(cb)
 
-        await mgr._compact_session("dashboard:chat-1", 92.0)
+        await mgr._restart_session("dashboard:chat-1", 92.0, "a reason")
 
-        cb.assert_awaited_once_with("dashboard:chat-1", 92.0)
+        cb.assert_awaited_once_with("dashboard:chat-1", 92.0, "a reason")
         assert "dashboard:chat-1" not in mgr._sessions
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_compact_session_skips_callback_when_session_absent(self, cfg):
-        """No session means no recycle happened, so the callback must not fire."""
+    async def test_restart_session_skips_callback_when_session_absent(self, cfg):
+        """No session means no restart happened, so the callback must not fire."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         cb = AsyncMock()
-        mgr.set_compact_callback(cb)
+        mgr.set_restart_callback(cb)
 
-        await mgr._compact_session("dashboard:missing", 91.0)
+        await mgr._restart_session("dashboard:missing", 91.0, "a reason")
 
         cb.assert_not_awaited()
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_compact_session_callback_exception_is_logged(self, cfg, caplog):
+    async def test_restart_session_callback_exception_is_logged(self, cfg, caplog):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("dashboard:chat-1")
         cb = AsyncMock(side_effect=RuntimeError("boom"))
-        mgr.set_compact_callback(cb)
+        mgr.set_restart_callback(cb)
 
         with caplog.at_level(logging.ERROR, logger="personalclaw.session"):
-            await mgr._compact_session("dashboard:chat-1", 95.0)
+            await mgr._restart_session("dashboard:chat-1", 95.0, "a reason")
 
         cb.assert_awaited_once()
-        assert any("Compact callback failed" in r.message for r in caplog.records)
-        # Session still recycled, compacting flag cleared
+        assert any("Restart callback failed" in r.message for r in caplog.records)
+        # Session still restarted, restarting flag cleared
         assert "dashboard:chat-1" not in mgr._sessions
-        assert "dashboard:chat-1" not in mgr._compacting
+        assert "dashboard:chat-1" not in mgr._restarting
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_trigger_compaction_threads_pct_through(self, cfg):
+    async def test_trigger_restart_threads_pct_and_reason_through(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("dashboard:chat-2")
-        captured: list[tuple[str, float]] = []
+        captured: list[tuple[str, float, str]] = []
 
-        async def cb(key, pct):
-            captured.append((key, pct))
+        async def cb(key, pct, reason):
+            captured.append((key, pct, reason))
 
-        mgr.set_compact_callback(cb)
+        mgr.set_restart_callback(cb)
 
-        mgr._trigger_compaction("dashboard:chat-2", "context at 92%", 92.0)
-        # _trigger_compaction schedules the work as a background task
+        mgr._trigger_restart("dashboard:chat-2", 92.0, "a reason")
+        # _trigger_restart schedules the work as a background task
         await asyncio.gather(*mgr._background_tasks, return_exceptions=True)
 
-        assert captured == [("dashboard:chat-2", 92.0)]
+        assert captured == [("dashboard:chat-2", 92.0, "a reason")]
         await mgr.close_all()
 
     @pytest.mark.asyncio
@@ -852,18 +851,20 @@ class TestCompactCallback:
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         provider, _, _ = await mgr.get_or_create("dashboard:chat-3")
         provider.context_usage_pct = lambda: 93.0
-        captured: list[tuple[str, float]] = []
+        captured: list[tuple[str, float, str]] = []
 
-        async def cb(key, pct):
-            captured.append((key, pct))
+        async def cb(key, pct, reason):
+            captured.append((key, pct, reason))
 
-        mgr.set_compact_callback(cb)
+        mgr.set_restart_callback(cb)
 
         pct = mgr.check_context_usage("dashboard:chat-3", provider)
         await asyncio.gather(*mgr._background_tasks, return_exceptions=True)
 
         assert pct == 93.0
-        assert captured == [("dashboard:chat-3", 93.0)]
+        assert captured == [
+            ("dashboard:chat-3", 93.0, "PersonalClaw cannot compact this agent's context")
+        ]
         await mgr.close_all()
 
 
@@ -1310,25 +1311,27 @@ class TestCheckContextUsage:
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_compaction_triggered_at_threshold(self, cfg):
+    async def test_restart_triggered_at_threshold(self, cfg):
         cfg.session.autocompact_pct = 90.0
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         provider, _, _ = await mgr.get_or_create("k1")
         mgr.release("k1")
         provider.context_usage_pct = lambda: 92.0
-        with patch.object(mgr, "_trigger_compaction") as mock_trigger:
+        with patch.object(mgr, "_trigger_restart") as mock_trigger:
             mgr.check_context_usage("k1", provider)
-            mock_trigger.assert_called_once_with("k1", "context at 92%", 92.0)
+            mock_trigger.assert_called_once_with(
+                "k1", 92.0, "PersonalClaw cannot compact this agent's context"
+            )
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_no_compaction_below_threshold(self, cfg):
+    async def test_no_restart_below_threshold(self, cfg):
         cfg.session.autocompact_pct = 90.0
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         provider, _, _ = await mgr.get_or_create("k1")
         mgr.release("k1")
         provider.context_usage_pct = lambda: 50.0
-        with patch.object(mgr, "_trigger_compaction") as mock_trigger:
+        with patch.object(mgr, "_trigger_restart") as mock_trigger:
             mgr.check_context_usage("k1", provider)
             mock_trigger.assert_not_called()
         await mgr.close_all()
@@ -1341,15 +1344,15 @@ class TestCheckContextUsage:
         assert result == 55.0
 
     @pytest.mark.asyncio
-    async def test_unmeasured_returns_none_and_never_compacts(self, cfg):
-        """A provider that measured nothing yields no percentage and no compaction —
+    async def test_unmeasured_returns_none_and_never_restarts(self, cfg):
+        """A provider that measured nothing yields no percentage and no restart —
         an unknown gauge cannot cross a threshold."""
         cfg.session.autocompact_pct = 90.0
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         provider, _, _ = await mgr.get_or_create("k1")
         mgr.release("k1")
         provider.context_usage_pct = lambda: None
-        with patch.object(mgr, "_trigger_compaction") as mock_trigger:
+        with patch.object(mgr, "_trigger_restart") as mock_trigger:
             assert mgr.check_context_usage("k1", provider) is None
             mock_trigger.assert_not_called()
         # The prompt counter still advances — the blind fallback depends on it.
@@ -2008,44 +2011,44 @@ class TestScheduleReplenish:
         assert len(mgr._background_tasks) == 0
 
 
-class TestCompaction:
-    """Tests for _trigger_compaction and _compact_session."""
+class TestRestartAtTheThreshold:
+    """Tests for _trigger_restart and _restart_session."""
 
     @pytest.mark.asyncio
-    async def test_trigger_compaction_duplicate_is_noop(self, cfg):
+    async def test_trigger_restart_duplicate_is_noop(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("k1")
         mgr.release("k1")
-        # First trigger starts compaction
-        mgr._trigger_compaction("k1", "test", 92.0)
-        assert "k1" in mgr._compacting
+        # First trigger starts the restart
+        mgr._trigger_restart("k1", 92.0, "test")
+        assert "k1" in mgr._restarting
         # Second trigger on same key is a no-op (already in progress)
-        mgr._trigger_compaction("k1", "test again", 95.0)
+        mgr._trigger_restart("k1", 95.0, "test again")
         await asyncio.sleep(0.1)
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_compact_session_calls_callback(self, cfg):
+    async def test_restart_session_calls_callback(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         provider, _, _ = await mgr.get_or_create("k1")
         mgr.release("k1")
         callback_args = []
-        mgr._on_compacted = AsyncMock(side_effect=lambda k, p: callback_args.append((k, p)))
-        await mgr._compact_session("k1", 92.0)
+        mgr._on_restarted = AsyncMock(side_effect=lambda k, p, r: callback_args.append((k, p, r)))
+        await mgr._restart_session("k1", 92.0, "test")
         provider.shutdown.assert_awaited_once()
-        assert callback_args == [("k1", 92.0)]
+        assert callback_args == [("k1", 92.0, "test")]
         assert not mgr.has_session("k1")
 
     @pytest.mark.asyncio
-    async def test_compact_session_missing_key_is_safe(self, cfg):
+    async def test_restart_session_missing_key_is_safe(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        mgr._compacting.add("gone")
-        await mgr._compact_session("gone", 90.0)
-        assert "gone" not in mgr._compacting
+        mgr._restarting.add("gone")
+        await mgr._restart_session("gone", 90.0, "test")
+        assert "gone" not in mgr._restarting
 
     @pytest.mark.asyncio
-    async def test_compaction_keeps_a_channel_chats_link(self, cfg):
-        """The recycled session is never resumed, so its id goes. The chat is still the channel
+    async def test_a_restart_keeps_a_channel_chats_link(self, cfg):
+        """The replaced session is never resumed, so its id goes. The chat is still the channel
         thread's chat: deleting the whole entry stopped its answers reaching the channel."""
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("dashboard:chat-1")
@@ -2053,7 +2056,7 @@ class TestCompaction:
         mgr._session_map.set("dashboard:chat-1", "sid-replaced")
         mgr.set_channel_link("dashboard:chat-1", "4242", "4242")
 
-        await mgr._compact_session("dashboard:chat-1", 100.0)
+        await mgr._restart_session("dashboard:chat-1", 100.0, "test")
 
         assert mgr.get_channel_link("dashboard:chat-1") == ("4242", "4242")
         assert mgr.get_session_for_thread("4242") == "dashboard:chat-1"
@@ -2061,13 +2064,13 @@ class TestCompaction:
         await mgr.close_all()
 
     @pytest.mark.asyncio
-    async def test_compaction_forgets_a_chat_with_no_channel_entirely(self, cfg):
+    async def test_a_restart_forgets_a_chat_with_no_channel_entirely(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         await mgr.get_or_create("dashboard:chat-2")
         mgr.release("dashboard:chat-2")
         mgr._session_map.set("dashboard:chat-2", "sid-replaced")
 
-        await mgr._compact_session("dashboard:chat-2", 100.0)
+        await mgr._restart_session("dashboard:chat-2", 100.0, "test")
 
         assert "dashboard:chat-2" not in mgr._session_map._data
         await mgr.close_all()
@@ -2136,20 +2139,20 @@ class TestSafeCleanup:
         await mgr._safe_cleanup(mock_p, "sid-456")  # should not raise
 
 
-class TestSetCompactCallback:
-    """Tests for set_compact_callback."""
+class TestSetRestartCallback:
+    """Tests for set_restart_callback."""
 
     def test_sets_callback(self, cfg):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
         cb = AsyncMock()
-        mgr.set_compact_callback(cb)
-        assert mgr._on_compacted is cb
+        mgr.set_restart_callback(cb)
+        assert mgr._on_restarted is cb
 
     def test_warns_on_replace(self, cfg, caplog):
         mgr = SessionManager(cfg, provider_factory=_mock_provider_factory())
-        mgr.set_compact_callback(AsyncMock())
+        mgr.set_restart_callback(AsyncMock())
         with caplog.at_level(logging.WARNING, logger="personalclaw.session"):
-            mgr.set_compact_callback(AsyncMock())
+            mgr.set_restart_callback(AsyncMock())
         assert any("already registered" in r.message for r in caplog.records)
 
 
