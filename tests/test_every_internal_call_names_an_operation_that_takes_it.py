@@ -50,6 +50,7 @@ SENDERS = {
     ("mcp_core.py", "_internal_headers"): "mcp_core's _get/_post/_delete, and every call of them",
     ("mcp_shared.py", "_resolve_excluded_tools"): "an MCP server's read of its tool policy",
     ("auth/cli.py", "_rotate_key_cmd"): "`personalclaw auth rotate-key`",
+    ("schedule_trigger.py", "trigger_schedule_job"): "`personalclaw cron trigger`",
     (LAUNCHER, "_post"): "a scheduled script's ctx.notify and ctx.call_tool",
 }
 
@@ -211,18 +212,41 @@ def _request_calls(rel: str, function: str) -> list[Call]:
     return calls
 
 
+#: How a command sends the credential to its gateway: ``HomeGateway`` (``home_gateway.py``), by
+#: the method each of its senders sends.
+GATEWAY_SENDERS = {"post": "POST"}
+
+
 def _named_header_calls(rel: str, function: str) -> list[Call]:
-    """Calls in *function* that pass the header by name: ``_ask_gateway(port, "/api/…",
-    secret_header="X-Internal-Secret")``, whose callee POSTs."""
+    """Calls in *function* that pass the header by name to the gateway a command reached:
+    ``gateway.post("/api/…", body, secret_header="X-Internal-Secret")``. Its method is the one
+    ``HomeGateway.post`` sends, read from ``home_gateway.py``."""
     tree = _trees()[rel]
     calls = []
     for node in ast.walk(_function(rel, function)):
         if isinstance(node, ast.Call) and any(_is_header(k.value) for k in node.keywords):
-            callee = _function(rel, node.func.id)
-            (method,) = _method_of_requests(callee)
-            path = _path(node.args[1], _constants(tree)) if len(node.args) > 1 else None
-            calls.append(Call(method, path, f"{rel}:{node.lineno}"))
+            sender = getattr(node.func, "attr", "")
+            assert sender in GATEWAY_SENDERS, f"{rel}:{node.lineno} sends it through {sender!r}"
+            path = _path(node.args[0], _constants(tree)) if node.args else None
+            calls.append(Call(GATEWAY_SENDERS[sender], path, f"{rel}:{node.lineno}"))
     return calls
+
+
+def test_the_gateways_sender_sends_the_method_the_census_reads():
+    """``HomeGateway.post`` sends POST: the census reads its callers' calls as POSTs."""
+    tree = _trees()["home_gateway.py"]
+    post = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "post"
+    )
+    sends = [
+        node.args[0].value
+        for node in ast.walk(post)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "attr", "") == "_send"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+    ]
+    assert sends == [GATEWAY_SENDERS["post"]], sends
 
 
 @functools.lru_cache(maxsize=1)
@@ -233,6 +257,9 @@ def _census() -> dict[tuple[str, str], list[Call]]:
             "mcp_shared.py", "_resolve_excluded_tools"
         ),
         ("auth/cli.py", "_rotate_key_cmd"): _named_header_calls("auth/cli.py", "_rotate_key_cmd"),
+        ("schedule_trigger.py", "trigger_schedule_job"): _named_header_calls(
+            "schedule_trigger.py", "trigger_schedule_job"
+        ),
         (LAUNCHER, "_post"): _launcher_calls(),
     }
 

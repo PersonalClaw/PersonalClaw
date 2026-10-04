@@ -24,8 +24,8 @@ from email.message import Message
 from unittest.mock import patch
 
 import pytest
+from fakes import gateway_stand_in
 
-_PORT = 10000
 _OWN_ADDRESS = "10.4.0.12"
 
 
@@ -57,21 +57,25 @@ def _run_doctor(
     addresses: list[str],
     tokenless_answer_on: frozenset[str] = frozenset(),
     env: dict[str, str] | None = None,
-) -> tuple[str, list[str]]:
-    """Run ``_doctor()`` on an all-interfaces bind with no channel; return (output, URLs asked).
+) -> tuple[str, list[str], int]:
+    """Run ``_doctor()`` on an all-interfaces bind with no channel, with this home's gateway on a
+    port of its own; return (output, the URLs asked beyond loopback, that port).
 
     Every ``/api/status`` request is refused with a 403 — the gateway's token gate — except those
     to a host in *tokenless_answer_on*, which it serves.
     """
     from personalclaw.cli_doctor import _doctor
+    from personalclaw.config import loader
 
     monkeypatch.setenv("PERSONALCLAW_BIND_HOST", "0.0.0.0")
-    monkeypatch.setenv("PERSONALCLAW_PORT", str(_PORT))
     for name in (
+        "PERSONALCLAW_PORT",
         "PERSONALCLAW_AUTH_MODE",
         "PERSONALCLAW_BYPASS_LOCAL_NETWORKS",
         "SSH_CONNECTION",
         "SSH_CLIENT",
+        "HTTP_PROXY",
+        "http_proxy",
     ):
         monkeypatch.delenv(name, raising=False)
     for name, value in (env or {}).items():
@@ -88,17 +92,21 @@ def _run_doctor(
         raise _refused(url)
 
     with (
+        gateway_stand_in(
+            loader.config_dir(), routes={("GET", "/api/status"): (403, {"error": "sign in"})}
+        ) as gateway,
         patch("personalclaw.cli_doctor.shutil.which", side_effect=lambda b: f"/usr/local/bin/{b}"),
         # This machine's addresses are the test's: no route answer, and these for the hostname.
         patch("personalclaw.dashboard.origin._routed_address", return_value=""),
         patch("personalclaw.dashboard.origin._local_addresses", return_value=list(addresses)),
         patch("urllib.request.urlopen", side_effect=urlopen),
     ):
+        gateway.record()
         try:
             _doctor()
         except SystemExit:
             pass
-    return capsys.readouterr().out, asked
+    return capsys.readouterr().out, asked, gateway.port
 
 
 def _issues(out: str) -> str:
@@ -110,7 +118,7 @@ def _issues(out: str) -> str:
 
 
 def test_no_channel_is_not_a_fault_and_the_sign_in_command_is_named(capsys, monkeypatch):
-    out, _ = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", _OWN_ADDRESS])
+    out, _, _ = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", _OWN_ADDRESS])
     assert "bind:        0.0.0.0" in out, "the probe did not reach the all-interfaces branch"
     assert "token generation unavailable" not in out, out
     assert "!dashboard" not in out, "a command one channel app has is not how everyone signs in"
@@ -123,15 +131,15 @@ def test_no_channel_is_not_a_fault_and_the_sign_in_command_is_named(capsys, monk
 def test_the_external_check_asks_this_machines_own_address_when_no_host_is_configured(
     capsys, monkeypatch
 ):
-    out, asked = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", _OWN_ADDRESS])
-    assert f"http://{_OWN_ADDRESS}:{_PORT}/api/status" in asked, asked
+    out, asked, port = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", _OWN_ADDRESS])
+    assert f"http://{_OWN_ADDRESS}:{port}/api/status" in asked, asked
     assert f"auth check:  ✅ a request with no token is refused at {_OWN_ADDRESS}" in out, out
     assert "dashboard auth" not in _issues(out), _issues(out)
 
 
 def test_a_tokenless_answer_at_this_machines_own_address_is_a_fault(capsys, monkeypatch):
     """The check is real: served without a token beyond loopback is reported, and fails doctor."""
-    out, _ = _run_doctor(
+    out, _, _ = _run_doctor(
         capsys,
         monkeypatch,
         addresses=["127.0.0.1", _OWN_ADDRESS],
@@ -142,7 +150,7 @@ def test_a_tokenless_answer_at_this_machines_own_address_is_a_fault(capsys, monk
 
 
 def test_with_no_address_beyond_loopback_it_says_the_check_did_not_run(capsys, monkeypatch):
-    out, asked = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", "::1"])
+    out, asked, _ = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", "::1"])
     assert "auth check:  ⏭  not checked" in out, out
     assert not [u for u in asked if "127.0.0.1" not in u], asked
     assert "host unknown" not in _issues(out), _issues(out)
@@ -165,7 +173,7 @@ def test_with_no_address_beyond_loopback_it_says_the_check_did_not_run(capsys, m
 )
 def test_the_auth_row_says_what_the_gateway_does_beyond_loopback(capsys, monkeypatch, env, claim):
     """The row mirrors the token gate, as the loopback branch does, instead of claiming a token."""
-    out, _ = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", _OWN_ADDRESS], env=env)
+    out, _, _ = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", _OWN_ADDRESS], env=env)
     assert claim in out, out
     assert "token required on every interface" not in out, out
 
@@ -174,7 +182,7 @@ def test_a_bind_beyond_loopback_is_not_called_local_only(capsys, monkeypatch):
     """Doctor cannot see what reaches such a bind — this machine's interfaces, or the port a
     container published — so it says what it established: there is no tailnet address."""
     monkeypatch.setattr("personalclaw.cli_doctor.tailnet_ip", lambda: "")
-    out, _ = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", _OWN_ADDRESS])
+    out, _, _ = _run_doctor(capsys, monkeypatch, addresses=["127.0.0.1", _OWN_ADDRESS])
     assert "remote:      local-only" not in out, out
     assert "remote:      no tailnet address found" in out, out
 

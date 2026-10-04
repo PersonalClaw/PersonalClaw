@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from fakes import home_fingerprint
 from port_guard import GUARD
 
 from harness import named_home
@@ -129,13 +130,13 @@ def _trapped(machine: _Machine, tool: str, *args: str, **env: str):
 
 @pytest.fixture
 def no_named_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unset_env) -> Path:
-    """A process whose HOME is a scratch folder and which names no PersonalClaw home. Returns the
-    default home that HOME implies. The environment is put back after the test, a name the helper
-    exported included."""
+    """A process whose HOME is a scratch folder and which names no PersonalClaw home, and no port.
+    Returns the default home that HOME implies. The environment is put back after the test, a name
+    the helper exported included."""
     user = tmp_path / "user-home"
     user.mkdir()
     monkeypatch.setenv("HOME", str(user))
-    unset_env("PERSONALCLAW_HOME")
+    unset_env("PERSONALCLAW_HOME", "PERSONALCLAW_PORT")
     return user / ".personalclaw"
 
 
@@ -189,15 +190,19 @@ def test_the_flag_names_the_home_before_the_environment(
 
 
 class _FakeGateway(http.server.BaseHTTPRequestHandler):
-    """The two doors a dev tool uses: the loopback token handshake, and one owner-only route."""
+    """The three doors a dev tool uses: the health route that says whose gateway it is, the
+    loopback token handshake, and one owner-only route."""
 
     secret = ""
+    home_id = ""
     minted = "minted-owner-token"
     seen: list[dict[str, str]] = []
 
     def do_GET(self) -> None:  # noqa: N802 - the http.server method name
         self.seen.append({"path": self.path, **dict(self.headers.items())})
-        if self.path.startswith("/api/token/local"):
+        if self.path == "/api/healthz":
+            self._answer(200, {"status": "ok", "pid": os.getpid(), "home_id": self.home_id})
+        elif self.path.startswith("/api/token/local"):
             ok = self.headers.get("X-Local-Secret") == self.secret
             self._answer(200 if ok else 403, {"token": self.minted} if ok else {"error": "nope"})
         elif self.headers.get("Authorization") == f"Bearer {self.minted}":
@@ -226,6 +231,7 @@ def fake_gateway(tmp_path: Path) -> Iterator[tuple[Path, http.server.ThreadingHT
     home = tmp_path / "scratch-home"
     home.mkdir()
     _FakeGateway.secret = "the-scratch-homes-secret"
+    _FakeGateway.home_id = home_fingerprint(home)
     _FakeGateway.seen = []
     (home / ".local_secret").write_text(_FakeGateway.secret, encoding="utf-8")
     port = server.server_address[1]
@@ -249,19 +255,35 @@ def test_the_gateway_the_named_home_records_signs_the_tool_in(no_named_home, fak
         "minted-owner-token",
     )
     assert gateway.get("/api/whoami") == {"you": "owner"}
-    handshake, call = _FakeGateway.seen
+    identity, handshake, call = _FakeGateway.seen
+    assert identity["path"] == "/api/healthz" and "X-Local-Secret" not in identity
     assert handshake["path"] == "/api/token/local?ttl=1h"
     assert handshake["X-Local-Secret"] == "the-scratch-homes-secret"
     assert call["Authorization"] == "Bearer minted-owner-token"
 
 
-def test_a_gateway_that_does_not_know_the_homes_secret_is_refused(
-    no_named_home, fake_gateway
+def test_a_gateway_of_another_home_is_refused_before_the_secret_is_sent(
+    no_named_home, fake_gateway, tmp_path: Path
 ) -> None:
     """The record is inside the home, but a recycled pid can leave it naming a port another
-    program now holds. The secret handshake is what shows the gateway IS this home's."""
+    home's gateway now holds. The gateway is asked whose it is first, and is sent nothing more:
+    the secret handshake used to be how it showed it, which handed the secret to whoever
+    answered."""
     home, _server = fake_gateway
-    (home / ".local_secret").write_text("another-homes-secret", encoding="utf-8")
+    _FakeGateway.home_id = home_fingerprint(tmp_path / "another-home")
+    with pytest.raises(named_home.Refused, match="not one this tool may drive"):
+        named_home.scratch_gateway(home)
+    assert [seen["path"] for seen in _FakeGateway.seen] == ["/api/healthz"]
+    assert not [seen for seen in _FakeGateway.seen if "X-Local-Secret" in seen]
+
+
+def test_the_homes_gateway_that_does_not_know_its_secret_is_refused(
+    no_named_home, fake_gateway
+) -> None:
+    """A gateway of the home that will not sign the tool in (the home's secret is not the one it
+    holds: a second gateway was started on the home since) is said so."""
+    home, _server = fake_gateway
+    (home / ".local_secret").write_text("a-secret-the-gateway-does-not-hold", encoding="utf-8")
     with pytest.raises(named_home.Refused, match="did not sign this tool in"):
         named_home.scratch_gateway(home)
 

@@ -266,13 +266,14 @@ def test_the_chat_automation_run_refuses_before_its_runner(home):
 def test_schedule_trigger_passes_the_refusal_on(monkeypatch):
     """🔴 Red on main: `schedule_trigger` (and `personalclaw cron trigger`) read a refusal as
     "trigger failed", dropping the sentence that says what to do."""
-    from personalclaw import schedule_trigger
+    from types import SimpleNamespace
+
+    from personalclaw import home_gateway, schedule_trigger
 
     sentence = "“Job abc123” is not allowed to use the “Bash Command” action, so it did not run."
-    monkeypatch.setattr(
-        "personalclaw.mcp_core._post",
-        lambda path, body=None: {"ok": False, "name": "Job abc123", "refused": sentence},
-    )
+    answer = {"ok": False, "name": "Job abc123", "refused": sentence}
+    reached = SimpleNamespace(post=lambda path, body, **_kw: (200, answer))
+    monkeypatch.setattr(home_gateway, "reach", lambda port=None: reached)
 
     assert schedule_trigger.trigger_schedule_job("abc123") == (False, sentence)
 

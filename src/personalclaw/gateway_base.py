@@ -46,6 +46,11 @@ Resolution order — three projections of ONE fact, never a guess:
 3. an EXPLICIT port in ``dashboard.url`` — the operator's own declaration.
 
 then refuse. ``_DEFAULT_PORT`` is deliberately unreachable from here.
+
+A command run for a home (``personalclaw token`` and the rest) is no child: nothing it inherits
+names its gateway, so it asks :mod:`personalclaw.home_gateway`, which reads the same record (or
+the port the command was given) and, before any credential is sent, asks the gateway answering
+there which home it serves.
 """
 
 from __future__ import annotations

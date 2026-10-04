@@ -18,6 +18,7 @@ from personalclaw import (
     checkout_update,
     container_host,
     gateway_base,
+    home_gateway,
     process_facts,
     self_update,
 )
@@ -25,7 +26,6 @@ from personalclaw.atomic_write import open_streamed
 from personalclaw.auth import lifetimes
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
-from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.constants import DATA_WARNING
 from personalclaw.dashboard.origin import (
     container_port_note,
@@ -73,50 +73,21 @@ def config_path() -> Path:
     return config_loader.config_path()
 
 
-def resolve_client_port(cli_port: int | None) -> int:
-    """Return the dashboard port a *client* CLI command (token/status/logout) should talk to,
-    and the port ``restart`` starts a gateway on when none was running. (``stop`` needs no
-    port: it reads the one this home's gateway recorded.)
-
-    Resolution order:
-
-    1. Explicit ``--port`` CLI flag if the user passed one (``cli_port`` is not ``None``).
-    2. ``PERSONALCLAW_PORT`` env var if set to a valid integer.
-    3. Port parsed from ``dashboard.url`` in the config file (``~/.personalclaw/config.json``)
-       if present and parseable.
-    4. ``_DEFAULT_PORT`` (10000) as the final fallback.
-
-    This matches the server-side ``parse_dashboard_url()`` logic so that
-    ``personalclaw token`` / ``status`` / ``logout`` all hit the same
-    port the gateway is actually bound to when the user has configured a
-    non-default ``dashboard.url`` (for example a dev instance on 6777 or an
-    alternative prod port like 7778).
-    """
-    if cli_port is not None:
-        return cli_port
-    env_port = os.environ.get("PERSONALCLAW_PORT")
-    if env_port:
-        try:
-            return int(env_port)
-        except ValueError:
-            # Fall through to config/default — main() validates this early,
-            # but guard here too in case the helper is reached via another path.
-            pass
+def _bind_port() -> int:
+    """The port a gateway of this home binds when it is not told one: the gateway's own decision
+    (``PERSONALCLAW_PORT``, else the port in ``dashboard.url``, else the default). For ``restart``
+    to start one there and say where; never where a command connects (``home_gateway.reach``)."""
     try:
-        cfg = AppConfig.load()
-        url = cfg.dashboard.url or ""
-        if url:
-            _, port = parse_dashboard_url(url)
-            if port:
-                return port
-    except Exception:
-        # Config load failures must not break client commands — fall through.
-        pass
-    return _DEFAULT_PORT
+        url = AppConfig.load().dashboard.url or ""
+    except Exception:  # noqa: BLE001 - an unreadable config names no port; the gateway's default
+        url = ""
+    return parse_dashboard_url(url)[1]
 
 
 def _token(args: argparse.Namespace) -> None:
-    """Print a dashboard URL with a fresh auth token.
+    """Print a dashboard URL with a fresh auth token, from this home's gateway
+    (``home_gateway.reach``): the one it recorded, or the one ``--port`` or ``PERSONALCLAW_PORT``
+    names, once it has shown it serves this home. The home's local secret goes to no other.
 
     A ``--ttl`` that is not a lifetime, or one over the 90-day limit, is refused HERE, with the
     sentence saying why — before the gateway is asked for anything (ledger 285).
@@ -127,23 +98,14 @@ def _token(args: argparse.Namespace) -> None:
         print(f"❌ {refusal}", file=sys.stderr)
         sys.exit(1)
 
-    port = resolve_client_port(args.port)
-    secret_path = config_dir() / ".local_secret"
     try:
-        secret = secret_path.read_text().strip()
-    except FileNotFoundError:
-        print("❌ Gateway not running — start it with: personalclaw gateway", file=sys.stderr)
+        gateway = home_gateway.reach(args.port)
+        data = gateway.sign_in(args.ttl)
+    except home_gateway.GatewayError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
         sys.exit(1)
-
-    url = f"http://localhost:{port}/api/token/local?ttl={args.ttl}"
-    req = urllib.request.Request(url, headers={"X-Local-Secret": secret})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
-            token = data.get("token", "")
-    except Exception as exc:
-        print(f"❌ Could not reach gateway on port {port}: {exc}", file=sys.stderr)
-        sys.exit(1)
+    port = gateway.port
+    token = str(data.get("token") or "")
 
     if not token:
         print("❌ Gateway returned empty token", file=sys.stderr)
@@ -193,39 +155,28 @@ def _token_lifetime_note(reply: dict) -> str:
     )
 
 
-def _logout(port: int) -> None:
-    """Revoke all dashboard sessions by calling the gateway's /api/logout endpoint."""
-    secret_path = config_dir() / ".local_secret"
-    try:
-        secret = secret_path.read_text().strip()
-    except FileNotFoundError:
-        print("❌ Gateway not running — start it with: personalclaw gateway", file=sys.stderr)
-        sys.exit(1)
+def _logout(port: int | None) -> None:
+    """Revoke all dashboard sessions through this home's gateway's ``/api/logout``.
 
-    url = f"http://localhost:{port}/api/logout"
-    req = urllib.request.Request(
-        url,
-        method="POST",
-        headers={"X-Local-Secret": secret, "Content-Type": "application/json"},
-        data=b"{}",
-    )
+    *port* is the ``--port`` typed, or None. The gateway is the one ``home_gateway.reach`` finds,
+    so the home's local secret goes to no other.
+    """
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
-            if data.get("ok"):
-                print("✅ All dashboard sessions revoked.")
-            else:
-                print(
-                    f"❌ Failed to revoke sessions: {data.get('error', 'unknown error')}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-    except urllib.error.HTTPError as e:
-        print(f"❌ Failed to revoke sessions: HTTP {e.code}", file=sys.stderr)
+        gateway = home_gateway.reach(port)
+        status, data = gateway.post("/api/logout", {}, secret_header="X-Local-Secret")
+    except home_gateway.GatewayError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
         sys.exit(1)
-    except (urllib.error.URLError, OSError):
-        print("❌ Gateway not running — start it with: personalclaw gateway", file=sys.stderr)
+    if status != 200:
+        print(f"❌ Failed to revoke sessions: HTTP {status}", file=sys.stderr)
         sys.exit(1)
+    if not data.get("ok"):
+        print(
+            f"❌ Failed to revoke sessions: {data.get('error', 'unknown error')}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print("✅ All dashboard sessions revoked.")
 
 
 #: How long `stop` waits for the gateway to exit once asked. The gateway bounds its own graceful
@@ -498,7 +449,9 @@ def _restart(port: int | None) -> None:
     running = gateway_base.live_gateway()
     if running is not None:
         _stop(port)  # returns only once it has exited; exits 1 when it cannot stop it
-    _spawn_detached_gateway(running.port if running else resolve_client_port(port))
+        _spawn_detached_gateway(running.port)
+    else:
+        _spawn_detached_gateway(port if port is not None else _bind_port())
 
 
 # Every InstallKind `_update` maps to a branch. The dispatch is exhaustive over
@@ -1048,13 +1001,25 @@ def _status_value(data: object, path: tuple[str, ...]) -> str:
 
 
 def _status(args: argparse.Namespace) -> None:
-    """Query the running gateway for stats, or print offline message. Each names the service
-    installed for this home, when there is one."""
-    port = resolve_client_port(getattr(args, "port", None))
-    url = f"http://127.0.0.1:{port}/api/status"
+    """Query this home's running gateway for stats (``home_gateway.reach``), or say there is none.
+    Each report names the service installed for this home, when there is one.
+
+    No gateway of this home running is a report, on stdout, exit 0. A port named with ``--port`` or
+    ``PERSONALCLAW_PORT`` that is not where this home's gateway answers is a refusal, on stderr
+    alone, exit 1: what answers there is not this home's, and its numbers are not this home's."""
     service = service_controller.this_homes_service()
     try:
-        with urllib.request.urlopen(url, timeout=3) as resp:
+        gateway = home_gateway.reach(getattr(args, "port", None))
+    except home_gateway.NoGatewayRunning as exc:
+        print(exc)
+        _print_service(service)
+        return
+    except home_gateway.GatewayError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(1)
+    request = urllib.request.Request(f"{gateway.url}/api/status")
+    try:
+        with home_gateway.open_loopback(request, timeout=3) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
@@ -1065,8 +1030,7 @@ def _status(args: argparse.Namespace) -> None:
         _print_service(service)
         return
     except (urllib.error.URLError, OSError):
-        print("PersonalClaw gateway is not running.")
-        print(f"  Start it with: personalclaw {'restart' if service else 'gateway'}")
+        print(gateway.gone())
         _print_service(service)
         return
     except Exception:

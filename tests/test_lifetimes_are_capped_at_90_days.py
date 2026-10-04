@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import io
 import json
 import secrets
 import time
@@ -29,6 +28,7 @@ from unittest.mock import patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from fakes import gateway_stand_in
 from signed_in_sessions import without_sign_in
 
 from personalclaw import cli_server
@@ -107,33 +107,21 @@ def test_a_lifetime_is_read_in_minutes_hours_or_days_and_never_clamped():
 # ── personalclaw token ───────────────────────────────────────────────────────────────────────
 
 
-class _Response(io.BytesIO):
-    def __enter__(self) -> "_Response":
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.close()
-
-
 def _run_token(monkeypatch, tmp_path, capsys, ttl: str) -> tuple[int, str, list[str]]:
+    """``personalclaw token --ttl`` against this home's gateway, on a port of its own: the exit
+    status, what it said, and the token requests the gateway was sent."""
     (tmp_path / ".local_secret").write_text(SECRET + "\n")
-    monkeypatch.setenv("PERSONALCLAW_PORT", str(PORT))
-    asked: list[str] = []
-
-    def _urlopen(req, timeout=5):
-        asked.append(req.full_url)
-        return _Response(
-            json.dumps({"token": "t.x", "expires_in": 60, "expires_at": time.time() + 60}).encode()
-        )
-
-    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
+    reply = {"token": "t.x", "expires_in": 60, "expires_at": time.time() + 60}
     code = 0
-    try:
-        cli_server._token(argparse.Namespace(ttl=ttl, port=None))
-    except SystemExit as exit_:
-        code = int(exit_.code or 0)
+    with gateway_stand_in(tmp_path, routes={("GET", "/api/token/local"): (200, reply)}) as gateway:
+        gateway.record()
+        try:
+            cli_server._token(argparse.Namespace(ttl=ttl, port=None))
+        except SystemExit as exit_:
+            code = int(exit_.code or 0)
     captured = capsys.readouterr()
-    return code, captured.out + captured.err, asked
+    return code, captured.out + captured.err, [s.path for s in gateway.asked("/api/token/local")]
 
 
 @pytest.mark.parametrize(("ttl", "named"), [("8760h", "365 days"), ("91d", "91 days")])
@@ -194,11 +182,15 @@ async def test_an_unreadable_lifetime_is_refused_not_replaced_with_a_default(ttl
 
 @pytest.mark.asyncio
 async def test_personalclaw_run_gets_the_hour_it_asks_for(tmp_path):
-    from personalclaw import cli_run
+    from personalclaw import cli_run, home_gateway
+    from personalclaw.dashboard.handlers_system import api_healthz
 
     (tmp_path / ".local_secret").write_text(SECRET)
-    async with TestServer(_token_app(), port=0) as server:
-        token = await asyncio.to_thread(cli_run.mint_local_token, server.port)
+    app = _token_app()
+    app.router.add_get("/api/healthz", api_healthz)
+    async with TestServer(app, port=0) as server:
+        gateway = await asyncio.to_thread(home_gateway.reach, server.port)
+        token = await asyncio.to_thread(cli_run.mint_local_token, gateway)
     claims = _claims(token)
     assert claims["session_exp"] - claims["iat"] == pytest.approx(3600, abs=5)
 

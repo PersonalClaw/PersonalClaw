@@ -2,10 +2,13 @@
 
 import argparse
 import json
+import os
 import urllib.error
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fakes import gateway_stand_in, released_port
 
 from personalclaw.cli_commands import _cron, _security
 from personalclaw.cli_doctor import _doctor
@@ -702,145 +705,119 @@ class TestSetupTimezone:
         assert "Could not read" in capsys.readouterr().err
 
 
+@pytest.fixture
+def gateway_home(tmp_path, monkeypatch, unset_env):
+    """A home, named by ``PERSONALCLAW_HOME``, holding the local secret its gateway writes as it
+    starts, with no port named in the environment: what ``logout`` and ``status`` run for."""
+    unset_env("PERSONALCLAW_PORT", "HTTP_PROXY", "http_proxy")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / ".local_secret").write_text("test-secret")
+    return home
+
+
+@contextmanager
+def _running(home, routes):
+    """This home's gateway, on a loopback port of its own, answering *routes*, and the record it
+    keeps of that port."""
+    with gateway_stand_in(home, routes=routes) as gateway:
+        gateway.record()
+        yield gateway
+
+
 class TestLogout:
-    """Tests for _logout CLI function."""
+    """Tests for _logout CLI function, against this home's gateway."""
 
-    def test_logout_success(self, tmp_path, monkeypatch):
-        """Successful logout prints success message."""
-        secret_file = tmp_path / ".local_secret"
-        secret_file.write_text("test-secret")
-        monkeypatch.setattr("personalclaw.cli_server.config_dir", lambda: tmp_path)
-
+    def test_logout_success(self, gateway_home, capsys):
+        """Successful logout prints success message, having sent the home's secret."""
         from personalclaw.cli_server import _logout
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b'{"ok": true}'
-        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-        mock_resp.__exit__ = MagicMock(return_value=False)
+        with _running(gateway_home, {("POST", "/api/logout"): (200, {"ok": True})}) as gateway:
+            _logout(None)
+        assert "All dashboard sessions revoked" in capsys.readouterr().out
+        (sent,) = gateway.asked("/api/logout")
+        assert sent.headers["x-local-secret"] == "test-secret"
 
-        with patch("urllib.request.urlopen", return_value=mock_resp):
-            _logout(7777)  # Should not raise
-
-    def test_logout_gateway_not_running(self, tmp_path, monkeypatch):
-        """Missing secret file means gateway not running."""
-        monkeypatch.setattr("personalclaw.cli_server.config_dir", lambda: tmp_path)
-
+    def test_logout_gateway_not_running(self, gateway_home, capsys):
+        """No gateway of this home running: refused, saying so."""
         from personalclaw.cli_server import _logout
 
-        try:
-            _logout(7777)
-            assert False, "should have exited"
-        except SystemExit as e:
-            assert e.code == 1
+        with pytest.raises(SystemExit) as exited:
+            _logout(None)
+        assert exited.value.code == 1
+        assert "No gateway is running for this home" in capsys.readouterr().err
 
-    def test_logout_http_error(self, tmp_path, monkeypatch):
+    def test_logout_http_error(self, gateway_home, capsys):
         """HTTP error from gateway is handled."""
-        secret_file = tmp_path / ".local_secret"
-        secret_file.write_text("test-secret")
-        monkeypatch.setattr("personalclaw.cli_server.config_dir", lambda: tmp_path)
-
         from personalclaw.cli_server import _logout
 
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=urllib.error.HTTPError(None, 403, "Forbidden", {}, None),
-        ):
-            try:
-                _logout(7777)
-                assert False, "should have exited"
-            except SystemExit as e:
-                assert e.code == 1
+        with _running(gateway_home, {("POST", "/api/logout"): (403, {"error": "invalid secret"})}):
+            with pytest.raises(SystemExit) as exited:
+                _logout(None)
+        assert exited.value.code == 1
+        assert "Failed to revoke sessions: HTTP 403" in capsys.readouterr().err
 
-    def test_logout_connection_error(self, tmp_path, monkeypatch):
-        """Connection error means gateway not running."""
-        secret_file = tmp_path / ".personalclaw" / ".local_secret"
-        secret_file.parent.mkdir(parents=True, exist_ok=True)
-        secret_file.write_text("test-secret")
-        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-
+    def test_logout_connection_error(self, gateway_home, capsys):
+        """Nothing listening where the home's gateway said it listens: it is not running."""
         from personalclaw.cli_server import _logout
 
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=urllib.error.URLError("Connection refused"),
-        ):
-            try:
-                _logout(7777)
-                assert False, "should have exited"
-            except SystemExit as e:
-                assert e.code == 1
+        (gateway_home / "gateway.runtime.json").write_text(
+            json.dumps({"port": released_port(), "pid": os.getpid()})
+        )
+        with pytest.raises(SystemExit) as exited:
+            _logout(None)
+        assert exited.value.code == 1
+        assert "No gateway is running for this home" in capsys.readouterr().err
 
-    def test_logout_error_response(self, tmp_path, monkeypatch):
+    def test_logout_error_response(self, gateway_home, capsys):
         """Error response from gateway is handled."""
-        secret_file = tmp_path / ".personalclaw" / ".local_secret"
-        secret_file.parent.mkdir(parents=True, exist_ok=True)
-        secret_file.write_text("test-secret")
-        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-
         from personalclaw.cli_server import _logout
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b'{"ok": false, "error": "test error"}'
-        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-        mock_resp.__exit__ = MagicMock(return_value=False)
-
-        with patch("urllib.request.urlopen", return_value=mock_resp):
-            try:
-                _logout(7777)
-                assert False, "should have exited"
-            except SystemExit as e:
-                assert e.code == 1
+        answer = {"ok": False, "error": "test error"}
+        with _running(gateway_home, {("POST", "/api/logout"): (200, answer)}):
+            with pytest.raises(SystemExit) as exited:
+                _logout(None)
+        assert exited.value.code == 1
+        assert "test error" in capsys.readouterr().err
 
 
 class TestStatus:
-    """Tests for _status() HTTP error handling."""
+    """Tests for _status() against this home's gateway."""
 
-    def _make_args(self, port=7777):
+    def _make_args(self, port=None):
         return argparse.Namespace(port=port)
 
-    def test_status_auth_required(self, capsys):
+    def test_status_auth_required(self, gateway_home, capsys):
         """401/403 should report gateway as running with token auth."""
         from personalclaw.cli_server import _status
 
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=urllib.error.HTTPError(
-                "http://127.0.0.1:7777/api/status", 403, "Forbidden", {}, None
-            ),
-        ):
+        with _running(gateway_home, {("GET", "/api/status"): (403, {"error": "sign in"})}):
             _status(self._make_args())
         out = capsys.readouterr().out
         assert "running" in out
         assert "token auth" in out
 
-    def test_status_other_http_error(self, capsys):
+    def test_status_other_http_error(self, gateway_home, capsys):
         """Non-auth HTTP errors should report gateway as running with code."""
         from personalclaw.cli_server import _status
 
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=urllib.error.HTTPError(
-                "http://127.0.0.1:7777/api/status", 500, "Internal Server Error", {}, None
-            ),
-        ):
+        with _running(gateway_home, {("GET", "/api/status"): (500, {"error": "boom"})}):
             _status(self._make_args())
         out = capsys.readouterr().out
         assert "running" in out
         assert "HTTP 500" in out
 
-    def test_status_connection_refused(self, capsys):
-        """Connection refused should report gateway as not running."""
+    def test_status_connection_refused(self, gateway_home, capsys):
+        """No gateway of this home running is reported, with the command that starts one."""
         from personalclaw.cli_server import _status
 
-        with patch(
-            "urllib.request.urlopen",
-            side_effect=urllib.error.URLError("Connection refused"),
-        ):
-            _status(self._make_args())
+        _status(self._make_args())
         out = capsys.readouterr().out
-        assert "not running" in out
+        assert "No gateway is running for this home" in out
+        assert "Start it with: personalclaw" in out
 
-    def test_status_success(self, capsys):
+    def test_status_success(self, gateway_home, capsys):
         """200 OK should display stats.
 
         The payload is the shape `/api/status` really emits — `cron` is a BLOCK and there is
@@ -851,21 +828,15 @@ class TestStatus:
         """
         from personalclaw.cli_server import _status
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(
-            {
-                "uptime": "1h 0m",
-                "sessions": 2,
-                "subagents": 0,
-                "cron": {"total": 1, "enabled": 1, "broken": 0},
-                "stats": {"total_turns": 7},
-                "lessons": 3,
-            }
-        ).encode()
-        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-        mock_resp.__exit__ = MagicMock(return_value=False)
-
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        payload = {
+            "uptime": "1h 0m",
+            "sessions": 2,
+            "subagents": 0,
+            "cron": {"total": 1, "enabled": 1, "broken": 0},
+            "stats": {"total_turns": 7},
+            "lessons": 3,
+        }
+        with _running(gateway_home, {("GET", "/api/status"): (200, payload)}):
             _status(self._make_args())
         out = capsys.readouterr().out
         assert "1h 0m" in out
@@ -873,105 +844,21 @@ class TestStatus:
         assert "Cron jobs:   1" in out
         assert "Turns:       7" in out
 
-    def test_status_unexpected_exception(self, capsys):
-        """Non-network exceptions should report gateway as running with unexpected response."""
+    def test_status_unexpected_exception(self, gateway_home, capsys):
+        """An answer that is not JSON reports the gateway as running with an unexpected
+        response."""
+        from aiohttp import web
+
         from personalclaw.cli_server import _status
 
-        with patch("urllib.request.urlopen", side_effect=RuntimeError("unexpected")):
+        async def not_json(_request):
+            return web.Response(text="not json")
+
+        with _running(gateway_home, {("GET", "/api/status"): not_json}):
             _status(self._make_args())
         out = capsys.readouterr().out
         assert "running" in out
         assert "unexpected response" in out
-
-
-class TestResolveClientPort:
-    """Tests for `resolve_client_port` — the port-resolution order used by
-    `personalclaw token` / `status` / `logout` to find the gateway.
-
-    Resolution order (see cli.resolve_client_port):
-      1. explicit --port CLI arg (cli_port != None)
-      2. PERSONALCLAW_PORT env var
-      3. port parsed from dashboard.url in config
-      4. default 10000
-    """
-
-    def test_cli_flag_wins(self, monkeypatch, tmp_path):
-        """An explicit --port flag must override env and config."""
-        from personalclaw.cli_server import resolve_client_port
-
-        monkeypatch.setenv("PERSONALCLAW_PORT", "9999")
-        mock_cfg = MagicMock()
-        mock_cfg.dashboard.url = "http://localhost:8888"
-        with patch("personalclaw.cli_server.AppConfig.load", return_value=mock_cfg):
-            assert resolve_client_port(12345) == 12345
-
-    def test_env_var_used_when_no_cli(self, monkeypatch):
-        """PERSONALCLAW_PORT env var wins over config when no --port passed."""
-        from personalclaw.cli_server import resolve_client_port
-
-        monkeypatch.setenv("PERSONALCLAW_PORT", "6777")
-        mock_cfg = MagicMock()
-        mock_cfg.dashboard.url = "http://localhost:8888"
-        with patch("personalclaw.cli_server.AppConfig.load", return_value=mock_cfg):
-            assert resolve_client_port(None) == 6777
-
-    def test_invalid_env_var_falls_through_to_config(self, monkeypatch):
-        """A garbage PERSONALCLAW_PORT must not crash; the helper falls through."""
-        from personalclaw.cli_server import resolve_client_port
-
-        monkeypatch.setenv("PERSONALCLAW_PORT", "not-a-number")
-        mock_cfg = MagicMock()
-        mock_cfg.dashboard.url = "http://localhost:7778"
-        with patch("personalclaw.cli_server.AppConfig.load", return_value=mock_cfg):
-            assert resolve_client_port(None) == 7778
-
-    def test_config_url_used_when_no_cli_no_env(self, monkeypatch):
-        """The port in dashboard.url must be honoured when env is unset."""
-        from personalclaw.cli_server import resolve_client_port
-
-        monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
-        mock_cfg = MagicMock()
-        mock_cfg.dashboard.url = "http://localhost:7778"
-        with patch("personalclaw.cli_server.AppConfig.load", return_value=mock_cfg):
-            assert resolve_client_port(None) == 7778
-
-    def test_config_url_hostname_only_falls_through_to_default(self, monkeypatch):
-        """A dashboard.url without an explicit port must fall through to 10000."""
-        from personalclaw.cli_server import resolve_client_port
-
-        monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
-        mock_cfg = MagicMock()
-        mock_cfg.dashboard.url = "http://my.host.example"
-        with patch("personalclaw.cli_server.AppConfig.load", return_value=mock_cfg):
-            # parse_dashboard_url returns _DEFAULT_PORT when no port in URL,
-            # which is the same as the final fallback — either way we land on 10000.
-            assert resolve_client_port(None) == 10000
-
-    def test_empty_config_falls_through_to_default(self, monkeypatch):
-        """No env, empty dashboard.url → 10000."""
-        from personalclaw.cli_server import resolve_client_port
-
-        monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
-        mock_cfg = MagicMock()
-        mock_cfg.dashboard.url = ""
-        with patch("personalclaw.cli_server.AppConfig.load", return_value=mock_cfg):
-            assert resolve_client_port(None) == 10000
-
-    def test_config_load_failure_falls_through_to_default(self, monkeypatch):
-        """If config loading raises, the helper must still return a usable port."""
-        from personalclaw.cli_server import resolve_client_port
-
-        monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
-        with patch("personalclaw.cli_server.AppConfig.load", side_effect=RuntimeError("boom")):
-            assert resolve_client_port(None) == 10000
-
-    def test_cli_flag_zero_is_respected(self, monkeypatch):
-        """Port 0 is weird but valid; it must not be coerced to None/default."""
-        from personalclaw.cli_server import resolve_client_port
-
-        monkeypatch.setenv("PERSONALCLAW_PORT", "9999")
-        # cli_port=0 is explicit; the helper uses 'is not None' not truthiness.
-        assert resolve_client_port(0) == 0
 
 
 class TestDoctorProjectDir:
@@ -1187,21 +1074,15 @@ class TestDoctorStt:
 class TestConfigDirOverride:
     """Tests that CLI functions respect PERSONALCLAW_HOME env var via config_dir()."""
 
-    def test_logout_reads_secret_from_config_dir(self, tmp_path, monkeypatch):
-        """_logout reads .local_secret from config_dir(), not ~/.personalclaw."""
-        secret_file = tmp_path / ".local_secret"
-        secret_file.write_text("test-secret")
-        monkeypatch.setattr("personalclaw.cli_server.config_dir", lambda: tmp_path)
-
+    def test_logout_reads_secret_from_config_dir(self, gateway_home):
+        """_logout sends the .local_secret of the home it runs for, not ~/.personalclaw's."""
         from personalclaw.cli_server import _logout
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b'{"ok": true}'
-        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-        mock_resp.__exit__ = MagicMock(return_value=False)
-
-        with patch("urllib.request.urlopen", return_value=mock_resp):
-            _logout(7777)
+        (gateway_home / ".local_secret").write_text("this-homes-own-secret")
+        with _running(gateway_home, {("POST", "/api/logout"): (200, {"ok": True})}) as gateway:
+            _logout(None)
+        (sent,) = gateway.asked("/api/logout")
+        assert sent.headers["x-local-secret"] == "this-homes-own-secret"
 
     # (removed) test_setup_slack_tokens_writes_to_config_dir — plan 32 moved
     # _setup_slack_tokens out of core into the slack-channel app's cli_setup.py

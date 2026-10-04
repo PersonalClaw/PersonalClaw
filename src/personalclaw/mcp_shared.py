@@ -13,7 +13,7 @@ from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from personalclaw import gateway_base
+from personalclaw import gateway_base, home_gateway
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import JSONRPC_METHOD_NOT_FOUND
 from personalclaw.sel import sel
@@ -184,7 +184,7 @@ def _resolve_excluded_tools() -> set[str]:
             headers=headers,
         )
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with home_gateway.open_loopback(req, timeout=5) as resp:
                 policy = json.loads(resp.read())
         except urllib.error.HTTPError as http_exc:
             # 404 = "agent not resolved" (gateway side hasn't registered

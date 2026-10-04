@@ -10,8 +10,8 @@ turn path and one stream contract.
 one: its turns run in an ordinary chat, so a call that asks for approval asks you, wherever
 your approvals reach you. ``run`` is the headless one, for a script or CI with nobody there
 to ask, which is why it is a command of its own rather than a flag on ``chat``. Both reach
-the gateway through the probe, the token and the turn socket below; the two are told apart
-in ``docs/reference/cli.md``.
+this home's gateway through ``home_gateway.reach``, then the token and the turn socket below;
+the two are told apart in ``docs/reference/cli.md``.
 
 Safety posture (fail-CLOSED, and the reason this module exists at all):
 
@@ -55,7 +55,7 @@ import urllib.request
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import session_keys
+from personalclaw import home_gateway, session_keys
 
 if TYPE_CHECKING:
     import aiohttp
@@ -93,92 +93,21 @@ class RunError(Exception):
 # ── Gateway discovery / bootstrap ────────────────────────────────────────────────
 
 
-#: Per-attempt timeout and attempt count for the liveness probe.
-#:
-#: 🔴 Both numbers are load-bearing and were MEASURED, not chosen. At the 2s single-shot
-#: this probe first shipped with, a gateway that was alive and serving answered
-#: ``/api/healthz`` in >2s while it was busy — three consecutive probes read False,
-#: then the fourth returned True in 0.67s. Misreading a live gateway as absent is not a
-#: cosmetic error here: ``run`` responds by booting a SECOND gateway on the same home,
-#: and because ``.local_secret`` is a per-process random value written to one shared
-#: path, the newcomer overwrites it and the ORIGINAL gateway can no longer mint a token
-#: — breaking ``personalclaw token`` and this command for the operator's real gateway.
-#: So the probe must be biased hard toward "present": slow-but-alive has to win.
-_PROBE_TIMEOUT_SECS = 10.0
-_PROBE_ATTEMPTS = 3
+def mint_local_token(gateway: home_gateway.HomeGateway, *, ttl: str = _TOKEN_TTL) -> str:
+    """A sign-in token from this home's running gateway, for one command's requests.
 
-
-def probe_gateway(
-    port: int, *, timeout: float = _PROBE_TIMEOUT_SECS, attempts: int = _PROBE_ATTEMPTS
-) -> bool:
-    """True when a gateway answers on ``port``.
-
-    Probes ``/api/healthz``, which is in ``token_auth._BYPASS_EXACT`` and so answers
-    without a token. ``doctor`` and ``status`` both probe ``/api/status`` instead and
-    then have to read 401/403 as "up" — an auth-gated liveness check needing a
-    treat-the-error-as-success branch. This is the same readiness question asked at the
-    route that exists to answer it; nothing here reads a 401 as alive.
-
-    Retries because a timeout is ambiguous (absent vs. busy) while a refused connection
-    is not. Only a *connection* failure short-circuits to False; a timeout is retried,
-    because concluding "absent" from a slow answer is the expensive mistake.
+    Same handshake as ``personalclaw token`` (``HomeGateway.sign_in``): the home's local
+    secret, presented to the loopback-only ``/api/token/local`` of a gateway that has shown it
+    serves this home (``home_gateway.reach``), and to no other. ``ttl`` is its lifetime in the
+    endpoint's grammar: no longer than the command needs it. Raises :class:`RunError`.
     """
-    for attempt in range(max(1, attempts)):
-        try:
-            with urllib.request.urlopen(  # noqa: S310 — fixed loopback scheme
-                urllib.request.Request(f"http://127.0.0.1:{port}/api/healthz"), timeout=timeout
-            ) as resp:
-                return 200 <= int(resp.status) < 300
-        except urllib.error.HTTPError:
-            # Answering at all means a server is bound. A non-2xx healthz is a gateway in
-            # trouble, not an absent one — reusing it beats booting a second one on top.
-            return True
-        except (urllib.error.URLError, OSError) as exc:
-            # ConnectionRefusedError means nothing is listening — a definite answer, so
-            # stop early rather than burning the remaining attempts on it. Anything else
-            # (a timeout) is ambiguous and gets another try.
-            reason = getattr(exc, "reason", exc)
-            if isinstance(reason, ConnectionRefusedError):
-                return False
-            if attempt == attempts - 1:
-                return False
-    return False  # pragma: no cover — the loop always returns
-
-
-def mint_local_token(port: int, *, timeout: float = 5.0, ttl: str = _TOKEN_TTL) -> str:
-    """Mint a dashboard token for a gateway already running on ``port``.
-
-    Same handshake as ``personalclaw token``: read ``$PERSONALCLAW_HOME/.local_secret``
-    and present it as ``X-Local-Secret`` to the loopback-only ``/api/token/local``. This
-    is why ``run`` cannot drive a gateway whose home it does not share — and that is the
-    correct limit, not a gap: the secret IS the proof that the caller owns the home.
-    ``ttl`` is its lifetime in the endpoint's grammar: no longer than the command needs it.
-    """
-    from personalclaw.config.loader import config_dir
-
-    secret_path = config_dir() / ".local_secret"
     try:
-        secret = secret_path.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise RunError(
-            f"cannot read {secret_path} — a gateway is running on port {port} but this "
-            f"process does not share its PERSONALCLAW_HOME, so no token can be minted. "
-            f"Set PERSONALCLAW_HOME to that gateway's home, or stop it and let `run` "
-            f"start its own."
-        ) from exc
-    if not secret:
-        raise RunError(f"{secret_path} is empty — cannot mint a token.")
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}/api/token/local?ttl={ttl}",
-        headers={"X-Local-Secret": secret},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-            token = str(json.loads(resp.read()).get("token", ""))
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise RunError(f"token mint failed against port {port}: {exc}") from exc
+        reply = gateway.sign_in(ttl)
+    except home_gateway.GatewayError as exc:
+        raise RunError(str(exc)) from exc
+    token = str(reply.get("token") or "")
     if not token:
-        raise RunError(f"gateway on port {port} returned an empty token.")
+        raise RunError(f"this home's gateway on port {gateway.port} returned an empty token.")
     return token
 
 
@@ -389,7 +318,7 @@ def _api(port: int, token: str, path: str, body: dict | None = None) -> dict:
         headers={"Content-Type": "application/json", **owner_headers(token)},
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+        with home_gateway.open_loopback(req, timeout=30) as resp:
             raw = resp.read()
     except urllib.error.HTTPError as exc:
         detail = ""
@@ -537,7 +466,7 @@ def _token_total(session_key: str) -> int:
 
     No WS frame carries token counts, so the count comes from the ledger the gateway
     writes under ``config_dir()/usage/turns.jsonl`` — readable here precisely because
-    ``run`` requires sharing the gateway's home (see ``mint_local_token``). Best-effort:
+    ``run`` talks only to the gateway of its own home (``home_gateway.reach``). Best-effort:
     a missing ledger reports 0 rather than failing a turn that already succeeded.
 
     🔴 The ledger keys rows by the DASHBOARD-WRAPPED provider key
@@ -587,21 +516,22 @@ def _run_one(args) -> int:
             return 2
     print(grant_notice(session_key, task_mode), file=sys.stderr, flush=True)
 
-    from personalclaw.cli_server import resolve_client_port
-
-    port = resolve_client_port(getattr(args, "port", None))
     transient: subprocess.Popen | None = None
     started = time.monotonic()
     try:
-        if probe_gateway(port):
-            token = mint_local_token(port)
-        else:
+        try:
+            gateway = home_gateway.reach(getattr(args, "port", None))
+        except home_gateway.NoGatewayRunning:
             print(
-                f"personalclaw run: no gateway on port {port} — starting a transient one.",
+                "personalclaw run: no gateway of this home is running — starting a transient one.",
                 file=sys.stderr,
                 flush=True,
             )
             port, token, transient = start_transient_gateway()
+        except home_gateway.GatewayError as exc:
+            raise RunError(str(exc)) from exc
+        else:
+            port, token = gateway.port, mint_local_token(gateway)
 
         _api(
             port,

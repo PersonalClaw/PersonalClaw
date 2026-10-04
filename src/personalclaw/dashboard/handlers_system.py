@@ -14,6 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 import personalclaw
+from personalclaw import home_gateway
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.stats import Stats
@@ -73,26 +74,6 @@ def _get_telemetry_salt() -> bytes:
         return _IN_MEMORY_SALT
 
 
-def home_fingerprint(path: object) -> str:
-    """A short, stable, non-reversible id for a resolved ``PERSONALCLAW_HOME``.
-
-    Deliberately a fingerprint and not the path: ``/api/healthz`` is auth-exempt
-    (``token_auth._BYPASS_EXACT``) and the gateway can bind ``0.0.0.0``, so shipping an
-    absolute path there would hand every unauthenticated LAN client the operator's username
-    and directory layout. A caller does not need the path — it needs to COMPARE — and a
-    fingerprint answers that without disclosing anything.
-
-    Reproduce it for the home you expect, then compare::
-
-        python3 -c 'import hashlib,pathlib,os,sys; \
-            p=pathlib.Path(os.environ["PERSONALCLAW_HOME"]).expanduser().resolve(); \
-            print(hashlib.sha256(str(p).encode()).hexdigest()[:16])'
-    """
-    import hashlib
-
-    return hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
-
-
 def _serving_root() -> Path | None:
     """The directory the RUNNING code is imported from, or ``None`` if unknowable.
 
@@ -117,10 +98,10 @@ async def api_healthz(request: web.Request) -> web.Response:
 
     * ``pid`` — the answering process. A caller that spawned the gateway asserts this equals
       the child pid it holds. Not a disclosure: any local user reads it from ``ps``.
-    * ``home_id`` — ``home_fingerprint()`` of the resolved ``PERSONALCLAW_HOME``. A caller
+    * ``home_id`` — ``home_gateway.home_id()`` of the resolved ``PERSONALCLAW_HOME``. A caller
       that knows only its own home (the common case — ``make serve`` in one shell, a probe in
-      another) recomputes it and compares. The path itself is never sent; see
-      ``home_fingerprint``.
+      another, every CLI command before it sends the home's secret) recomputes it and compares.
+      The path itself is never sent; see ``home_gateway.home_id``.
     * ``root_ok`` — does the directory this code is being served FROM still exist on disk.
       ``false`` is the zombie: a live process serving code from a removed checkout. Computed
       live on every call, because becoming false is the whole event worth catching.
@@ -134,8 +115,9 @@ async def api_healthz(request: web.Request) -> web.Response:
     root = _serving_root()
     try:
         # The one resolver, so the fingerprint is of the home the rest of the process actually
-        # uses — a second reimplementation here could drift from it.
-        home_id = home_fingerprint(config_loader.config_dir())
+        # uses, and the one fingerprint, the one every command compares with before it sends this
+        # home's secret: a second reimplementation here could drift from it.
+        home_id = home_gateway.home_id(config_loader.config_dir())
     except (OSError, RuntimeError):  # pragma: no cover — an unresolvable home must not 500 here
         home_id = None
     return web.json_response(

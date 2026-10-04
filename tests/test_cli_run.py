@@ -9,13 +9,11 @@ that must NOT move.
 from __future__ import annotations
 
 import json
-import socket
-import urllib.error
 from pathlib import Path
 
 import pytest
 
-from personalclaw import cli_run
+from personalclaw import cli_run, home_gateway
 from personalclaw.dashboard.chat_runner import (
     TURN_COMPLETE,
     TURN_ERROR,
@@ -92,7 +90,12 @@ def test_a_real_prompt_passes_the_blank_guard(monkeypatch):
     prompt guard (it fails later, on transport, which is a different exit path).
     """
     reached: list[int] = []
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: reached.append(1) or False)
+
+    def no_gateway(port=None):
+        reached.append(1)
+        raise home_gateway.NoGatewayRunning("no gateway of this home is running")
+
+    monkeypatch.setattr(home_gateway, "reach", no_gateway)
     monkeypatch.setattr(
         cli_run,
         "start_transient_gateway",
@@ -181,8 +184,7 @@ def test_run_sets_the_task_mode_through_the_task_mode_endpoint(monkeypatch):
     would look correct and enforce nothing).
     """
     calls = _capture_api(monkeypatch)
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
 
     cli_run._run_one(_args(prompt="hi"))
@@ -202,8 +204,7 @@ def test_run_sets_the_task_mode_through_the_task_mode_endpoint(monkeypatch):
 def test_allow_sends_agent_mode(monkeypatch):
     """VACUITY for the rail: ``--allow`` must really change what is sent."""
     calls = _capture_api(monkeypatch)
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
 
     cli_run._run_one(_args(prompt="hi", allow=True))
@@ -218,8 +219,7 @@ def test_allow_trusts_the_runs_own_chat_before_the_turn(monkeypatch):
     ran on a native agent. Its approval half is Trust on the run's own chat, set before the turn
     is posted, and for that chat alone."""
     calls = _capture_api(monkeypatch)
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
 
     cli_run._run_one(_args(prompt="hi", allow=True))
@@ -235,8 +235,7 @@ def test_allow_trusts_the_runs_own_chat_before_the_turn(monkeypatch):
 
 def test_a_read_only_run_trusts_nothing(monkeypatch):
     calls = _capture_api(monkeypatch)
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
 
     cli_run._run_one(_args(prompt="hi"))
@@ -256,8 +255,7 @@ def test_a_refused_write_grant_stops_the_run_before_its_turn(monkeypatch, capsys
         return {}
 
     monkeypatch.setattr(cli_run, "_api", _api)
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     turned: list[int] = []
 
     async def _turn(*a, **k):
@@ -317,8 +315,7 @@ def test_allow_on_an_acp_agent_proceeds(monkeypatch):
     """VACUITY 1: the ACP refusal is scoped to the read-only posture, not to ACP."""
     _bind_provider(monkeypatch, "acp:claude-code")
     reached: list[int] = []
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: reached.append(1) or True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch, reached)
     monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
     monkeypatch.setattr(cli_run, "_consume", _raise_after_setup)
     assert cli_run._run_one(_args(prompt="hi", allow=True)) == 1
@@ -329,56 +326,6 @@ def test_readonly_run_on_a_native_agent_proceeds(monkeypatch):
     """VACUITY 2: the refusal keys off the RUNTIME, not off read-only mode."""
     _bind_provider(monkeypatch, "native")
     assert cli_run.acp_readonly_refusal("PersonalClaw") == ""
-
-
-# ── The liveness probe must not misread a slow gateway as an absent one ──────────
-
-
-def test_probe_retries_a_timeout_and_reports_the_live_gateway(monkeypatch):
-    """REGRESSION for a measured defect.
-
-    At a 2s single-shot, a busy-but-alive gateway answered ``/api/healthz`` in >2s: three
-    probes read False and the fourth returned True in 0.67s. Reading absent is expensive
-    — ``run`` then boots a second gateway on the same home, whose startup overwrites the
-    single shared ``.local_secret`` and leaves the ORIGINAL gateway unable to mint a
-    token (observed as ``token mint failed: HTTP Error 403``).
-    """
-    attempts: list[int] = []
-
-    def _flaky(req, timeout=0):
-        attempts.append(1)
-        if len(attempts) < 3:
-            raise urllib.error.URLError(socket.timeout("timed out"))
-        return _FakeResp(200)
-
-    monkeypatch.setattr(urllib.request, "urlopen", _flaky)
-    assert cli_run.probe_gateway(1234, attempts=3) is True
-    assert len(attempts) == 3, "the probe did not retry the ambiguous timeouts"
-
-
-def test_probe_reports_absent_when_every_attempt_times_out(monkeypatch):
-    """VACUITY: retrying must not make the probe answer True unconditionally."""
-    monkeypatch.setattr(
-        urllib.request,
-        "urlopen",
-        lambda req, timeout=0: (_ for _ in ()).throw(
-            urllib.error.URLError(socket.timeout("timed out"))
-        ),
-    )
-    assert cli_run.probe_gateway(1234, attempts=2) is False
-
-
-def test_probe_short_circuits_a_refused_connection(monkeypatch):
-    """A refused connection is unambiguous — don't spend the retry budget on it."""
-    attempts: list[int] = []
-
-    def _refused(req, timeout=0):
-        attempts.append(1)
-        raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
-
-    monkeypatch.setattr(urllib.request, "urlopen", _refused)
-    assert cli_run.probe_gateway(1234, attempts=3) is False
-    assert len(attempts) == 1, "a refused connection should not be retried"
 
 
 # ── Auth rides the Authorization header, never the URL ───────────────────────────
@@ -493,8 +440,7 @@ def test_collector_marks_a_denied_tool_not_ok():
 
 def test_an_error_frame_makes_the_turn_fail(monkeypatch, capsys):
     """Exit code must track turn SUCCESS, not merely reaching the end of the stream."""
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
 
     async def _erroring(port, token, collector, prompt, timeout):
@@ -516,8 +462,7 @@ def test_an_error_frame_makes_the_turn_fail(monkeypatch, capsys):
 def test_a_retried_turn_that_finishes_succeeds(monkeypatch, capsys):
     """A retry notice is an error row, and the turn goes on: the gateway runs the message again.
     The exit code follows how the turn ENDED, which only its final ``chat_done`` says."""
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
 
     async def _retried(port, token, collector, prompt, timeout):
@@ -545,8 +490,7 @@ def test_a_retried_turn_that_finishes_succeeds(monkeypatch, capsys):
 def test_a_stopped_turn_fails_and_says_it_was_stopped(monkeypatch, capsys):
     """A turn stopped before it finished (from the dashboard, or by a watchdog) is not a
     success, and it is not an error either: the CLI says which."""
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
 
     async def _stopped(port, token, collector, prompt, timeout):
@@ -563,8 +507,7 @@ def test_a_stopped_turn_fails_and_says_it_was_stopped(monkeypatch, capsys):
 
 def test_a_turn_a_restart_cut_off_says_the_gateway_restarted(monkeypatch, capsys):
     """Neither a Stop nor a failure of the turn's: the CLI says what its error row says."""
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
     notice = TURN_INTERRUPTED_NOTICES[RESTARTING]
 
@@ -584,8 +527,7 @@ def test_a_turn_a_restart_cut_off_says_the_gateway_restarted(monkeypatch, capsys
 
 def test_a_clean_turn_exits_zero(monkeypatch, capsys):
     """VACUITY for the exit code: it must not be 1 for every turn."""
-    monkeypatch.setattr(cli_run, "probe_gateway", lambda *a, **k: True)
-    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
+    _a_gateway_of_this_home_runs(monkeypatch)
     monkeypatch.setattr(cli_run, "_api", lambda *a, **k: {})
     monkeypatch.setattr(cli_run, "_token_total", lambda key: 7)
 
@@ -732,18 +674,17 @@ def test_this_suite_runs_against_a_redirected_home():
 # ── helpers ──────────────────────────────────────────────────────────────────────
 
 
-class _FakeResp:
-    def __init__(self, status: int) -> None:
-        self.status = status
+def _a_gateway_of_this_home_runs(monkeypatch, reached: list[int] | None = None) -> None:
+    """This home's gateway answers (``home_gateway.reach``, recorded in *reached*) and signs the
+    run in, so the run goes on to set up its turn."""
 
-    def read(self) -> bytes:
-        return b"{}"
+    def reach(port=None):
+        if reached is not None:
+            reached.append(1)
+        return home_gateway.HomeGateway(home=Path("/home/user/.personalclaw"), port=1, pid=0)
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
+    monkeypatch.setattr(home_gateway, "reach", reach)
+    monkeypatch.setattr(cli_run, "mint_local_token", lambda *a, **k: "tok")
 
 
 class _FakeSession:

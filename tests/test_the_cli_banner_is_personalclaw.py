@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw import cli, cli_chat
+from personalclaw import cli, cli_chat, home_gateway
 from personalclaw.constants import BANNER
 
 #: The committed art: PersonalClaw in figlet's "small" font, two columns in, over the tagline.
@@ -57,7 +57,8 @@ def test_the_chat_prompt_prints_it(monkeypatch, capsys):
     monkeypatch.setattr("builtins.input", no_more_input)
     # Nothing reaches a gateway: the chat is opened by the first message, and the prompt ends at
     # its first read.
-    assert cli_chat._interactive(cli_chat._SignIn(0), "") == 0
+    unreached = home_gateway.HomeGateway(home=Path("/home/user/.personalclaw"), port=0, pid=0)
+    assert cli_chat._interactive(cli_chat._SignIn(unreached), "") == 0
     assert capsys.readouterr().out.startswith(PERSONALCLAW_ART)
 
 

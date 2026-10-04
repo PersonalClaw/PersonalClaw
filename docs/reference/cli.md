@@ -12,9 +12,18 @@ text — this page mirrors it.
 | `--version` | Print the version and exit. |
 | `-v` / `--verbose` | Increase log verbosity (`-v` INFO, `-vv` DEBUG). Overrides the persisted `agent.log_level`. |
 
-Commands that talk to a running gateway (`chat`, `run`, `status`, `stop`, `restart`,
-`token`, `logout`, `spawn`) accept `--port` (default: resolved from the `PERSONALCLAW_PORT`
-env var or the `dashboard.url` config).
+Commands that talk to a running gateway (`chat`, `run`, `status`, `token`, `logout`, `spawn`,
+`auth revoke`, `auth rotate-key`, `cron trigger`, `doctor`) reach the gateway of the home they
+run for: the one at the port that home's gateway recorded in its home once it listened, or at the
+port `--port` or `PERSONALCLAW_PORT` names (`--port` first). No other port is assumed. Before
+anything that carries a credential is sent, the gateway there is asked which home it serves
+(`GET /api/healthz`, whose `home_id` is a fingerprint of the gateway's home), and another home's
+gateway, or a program that is not a gateway, is refused with a sentence that says so: the home's
+local secret goes to its own gateway and nowhere else. None of these requests goes through a proxy
+from the environment. With no gateway of the home running, a command says so and names the command
+that starts one; `run` starts its own for the turn, `auth revoke` and `auth rotate-key` change the
+home directly, and `doctor` measures in its own process. `stop` and `restart` find the gateway from
+the same record, and their `--port` only checks it.
 
 ## Exit codes and output streams
 
@@ -114,7 +123,7 @@ tools, and it stays in the dashboard's chat list, where you can go on with it.
 | *(no flags)* | Chat until you type `exit` (or `quit`) or press Ctrl+D. Your first message opens the chat. |
 | `-m, --message TEXT` | Send one message, print its reply, and exit. An empty or whitespace-only message is refused (exit 2). |
 | `--model NAME` | Model for this chat (default: the chat model bound in Settings → Models). |
-| `--port PORT` | Gateway port (default: resolved like every other client command). |
+| `--port PORT` | Port of this home's gateway (default: the port it recorded when it started; `PERSONALCLAW_PORT` names one too). A gateway there that is not this home's is refused. |
 
 The reply streams to stdout. A call that asks for approval waits for your answer as it does
 in any chat: it is listed in the dashboard (Home, the Inbox and the chat itself) and on your
@@ -152,7 +161,7 @@ unattended (see the safety posture below): nobody is there to answer an approval
 | `--cwd DIR` | Working directory for the turn's tools. |
 | `--allow` | Grant write/execute tools, and approve the run's calls without asking. **Default is read-only.** |
 | `--timeout SECS` | Ceiling on the turn (default 600). |
-| `--port PORT` | Gateway port (default: resolved like every other client command). |
+| `--port PORT` | Port of this home's gateway (default: the port it recorded when it started; `PERSONALCLAW_PORT` names one too). A gateway there that is not this home's is refused. |
 
 Exit code is `0` when the turn completed, `1` when it ended with an error, was stopped before
 it finished, the transport failed, or `--allow` could not grant the run's writes (the operator's
@@ -262,11 +271,11 @@ reads as registered and not tested.
 
 | Command | What it does |
 |---|---|
-| `personalclaw status [--port]` | Show runtime stats from the running gateway, and the service installed for this home, if there is one, with whether it is running. |
+| `personalclaw status [--port]` | Show runtime stats from this home's running gateway, or say that none is running and how to start it, and the service installed for this home, if there is one, with whether it is running. |
 | `personalclaw stop [--port]` | Stop this home's gateway, and return once it has exited. It finds the gateway from the record the gateway keeps in its home (its port and pid), so it needs no other program. `--port` stops it only if it listens on that port. With a service installed for this home and running, it stops the service and leaves it installed: it starts again at your next login (macOS) or the next boot (Linux), or with `personalclaw restart`. In a container it changes nothing and prints the host command that stops the container. |
 | `personalclaw restart [--port]` | Restart the gateway: the service installed for this home, whether or not it is running (a gateway started outside it is stopped first), else stop this home's gateway and start a fresh one on the port it had. A fresh one starts only once the old one has exited. A service installed for another home is left alone. In a container it changes nothing and prints the host command that restarts the container. |
 | `personalclaw logs [-f] [-n LINES]` | Show gateway logs (`-f` live tail; `-n` line count, default 100). Reads the systemd journal (Linux service), the launchd service's log, `~/Library/Logs/PersonalClaw/gateway.err` (macOS), or `gateway.log` in the home (a gateway that is not a service). Each holds the same lines as Settings → Diagnostics → Live logs: the gateway's own, every loaded app's from the moment it loads, what each app's backend, background worker and engine print (masked, tagged with the app), and any library's warnings. |
-| `personalclaw token [--port] [--ttl 20h]` | Print a sign-in link for the dashboard. Open it in a browser to sign that browser in, or send the token after `?token=` as an `Authorization: Bearer` header from a script. It lasts 20 hours unless `--ttl` says otherwise (`30m`, `20h`, `7d`; at most `90d`, the limit for a long-lived credential — longer is refused, with a sentence saying why), and it says so on stderr, with the time it stops working. Every sign-in is listed under Settings → Devices, where it can be signed out. |
+| `personalclaw token [--port] [--ttl 20h]` | Print a sign-in link for the dashboard, from this home's gateway. Open it in a browser to sign that browser in, or send the token after `?token=` as an `Authorization: Bearer` header from a script. It lasts 20 hours unless `--ttl` says otherwise (`30m`, `20h`, `7d`; at most `90d`, the limit for a long-lived credential — longer is refused, with a sentence saying why), and it says so on stderr, with the time it stops working. Every sign-in is listed under Settings → Devices, where it can be signed out. |
 | `personalclaw logout [--port]` | Sign every device and token out, everywhere. Each one's next request is told when and from where, and how to sign back in. |
 | `personalclaw update [--to VERSION]` | Move this install to the newest release on its `updates` channel, or to its pinned release: it upgrades the wheel, checks out the release tag in a git clone, or prints the host's commands that replace a container's image. It installs with the tool that made the environment (uv or pip); when that tool is not on PATH it changes nothing and says what to run, and when the install fails it puts the git clone back on the commit it was on and exits 1 saying why. A Ctrl-C while it installs stops it the same way, says what that left and exits 130; once the install has finished, it says the update will finish. When that release is not newer than the one running (or is the pinned one, already running), it says so and changes nothing. A gateway that is running keeps its code until it restarts (`personalclaw restart`). `--to` pins that release first, which is also how you roll back. |
 

@@ -9,29 +9,25 @@ location. On the default auth-on gateway that meant:
   - ``spawn run``'s POST also got ``403``, surfaced via its ``HTTPError`` arm as the
     unhelpful bare "Error: Forbidden", with no flag to authenticate at all.
 
-The fix routes ``spawn`` through the same trio ``personalclaw run`` already uses:
-``probe_gateway`` (hits the auth-bypassed ``/api/healthz`` for liveness),
-``mint_local_token`` (exchanges the shared ``.local_secret`` for a token at
-``/api/token/local`` — the same handshake ``token``/``status``/``logout`` use), and
-``owner_headers`` (the token in ``Authorization: Bearer``, never in the URL).
+``spawn`` reaches its gateway the way every client command does: ``home_gateway.reach`` (this
+home's gateway, at the port it recorded, once it has shown it serves this home), then
+``mint_local_token`` (exchanges the home's ``.local_secret`` for a token at
+``/api/token/local`` — the handshake ``token`` makes), and ``owner_headers`` (the token in
+``Authorization: Bearer``, never in the URL).
 
-These tests build a minimal fake gateway that actually enforces token auth on
-``/api/spawn`` (403 without the header, 200 with it matching what ``/api/token/local``
-minted), and that refuses any ``/api/spawn`` URL carrying the token — the run-list test
-fails against the pre-fix ``_spawn`` because it never attaches a token, and passes after
-because the fix does.
+These tests serve a gateway of this home on a loopback port of its own that actually enforces
+token auth on ``/api/spawn`` (403 without the header, 200 with it matching what
+``/api/token/local`` minted), and that refuses any ``/api/spawn`` URL carrying the token.
 """
 
 from __future__ import annotations
 
 import argparse
-import io
-import json
-import urllib.error
-import urllib.request
-from urllib.parse import urlsplit
+from pathlib import Path
 
 import pytest
+from aiohttp import web
+from fakes import gateway_stand_in
 
 from personalclaw import cli_commands
 
@@ -39,194 +35,131 @@ _SECRET = "test-local-secret"
 _TOKEN = "minted-test-token"
 
 
-class _Resp:
-    """A minimal stand-in for ``http.client.HTTPResponse`` as a context manager."""
-
-    def __init__(self, payload: dict) -> None:
-        self._body = json.dumps(payload).encode()
-        self.status = 200
-
-    def read(self) -> bytes:
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-
-def _forbidden(url: str) -> urllib.error.HTTPError:
-    return urllib.error.HTTPError(
-        url, 403, "Forbidden", None, io.BytesIO(b'{"error": "Forbidden"}')
-    )
-
-
-def _fake_gateway(secret_path, agents_payload):
-    """A tiny ``urlopen`` replacement that enforces the real auth contract:
-
-    ``/api/healthz`` always answers (the bypass every liveness probe relies on),
-    ``/api/token/local`` requires the correct ``X-Local-Secret`` header, and
-    ``/api/spawn*`` requires an ``Authorization: Bearer`` header carrying what that mint
-    returned — and fails the test outright if the URL carries the token instead.
+def _auth_routes(home: Path, *, spawned: dict, polled: dict | None = None) -> dict:
+    """The gateway's token route and its owner-only ``/api/spawn`` routes, enforcing the real
+    auth contract: the mint takes the home's local secret in ``X-Local-Secret``, and every
+    ``/api/spawn`` request takes what it minted as ``Authorization: Bearer``, never in its URL.
     """
 
-    def _urlopen(req, timeout=5):
-        url = req if isinstance(req, str) else req.full_url
-        parts = urlsplit(url)
+    # What the gateway wrote as it started, and holds from then on.
+    secret = (home / ".local_secret").read_text(encoding="utf-8").strip()
 
-        if parts.path == "/api/healthz":
-            return _Resp({})
+    async def token_local(request: web.Request) -> web.Response:
+        if request.headers.get("X-Local-Secret") != secret:
+            return web.json_response({"error": "Forbidden"}, status=403)
+        return web.json_response({"token": _TOKEN})
 
-        if parts.path == "/api/token/local":
-            # ``Request.add_header`` stores keys via ``.capitalize()`` ("X-local-secret"),
-            # and ``Request.get_header`` does NOT re-capitalize its argument — so a
-            # case-insensitive scan is the only way to read it back reliably here,
-            # same as a real (case-insensitive) HTTP server would.
-            header = (
-                ""
-                if isinstance(req, str)
-                else next((v for k, v in req.headers.items() if k.lower() == "x-local-secret"), "")
-            )
-            if header != secret_path.read_text(encoding="utf-8").strip():
-                raise _forbidden(url)
-            return _Resp({"token": _TOKEN})
+    def _owner(request: web.Request) -> bool:
+        assert _TOKEN not in request.path_qs, f"the owner token rode the URL: {request.path_qs}"
+        return request.headers.get("Authorization") == f"Bearer {_TOKEN}"
 
-        if parts.path.startswith("/api/spawn"):
-            assert _TOKEN not in url, f"the owner token rode the URL: {url}"
-            bearer = (
-                ""
-                if isinstance(req, str)
-                else next((v for k, v in req.headers.items() if k.lower() == "authorization"), "")
-            )
-            if bearer != f"Bearer {_TOKEN}":
-                raise _forbidden(url)
-            return _Resp(agents_payload)
+    async def spawn(request: web.Request) -> web.Response:
+        if not _owner(request):
+            return web.json_response({"error": "Forbidden"}, status=403)
+        return web.json_response(spawned)
 
-        raise AssertionError(f"unexpected URL in fake gateway: {url}")
+    async def poll(request: web.Request) -> web.Response:
+        if not _owner(request):
+            return web.json_response({"error": "Forbidden"}, status=403)
+        return web.json_response(polled or {})
 
-    return _urlopen
+    routes = {
+        ("GET", "/api/token/local"): token_local,
+        ("GET", "/api/spawn"): spawn,
+        ("POST", "/api/spawn"): spawn,
+    }
+    if polled is not None:
+        routes[("GET", f"/api/spawn/{spawned['id']}")] = poll
+    return routes
 
 
-def _spawn_args(*, action: str, port: int, task: str = "", fire_and_forget: bool = True):
+def _spawn_args(*, action: str, task: str = "", fire_and_forget: bool = True):
     return argparse.Namespace(
         spawn_action=action,
-        port=port,
+        port=None,
         task=task,
         fire_and_forget=fire_and_forget,
     )
 
 
 @pytest.fixture
-def _local_secret(tmp_path, monkeypatch):
-    """Point every ``config_dir()`` caller (``cli_run`` and ``cli_commands``) at an
-    isolated home carrying a known ``.local_secret`` — the file ``mint_local_token``
-    reads to authenticate, so no real ``PERSONALCLAW_HOME`` is ever touched."""
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unset_env) -> Path:
+    """This home, named by ``PERSONALCLAW_HOME``, with the ``.local_secret`` its gateway writes,
+    so no real home is ever touched and no port in the environment is asked."""
+    unset_env("PERSONALCLAW_PORT", "HTTP_PROXY", "http_proxy")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    (home / ".local_secret").write_text(_SECRET, encoding="utf-8")
+    return home
 
-    secret_path = tmp_path / ".local_secret"
-    secret_path.write_text(_SECRET, encoding="utf-8")
-    monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
-    return secret_path
 
-
-def test_spawn_list_authenticates_against_a_real_auth_gateway(_local_secret, monkeypatch, capsys):
+def test_spawn_list_authenticates_against_a_real_auth_gateway(home, capsys):
     """The end-to-end regression: a `spawn list` must reach a token-gated gateway.
 
-    Fails before the fix (no token ever sent -> 403 -> "gateway not running", even
-    though the fake gateway is answering `/api/healthz` fine). Passes after: the
-    minted token rides the Bearer header and the fake gateway's `/api/spawn` accepts it.
+    Failed before #2947 (no token ever sent -> 403 -> "gateway not running", even though the
+    gateway answered fine). The minted token rides the Bearer header and the gateway's
+    `/api/spawn` accepts it.
     """
-    monkeypatch.setattr(
-        urllib.request,
-        "urlopen",
-        _fake_gateway(
-            _local_secret,
-            {
-                "agents": [
-                    {"id": "agent-42", "task": "check open PRs", "done": True},
-                ]
-            },
-        ),
-    )
-
-    cli_commands._spawn(_spawn_args(action="list", port=10884))
+    agents = {"agents": [{"id": "agent-42", "task": "check open PRs", "done": True}]}
+    with gateway_stand_in(home, routes=_auth_routes(home, spawned=agents)) as gateway:
+        gateway.record()
+        cli_commands._spawn(_spawn_args(action="list"))
 
     out = capsys.readouterr().out
-    assert "gateway not running" not in out, (
-        "a healthy, auth-on gateway was misreported as not running — the request "
-        "never carried a token"
-    )
     assert "agent-42" in out, f"the authenticated request never reached the gateway: {out!r}"
 
 
-def test_spawn_run_sends_the_minted_token_in_the_header(_local_secret, monkeypatch, capsys):
+def test_spawn_run_sends_the_minted_token_in_the_header(home, capsys):
     """`spawn run --async` must authenticate its POST with the minted token, not send it bare."""
-    monkeypatch.setattr(
-        urllib.request,
-        "urlopen",
-        _fake_gateway(_local_secret, {"id": "agent-7", "task": "probe"}),
-    )
-
-    cli_commands._spawn(_spawn_args(action="run", port=10884, task="probe"))
+    spawned = {"id": "agent-7", "task": "probe"}
+    with gateway_stand_in(home, routes=_auth_routes(home, spawned=spawned)) as gateway:
+        gateway.record()
+        cli_commands._spawn(_spawn_args(action="run", task="probe"))
 
     out = capsys.readouterr().out
     assert "Forbidden" not in out
     assert "Spawned subagent agent-7" in out
 
 
-def test_spawn_run_polls_with_the_header_until_the_subagent_is_done(
-    _local_secret, monkeypatch, capsys
-):
+def test_spawn_run_polls_with_the_header_until_the_subagent_is_done(home, monkeypatch, capsys):
     """The blocking form's poll loop is the third request and must authenticate the same way:
     a poll the gateway refuses reads as "lost connection to gateway"."""
-    gateway = _fake_gateway(_local_secret, {"id": "agent-9", "task": "probe"})
-    polled: list[str] = []
-
-    def _urlopen(req, timeout=5):
-        url = req if isinstance(req, str) else req.full_url
-        if urlsplit(url).path == "/api/spawn/agent-9":
-            polled.append(url)
-            gateway(req, timeout)  # the same auth rule as every other /api/spawn request
-            return _Resp({"done": True, "result": "the subagent's answer"})
-        return gateway(req, timeout)
-
-    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    spawned = {"id": "agent-9", "task": "probe"}
+    done = {"done": True, "result": "the subagent's answer"}
+    routes = _auth_routes(home, spawned=spawned, polled=done)
     monkeypatch.setattr(cli_commands._time, "sleep", lambda _s: None)
+    with gateway_stand_in(home, routes=routes) as gateway:
+        gateway.record()
+        cli_commands._spawn(_spawn_args(action="run", task="probe", fire_and_forget=False))
 
-    cli_commands._spawn(_spawn_args(action="run", port=10884, task="probe", fire_and_forget=False))
-
-    assert polled, "the blocking form never polled"
+    assert gateway.asked("/api/spawn/agent-9"), "the blocking form never polled"
     assert "the subagent's answer" in capsys.readouterr().out
 
 
-def test_spawn_reports_not_running_only_when_the_gateway_is_actually_absent(monkeypatch, capsys):
-    """VACUITY: a real liveness failure must still read as "gateway not running".
+def test_spawn_reports_not_running_only_when_the_gateway_is_actually_absent(home, capsys):
+    """VACUITY: no gateway of this home running must still read as none running.
 
     Without this, a fix that always finds a way to avoid the phrase (e.g. by
     swallowing every error) would pass the tests above for the wrong reason.
     """
-    monkeypatch.setattr(cli_commands, "probe_gateway", lambda *a, **k: False)
-
     with pytest.raises(SystemExit):
-        cli_commands._spawn(_spawn_args(action="list", port=10884))
+        cli_commands._spawn(_spawn_args(action="list"))
 
-    assert "gateway not running" in capsys.readouterr().err
+    assert "No gateway is running for this home" in capsys.readouterr().err
 
 
-def test_spawn_mint_failure_is_reported_as_itself_not_as_not_running(monkeypatch, capsys):
-    """A live gateway this process cannot authenticate against (e.g. a different
-    ``PERSONALCLAW_HOME``) is a DIFFERENT fact than "not running" and must read as
-    one — mirroring how `status` distinguishes a 401/403 from an unreachable port."""
-    monkeypatch.setattr(cli_commands, "probe_gateway", lambda *a, **k: True)
+def test_spawn_mint_failure_is_reported_as_itself_not_as_not_running(home, capsys):
+    """A gateway of this home that will not sign this command in (its secret is not the one in the
+    home: a second gateway started on the home since) is a DIFFERENT fact than "not running" and
+    must read as one — mirroring how `status` distinguishes a 401/403 from an unreachable port."""
+    routes = _auth_routes(home, spawned={"agents": []})
+    with gateway_stand_in(home, routes=routes) as gateway:
+        gateway.record()
+        (home / ".local_secret").write_text("a-secret-the-gateway-no-longer-holds")
+        with pytest.raises(SystemExit):
+            cli_commands._spawn(_spawn_args(action="list"))
 
-    def _boom(port, timeout=5.0):
-        raise cli_commands.RunError("cannot read secret — different PERSONALCLAW_HOME")
-
-    monkeypatch.setattr(cli_commands, "mint_local_token", _boom)
-
-    with pytest.raises(SystemExit):
-        cli_commands._spawn(_spawn_args(action="list", port=10884))
-
-    out = capsys.readouterr().err
-    assert "gateway not running" not in out
-    assert "different PERSONALCLAW_HOME" in out
+    err = capsys.readouterr().err
+    assert "No gateway is running" not in err
+    assert "did not sign this command in" in err

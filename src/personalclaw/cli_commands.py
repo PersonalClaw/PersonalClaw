@@ -10,8 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
 
+from personalclaw import home_gateway
 from personalclaw.atomic_write import atomic_json_write, write_private_file
-from personalclaw.cli_run import RunError, mint_local_token, owner_headers, probe_gateway
+from personalclaw.cli_run import RunError, mint_local_token, owner_headers
 from personalclaw.config import config_dir
 from personalclaw.config.loader import AgentProfile, AppConfig
 from personalclaw.eval.judge import LLMJudge
@@ -54,47 +55,43 @@ def _usage_error(sentence: str) -> NoReturn:
 def _spawn(args: argparse.Namespace) -> None:
     """Dispatch spawn subcommands: run, list.
 
-    Authenticates through the same trio ``personalclaw run`` uses rather than inventing
-    a second mechanism (#2947): ``probe_gateway`` for liveness (it hits ``/api/healthz``,
-    which ``token_auth`` always bypasses, so a 403 from an auth-on gateway can never be
-    misread as absent) and ``mint_local_token`` for the credential itself (reads the
-    shared ``.local_secret`` and exchanges it at ``/api/token/local`` — the same handshake
-    ``personalclaw token``/``status``/``logout`` use). The minted token then rides every
-    request in the ``Authorization: Bearer`` header (``owner_headers``), never in the URL.
+    Reaches the gateway the way every client command does (``home_gateway.reach``: this home's,
+    at the port it recorded or the one ``--port`` names, once it has shown it serves this home)
+    and signs in the way ``personalclaw run`` does: ``mint_local_token`` trades the home's local
+    secret for a token at ``/api/token/local``. The token then rides every request in the
+    ``Authorization: Bearer`` header (``owner_headers``), never in the URL.
 
-    Before this fix ``_spawn`` sent no credential at all, so a 403 from the default
-    auth-on gateway raised ``urllib.error.HTTPError`` (a ``URLError`` subclass) and landed
-    on the "gateway not running" arm below — reporting a running gateway as down.
+    Before #2947 ``_spawn`` sent no credential at all, so a 403 from the default auth-on gateway
+    landed on the "gateway not running" arm, reporting a running gateway as down.
     """
     action = getattr(args, "spawn_action", None)
-    port = args.port
-    base = f"http://localhost:{port}"
-
-    if not probe_gateway(port):
-        print(
-            "Error: gateway not running (cannot reach dashboard on port %d)" % port, file=sys.stderr
-        )
-        sys.exit(1)
     try:
-        token = mint_local_token(port)
+        gateway = home_gateway.reach(getattr(args, "port", None))
+    except home_gateway.GatewayError as exc:
+        _refuse(f"Error: {exc}")
+    try:
+        token = mint_local_token(gateway)
     except RunError as exc:
-        # Liveness is confirmed (probe_gateway passed above) — a mint failure here is a
-        # DIFFERENT fact than "not running" (e.g. this process does not share the
-        # gateway's PERSONALCLAW_HOME, so it holds no `.local_secret`) and must read as one.
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
+        # The gateway is this home's and answers; a mint failure is a DIFFERENT fact than "not
+        # running" and must read as one.
+        _refuse(f"Error: {exc}")
 
     if action == "list":
-        _spawn_list(base, port, token)
+        _spawn_list(gateway, token)
     elif action == "run":
-        _spawn_run(args, base, port, token)
+        _spawn_run(args, gateway, token)
 
 
-def _spawn_list(base: str, port: int, token: str) -> None:
+def _lost(gateway: home_gateway.HomeGateway) -> NoReturn:
+    """The gateway stopped answering part way through: say so, and how to start it again."""
+    _refuse(f"Error: {gateway.gone()}")
+
+
+def _spawn_list(gateway: home_gateway.HomeGateway, token: str) -> None:
     """``spawn list`` — GET ``/api/spawn`` carrying the caller's minted token."""
     try:
-        req = urllib.request.Request(f"{base}/api/spawn", headers=owner_headers(token))
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        req = urllib.request.Request(f"{gateway.url}/api/spawn", headers=owner_headers(token))
+        with home_gateway.open_loopback(req, timeout=5) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         try:
@@ -104,10 +101,7 @@ def _spawn_list(base: str, port: int, token: str) -> None:
             print(f"Error: {e.code} {e.reason}", file=sys.stderr)
         sys.exit(1)
     except (urllib.error.URLError, OSError):
-        print(
-            "Error: gateway not running (cannot reach dashboard on port %d)" % port, file=sys.stderr
-        )
-        sys.exit(1)
+        _lost(gateway)
     agents = data.get("agents", [])
     if not agents:
         print("No subagents.")
@@ -117,16 +111,16 @@ def _spawn_list(base: str, port: int, token: str) -> None:
         print(f"  {status} {a['id']}  {a.get('task', '')[:60]}")
 
 
-def _spawn_run(args: argparse.Namespace, base: str, port: int, token: str) -> None:
+def _spawn_run(args: argparse.Namespace, gateway: home_gateway.HomeGateway, token: str) -> None:
     """Spawn a subagent via the dashboard API."""
     data = json.dumps({"task": args.task}).encode()
     req = urllib.request.Request(
-        f"{base}/api/spawn",
+        f"{gateway.url}/api/spawn",
         data=data,
         headers={"Content-Type": "application/json", **owner_headers(token)},
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with home_gateway.open_loopback(req, timeout=5) as resp:
             result = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         try:
@@ -136,10 +130,7 @@ def _spawn_run(args: argparse.Namespace, base: str, port: int, token: str) -> No
             print(f"Error: {e.code} {e.reason}", file=sys.stderr)
         sys.exit(1)
     except (urllib.error.URLError, OSError):
-        print(
-            "Error: gateway not running (cannot reach dashboard on port %d)" % port, file=sys.stderr
-        )
-        sys.exit(1)
+        _lost(gateway)
 
     agent_id = result["id"]
 
@@ -150,11 +141,13 @@ def _spawn_run(args: argparse.Namespace, base: str, port: int, token: str) -> No
     # Block: poll until done
 
     print(f"Spawned subagent {agent_id}, waiting for result...", file=sys.stderr)
-    poll = urllib.request.Request(f"{base}/api/spawn/{agent_id}", headers=owner_headers(token))
+    poll = urllib.request.Request(
+        f"{gateway.url}/api/spawn/{agent_id}", headers=owner_headers(token)
+    )
     while True:
         _time.sleep(2)
         try:
-            with urllib.request.urlopen(poll, timeout=5) as resp:
+            with home_gateway.open_loopback(poll, timeout=5) as resp:
                 status = json.loads(resp.read())
         except Exception:
             print("Error: lost connection to gateway", file=sys.stderr)

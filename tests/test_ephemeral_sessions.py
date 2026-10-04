@@ -510,7 +510,7 @@ class TestMcpCoreSessionKeyPassthrough:
 
     def test_learn_add_sends_session_key_header(self):
         with (
-            patch("personalclaw.mcp_core.urllib.request.urlopen") as mock_urlopen,
+            patch("personalclaw.mcp_core.home_gateway.open_loopback") as mock_urlopen,
             patch.dict(
                 "os.environ",
                 {"PERSONALCLAW_SESSION_KEY": "dashboard:e1", "PERSONALCLAW_PORT": "7777"},
@@ -532,7 +532,7 @@ class TestMcpCoreSessionKeyPassthrough:
 
     def test_learn_add_no_session_key_header_when_unset(self):
         with (
-            patch("personalclaw.mcp_core.urllib.request.urlopen") as mock_urlopen,
+            patch("personalclaw.mcp_core.home_gateway.open_loopback") as mock_urlopen,
             patch("personalclaw.mcp_core._resolve_session_key", return_value=""),
             patch.dict("os.environ", {"PERSONALCLAW_PORT": "7777"}),
         ):

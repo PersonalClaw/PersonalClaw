@@ -149,14 +149,19 @@ def test_cron_remove_of_a_job_that_is_not_there_exits_1(home, capsys):
 def test_cron_trigger_the_gateway_refused_exits_1(home, capsys, monkeypatch):
     """`cron trigger` (run now) posts to the running gateway; its refusal is the gateway's
     sentence, and the run did not start."""
+    from types import SimpleNamespace
+
+    from personalclaw import home_gateway
+
     refusal = "“ops” is not allowed to use the “Bash Command” action, so it was not run."
     posted: list[str] = []
 
-    def _post(path, body):
+    def _post(path, body, **_kw):
         posted.append(path)
-        return {"refused": refusal}
+        return 200, {"refused": refusal}
 
-    monkeypatch.setattr("personalclaw.mcp_core._post", _post)
+    # This home's gateway, as the command reaches it (``home_gateway.reach``).
+    monkeypatch.setattr(home_gateway, "reach", lambda port=None: SimpleNamespace(post=_post))
     _seed(home, "abc123")  # a job the store has: an unknown one is refused before any post
 
     err = _refused(capsys, lambda: _cron(cron_action="trigger", job_id="abc123"))

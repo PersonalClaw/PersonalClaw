@@ -37,7 +37,7 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import gateway_base, lasting_work
+from personalclaw import gateway_base, home_gateway, lasting_work
 from personalclaw.config import loader as config_loader
 from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.safety_flags import yes_or_no
@@ -958,6 +958,10 @@ def _unanswered(method: str, path: str, budget: float) -> dict:
     return {"error": f"the gateway did not answer {call} within {budget:g} s", "timed_out": True}
 
 
+# Each request goes to this gateway through ``home_gateway.open_loopback``: never through a proxy
+# named in the environment (an agent CLI started with one would hand it the internal credential)
+# and never on to wherever a redirect points.
+#
 # NB: ``_api_base()`` and the credential are resolved INSIDE each try below. Each refuses
 # (``GatewayBaseUnresolved``, ``InternalSecretUnavailable``) rather than guessing a port or
 # sending an empty credential, and a refusal must reach the agent as this tool's result
@@ -974,7 +978,7 @@ def _post(path: str, body: dict | None = None, *, timeout: float | None = None) 
             headers=_internal_headers({"Content-Type": "application/json"}),
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=budget) as resp:
+        with home_gateway.open_loopback(req, timeout=budget) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return _refused(exc)
@@ -991,7 +995,7 @@ def _get(path: str, *, timeout: float | None = None) -> dict:
             f"{_api_base()}{path}",
             headers=_internal_headers(),
         )
-        with urllib.request.urlopen(req, timeout=budget) as resp:
+        with home_gateway.open_loopback(req, timeout=budget) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return _refused(exc)
@@ -1010,7 +1014,7 @@ def _delete(path: str, body: dict | None = None) -> dict:
             headers=_internal_headers({"Content-Type": "application/json"} if data else None),
             method="DELETE",
         )
-        with urllib.request.urlopen(req, timeout=GATEWAY_READ_TIMEOUT_SECS) as resp:
+        with home_gateway.open_loopback(req, timeout=GATEWAY_READ_TIMEOUT_SECS) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         return _refused(exc)

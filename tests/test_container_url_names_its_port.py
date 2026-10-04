@@ -14,12 +14,11 @@ ever a credential.
 from __future__ import annotations
 
 import argparse
-import io
-import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fakes import gateway_stand_in
 
 from personalclaw import cli_server
 from personalclaw.dashboard.origin import format_dashboard_urls
@@ -27,26 +26,18 @@ from personalclaw.dashboard.origin import format_dashboard_urls
 _SYNTHETIC_TOKEN = "synthetic.placeholder.not-a-real-token"
 
 
-class _Response(io.BytesIO):
-    def __enter__(self) -> "_Response":
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.close()
-
-
-def _run_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> tuple[str, str]:
-    """`personalclaw token` against a faked gateway: its secret file and its token route."""
+def _run_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys) -> tuple[str, str, int]:
+    """`personalclaw token` against a gateway of this home on a port of its own, standing in for
+    the container's: its secret file and its token route. Returns stdout, stderr and the port."""
+    monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     (tmp_path / ".local_secret").write_text("synthetic-local-secret\n")
-    monkeypatch.setattr(cli_server, "config_dir", lambda: tmp_path)
-    monkeypatch.setenv("PERSONALCLAW_PORT", "10000")
-    monkeypatch.setattr(
-        "urllib.request.urlopen",
-        lambda req, timeout=5: _Response(json.dumps({"token": _SYNTHETIC_TOKEN}).encode()),
-    )
-    cli_server._token(argparse.Namespace(ttl="20h", port=None))
+    routes = {("GET", "/api/token/local"): (200, {"token": _SYNTHETIC_TOKEN})}
+    with gateway_stand_in(tmp_path, routes=routes) as gateway:
+        gateway.record()
+        cli_server._token(argparse.Namespace(ttl="20h", port=None))
     captured = capsys.readouterr()
-    return captured.out, captured.err
+    return captured.out, captured.err, gateway.port
 
 
 def test_the_token_command_says_the_port_is_the_containers(
@@ -54,14 +45,14 @@ def test_the_token_command_says_the_port_is_the_containers(
 ) -> None:
     """🔑 The URL stays the one line on stdout; the note goes to stderr, naming the port."""
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
-    out, err = _run_token(monkeypatch, tmp_path, capsys)
+    out, err, port = _run_token(monkeypatch, tmp_path, capsys)
     # stdout is still a list of URLs, so `open "$(docker exec … personalclaw token)"` keeps working.
-    assert out == f"http://localhost:10000?token={_SYNTHETIC_TOKEN}\n"
-    assert "Port 10000 is this container's own port" in err
-    assert "docker run -p HOST:10000" in err
+    assert out == f"http://localhost:{port}?token={_SYNTHETIC_TOKEN}\n"
+    assert f"Port {port} is this container's own port" in err
+    assert f"docker run -p HOST:{port}" in err
     # It must not invent a host port: the only number it may state is the container's own.
     assert [word for word in err.replace("`", " ").split() if word.strip(".,:").isdigit()] == [
-        "10000"
+        str(port)
     ]
 
 
@@ -70,8 +61,8 @@ def test_outside_a_container_the_token_command_is_unchanged(
 ) -> None:
     """The control arm: a pip or git install prints the URL and nothing else."""
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
-    out, err = _run_token(monkeypatch, tmp_path, capsys)
-    assert out == f"http://localhost:10000?token={_SYNTHETIC_TOKEN}\n"
+    out, err, port = _run_token(monkeypatch, tmp_path, capsys)
+    assert out == f"http://localhost:{port}?token={_SYNTHETIC_TOKEN}\n"
     assert err == ""
 
 

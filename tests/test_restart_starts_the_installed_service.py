@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import shlex
-import urllib.error
 from pathlib import Path
 
 import pytest
@@ -200,15 +199,13 @@ def test_a_service_of_another_home_is_not_this_homes_to_stop_or_restart(
 
 
 def test_status_names_the_service_and_the_command_that_starts_it(
-    launchctl: _FakeManager, monkeypatch: pytest.MonkeyPatch, capsys
+    launchctl: _FakeManager, capsys
 ) -> None:
+    """No gateway of this home is running (it keeps no record of one): the status says so, with
+    the command that starts the service installed for this home."""
     _install_plist()
 
-    def _down(*_args: object, **_kwargs: object) -> object:
-        raise urllib.error.URLError("connection refused")
-
-    monkeypatch.setattr("urllib.request.urlopen", _down)
-    cli_server._status(argparse.Namespace(port=19703))
+    cli_server._status(argparse.Namespace(port=None))
 
     out = capsys.readouterr().out
     assert "io.personalclaw.gateway" in out, out

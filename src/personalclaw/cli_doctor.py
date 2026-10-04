@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from personalclaw import __version__ as _pc_version
-from personalclaw import approval_grants, python_children
+from personalclaw import approval_grants, home_gateway, python_children
 from personalclaw.agent import AGENT_FILENAME, agents_dir
 from personalclaw.atomic_write import atomic_write
 from personalclaw.auth.modes import classify_auth_mode_request
@@ -71,16 +71,19 @@ class _GatewayReading:
     #: Its model-provider instances by name (``GET /api/model-providers``), or None.
     providers: dict[str, dict] | None = None
     why: str = ""
+    #: The port named was not where this home's gateway answers (``home_gateway`` refused it):
+    #: a gateway of this home may still run elsewhere, so none is said to be "not running".
+    refused: bool = False
 
 
 def _gateway_get(port: int, token: str, path: str) -> dict:
-    """One authenticated read of the local gateway. Raises on anything but a JSON object."""
+    """One authenticated read of this home's gateway. Raises on anything but a JSON object."""
     from personalclaw.cli_run import owner_headers
 
-    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=owner_headers(token))
-    with urllib.request.urlopen(  # noqa: S310 — a fixed loopback address
-        request, timeout=_GATEWAY_READ_TIMEOUT_SECS
-    ) as resp:
+    request = urllib.request.Request(
+        f"http://{home_gateway.LOOPBACK_HOST}:{port}{path}", headers=owner_headers(token)
+    )
+    with home_gateway.open_loopback(request, timeout=_GATEWAY_READ_TIMEOUT_SECS) as resp:
         body = json.loads(resp.read())
     if not isinstance(body, dict):
         raise ValueError(f"{path} did not answer with an object")
@@ -88,19 +91,27 @@ def _gateway_get(port: int, token: str, path: str) -> dict:
 
 
 def _read_running_gateway() -> _GatewayReading:
-    """Ask this home's running gateway for its own measurements, signed in the way
-    ``personalclaw token`` is (the home's local secret), with a token that lasts two minutes."""
+    """Ask this home's running gateway (``home_gateway.reach``) for its own measurements, signed
+    in the way ``personalclaw token`` is (the home's local secret), with a token that lasts two
+    minutes."""
     from personalclaw.cli_run import RunError, mint_local_token
-    from personalclaw.gateway_base import live_port
 
-    port = live_port()
-    if port is None:
+    try:
+        gateway = home_gateway.reach()
+    except home_gateway.NoGatewayRunning:
         return _GatewayReading(
             why="here, with no gateway of this home running: channels receive and app backends "
             "run only in a gateway, so their checks fail until one starts"
         )
+    except home_gateway.GatewayError as exc:
+        return _GatewayReading(
+            why=f"here, not by a gateway of this home ({exc}): the checks of its channels, app "
+            "backends and model calls read this command's process instead, where none of them runs",
+            refused=True,
+        )
+    port = gateway.port
     try:
-        token = mint_local_token(port, ttl=_GATEWAY_TOKEN_TTL)
+        token = mint_local_token(gateway, ttl=_GATEWAY_TOKEN_TTL)
         remediation = _gateway_get(port, token, "/api/doctor/remediation")
         listed = _gateway_get(port, token, "/api/model-providers").get("providers") or []
     except (RunError, OSError, ValueError) as exc:
@@ -128,11 +139,12 @@ def _connection_row(name: str, gateway: _GatewayReading) -> str:
     from personalclaw.providers.connection import CHECKING, CONNECTED, FAILED, UNTESTABLE
 
     if gateway.providers is None:
-        where = (
-            "no gateway of this home is running to test it"
-            if gateway.port is None
-            else "the running gateway could not be asked"
-        )
+        if gateway.port is not None:
+            where = "the running gateway could not be asked"
+        elif gateway.refused:
+            where = "no gateway of this home answered to test it"
+        else:
+            where = "no gateway of this home is running to test it"
         return f"⏹  registered, connection not tested ({where})"
     connection = (gateway.providers.get(name) or {}).get("connection") or {}
     state = connection.get("state")
@@ -1236,15 +1248,24 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
 
     # ── Connectivity ──
     print("\nConnectivity")
-    # Check if gateway is running — connect to 127.0.0.1 (loopback)
-    # to avoid DNS resolution issues with the configured hostname.
-    # Any HTTP response (even 401/403 from token auth) means the gateway is up.
+    # This home's gateway, as the reading above reached it (`home_gateway.reach`): the port it
+    # recorded, or the one PERSONALCLAW_PORT names, once it showed it serves this home. Whatever
+    # answers on the configured port may be another home's, and is not this home's to report on.
+    # Its status is asked at 127.0.0.1; any HTTP answer (a 401/403 from token auth too) means up.
     is_remote = bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_CLIENT"))
+    _live = gateway.port
+    _absent = (
+        "the port named is not where this home's gateway answers (see measured: above)"
+        if gateway.refused
+        else "no gateway of this home is running"
+    )
 
-    if _port:
+    if _live is None:
+        print(f"  gateway:     ⏹  {_absent}")
+    else:
         try:
-            req = urllib.request.Request(f"http://127.0.0.1:{_port}/api/status")
-            with urllib.request.urlopen(req, timeout=2) as resp:
+            req = urllib.request.Request(f"http://{home_gateway.LOOPBACK_HOST}:{_live}/api/status")
+            with home_gateway.open_loopback(req, timeout=2) as resp:
                 data = json.loads(resp.read())
             print(f"  gateway:     ✅ running (uptime {data.get('uptime', '?')})")
         except urllib.error.HTTPError as he:
@@ -1258,20 +1279,25 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         except Exception:
             print("  gateway:     ⚠️  running but returned unexpected response")
 
-        # SSH tunnel hint for remote hosts
-        if is_remote:
-            mh = machine_hostname() or "this-host"
-            print("\n  💡 Remote access: Run on your LOCAL machine:")
-            print(f"     ssh -L {_port}:localhost:{_port} {mh}")
-            print("     Then run: personalclaw token")
+    # SSH tunnel hint for remote hosts: the port this home's gateway listens on, else the one it
+    # is configured to bind.
+    _tunnel = _live or _port
+    if _tunnel and is_remote:
+        mh = machine_hostname() or "this-host"
+        print("\n  💡 Remote access: Run on your LOCAL machine:")
+        print(f"     ssh -L {_tunnel}:localhost:{_tunnel} {mh}")
+        print("     Then run: personalclaw token")
 
     # Verify a request with no token is refused beyond loopback (security check). It is asked of
     # an address that is not loopback, because a request from loopback is not the one a bind
     # beyond it exposes: the host `dashboard.url` names, else the one interface the gateway is
     # bound to, else this machine's own address — the container's, in the one-container
     # `docker run`, which names no host. With none of those there is nothing to ask from, and
-    # the row says so rather than failing a check it never ran.
-    if _port and not _local:
+    # the row says so rather than failing a check it never ran. It asks this home's gateway, at
+    # the port it listens on; with none running there is nothing to ask.
+    if not _local and _live is None:
+        print(f"  auth check:  ⏭  not checked — {_absent}")
+    elif not _local:
         _probe = _address_to_check_from(_host, _bind_host)
         if not _probe:
             print(
@@ -1280,7 +1306,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
         else:
             _url_host = f"[{_probe}]" if ":" in _probe else _probe
             try:
-                ext_req = urllib.request.Request(f"http://{_url_host}:{_port}/api/status")
+                ext_req = urllib.request.Request(f"http://{_url_host}:{_live}/api/status")
                 try:
                     with urllib.request.urlopen(ext_req, timeout=2):
                         # 200 without a token: the gate let this address in.
@@ -1300,7 +1326,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
                     else:
                         print(f"  auth check:  ⚠️  HTTP {he.code} from {_probe}")
             except Exception:
-                print(f"  auth check:  ⏭  could not reach {_probe}:{_port} to check")
+                print(f"  auth check:  ⏭  could not reach {_probe}:{_live} to check")
 
     # ── Summary ──
     print()

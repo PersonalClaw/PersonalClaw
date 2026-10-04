@@ -14,7 +14,6 @@ longer is refused with a sentence saying so.
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import re
 import time
@@ -22,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fakes import gateway_stand_in
 
 from personalclaw import cli_server
 from personalclaw.dashboard import token_auth
@@ -30,25 +30,18 @@ REPO = Path(__file__).resolve().parents[1]
 _SYNTHETIC_TOKEN = "synthetic.placeholder.not-a-real-token"
 
 
-class _Response(io.BytesIO):
-    def __enter__(self) -> "_Response":
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.close()
-
-
 def _run_token(monkeypatch, tmp_path, capsys, reply: dict) -> tuple[str, str]:
+    """`personalclaw token` against this home's gateway, on a port of its own, answering *reply*:
+    what it printed, with that port written as ``PORT``."""
     (tmp_path / ".local_secret").write_text("synthetic-local-secret\n")
-    monkeypatch.setattr(cli_server, "config_dir", lambda: tmp_path)
-    monkeypatch.setenv("PERSONALCLAW_PORT", "10000")
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
-    monkeypatch.setattr(
-        "urllib.request.urlopen", lambda req, timeout=5: _Response(json.dumps(reply).encode())
-    )
-    cli_server._token(argparse.Namespace(ttl="20h", port=None))
+    with gateway_stand_in(tmp_path, routes={("GET", "/api/token/local"): (200, reply)}) as gateway:
+        gateway.record()
+        cli_server._token(argparse.Namespace(ttl="20h", port=None))
     captured = capsys.readouterr()
-    return captured.out, captured.err
+    return captured.out.replace(f"localhost:{gateway.port}?", "localhost:PORT?"), captured.err
 
 
 def test_personalclaw_token_says_what_it_is_and_how_long_it_lasts(monkeypatch, tmp_path, capsys):
@@ -65,7 +58,7 @@ def test_personalclaw_token_says_what_it_is_and_how_long_it_lasts(monkeypatch, t
         },
     )
     # stdout stays exactly the URL, so `open "$(personalclaw token)"` and `| head -1` keep working.
-    assert out == f"http://localhost:10000?token={_SYNTHETIC_TOKEN}\n"
+    assert out == f"http://localhost:PORT?token={_SYNTHETIC_TOKEN}\n"
     assert "sign-in link" in err
     assert "Authorization: Bearer" in err, "a script needs to know it can send it as a header"
     assert "20 hours" in err

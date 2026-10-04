@@ -22,16 +22,17 @@ import argparse
 import asyncio
 import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
+from fakes import gateway_stand_in
 
 from personalclaw.cli_server import _STATUS_LINES, _status
 from personalclaw.dashboard.state import DashboardState
 
 
 @pytest.fixture
-def home(tmp_path, monkeypatch):
+def home(tmp_path, monkeypatch, unset_env):
     """One isolated home behind every seam the status payload reads.
 
     Production resolves the trigger store, the hook/event stores and `status_snapshot`'s
@@ -42,6 +43,7 @@ def home(tmp_path, monkeypatch):
     """
     h = tmp_path / "home"
     h.mkdir()
+    unset_env("PERSONALCLAW_PORT", "HTTP_PROXY", "http_proxy")
     monkeypatch.setenv("PERSONALCLAW_HOME", str(h))
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: h)
     monkeypatch.setattr(
@@ -102,18 +104,19 @@ def _real_status_payload(monkeypatch) -> dict:
 
 
 def _run_status(payload: dict) -> str:
-    """Drive the real CLI reader over *payload* and return what it printed."""
+    """Drive the real CLI reader over *payload*, served by this home's gateway at the port it
+    records, and return what it printed."""
     import io
     from contextlib import redirect_stdout
 
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(payload).encode()
-    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-    mock_resp.__exit__ = MagicMock(return_value=False)
+    from personalclaw.config import loader
 
+    home = loader.config_dir()
     buf = io.StringIO()
-    with patch("urllib.request.urlopen", return_value=mock_resp), redirect_stdout(buf):
-        _status(argparse.Namespace(port=7777))
+    with gateway_stand_in(home, routes={("GET", "/api/status"): (200, payload)}) as gateway:
+        gateway.record()
+        with redirect_stdout(buf):
+            _status(argparse.Namespace(port=None))
     return buf.getvalue()
 
 

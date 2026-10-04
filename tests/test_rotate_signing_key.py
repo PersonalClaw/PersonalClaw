@@ -251,8 +251,8 @@ def test_the_cli_rotates_here_only_when_no_gateway_is_running(tmp_path, monkeypa
 
     minted = _mint()
     old_key = (tmp_path / session_store.KEY_FILE).read_bytes()
-    monkeypatch.setattr(cli, "_ask_gateway", lambda *a, **k: (False, {}))
-    assert cli.auth_cmd(SimpleNamespace(auth_command="rotate-key", port=0)) == 0
+    monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)  # and the home records no gateway
+    assert cli.auth_cmd(SimpleNamespace(auth_command="rotate-key", port=None)) == 0
     assert (tmp_path / session_store.KEY_FILE).read_bytes() != old_key
     assert not token_auth.validate_token(minted.token, use_session_exp=True)[0]
     assert "Replaced the sign-in key" in capsys.readouterr().out
@@ -263,13 +263,21 @@ def test_the_cli_never_rotates_behind_a_gateway_that_refused(tmp_path, monkeypat
     would leave it signing with the old key. So a refusal is reported, and nothing changes."""
     from types import SimpleNamespace
 
+    from fakes import gateway_stand_in
+
     from personalclaw.auth import cli
 
     minted = _mint()
     old_key = (tmp_path / session_store.KEY_FILE).read_bytes()
     refusal = {"error": {"code": "service_unavailable", "message": "the key file is read-only"}}
-    monkeypatch.setattr(cli, "_ask_gateway", lambda *a, **k: (True, refusal))
-    assert cli.auth_cmd(SimpleNamespace(auth_command="rotate-key", port=0)) == 1
+    monkeypatch.delenv("PERSONALCLAW_PORT", raising=False)
+    (tmp_path / ".local_secret").write_text("this-homes-secret", encoding="utf-8")
+    routes = {("POST", "/api/auth/rotate-key"): (503, refusal)}
+    with gateway_stand_in(tmp_path, routes=routes) as gateway:
+        gateway.record()
+        assert cli.auth_cmd(SimpleNamespace(auth_command="rotate-key", port=None)) == 1
+    (asked,) = gateway.asked("/api/auth/rotate-key")
+    assert asked.headers["x-internal-secret"] == "this-homes-secret"
     assert (tmp_path / session_store.KEY_FILE).read_bytes() == old_key
     assert token_auth.validate_token(minted.token, use_session_exp=True)[0]
     printed = capsys.readouterr()

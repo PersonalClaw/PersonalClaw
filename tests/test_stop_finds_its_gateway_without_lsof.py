@@ -265,10 +265,22 @@ def test_restart_starts_no_second_gateway_beside_one_it_could_not_stop(
     assert spawned == []
 
 
-def test_restart_with_nothing_running_starts_one_on_the_resolved_port(
+def test_restart_with_nothing_running_starts_one_where_a_gateway_binds(
+    no_programs, signals, spawned, monkeypatch
+) -> None:
+    """With none running, the fresh gateway starts where a gateway of this home binds when it is
+    not told a port: the gateway's own decision, ``PERSONALCLAW_PORT`` first."""
+    sent, _alive = signals
+    monkeypatch.setenv("PERSONALCLAW_PORT", "12399")
+    cli_server._restart(None)
+    assert sent == []
+    assert spawned == [12399]
+
+
+def test_restart_with_nothing_running_starts_one_on_the_port_typed(
     no_programs, signals, spawned
 ) -> None:
     sent, _alive = signals
-    cli_server._restart(None)
+    cli_server._restart(12345)
     assert sent == []
-    assert spawned == [cli_server.resolve_client_port(None)]
+    assert spawned == [12345]

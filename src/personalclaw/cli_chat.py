@@ -1,12 +1,12 @@
 """``personalclaw chat`` — your assistant in the terminal, in a chat of the running gateway.
 
 The terminal is a client of the gateway's chat, as ``personalclaw run`` is, and reaches it the
-same way (``cli_run``: the liveness probe, the token minted with the home's local secret, the
-turn socket). The chat is opened with ``POST /api/chat/sessions``, as the dashboard's New chat
-opens one, and each message is a turn of it, posted with ``POST /api/chat`` and streamed back over
-``/api/ws``. So the turn engine assembles every turn as it does any chat's, with the name you gave
-your assistant, what it remembers and the platform's safety rules, and the chat stays in the
-dashboard's list afterwards, where it can go on.
+same way: this home's gateway (``home_gateway.reach``), the token minted with the home's local
+secret (``cli_run``), the turn socket. The chat is opened with ``POST /api/chat/sessions``, as
+the dashboard's New chat opens one, and each message is a turn of it, posted with
+``POST /api/chat`` and streamed back over ``/api/ws``. So the turn engine assembles every turn as
+it does any chat's, with the name you gave your assistant, what it remembers and the platform's
+safety rules, and the chat stays in the dashboard's list afterwards, where it can go on.
 
 The chat is attended, where ``run``'s turn is not. It is an ordinary chat, under the interactive
 posture and the approval mode a new chat gets, so a call that asks for approval asks you: it is
@@ -17,8 +17,9 @@ approvals go to list it and answer it, and the terminal says what is waiting and
 The agent works in the gateway, not in this process, so letting go of the terminal would leave
 it working. A Ctrl-C during a turn stops the turn in the gateway too.
 
-With no gateway running there is no chat to talk to: it says so, with the command that starts
-one, and exits 1.
+With no gateway of this home running there is no chat to talk to: it says so, with the command
+that starts one, and exits 1. A port named that is not where this home's gateway answers is
+refused the same way, and nothing is sent to it.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ import time
 import urllib.parse
 from typing import Any
 
-from personalclaw import cli_run
+from personalclaw import cli_run, home_gateway
 from personalclaw.approval_brief import RISK_LABELS
 from personalclaw.cli_run import RunError
 from personalclaw.config import loader as config_loader
@@ -85,22 +86,21 @@ def _chat_main(args) -> int:
         print("personalclaw chat: -m/--message must be a non-empty message.", file=sys.stderr)
         return 2
 
-    from personalclaw.cli_server import resolve_client_port
-
-    port = resolve_client_port(getattr(args, "port", None))
-    if not cli_run.probe_gateway(port):
-        print(_no_gateway(port), file=sys.stderr)
+    try:
+        gateway = home_gateway.reach(getattr(args, "port", None))
+    except home_gateway.GatewayError as exc:
+        print(f"personalclaw chat: {exc}", file=sys.stderr)
         return 1
     model = getattr(args, "model", None) or ""
-    sign_in = _SignIn(port)
+    sign_in = _SignIn(gateway)
     try:
-        sign_in.token()  # a home this process does not share is refused before anything else
+        sign_in.token()  # the gateway is asked to sign this chat in before anything else
         if message is None:
             return _interactive(sign_in, model)
         key = _open_chat(sign_in, model)
         return 0 if _say(sign_in, key, message.strip()) == "complete" else 1
     except RunError as exc:
-        _failed(port, exc)
+        _failed(sign_in, exc)
         return 1
     except KeyboardInterrupt:
         # A second Ctrl-C while a stopped turn was still ending: the first one already asked the
@@ -109,43 +109,31 @@ def _chat_main(args) -> int:
         return 1
 
 
-def _failed(port: int, exc: RunError) -> None:
-    """Say why a request to the gateway failed: a gateway that has gone away is said as it is
-    when there was none to begin with, with how to start it."""
-    gone = not cli_run.probe_gateway(port, attempts=1)
-    print(_no_gateway(port) if gone else f"personalclaw chat: {exc}", file=sys.stderr)
-
-
-def _no_gateway(port: int) -> str:
-    """Why there is nothing to chat with, and the command that starts it: the service installed
-    for this home when there is one (``restart`` starts it), else ``gateway`` — what ``status``
-    says of a gateway that is not running."""
-    try:
-        from personalclaw.service import controller as service_controller
-
-        installed = service_controller.this_homes_service() is not None
-    except Exception:  # noqa: BLE001 — naming the start command must not hide the refusal
-        installed = False
-    start = "personalclaw restart" if installed else "personalclaw gateway"
-    return (
-        f"personalclaw chat: no gateway is running on port {port}, and your chat runs in it.\n"
-        f"  Start it with: {start}"
+def _failed(sign_in: _SignIn, exc: RunError) -> None:
+    """Say why a request to the gateway failed: a gateway that has gone away is said as it is,
+    with how to start it again."""
+    gateway = sign_in.gateway
+    print(
+        f"personalclaw chat: {exc if gateway.answers() else gateway.gone()}",
+        file=sys.stderr,
     )
 
 
 class _SignIn:
-    """The token the chat's requests carry: ``run``'s, minted with the home's local secret
-    (:func:`~personalclaw.cli_run.mint_local_token`), and minted again before a request once it
-    is :data:`_REFRESH_AFTER_SECS` old. A turn's socket is signed in once, when it opens."""
+    """The token the chat's requests carry: ``run``'s, minted with the home's local secret from
+    this home's gateway (:func:`~personalclaw.cli_run.mint_local_token`), and minted again before
+    a request once it is :data:`_REFRESH_AFTER_SECS` old. A turn's socket is signed in once, when
+    it opens."""
 
-    def __init__(self, port: int) -> None:
-        self.port = port
+    def __init__(self, gateway: home_gateway.HomeGateway) -> None:
+        self.gateway = gateway
+        self.port = gateway.port
         self._token = ""
         self._minted = 0.0
 
     def token(self) -> str:
         if not self._token or time.monotonic() - self._minted >= _REFRESH_AFTER_SECS:
-            self._token = cli_run.mint_local_token(self.port)
+            self._token = cli_run.mint_local_token(self.gateway)
             self._minted = time.monotonic()
         return self._token
 
@@ -185,7 +173,7 @@ def _interactive(sign_in: _SignIn, model: str) -> int:
             key = key or _open_chat(sign_in, model)
             _say(sign_in, key, message)
         except RunError as exc:
-            _failed(sign_in.port, exc)
+            _failed(sign_in, exc)
         print()
 
 

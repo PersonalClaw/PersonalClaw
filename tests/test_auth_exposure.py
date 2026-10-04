@@ -538,30 +538,18 @@ async def _body_text(resp) -> str:  # noqa: ANN001
     return body if isinstance(body, str) else ""
 
 
-def test_revoke_cli_prefers_the_running_gateway(monkeypatch, _isolated) -> None:
+def test_revoke_cli_prefers_the_running_gateway(monkeypatch, _isolated, unset_env) -> None:
     """The CLI must ASK the gateway, not clear the file behind its back.
 
     Clearing `sessions.json` from another process leaves the live gateway's in-memory nonce
     set intact, so it keeps honoring the sessions the user just revoked.
     """
+    from fakes import gateway_stand_in
+
     from personalclaw.auth import cli as auth_cli
 
-    called: list[int] = []
-    monkeypatch.setattr(auth_cli, "_revoke_via_gateway", lambda port: (called.append(port) or True))
-
-    class _Args:
-        all = True
-        port = 12345
-
-    assert auth_cli._revoke_cmd(_Args()) == 0
-    assert called == [12345], "the CLI did not route the revoke through the gateway"
-
-
-def test_revoke_cli_falls_back_when_no_gateway_is_running(monkeypatch, _isolated) -> None:
-    """Offline, nothing holds contradictory state — refusing would leave no way to revoke."""
-    from personalclaw.auth import cli as auth_cli
-
-    monkeypatch.setattr(auth_cli, "_revoke_via_gateway", lambda port: False)
+    unset_env("PERSONALCLAW_PORT", "HTTP_PROXY", "http_proxy")
+    (_isolated / ".local_secret").write_text("this-homes-secret", encoding="utf-8")
     cleared: list[bool] = []
     import personalclaw.dashboard.token_auth as ta
 
@@ -569,10 +557,63 @@ def test_revoke_cli_falls_back_when_no_gateway_is_running(monkeypatch, _isolated
 
     class _Args:
         all = True
-        port = 0
+        port = None
+
+    routes = {("POST", "/api/logout"): (200, {"ok": True})}
+    with gateway_stand_in(_isolated, routes=routes) as gateway:
+        gateway.record()
+        assert auth_cli._revoke_cmd(_Args()) == 0
+    (asked,) = gateway.asked("/api/logout")
+    assert asked.headers["x-local-secret"] == "this-homes-secret"
+    assert cleared == [], "the CLI cleared the store itself while the gateway ran"
+
+
+def test_revoke_cli_falls_back_when_no_gateway_is_running(
+    monkeypatch, _isolated, unset_env
+) -> None:
+    """Offline, nothing holds contradictory state — refusing would leave no way to revoke."""
+    from personalclaw.auth import cli as auth_cli
+
+    unset_env("PERSONALCLAW_PORT")
+    cleared: list[bool] = []
+    import personalclaw.dashboard.token_auth as ta
+
+    monkeypatch.setattr(ta, "revoke_all_sessions", lambda: cleared.append(True))
+
+    class _Args:
+        all = True
+        port = None
 
     assert auth_cli._revoke_cmd(_Args()) == 0
     assert cleared == [True]
+
+
+def test_revoke_cli_never_clears_behind_a_gateway_that_refused(
+    monkeypatch, _isolated, unset_env, capsys
+) -> None:
+    """A gateway of this home that refuses holds the sessions still: clearing the file here
+    would report a revoke the gateway does not honour. It used to fall back to exactly that."""
+    from fakes import gateway_stand_in
+
+    from personalclaw.auth import cli as auth_cli
+
+    unset_env("PERSONALCLAW_PORT", "HTTP_PROXY", "http_proxy")
+    (_isolated / ".local_secret").write_text("this-homes-secret", encoding="utf-8")
+    cleared: list[bool] = []
+    import personalclaw.dashboard.token_auth as ta
+
+    monkeypatch.setattr(ta, "revoke_all_sessions", lambda: cleared.append(True))
+
+    class _Args:
+        all = True
+        port = None
+
+    routes = {("POST", "/api/logout"): (403, {"error": "invalid secret"})}
+    with gateway_stand_in(_isolated, routes=routes) as gateway:
+        gateway.record()
+        assert auth_cli._revoke_cmd(_Args()) == 1
+    assert cleared == []
+    assert "did not revoke the sessions: invalid secret" in capsys.readouterr().err
 
 
 def test_revoke_requires_the_all_flag(_isolated) -> None:

@@ -2,8 +2,8 @@
 
 A thin helper that fires a job **immediately** by POSTing to the running gateway's run route —
 never by instantiating a fresh ``ScheduleService`` (a fresh service has no live timer/reaper and
-would orphan the run). Reuses PersonalClaw's internal-secret IPC (``mcp_core._post`` →
-``X-Internal-Secret``), the authenticated localhost path the MCP tools use.
+would orphan the run). The gateway is this home's (``home_gateway.reach``), and the call carries
+the home's internal credential (``X-Internal-Secret``), the one the MCP tools use, to it alone.
 """
 
 from __future__ import annotations
@@ -22,8 +22,9 @@ def trigger_schedule_job(job_id: str) -> tuple[bool, str]:
     does, so no character in it can change which route the request reaches.
 
     POSTs to ``/api/triggers/schedule:{id}/run`` (non-blocking on the server — it spawns the run
-    and returns immediately). A gateway that is down / unreachable yields a friendly error
-    rather than raising.
+    and returns immediately) on this home's running gateway. No gateway of this home running, or a
+    port named that is not where it answers, is said in ``home_gateway``'s sentence, and nothing
+    is sent anywhere.
 
     The call names the work it does, as every call made with the internal credential must (the
     gateway refuses one that names none): the job's own, ``cron:<id>``, as a fire of the job is
@@ -33,21 +34,21 @@ def trigger_schedule_job(job_id: str) -> tuple[bool, str]:
     job_id = (job_id or "").strip()
     if not job_id:
         return False, "no job id given"
-    # Deferred import: keeps this module importable in contexts where the MCP
-    # core isn't wired, and avoids a circular import at module load.
-    from personalclaw import mcp_core, session_keys
+    from personalclaw import home_gateway, session_keys
+    from personalclaw.mcp_core import _resolve_session_key
 
-    named = mcp_core._resolve_session_key()
-    token = None if named else mcp_core.set_current_session_key(session_keys.TRIGGER.key(job_id))
     try:
-        resp = mcp_core._post(f"/api/triggers/schedule:{quote(job_id, safe='')}/run", {})
-    finally:
-        if token is not None:
-            mcp_core.reset_current_session_key(token)
-    if not isinstance(resp, dict):
-        return False, "unexpected response from gateway"
-    if resp.get("error"):
-        return False, str(resp["error"])
+        gateway = home_gateway.reach()
+        status, resp = gateway.post(
+            f"/api/triggers/schedule:{quote(job_id, safe='')}/run",
+            {},
+            secret_header="X-Internal-Secret",
+            work=_resolve_session_key() or session_keys.TRIGGER.key(job_id),
+        )
+    except home_gateway.GatewayError as exc:
+        return False, str(exc)
+    if status >= 400 or resp.get("error"):
+        return False, home_gateway.error_text(resp, status)
     if resp.get("refused"):
         # The gateway's own sentence — a missing grant says which and how to give it, the kill
         # switch says how to resume. "trigger failed" in its place told the caller nothing.

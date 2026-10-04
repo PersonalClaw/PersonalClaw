@@ -18,19 +18,29 @@ verdict's whole hand-over with ``wait_for_verdicts``, not for the verdict word t
 
 And to a BOUNDED READ: a test that times out a read on a worker holds the worker with
 ``held_workers`` and lets it go before the test ends, since nothing can stop it.
+
+And to a RUNNING GATEWAY a command talks to: a test serves ``gateway_stand_in`` on a loopback port
+of its own, which answers ``/api/healthz`` as the gateway of the home it is given and records
+every request it is sent, rather than patching ``urllib``. Commands reach their gateway through
+``home_gateway``, whose transport takes no proxy and no patched ``urlopen``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
 import inspect
+import json
+import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 from unittest import mock
+from urllib.parse import unquote
 
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
@@ -385,3 +395,159 @@ def held_workers() -> Iterator[HeldWorkers]:
             yield held
         finally:
             held.let_go()
+
+
+#: The headers a credential travels in: the home's local secret, the internal credential that is
+#: the same secret, and a token minted with it.
+CREDENTIAL_HEADERS = ("x-local-secret", "x-internal-secret", "authorization")
+
+
+def home_fingerprint(home: Path | str) -> str:
+    """The ``home_id`` a gateway of *home* answers ``/api/healthz`` with, by the recipe its
+    docstring gives, written out here apart from the code that computes it, so a change to either
+    side is a failure rather than a silent agreement."""
+    return hashlib.sha256(str(Path(home).expanduser().resolve()).encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class SeenRequest:
+    """One request a stand-in gateway was sent."""
+
+    method: str
+    path: str
+    headers: dict[str, str]
+    body: bytes
+
+    def credentials(self) -> list[str]:
+        """The credential headers it carried, by lower-case name."""
+        return [name for name in CREDENTIAL_HEADERS if name in self.headers]
+
+
+#: A route's answer: an aiohttp handler (a real one of the gateway's included), or a fixed
+#: ``(status, JSON body)``.
+Route = Callable[[Any], Any] | tuple[int, Any]
+
+
+@dataclass
+class GatewayStandIn:
+    """A gateway on a loopback port of its own, served from a thread of its own (so a command can
+    call it from the test's thread, and an async test's loop stays free). See
+    :func:`gateway_stand_in`."""
+
+    home: Path
+    port: int
+    requests: list[SeenRequest]
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def credentials_sent(self) -> list[str]:
+        """Every credential header a request it was sent carried, in order."""
+        return [name for seen in self.requests for name in seen.credentials()]
+
+    def asked(self, path: str) -> list[SeenRequest]:
+        """The requests it was sent for *path* (its query left off)."""
+        return [seen for seen in self.requests if seen.path.split("?", 1)[0] == path]
+
+    def record(self, home: Path | None = None) -> None:
+        """Write the runtime record a gateway keeps in its home once it listens, naming this
+        port and a live pid (this test's), into *home* (its own, when none is named)."""
+        target = home if home is not None else self.home
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "gateway.runtime.json").write_text(
+            json.dumps({"port": self.port, "pid": os.getpid()}), encoding="utf-8"
+        )
+
+
+@contextmanager
+def gateway_stand_in(
+    home: Path | str,
+    *,
+    routes: Mapping[tuple[str, str], Route] | None = None,
+    local_secret: str = "",
+) -> Iterator[GatewayStandIn]:
+    """A gateway of *home*: ``GET /api/healthz`` answers as that home's gateway does (``status``,
+    ``pid``, and ``home_id``, its fingerprint), and every other request is answered from *routes*,
+    by ``(method, path)``, else 404. *local_secret* is the secret the gateway's own handlers check
+    (``app["local_secret"]``), for a route that is one of them. Every request is recorded, its
+    headers by lower-case name, before it is answered.
+    """
+    from aiohttp import web
+
+    import personalclaw
+
+    home = Path(home)
+    seen: list[SeenRequest] = []
+    table: dict[tuple[str, str], Route] = {
+        ("GET", "/api/healthz"): (
+            200,
+            {
+                "status": "ok",
+                "version": personalclaw.__version__,
+                "pid": os.getpid(),
+                "home_id": home_fingerprint(home),
+                "root_ok": True,
+            },
+        ),
+        **(routes or {}),
+    }
+
+    async def answer(request: web.Request) -> web.StreamResponse:
+        body = await request.read()
+        # The path as the router reads it, percent-escapes decoded, and its query as it was sent.
+        path, _, query = request.raw_path.partition("?")
+        path = unquote(path)
+        seen.append(
+            SeenRequest(
+                method=request.method,
+                path=f"{path}?{query}" if query else path,
+                headers={k.lower(): v for k, v in request.headers.items()},
+                body=body,
+            )
+        )
+        route = table.get((request.method, path))
+        if route is None:
+            return web.json_response({"error": "not found"}, status=404)
+        if isinstance(route, tuple):
+            status, payload = route
+            return web.json_response(payload, status=status)
+        return await route(request)
+
+    app = web.Application()
+    app["local_secret"] = local_secret
+    app.router.add_route("*", "/{tail:.*}", answer)
+    loop = asyncio.new_event_loop()
+    runner = web.AppRunner(app)
+    bound: dict[str, int] = {}
+    ready = threading.Event()
+
+    def serve() -> None:
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(runner.setup())
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        loop.run_until_complete(site.start())
+        bound["port"] = runner.addresses[0][1]
+        ready.set()
+        loop.run_forever()
+
+    thread = threading.Thread(target=serve, name="gateway-stand-in", daemon=True)
+    thread.start()
+    assert ready.wait(10), "the stand-in gateway did not start"
+    try:
+        yield GatewayStandIn(home=home, port=bound["port"], requests=seen)
+    finally:
+        asyncio.run_coroutine_threadsafe(runner.cleanup(), loop).result(10)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(10)
+        loop.close()
+
+
+def released_port() -> int:
+    """A loopback port nothing listens on: bound, then let go, so the test holds it (the port
+    guard lets a test ask a port it held) and a connection to it is refused."""
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])

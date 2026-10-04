@@ -32,6 +32,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 import personalclaw
+from personalclaw import home_gateway
 from personalclaw.dashboard import handlers_system
 
 
@@ -123,7 +124,7 @@ class TestAuthExemptRouteLeaksNoPaths:
 
     def test_fingerprint_is_stable_and_not_the_path(self):
         p = Path("/some/where/.personalclaw")
-        first = handlers_system.home_fingerprint(p)
-        assert first == handlers_system.home_fingerprint(p)
+        first = home_gateway.home_id(p)
+        assert first == home_gateway.home_id(p)
         assert first == _expected_home_id(p)
         assert str(p) not in first and len(first) == 16

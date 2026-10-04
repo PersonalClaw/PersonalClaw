@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import copy
 import json
+import os
 import threading
 import types
 import urllib.request
@@ -34,6 +35,7 @@ from personalclaw.action_providers.base import ActionResult
 from personalclaw.config import loader
 from personalclaw.dashboard.handlers import trigger_runs
 from personalclaw.dashboard.handlers import triggers as T
+from personalclaw.dashboard.handlers_system import api_healthz
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.store import TriggerStore
 
@@ -78,9 +80,12 @@ def ran(monkeypatch):
 
 
 @pytest.fixture
-def gateway(home, monkeypatch):
-    """The gateway's real run and history routes on 127.0.0.1, with `_post` pointed at them,
-    and the internal credential a gateway writes to its home when it starts."""
+def gateway(home, monkeypatch, unset_env):
+    """The gateway's real health, run and history routes on 127.0.0.1, with the record a gateway
+    keeps in its home once it listens (where `cron trigger` finds it) and `_post` pointed at it
+    (where the MCP tool does), and the internal credential a gateway writes to its home when it
+    starts."""
+    unset_env("PERSONALCLAW_PORT", "PERSONALCLAW_SESSION_KEY", "HTTP_PROXY", "http_proxy")
     (home / ".local_secret").write_text("a-gateway-credential", encoding="utf-8")
 
     @web.middleware
@@ -92,6 +97,7 @@ def gateway(home, monkeypatch):
     app["state"] = types.SimpleNamespace(
         push_refresh=lambda *_a, **_k: None, _background_tasks=set()
     )
+    app.router.add_get("/api/healthz", api_healthz)
     app.router.add_post("/api/triggers/{id}/run", trigger_runs.api_trigger_run)
     app.router.add_get("/api/triggers/{id}/history", T.api_trigger_history)
 
@@ -113,6 +119,9 @@ def gateway(home, monkeypatch):
     thread.start()
     assert ready.wait(10), "the test gateway did not start"
     base = f"http://127.0.0.1:{bound['port']}"
+    (home / "gateway.runtime.json").write_text(
+        json.dumps({"port": bound["port"], "pid": os.getpid()}), encoding="utf-8"
+    )
     monkeypatch.setattr(mcp_core, "_api_base", lambda: base)
     try:
         yield base

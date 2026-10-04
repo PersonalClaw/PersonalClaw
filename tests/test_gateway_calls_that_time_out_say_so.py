@@ -26,12 +26,12 @@ def unanswered(monkeypatch):
     """A gateway that never answers in time: every request raises the socket's timeout."""
     raised: list[BaseException] = [TimeoutError("timed out")]
 
-    def _urlopen(req, timeout=None):  # noqa: ARG001 - the signature urllib's callers use
+    def _urlopen(req, timeout=None):  # noqa: ARG001 - the signature the gateway's transport takes
         raise raised[0]
 
     monkeypatch.setattr(mcp_core, "_api_base", lambda: "http://127.0.0.1:9")
     monkeypatch.setattr(mcp_core, "_internal_headers", lambda extra=None: dict(extra or {}))
-    monkeypatch.setattr(mcp_core.urllib.request, "urlopen", _urlopen)
+    monkeypatch.setattr(mcp_core.home_gateway, "open_loopback", _urlopen)
     return raised
 
 

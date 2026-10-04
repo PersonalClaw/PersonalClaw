@@ -189,8 +189,10 @@ def _revoke_cmd(args) -> int:
     stolen cookie still works. Found in live validation, which is the only place a
     two-process-state bug like this shows up.
 
-    Falls back to a direct store clear only when no gateway is running (nothing is holding
-    contradictory state then, and refusing would leave no way to revoke offline).
+    The gateway is this home's (``home_gateway.reach``). Only when no gateway of this home is
+    running is the store cleared here: nothing is holding contradictory state then, and refusing
+    would leave no way to revoke offline. A port named that is not this home's gateway, or a
+    gateway that refused, changes nothing.
 
     Only `--all` is offered. A per-nonce revoke would mean printing live nonces to choose one,
     and a nonce in a terminal or shell history is a credential.
@@ -203,16 +205,31 @@ def _revoke_cmd(args) -> int:
         )
         return 2
 
-    from personalclaw.config.loader import _DEFAULT_PORT
+    from personalclaw import home_gateway
 
-    port = int(getattr(args, "port", 0) or _DEFAULT_PORT)
-    if _revoke_via_gateway(port):
-        print("✅ Revoked every dashboard session (live gateway + on disk).")
+    try:
+        gateway = home_gateway.reach(getattr(args, "port", None))
+    except home_gateway.NoGatewayRunning:
+        _sessions_here().revoke_all_sessions()
+        print("✅ Revoked every stored session (no gateway was running).")
         print("   Your password and 2FA enrollment are untouched.")
         return 0
-
-    _sessions_here().revoke_all_sessions()
-    print("✅ Revoked every stored session (no gateway was running).")
+    except home_gateway.GatewayError as exc:
+        print(f"❌ {exc} Nothing was revoked.", file=sys.stderr)
+        return 1
+    try:
+        status, answer = gateway.post("/api/logout", {}, secret_header="X-Local-Secret")
+    except home_gateway.GatewayError as exc:
+        print(f"❌ {exc} Nothing was revoked.", file=sys.stderr)
+        return 1
+    if status != 200 or not answer.get("ok"):
+        print(
+            "❌ The gateway did not revoke the sessions: "
+            f"{home_gateway.error_text(answer, status)}",
+            file=sys.stderr,
+        )
+        return 1
+    print("✅ Revoked every dashboard session (live gateway + on disk).")
     print("   Your password and 2FA enrollment are untouched.")
     return 0
 
@@ -224,63 +241,6 @@ def _sessions_here() -> Any:
     import personalclaw.dashboard.token_auth as token_auth
 
     return token_auth
-
-
-def _revoke_via_gateway(port: int) -> bool:
-    """Ask a running gateway to revoke everything. False when none is reachable.
-
-    Reuses the existing loopback + `.local_secret` rail that `personalclaw logout` uses, so this
-    adds no new authenticated surface — it is the same internal endpoint.
-    """
-    _reached, answer = _ask_gateway(port, "/api/logout", secret_header="X-Local-Secret", body={})
-    return bool(answer.get("ok"))
-
-
-def _ask_gateway(
-    port: int, path: str, *, secret_header: str, body: dict, work: str = ""
-) -> tuple[bool, dict]:
-    """POST *body* to the running gateway on loopback with the local secret in *secret_header*,
-    naming *work*, the work the call does, in ``X-Session-Key`` when one is given: a call made
-    with the internal credential names it, or the gateway refuses it.
-
-    ``(reached, answer)``: whether a gateway answered at all — a refusal included — and what it
-    said (``{}`` when nothing readable came back). The two are kept apart because an action a
-    running gateway REFUSED must never be retried here as if none were running.
-    """
-    import json as _json
-    import urllib.error
-    import urllib.request
-
-    from personalclaw.config.loader import config_dir
-
-    try:
-        secret = (config_dir() / ".local_secret").read_text(encoding="utf-8").strip()
-    except OSError:
-        return False, {}
-    if not secret:
-        return False, {}
-
-    headers = {secret_header: secret, "Content-Type": "application/json"}
-    if work:
-        headers["X-Session-Key"] = work
-    req = urllib.request.Request(
-        f"http://localhost:{port}{path}",
-        method="POST",
-        headers=headers,
-        data=_json.dumps(body).encode(),
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310 - fixed loopback URL
-            raw = resp.read()
-    except urllib.error.HTTPError as refused:
-        raw = refused.read()
-    except (urllib.error.URLError, OSError):
-        return False, {}
-    try:
-        answer = _json.loads(raw)
-    except ValueError:
-        return True, {}
-    return True, answer if isinstance(answer, dict) else {}
 
 
 #: The work ``personalclaw auth rotate-key`` names on its call to the gateway: your own command,
@@ -297,32 +257,41 @@ def _rotate_key_cmd(args) -> int:
 
     **Routed through the RUNNING gateway**, for the reason ``auth revoke --all`` is: it holds the
     key and every live session in memory, so a key written from another process would leave it
-    signing and accepting with the old one until it restarted. It goes over loopback with the
-    local secret (``/api/auth/rotate-key`` is a mixed internal path). With no gateway running
-    there is nothing holding the old key, so it is replaced here.
+    signing and accepting with the old one until it restarted. It goes to this home's gateway
+    (``home_gateway.reach``) with the local secret (``/api/auth/rotate-key`` is a mixed internal
+    path). With no gateway of this home running there is nothing holding the old key, so it is
+    replaced here; a port named that is not this home's gateway changes nothing.
     """
-    from personalclaw.config.loader import _DEFAULT_PORT
+    from personalclaw import home_gateway
 
-    port = int(getattr(args, "port", 0) or _DEFAULT_PORT)
-    reached, answer = _ask_gateway(
-        port,
-        "/api/auth/rotate-key",
-        secret_header="X-Internal-Secret",
-        body={"confirm": True},
-        work=ROTATE_KEY_WORK,
-    )
-    if reached and not answer.get("ok"):
-        error = answer.get("error")
-        why = error.get("message") if isinstance(error, dict) else error
-        print(
-            f"❌ The gateway did not replace the key, so nobody was signed out: {why or answer}",
-            file=sys.stderr,
-        )
+    try:
+        gateway = home_gateway.reach(getattr(args, "port", None))
+    except home_gateway.NoGatewayRunning:
+        gateway = None
+    except home_gateway.GatewayError as exc:
+        print(f"❌ {exc} Nobody was signed out.", file=sys.stderr)
         return 1
-    if reached:
-        signed_out = int(answer.get("signed_out") or 0)
-    else:
+    if gateway is None:
         signed_out = _sessions_here().rotate_signing_key(actor="cli")
+    else:
+        try:
+            status, answer = gateway.post(
+                "/api/auth/rotate-key",
+                {"confirm": True},
+                secret_header="X-Internal-Secret",
+                work=ROTATE_KEY_WORK,
+            )
+        except home_gateway.GatewayError as exc:
+            print(f"❌ {exc} Nobody was signed out.", file=sys.stderr)
+            return 1
+        if status != 200 or not answer.get("ok"):
+            print(
+                "❌ The gateway did not replace the key, so nobody was signed out: "
+                f"{home_gateway.error_text(answer, status)}",
+                file=sys.stderr,
+            )
+            return 1
+        signed_out = int(answer.get("signed_out") or 0)
     ended = f"{signed_out} sign-in{'' if signed_out == 1 else 's'}"
     print(f"✅ Replaced the sign-in key and signed everyone out ({ended} ended).")
     print("   Every browser, paired device and token is told why the next time it connects.")

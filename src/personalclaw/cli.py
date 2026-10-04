@@ -35,7 +35,7 @@ from pathlib import Path
 
 from personalclaw import __version__, log_sinks
 from personalclaw.config import AppConfig, config_dir
-from personalclaw.config.loader import DASHBOARD_PORT, resolve_config_dir
+from personalclaw.config.loader import resolve_config_dir
 from personalclaw.constants import BANNER
 from personalclaw.seed import seed_cmd
 
@@ -168,6 +168,12 @@ _PROVIDER_BOOTSTRAP_COMMANDS = frozenset(
 #: advertised rather than hidden. Genuinely hiding one takes BOTH halves below.
 HIDDEN_COMMANDS = frozenset({"mcp-core", "availability-probe", "content-scan", "optimize-harness"})
 
+#: ``--port`` on every command that talks to this home's running gateway (``home_gateway.reach``).
+_HOME_GATEWAY_PORT_HELP = (
+    "Port of this home's gateway (default: the port it recorded when it started; "
+    "PERSONALCLAW_PORT names one too). A gateway there that is not this home's is refused."
+)
+
 
 def _add_hidden_parser(
     sub: argparse._SubParsersAction, name: str, **kwargs: object
@@ -298,7 +304,7 @@ phone) or on your paired chat channel. Ctrl+C during a reply stops that turn.
         "--port",
         type=int,
         default=None,
-        help="Gateway port to use (default: resolved like every other client command)",
+        help=_HOME_GATEWAY_PORT_HELP,
     )
 
     # run — headless one-shot scripted turn.
@@ -358,7 +364,7 @@ The posture is announced on stderr, so stdout stays pipeable.
         "--port",
         type=int,
         default=None,
-        help="Gateway port to use (default: resolved like every other client command)",
+        help=_HOME_GATEWAY_PORT_HELP,
     )
 
     # doctor
@@ -690,7 +696,7 @@ Examples:
         help="Fire-and-forget (don't wait for result)",
     )
     spawn_sub.add_parser("list", help="List subagents")
-    spawn_parser.add_argument("--port", type=int, default=DASHBOARD_PORT, help="Dashboard port")
+    spawn_parser.add_argument("--port", type=int, default=None, help=_HOME_GATEWAY_PORT_HELP)
 
     # snapshot / restore
     snap_parser = sub.add_parser("snapshot", help="Create a portable backup of PersonalClaw state")
@@ -853,15 +859,11 @@ Examples:
     )
     auth_revoke = auth_sub.add_parser("revoke", help="End dashboard sessions")
     auth_revoke.add_argument("--all", action="store_true", help="Revoke every session")
-    auth_revoke.add_argument(
-        "--port", type=int, default=0, help="Gateway port (defaults to the configured one)"
-    )
+    auth_revoke.add_argument("--port", type=int, default=None, help=_HOME_GATEWAY_PORT_HELP)
     auth_rotate = auth_sub.add_parser(
         "rotate-key", help="Replace the sign-in key, signing every device and token out"
     )
-    auth_rotate.add_argument(
-        "--port", type=int, default=0, help="Gateway port (defaults to the configured one)"
-    )
+    auth_rotate.add_argument("--port", type=int, default=None, help=_HOME_GATEWAY_PORT_HELP)
 
     # push — the phone's content-free wake-up transport
     push_parser = sub.add_parser("push", help="Set up content-free push to your phone")
@@ -1311,13 +1313,13 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
+        help=_HOME_GATEWAY_PORT_HELP,
     )
     token_parser.add_argument(
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
+        help=_HOME_GATEWAY_PORT_HELP,
     )
     token_parser.add_argument(
         "--ttl",
@@ -1358,7 +1360,7 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         "--port",
         type=int,
         default=None,
-        help="Dashboard port (default: resolved from PERSONALCLAW_PORT env or dashboard.url config)",  # noqa: E501
+        help=_HOME_GATEWAY_PORT_HELP,
     )
 
     # incident — the kill switch. Operates on the flag
@@ -1852,7 +1854,7 @@ def main() -> None:
     elif args.command == "discover":
         _discover(args)
     elif args.command == "logout":
-        _logout(resolve_client_port(args.port))
+        _logout(args.port)
     elif args.command == "status":
         _status(args)
     elif args.command == "incident":
@@ -1965,7 +1967,6 @@ from personalclaw.cli_server import (  # noqa: E402
     _stop,
     _token,
     _update,
-    resolve_client_port,
 )
 from personalclaw.cli_setup import (  # noqa: E402
     _setup,

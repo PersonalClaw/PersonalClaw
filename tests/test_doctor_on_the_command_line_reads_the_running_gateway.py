@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from fakes import home_fingerprint
 
 from personalclaw.config import loader as config_loader
 from personalclaw.llm.registry import ProviderEntry, get_default_registry
@@ -77,9 +78,11 @@ PROVIDERS = {
 
 
 class _Gateway(BaseHTTPRequestHandler):
-    """The running gateway's three routes: the local-secret token mint, and two owner reads."""
+    """The running gateway's four routes: its health, which says whose gateway it is, the
+    local-secret token mint, and two owner reads."""
 
     asked: list[str] = []
+    home_id = ""
 
     def log_message(self, *_args) -> None:
         pass
@@ -95,6 +98,8 @@ class _Gateway(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - the http.server hook
         url = urlparse(self.path)
         type(self).asked.append(self.path)
+        if url.path == "/api/healthz":
+            return self._send(200, {"status": "ok", "pid": os.getpid(), "home_id": self.home_id})
         if url.path == "/api/token/local":
             if self.headers.get("X-Local-Secret") != SECRET:
                 return self._send(403, {"error": "invalid secret"})
@@ -122,16 +127,23 @@ def providers():
         registry.unregister_entry(name)
 
 
+@pytest.fixture(autouse=True)
+def _no_port_named(unset_env):
+    """No port in the environment: the gateway is the one this home records."""
+    unset_env("PERSONALCLAW_PORT", "HTTP_PROXY", "http_proxy")
+
+
 @pytest.fixture()
 def running_gateway():
-    """A gateway of this home, as `live_gateway` finds one: a runtime record naming a live pid
-    and a port that answers, and the local secret it wrote."""
+    """A gateway of this home, as `home_gateway.reach` finds one: a runtime record naming a live
+    pid and a port that answers as this home's gateway, and the local secret it wrote."""
     _Gateway.asked = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Gateway)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     home = config_loader.config_dir()
     home.mkdir(parents=True, exist_ok=True)
+    _Gateway.home_id = home_fingerprint(home)
     (home / ".local_secret").write_text(SECRET, encoding="utf-8")
     (home / "gateway.runtime.json").write_text(
         json.dumps({"port": server.server_address[1], "pid": os.getpid()}), encoding="utf-8"

@@ -18,10 +18,12 @@ So a tool that acts on a home asks here, and gets the home it was NAMED or a ref
   the resolver refuses and replaces with the default home, is refused too. Only an accepted name
   is exported, so every product call this process makes afterwards resolves that home and no
   other.
-* :func:`scratch_gateway` — that home's running gateway, from the record a gateway writes into its
-  own home once it listens (``gateway_base``), and a short-lived owner token minted through the
-  home's local secret, the handshake ``personalclaw token`` makes. There is no port to pass: the
-  port is whatever the named home's gateway bound.
+* :func:`scratch_gateway` — that home's running gateway, found the way every CLI command finds
+  its own (``personalclaw.home_gateway.reach``: the record a gateway writes into its home once it
+  listens, and the home the gateway says it serves, read before the secret is sent), and a
+  short-lived owner token minted through the home's local secret, the handshake
+  ``personalclaw token`` makes. There is no port to pass: the port is whatever the named home's
+  gateway bound.
 
 ``python -m harness.named_home`` prints that gateway as one JSON line,
 ``{url, token, home, pid}``, for the JavaScript tools (``scripts/lib/named_home.mjs``), so
@@ -44,9 +46,6 @@ from typing import Any
 
 #: How long a dev tool's token lasts: long enough for a seed or a capture, and no longer.
 TOKEN_TTL = "1h"
-
-#: A loopback request must never be handed to a proxy from the environment.
-_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class Refused(SystemExit):
@@ -125,14 +124,20 @@ class ScratchGateway:
         self, method: str, path: str, body: Any = None, *, timeout: float = 30.0
     ) -> tuple[int, Any]:
         """One request as the owner: ``(status, the body decoded)``. An error status is
-        returned, not raised; an unreachable gateway raises the ``OSError`` urllib gives."""
+        returned, not raised; an unreachable gateway raises the ``OSError`` urllib gives.
+
+        Sent the way a command sends its own (``home_gateway.open_loopback``): never through a
+        proxy from the environment, and never on to where a redirect points, which would carry
+        the token with it."""
+        from personalclaw import home_gateway
+
         data = None if body is None else json.dumps(body).encode()
         headers = {"Authorization": f"Bearer {self.token}"}
         if data is not None:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(self.url + path, data=data, method=method, headers=headers)
         try:
-            with _OPENER.open(request, timeout=timeout) as resp:
+            with home_gateway.open_loopback(request, timeout=timeout) as resp:
                 return resp.status, _decoded(resp.read())
         except urllib.error.HTTPError as exc:
             return exc.code, _decoded(exc.read())
@@ -186,10 +191,11 @@ def scratch_gateway(
 ) -> ScratchGateway:
     """The running gateway of the scratch home :func:`scratch_home` accepts, signed in.
 
-    Raises :class:`Refused` when the home is refused, does not exist, or has no gateway running
-    (its runtime record is missing or names a process that has ended), and when that gateway will
-    not mint a token for this home's local secret, which is how it shows it IS that home's
-    gateway: one of another home answers 403.
+    Raises :class:`Refused` when the home is refused or does not exist, when it has no gateway
+    running (its runtime record is missing or names a process that has ended), when what answers
+    at the port it records is not that home's gateway (asked before the home's secret is sent,
+    so another home's gateway is never handed it), and when its gateway does not sign this tool
+    in.
     """
     home = scratch_home(named)
     if not home.is_dir():
@@ -197,23 +203,26 @@ def scratch_gateway(
             f"{home} does not exist, so no gateway of it is running. Start one: "
             f"{start_command(home)}"
         )
-    from personalclaw import gateway_base
+    from personalclaw import gateway_base, home_gateway
     from personalclaw.cli_run import RunError, mint_local_token
 
-    live = gateway_base.live_gateway()
-    if live is None:
+    if gateway_base.live_gateway() is None:
         raise Refused(
             f"No gateway of {home} is running: {home / gateway_base.RUNTIME_FILE} is missing or "
             f"names a process that has ended. Start one: {start_command(home)}"
         )
     try:
-        token = mint_local_token(live.port, ttl=ttl)
+        gateway = home_gateway.reach()
+    except home_gateway.GatewayError as exc:
+        raise Refused(f"The gateway {home} records is not one this tool may drive: {exc}") from exc
+    try:
+        token = mint_local_token(gateway, ttl=ttl)
     except RunError as exc:
         raise Refused(
-            f"The gateway {home} records (pid {live.pid}, port {live.port}) did not sign this "
+            f"The gateway of {home} (pid {gateway.pid}, port {gateway.port}) did not sign this "
             f"tool in: {exc}"
         ) from exc
-    return ScratchGateway(home=home, port=live.port, pid=live.pid, token=token)
+    return ScratchGateway(home=home, port=gateway.port, pid=gateway.pid, token=token)
 
 
 def main(argv: list[str] | None = None) -> int:

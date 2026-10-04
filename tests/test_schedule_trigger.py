@@ -1,49 +1,73 @@
 """Unit tests for on-demand Schedule triggering.
 
-trigger_schedule_job POSTs to the running gateway's /run route via the internal-secret IPC
-(mcp_core._post), the id percent-encoded. These tests monkeypatch _post so no gateway is needed;
+trigger_schedule_job POSTs to the running gateway's /run route with the internal credential, the
+id percent-encoded, on this home's gateway (``home_gateway.reach``). These tests stand a gateway
+in for ``reach`` that records what it was sent and answers as told, so no gateway is needed;
 `test_cron_trigger_takes_the_ids_cron_add_makes.py` drives it against the real routes.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-import personalclaw.mcp_core as mc
 import personalclaw.schedule_trigger as st
+from personalclaw import home_gateway
 
 
-def test_an_empty_id_is_refused_before_any_post(monkeypatch: pytest.MonkeyPatch) -> None:
-    posted: list[str] = []
-    monkeypatch.setattr(mc, "_post", lambda path, body=None: posted.append(path) or {"ok": True})
+class _Gateway:
+    """This home's gateway as ``trigger_schedule_job`` reaches it: what it was sent, and its
+    answer."""
+
+    def __init__(self, answer: dict[str, Any], status: int = 200) -> None:
+        self.answer = answer
+        self.status = status
+        self.posted: list[dict[str, Any]] = []
+
+    def post(self, path: str, body: dict, *, secret_header: str, work: str = "") -> tuple:
+        self.posted.append({"path": path, "body": body, "header": secret_header, "work": work})
+        return self.status, self.answer
+
+
+@pytest.fixture
+def gateway(monkeypatch: pytest.MonkeyPatch, unset_env):
+    """``gateway(answer, status=200)``: this home's gateway answers the run route so."""
+    unset_env("PERSONALCLAW_SESSION_KEY")
+
+    def install(answer: dict[str, Any], status: int = 200) -> _Gateway:
+        reached = _Gateway(answer, status)
+        monkeypatch.setattr(home_gateway, "reach", lambda port=None: reached)
+        return reached
+
+    return install
+
+
+def test_an_empty_id_is_refused_before_any_post(gateway) -> None:
+    reached = gateway({"ok": True})
     assert st.trigger_schedule_job("  ") == (False, "no job id given")
-    assert posted == []
+    assert reached.posted == []
 
 
-def test_the_id_is_percent_encoded_into_the_path(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_id_is_percent_encoded_into_the_path(gateway) -> None:
     """An app's job name can hold any character; none of them may change the route."""
-    posted: list[str] = []
-    monkeypatch.setattr(mc, "_post", lambda path, body=None: posted.append(path) or {"ok": True})
+    reached = gateway({"ok": True})
     assert st.trigger_schedule_job("app:x:Nightly Sync/../../tokens?all=1")[0] is True
-    assert posted == [
+    assert [p["path"] for p in reached.posted] == [
         "/api/triggers/schedule:app%3Ax%3ANightly%20Sync%2F..%2F..%2Ftokens%3Fall%3D1/run"
     ]
 
 
-def test_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    posted: dict = {}
-
-    def fake_post(path: str, body=None):
-        posted["path"] = path
-        posted["body"] = body
-        return {"ok": True, "name": "Nightly Report"}
-
-    monkeypatch.setattr(mc, "_post", fake_post)
+def test_success(gateway) -> None:
+    reached = gateway({"ok": True, "name": "Nightly Report"})
     ok, msg = st.trigger_schedule_job("abc123")
     assert ok is True
     assert "Nightly Report" in msg
-    # Hits the unified trigger run route with the namespaced id (not a fresh service).
+    # Hits the unified trigger run route with the namespaced id (not a fresh service), with the
+    # internal credential, naming the job's own work.
+    (posted,) = reached.posted
     assert posted["path"] == "/api/triggers/schedule:abc123/run"
+    assert (posted["header"], posted["work"]) == ("X-Internal-Secret", "cron:abc123")
 
 
 @pytest.mark.parametrize(
@@ -53,30 +77,32 @@ def test_success(monkeypatch: pytest.MonkeyPatch) -> None:
         ("no action provider configured", "'Nightly' did not run: no action provider configured"),
     ],
 )
-def test_a_run_that_did_not_succeed_says_why(note, said, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_run_that_did_not_succeed_says_why(note, said, gateway) -> None:
     """It said "trigger failed" and dropped the run route's own note on why."""
-    answer = {"ok": False, "name": "Nightly", "result": note, "status": ""}
-    monkeypatch.setattr(mc, "_post", lambda path, body=None: answer)
+    gateway({"ok": False, "name": "Nightly", "result": note, "status": ""})
     assert st.trigger_schedule_job("clock:nightly") == (False, said)
 
 
-def test_already_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mc, "_post", lambda path, body=None: {"ok": False, "running": True})
+def test_already_running(gateway) -> None:
+    gateway({"ok": False, "running": True})
     ok, msg = st.trigger_schedule_job("abc123")
     assert ok is False
     assert "already running" in msg
 
 
-def test_gateway_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mc, "_post", lambda path, body=None: {"error": "connection refused"})
-    ok, msg = st.trigger_schedule_job("abc123")
-    assert ok is False
-    assert "connection refused" in msg
+def test_no_gateway_of_this_home_running_is_said_and_nothing_is_sent(monkeypatch) -> None:
+    sentence = "No gateway is running for this home (/home/user/.personalclaw). Start it with: …"
+
+    def none_running(port=None):
+        raise home_gateway.NoGatewayRunning(sentence)
+
+    monkeypatch.setattr(home_gateway, "reach", none_running)
+    assert st.trigger_schedule_job("abc123") == (False, sentence)
 
 
-def test_not_found_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_not_found_passthrough(gateway) -> None:
     # Gateway returns the 404 body as {"error": "job not found"}.
-    monkeypatch.setattr(mc, "_post", lambda path, body=None: {"error": "not found"})
+    gateway({"error": "not found"}, status=404)
     ok, msg = st.trigger_schedule_job("abc123")
     assert ok is False
     assert "not found" in msg

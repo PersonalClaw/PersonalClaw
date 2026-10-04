@@ -31,7 +31,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from test_native_runtime import _defn, _ScriptedModel
 
-from personalclaw import cli, cli_chat
+from personalclaw import cli, cli_chat, home_gateway
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.config import AppConfig
 from personalclaw.config import loader as config_loader
@@ -294,7 +294,8 @@ def test_with_no_gateway_it_says_so_and_how_to_start_one(monkeypatch, capsys, se
     assert exited.value.code == 1
     out, err = capsys.readouterr()
     assert out == ""
-    assert f"no gateway is running on port {port}" in err, err
+    assert "personalclaw chat: No gateway is running for this home" in err, err
+    assert f"nothing listens on port {port}, which --port names" in err, err
     assert f"Start it with: {start}" in err, err
 
 
@@ -464,7 +465,7 @@ async def test_ctrl_c_during_a_turn_stops_it_in_the_gateway(tmp_path, monkeypatc
     gateway: its waiting call is cancelled, never run, and the terminal says how the turn ended."""
     model = _asks_then_says("Saving it now.", "Saved.")
     async with _gateway(tmp_path, model, monkeypatch) as gw:
-        sign_in = cli_chat._SignIn(gw.port)
+        sign_in = cli_chat._SignIn(await asyncio.to_thread(home_gateway.reach, gw.port))
         key = await asyncio.get_running_loop().run_in_executor(
             None, cli_chat._open_chat, sign_in, ""
         )
@@ -540,7 +541,8 @@ async def test_a_gateway_gone_between_turns_is_said_and_the_chat_goes_on(
     out, err = capsys.readouterr()
     assert code == 0, err
     assert "One." in out and out.rstrip().endswith("Bye!"), out
-    assert f"no gateway is running on port {gw.port}" in err, err
+    assert "No gateway is running for this home" in err, err
+    assert f"it no longer answers on port {gw.port}" in err, err
     assert "Start it with: personalclaw" in err, err
     assert "Traceback" not in err
 
@@ -555,11 +557,14 @@ def test_the_chats_token_is_minted_again_before_it_is_too_old(monkeypatch):
     assert lasts is not None and cli_chat._REFRESH_AFTER_SECS < lasts
     minted: list[int] = []
     monkeypatch.setattr(
-        cli_run, "mint_local_token", lambda port: minted.append(port) or f"token-{len(minted)}"
+        cli_run,
+        "mint_local_token",
+        lambda gateway: minted.append(gateway.port) or f"token-{len(minted)}",
     )
     now = [1000.0]
     monkeypatch.setattr(cli_chat.time, "monotonic", lambda: now[0])
-    sign_in = cli_chat._SignIn(4321)
+    gateway = home_gateway.HomeGateway(home=Path("/home/user/.personalclaw"), port=4321, pid=0)
+    sign_in = cli_chat._SignIn(gateway)
 
     assert [sign_in.token(), sign_in.token()] == ["token-1", "token-1"]
     now[0] += cli_chat._REFRESH_AFTER_SECS - 1

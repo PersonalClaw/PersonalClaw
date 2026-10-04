@@ -164,6 +164,16 @@ class Report(Exception):
         super().__init__(message); self.message = message
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# The gateway is on this machine: its credential goes to it alone, never through a proxy named in
+# the environment and never on to wherever a redirect points.
+_LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirects())
+
+
 def _post(path, payload):
     if _SECRET_UNAVAILABLE:
         # The gateway had no credential to hand over, so the call would be refused. It is not
@@ -179,7 +189,7 @@ def _post(path, payload):
                  "X-Session-Key": _SESSION_KEY},
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _LOOPBACK.open(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         # A REFUSAL IS DATA, NOT A CRASH. urlopen raises on every 4xx/5xx and throws the

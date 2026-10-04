@@ -190,19 +190,21 @@ def test_token_with_no_gateway_puts_nothing_on_stdout(tmp_path):
 
     assert proc.returncode == 1, proc
     assert proc.stdout == ""
-    assert "Gateway not running — start it with: personalclaw gateway" in proc.stderr
+    assert "No gateway is running for this home" in proc.stderr, proc.stderr
+    assert "Start it with: personalclaw gateway" in proc.stderr, proc.stderr
 
 
-def test_logout_with_no_gateway_puts_nothing_on_stdout(tmp_path, monkeypatch, capsys):
+def test_logout_with_no_gateway_puts_nothing_on_stdout(tmp_path, monkeypatch, capsys, unset_env):
     from personalclaw import cli_server
 
-    monkeypatch.setattr(cli_server, "config_dir", lambda: tmp_path)
+    unset_env("PERSONALCLAW_PORT")
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     with pytest.raises(SystemExit) as exited:
-        cli_server._logout(1)
+        cli_server._logout(None)
 
     assert exited.value.code == 1
     out, err = capsys.readouterr()
-    assert out == "" and "Gateway not running" in err
+    assert out == "" and "No gateway is running for this home" in err
 
 
 def test_a_refused_restore_names_the_components_on_stderr(tmp_path, monkeypatch, capsys):
