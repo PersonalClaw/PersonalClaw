@@ -125,14 +125,14 @@ def test_icons_and_pwa_roots_are_excluded_from_the_spa_fallback() -> None:
     """``/icons/`` must 404 rather than fall back to index.html.
 
     A manifest icon that resolves to HTML is an invalid icon, and the only symptom
-    is an install prompt that never appears. Asserted against the source because the
-    exclusion tuple is inside a closure in ``create_app``.
+    is an install prompt that never appears. Asserted against the source of the fallback
+    (``dashboard/fallbacks.py``).
     """
     from pathlib import Path
 
-    import personalclaw.dashboard.server as server_mod
+    import personalclaw.dashboard.fallbacks as fallbacks_mod
 
-    source = Path(server_mod.__file__).read_text(encoding="utf-8")
+    source = Path(fallbacks_mod.__file__).read_text(encoding="utf-8")
     assert '("/assets/", "/icons/", "/sprites/", "/vendor/")' in source
 
 
@@ -145,9 +145,9 @@ def test_unmatched_api_routes_answer_in_the_wire_envelope() -> None:
     """
     from pathlib import Path
 
-    import personalclaw.dashboard.server as server_mod
+    import personalclaw.dashboard.fallbacks as fallbacks_mod
 
-    source = Path(server_mod.__file__).read_text(encoding="utf-8")
+    source = Path(fallbacks_mod.__file__).read_text(encoding="utf-8")
     api_branch = source.find('if request.path.startswith("/api/"):')
     html_fallback = source.find("return await handlers.index(request)")
     assert api_branch != -1, "the spa_fallback /api branch is gone"
@@ -303,7 +303,8 @@ _NOTICES = (
 
 def _notices_app() -> web.Application:
     from personalclaw.dashboard import handlers
-    from personalclaw.dashboard.server import _security_headers_middleware, spa_fallback
+    from personalclaw.dashboard.fallbacks import spa_fallback
+    from personalclaw.dashboard.server import _security_headers_middleware
 
     app = web.Application(middlewares=[_security_headers_middleware, spa_fallback])
     app.router.add_get("/THIRD_PARTY_NOTICES.txt", handlers.third_party_notices)

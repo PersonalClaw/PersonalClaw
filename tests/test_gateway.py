@@ -1030,6 +1030,29 @@ class TestInitDashboard:
         assert orch.dashboard_state is ds
         assert orch._dashboard_runner is runner
 
+    @pytest.mark.parametrize("headless", [True, False])
+    @pytest.mark.asyncio
+    async def test_a_headless_gateway_starts_the_server_without_the_dashboard(
+        self, unset_env, headless
+    ):
+        unset_env("PERSONALCLAW_PORT")  # published for the children, as a bound port is
+        orch = _make_orchestrator(no_dashboard=headless)
+        orch.sessions = _mock_sessions()
+        orch.subagent_mgr = MagicMock()
+        orch.ctx_builder = MagicMock()
+        orch.conv_log = MagicMock()
+        orch.consolidator = MagicMock()
+        ds = _mock_dashboard_state()
+        with patch(
+            "personalclaw.gateway.start_dashboard",
+            new_callable=AsyncMock,
+            return_value=(MagicMock(), ds),
+        ) as start:
+            await orch._init_dashboard()
+        assert start.call_args.kwargs["web_app"] is not headless
+        assert start.call_args.kwargs["context_builder"] is orch.ctx_builder
+        assert orch.dashboard_state is ds
+
     def test_init_mcp_discovery_logs(self):
         orch = _make_orchestrator()
         with patch("personalclaw.mcp_discovery.list_servers", return_value=[]):
@@ -1376,8 +1399,8 @@ class TestRunMethod:
         orch._shutdown.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_run_no_dashboard_uses_api_server(self):
-        """--no-dashboard uses _init_api_server."""
+    async def test_run_no_dashboard_starts_the_same_server(self):
+        """--headless starts the gateway's one server, as a full gateway does."""
         import personalclaw
 
         orch = _make_orchestrator(no_dashboard=True)
@@ -1389,7 +1412,6 @@ class TestRunMethod:
         orch._init_mcp_discovery = MagicMock()
         orch._init_subagents = MagicMock()
         orch._init_dashboard = AsyncMock()
-        orch._init_api_server = AsyncMock()
         orch._init_autonudge = AsyncMock()
         orch._check_for_updates = AsyncMock()
         orch._shutdown = AsyncMock()
@@ -1405,35 +1427,7 @@ class TestRunMethod:
         finally:
             personalclaw.shutdown_event.clear()
 
-        orch._init_dashboard.assert_not_awaited()
-        orch._init_api_server.assert_awaited_once()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Tests: _init_api_server
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-class TestInitApiServer:
-    """API-only server initialization."""
-
-    @pytest.mark.asyncio
-    async def test_init_api_server(self, unset_env):
-        unset_env("PERSONALCLAW_PORT")  # published for the children, as a bound port is
-        orch = _make_orchestrator()
-        orch.sessions = _mock_sessions()
-        orch.cron_svc = MagicMock()
-        orch.subagent_mgr = MagicMock()
-        orch._channel_delivery = None
-        ds = _mock_dashboard_state()
-        runner = MagicMock()
-        with patch(
-            "personalclaw.dashboard.start_api_server",
-            new_callable=AsyncMock,
-            return_value=(runner, ds),
-        ):
-            await orch._init_api_server()
-        assert orch.dashboard_state is ds
+        orch._init_dashboard.assert_awaited_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

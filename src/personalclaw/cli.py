@@ -392,7 +392,11 @@ The posture is announced on stderr, so stdout stays pipeable.
         "--headless",
         dest="headless",
         action="store_true",
-        help="Headless mode — serve channels only; skip the dashboard web server and SSH tunnel instructions",  # noqa: E501
+        help=(
+            "Headless mode — run without the dashboard: none of its pages are served and no "
+            "dashboard address, sign-in link or SSH tunnel instructions are printed. Channels, "
+            "automations and the API the CLI and the agent's tools use run as they do with it"
+        ),
     )
     gw_parser.add_argument(
         "--no-crons",

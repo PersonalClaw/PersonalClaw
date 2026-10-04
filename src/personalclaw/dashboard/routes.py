@@ -2,9 +2,9 @@
 order the router matches them.
 
 ``start_dashboard`` calls :func:`register_dashboard_routes` once, after the routes the MCP tools
-share with the loopback API server (``server._register_mcp_routes``) and before the provider
-extensions load: the extension, instance and entity routes, the knowledge routes, the static files
-and the SPA fallback are registered after it. Order is part of the contract, as the comments below
+call (``server._register_mcp_routes``) and before the provider extensions load: the extension,
+instance and entity routes, the knowledge routes, the static files and the SPA fallback are
+registered after it. Order is part of the contract, as the comments below
 say where it matters: a literal path segment is registered before a dynamic one that would capture
 it, and the inbound surfaces that carry their own credential come early.
 """
@@ -31,9 +31,9 @@ def _register_upload_routes(app: web.Application) -> None:
     app.router.add_post("/api/uploads/{id}/complete", _up.api_uploads_complete)
 
 
-def register_dashboard_routes(app: web.Application) -> None:
-    """Register the dashboard's page and API routes on *app*, in the order they match."""
-    # Page routes
+def _register_pages(app: web.Application) -> None:
+    """The pages a browser opens: the dashboard, its PWA files, the licence notices and the login
+    page. They match before every API route, as they always have."""
     app.router.add_get("/", handlers.index)
     app.router.add_get("/claw.svg", handlers.favicon)
     # PWA. Both live at the origin ROOT by necessity, not
@@ -49,6 +49,20 @@ def register_dashboard_routes(app: web.Application) -> None:
     # the fonts' and the bundled npm packages'. Session-gated like every page here.
     app.router.add_get("/THIRD_PARTY_NOTICES.txt", handlers.third_party_notices)
     app.router.add_get("/THIRD_PARTY_NOTICES_NPM.txt", handlers.third_party_notices_npm)
+    # The owner's login page. What it posts to is the API's (`/api/auth/login`).
+    from personalclaw.dashboard.handlers import auth as _auth_h
+
+    app.router.add_get("/login", _auth_h.login_page)
+
+
+def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> None:
+    """Register the dashboard's page and API routes on *app*, in the order they match.
+
+    ``pages=False`` registers the API alone, for the headless gateway: none of the dashboard's
+    pages is served, and nothing hands out a link to one, so the device pairing flow, whose link
+    opens one, goes with them."""
+    if pages:
+        _register_pages(app)
 
     # Owner login. `/login`, `/api/auth/login` and
     # `/api/auth/status` are token-auth EXEMPT — they are how a remote browser obtains a
@@ -57,7 +71,6 @@ def register_dashboard_routes(app: web.Application) -> None:
     # sits behind the normal middleware: logout/session/password all require a live session.
     from personalclaw.dashboard.handlers import auth as _auth_h
 
-    app.router.add_get("/login", _auth_h.login_page)
     app.router.add_post("/api/auth/login", _auth_h.api_auth_login)
     app.router.add_get("/api/auth/status", _auth_h.api_login_status)
     app.router.add_post("/api/auth/logout", _auth_h.api_auth_logout)
@@ -71,7 +84,7 @@ def register_dashboard_routes(app: web.Application) -> None:
     # and `pair/complete` carries login's guards for the same reason it shares its exemption.
     from personalclaw.dashboard.handlers.devices import register_device_routes
 
-    register_device_routes(app)
+    register_device_routes(app, pairing=pages)
 
     # The browse user-browser connector. Beside the device routes because the
     # connector IS a paired device — it announces its CDP page-target endpoint over loopback

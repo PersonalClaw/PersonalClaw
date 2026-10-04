@@ -13,7 +13,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from personalclaw.dashboard.server import spa_fallback
+from personalclaw.dashboard.fallbacks import spa_fallback
 
 
 def _make_app() -> web.Application:

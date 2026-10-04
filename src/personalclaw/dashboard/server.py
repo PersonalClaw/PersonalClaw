@@ -12,6 +12,7 @@ from aiohttp import web
 
 from personalclaw.config import config_dir
 from personalclaw.dashboard import chat, handlers, housekeeping
+from personalclaw.dashboard.fallbacks import api_fallback, spa_fallback
 from personalclaw.dashboard.handlers.knowledge import setup_knowledge_routes
 from personalclaw.dashboard.handlers.research_reports import setup_research_report_routes
 from personalclaw.dashboard.origin import build_allowed_origins, check_origin, resolve_bind_host
@@ -324,50 +325,6 @@ async def _security_headers_middleware(
     return resp  # type: ignore[return-value]
 
 
-# SPA fallback: serve index.html for client-side React Router paths, and normalize
-# the router's two refusals into the one wire envelope for /api/*.
-@web.middleware  # type: ignore[misc]
-async def spa_fallback(
-    request: web.Request,
-    handler: object,
-) -> web.StreamResponse:
-    try:
-        return await handler(request)  # type: ignore[operator]
-    except web.HTTPNotFound:
-        # An unmatched /api/* route must answer in the one wire envelope — a JSON
-        # client that mistypes or hits a removed route cannot parse aiohttp's
-        # text/plain default, and so cannot tell "route gone" from "server broke".
-        # Handlers that ANSWER 404 (rather than raising) are untouched here.
-        if request.path.startswith("/api/"):
-            from personalclaw.http_errors import json_error
-
-            return json_error("not_found", status=404)
-        # `/icons/` is excluded for the PWA: a manifest icon that resolves to
-        # index.html is an invalid icon, and the only symptom is an install
-        # prompt that never appears. A 404 is diagnosable; HTML is not.
-        if request.method == "GET" and not request.path.startswith(
-            ("/assets/", "/icons/", "/sprites/", "/vendor/")
-        ):
-            return await handlers.index(request)
-        raise
-    except web.HTTPMethodNotAllowed as exc:
-        # A wrong method on a REAL /api/* route raises HTTPMethodNotAllowed, which
-        # otherwise sails past the 404 branch and answers the very text/plain default
-        # that branch exists to prevent. Normalize it to the same wire envelope. The
-        # `Allow` header the router set (the methods that WOULD work) is preserved so
-        # a client can still discover them.
-        if request.path.startswith("/api/"):
-            from personalclaw.http_errors import json_error
-
-            allow = exc.headers.get("Allow")
-            return json_error(
-                "method_not_allowed",
-                status=405,
-                headers={"Allow": allow} if allow else None,
-            )
-        raise
-
-
 @web.middleware  # type: ignore[misc]
 async def app_permission_middleware(
     request: web.Request,
@@ -579,8 +536,12 @@ async def start_dashboard(
     configured_host: str = "",
     dashboard_url: str = "",
     owner_id: str = "",
+    web_app: bool = True,
 ) -> tuple[web.AppRunner, DashboardState]:
-    """Start the dashboard web server.  Returns ``(runner, state)``."""
+    """Start the dashboard web server.  Returns ``(runner, state)``.
+
+    ``web_app=False`` is the headless gateway: this same server, its API, apps and services,
+    with none of the dashboard's pages or the files they load."""
     # Auto-create consolidator if conversation_log available but no consolidator
     if consolidator is None and conversation_log is not None:
         try:
@@ -659,7 +620,7 @@ async def start_dashboard(
 
     _precompute_telemetry(state)
 
-    # MCP tool routes (shared with start_api_server)
+    # MCP tool routes
     _register_mcp_routes(app)
 
     # Install persistent log ring buffer (captures logs even when Logs page is closed)
@@ -670,7 +631,7 @@ async def start_dashboard(
     # The page and API routes, in the order the router matches them (`dashboard/routes.py`).
     from personalclaw.dashboard.routes import register_dashboard_routes
 
-    register_dashboard_routes(app)
+    register_dashboard_routes(app, pages=web_app)
 
     # Extension system — discover and register provider extensions
     from personalclaw.providers.entity_routes import register_entity_routes
@@ -750,7 +711,7 @@ async def start_dashboard(
     register_chunk_backfill_pass()
 
     # Static files — React build under /assets, packaged static assets under /static
-    if _DIST_DIR.is_dir():
+    if web_app and _DIST_DIR.is_dir():
         app.router.add_static(
             "/assets",
             _DIST_DIR / "assets" if (_DIST_DIR / "assets").is_dir() else _DIST_DIR,
@@ -768,7 +729,7 @@ async def start_dashboard(
         app.router.add_get("/fonts/{name}", handlers.font_asset)
         # PWA app icons the manifest declares at stable, unhashed paths (they are
         # referenced from JSON, so they cannot carry a content hash). Also listed in
-        # spa_fallback's exclusions below: a missing icon must 404, because HTML
+        # spa_fallback's exclusions (`fallbacks.py`): a missing icon must 404, because HTML
         # returned for an icon URL makes the manifest entry invalid and the install
         # prompt then just never appears.
         if (_DIST_DIR / "icons").is_dir():
@@ -947,7 +908,7 @@ async def start_dashboard(
         # an unsafe record id to a 400 without also catching one raised by a middleware
         # (which would be a bug, not a client error). See invalid_id_gate.py.
         invalid_id_middleware(),
-        spa_fallback,
+        spa_fallback if web_app else api_fallback,
     ]
 
     # Verify security invariant: if dashboard_url expands the CSRF origin

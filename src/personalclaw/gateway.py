@@ -1307,8 +1307,8 @@ class GatewayOrchestrator:
         Both kinds by default, matching what the legacy `_record_run` pushed plus the list the fire
         may have changed: `cron_history` for the run feed, `crons` for the trigger list's status
         dots and next-fire times. A store change that is not a fire names `crons` alone.
-        Best-effort — a broadcast failure must never affect the fire's outcome, and a
-        dashboard-less gateway (`--no-dashboard`) simply has nothing to notify.
+        Best-effort — a broadcast failure must never affect the fire's outcome, and a gateway
+        whose server is not up yet simply has nothing to notify.
         """
         # `getattr`, not attribute access: this runs in the fire path's `finally`, and an
         # orchestrator that has not reached `_init_dashboard` yet (or a partially-built one) has
@@ -3055,8 +3055,7 @@ class GatewayOrchestrator:
             max_cycles.
             """
             # Guard (not assert): stripped under -O; also _init_autonudge() can
-            # run before _init_dashboard(), and _init_dashboard is skipped
-            # entirely in --no-dashboard mode. Mirrors _observer's guard below.
+            # run before _init_dashboard(). Mirrors _observer's guard below.
             if self.dashboard_state is None:
                 logger.warning(
                     "AutoNudge: dashboard not ready — skipping fire for loop %s", loop.id
@@ -3320,8 +3319,8 @@ class GatewayOrchestrator:
 
         # Goal-loop supervisor — drives loop lifecycle on top of autonudge. Needs
         # both the dashboard state (worker sessions) and the autonudge service, so
-        # it's started here once both exist. In --no-dashboard mode there is no
-        # state, so the watchdog is skipped.
+        # it's started here once both exist. With no state yet, the watchdog is
+        # skipped.
         if self.dashboard_state is not None:
             # The unified Loop supervisor — ONE watchdog for every kind
             # (general/goal/code/design) on top of autonudge. Replaces the legacy
@@ -4704,7 +4703,10 @@ class GatewayOrchestrator:
         gateway_base.publish(self._dashboard_port)
 
     async def _init_dashboard(self) -> None:
-        """Start the dashboard web server."""
+        """Start the gateway's server: the dashboard, or with ``--headless`` the same server
+        without the dashboard's pages (``start_dashboard``'s ``web_app``). Its apps, API and
+        services are the same either way, so a headless gateway serves its channels as the full
+        one does."""
         assert self.sessions is not None
 
         configured_host, dashboard_port = parse_dashboard_url(self._cfg.dashboard.url)
@@ -4730,6 +4732,7 @@ class GatewayOrchestrator:
             configured_host=configured_host,
             dashboard_url=self._cfg.dashboard.url,
             owner_id=self._owner_id,
+            web_app=not self._no_dashboard,
         )
         # When --port auto was requested, read the OS-assigned ephemeral port
         # back from the runner so subsequent URL building and the READY line
@@ -4772,37 +4775,6 @@ class GatewayOrchestrator:
         self._incident_watch_task = asyncio.create_task(
             incident.watch(lambda _st: state.push_refresh("incident", "loops"))
         )
-
-    async def _init_api_server(self) -> None:
-        """Start a minimal API-only HTTP server for MCP tool transport."""
-        from personalclaw.dashboard import start_api_server
-
-        assert self.sessions is not None
-        configured_host, dashboard_port = parse_dashboard_url(self._cfg.dashboard.url)
-        # --port override (literal int or "auto" for ephemeral)
-        if self._port_override == "auto":
-            dashboard_port = 0
-        elif self._port_override is not None:
-            dashboard_port = int(self._port_override)
-        self._dashboard_port = dashboard_port
-        self._configured_host = configured_host
-        # resolve_bind_host() honors the PERSONALCLAW_BIND_HOST escape hatch
-        # and otherwise sticks to loopback. ``local_only`` is derived from the
-        # resolved bind.
-        self._local_only = is_local_bind(resolve_bind_host())
-        self._dashboard_runner, self.dashboard_state = await start_api_server(
-            sessions=self.sessions,
-            port=dashboard_port,
-            subagents=self.subagent_mgr,
-            owner_id=self._owner_id,
-        )
-        if dashboard_port == 0 and self._dashboard_runner is not None:
-            addresses = self._dashboard_runner.addresses
-            if addresses:
-                self._dashboard_port = addresses[0][1]
-        self._publish_runtime_base()
-        if self.dashboard_state:
-            self.dashboard_state.no_crons = self._no_crons  # API-only mode
 
     # ------------------------------------------------------------------
     # Shutdown
@@ -4979,8 +4951,8 @@ class GatewayOrchestrator:
         """Whether a restart-interrupting unit is running: any not-done background
         subagent or any live chat session. Answered in ONE place by reusing
         :meth:`DashboardState.active_work_snapshot`, so the staged-apply gate and the
-        manual-restart confirm gate agree. Headless (no dashboard state) has no such
-        work to interrupt, so it reads idle."""
+        manual-restart confirm gate agree. Before the gateway's server is up (no dashboard
+        state) there is no such work to interrupt, so it reads idle."""
         if self.dashboard_state is None:
             return False
         snap = self.dashboard_state.active_work_snapshot()
@@ -5130,10 +5102,7 @@ class GatewayOrchestrator:
         self._init_mcp_discovery()
         self._init_subagents()
         try:
-            if not self._no_dashboard:
-                await self._init_dashboard()
-            else:
-                await self._init_api_server()
+            await self._init_dashboard()
         finally:
             self._apps_started.set()
         # What the boot passes found while the dashboard did not exist yet: one notice, now that
@@ -5151,9 +5120,7 @@ class GatewayOrchestrator:
             )
 
         # AutoNudge must run after dashboard init — _fire callback dereferences
-        # self.dashboard_state. In --no-dashboard mode the guard inside _fire
-        # early-returns so persisted loops are harmless until a dashboard
-        # process takes over.
+        # self.dashboard_state, which a headless gateway has as well.
         await self._init_autonudge()
 
         # Start the receiver of every configured channel (Slack Socket-Mode lives in the

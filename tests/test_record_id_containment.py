@@ -488,10 +488,10 @@ class TestGateIsInstalled:
     def test_server_installs_it_innermost(self):
         src = (SRC / "dashboard" / "server.py").read_text(encoding="utf-8")
         assert "invalid_id_middleware()" in src
-        # Innermost = last before spa_fallback, so it wraps the handler and nothing else.
+        # Innermost = last before the fallback, so it wraps the handler and nothing else.
         gate = src.index("invalid_id_middleware()")
-        fallback = src.index("spa_fallback,\n    ]")
-        assert gate < fallback, "the gate must precede spa_fallback in the ordering"
+        fallback = src.index("spa_fallback if web_app else api_fallback,\n    ]")
+        assert gate < fallback, "the gate must precede the fallback in the ordering"
 
     def test_wire_code_is_registered(self):
         from personalclaw.http_errors import HTTP_ERROR_CODES

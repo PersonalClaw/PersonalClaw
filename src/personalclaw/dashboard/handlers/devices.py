@@ -635,10 +635,15 @@ async def api_devices_integration_revoke(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "revoked": row_id})
 
 
-def register_device_routes(app: web.Application) -> None:
-    """Wire the eight API routes plus the redeem PAGE the pairing URL points at."""
-    app.router.add_post("/api/devices/pair/start", api_devices_pair_start)
-    app.router.add_post("/api/devices/pair/complete", api_devices_pair_complete)
+def register_device_routes(app: web.Application, *, pairing: bool = True) -> None:
+    """Wire the eight API routes plus the redeem PAGE the pairing URL points at.
+
+    ``pairing=False`` leaves out the pairing flow (its two routes and the page), for a gateway that
+    serves none of the dashboard's pages (``--headless``): its URL would open a page that is not
+    there, and a device it signed in would land on a dashboard that is not there either."""
+    if pairing:
+        app.router.add_post("/api/devices/pair/start", api_devices_pair_start)
+        app.router.add_post("/api/devices/pair/complete", api_devices_pair_complete)
     app.router.add_get("/api/devices", api_devices_list)
     app.router.add_post("/api/devices/revoke-others", api_devices_revoke_others)
     # Beside the other sign-out actions: replacing the key is signing EVERY device out.
@@ -649,4 +654,5 @@ def register_device_routes(app: web.Application) -> None:
     # Registered here rather than beside the other pages in server.py: it is the entry point of
     # `pair/start`'s URL, and splitting the two across files is how the URL came to point at a
     # route that did not exist.
-    app.router.add_get("/pair", pair_page)
+    if pairing:
+        app.router.add_get("/pair", pair_page)

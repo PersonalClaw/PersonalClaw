@@ -1,7 +1,5 @@
-"""Tests for start_api_server and _register_mcp_routes.
-
-Ensures --headless mode has working MCP tool endpoints (spawn, lessons,
-crons, send-message, notifications).
+"""Tests for _register_mcp_routes: the endpoints the agent's MCP tools call (spawn, lessons,
+triggers, send-message, notifications), on an app holding nothing else.
 """
 
 from unittest.mock import MagicMock
@@ -15,7 +13,7 @@ from personalclaw.dashboard.state import DashboardState
 
 
 def _make_state(tmp_path, **kwargs):
-    """DashboardState with mocked services (mirrors --headless init)."""
+    """DashboardState with mocked services."""
     monkeypatch_dir = tmp_path
     import personalclaw.dashboard.state as _st
 
@@ -33,7 +31,7 @@ def _make_state(tmp_path, **kwargs):
 
 
 def _make_api_app(state: DashboardState) -> web.Application:
-    """Minimal app using only _register_mcp_routes (same as start_api_server)."""
+    """Minimal app holding only _register_mcp_routes."""
     app = web.Application()
     app["state"] = state
     app["port"] = 7777
@@ -175,60 +173,6 @@ class TestApiServerSendMessage:
             data = await resp.json()
             assert data["ok"] is True
             assert data["channel"] is False
-
-
-class TestApiServerNoUiRoutes:
-    """API-only server must NOT have dashboard UI routes."""
-
-    @pytest.mark.asyncio
-    async def test_no_index_route(self, tmp_path):
-        state = _make_state(tmp_path)
-        async with TestClient(TestServer(_make_api_app(state))) as client:
-            resp = await client.get("/")
-            assert resp.status == 404
-
-    @pytest.mark.asyncio
-    async def test_no_static_route(self, tmp_path):
-        state = _make_state(tmp_path)
-        async with TestClient(TestServer(_make_api_app(state))) as client:
-            resp = await client.get("/static/foo.js")
-            assert resp.status == 404
-
-    @pytest.mark.asyncio
-    async def test_no_websocket_route(self, tmp_path):
-        state = _make_state(tmp_path)
-        async with TestClient(TestServer(_make_api_app(state))) as client:
-            resp = await client.get("/api/ws")
-            assert resp.status == 404
-
-    @pytest.mark.asyncio
-    async def test_no_chat_route(self, tmp_path):
-        state = _make_state(tmp_path)
-        async with TestClient(TestServer(_make_api_app(state))) as client:
-            resp = await client.post("/api/chat", json={})
-            assert resp.status == 404
-
-
-class TestStartApiServerWiring:
-    """Integration test: start_api_server installs middleware and hook store."""
-
-    @pytest.mark.asyncio
-    async def test_server_has_audit_middleware_and_hook_store(self, tmp_path, monkeypatch):
-        import personalclaw.dashboard.state as _st
-
-        monkeypatch.setattr(_st, "config_dir", lambda: tmp_path)
-
-        from personalclaw.dashboard.api_server import start_api_server
-
-        runner, state = await start_api_server(
-            sessions=MagicMock(count=0),
-            port=0,
-        )
-        try:
-            assert state._hook_store is not None
-            assert len(runner.app.middlewares) > 0
-        finally:
-            await runner.cleanup()
 
 
 class TestApiPersonalclawConfig:

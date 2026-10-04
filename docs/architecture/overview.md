@@ -79,7 +79,8 @@ one process that boots everything:
 - **Service management** — `service/` installs the gateway as a systemd unit
   (Linux) or launchd agent (macOS, label `io.personalclaw.gateway`); the CLI
   lifecycle lives in `cli_server.py` (`personalclaw gateway`, with a
-  `--headless` mode for channel-only operation).
+  `--headless` mode: the same gateway, its apps, channels and API, without the dashboard's
+  pages).
 
 **Restart discipline** (matters when developing): backend `.py` changes need a
 gateway restart. The frontend is served live from `web/dist` — a rebuild is

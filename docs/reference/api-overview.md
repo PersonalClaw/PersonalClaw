@@ -148,8 +148,8 @@ docstring rather than any prose:
 - `src/personalclaw/dashboard/routes.py` — the gateway's route table: its own mounts, in
   the order they match, and the `register_*_routes(app)` calls that pull in the rest.
 - `src/personalclaw/dashboard/server.py` — the routes it registers around that table:
-  the ones the MCP tools share with the loopback API server, the provider extensions',
-  the knowledge library's, the static files and the SPA fallback.
+  the ones the MCP tools call, the provider extensions', the knowledge library's, the
+  static files and the SPA fallback (`dashboard/fallbacks.py`).
 - `src/personalclaw/dashboard/handlers/` — the bulk of the `/api/*` surface.
 - Per-domain handler modules beside their domain: `tasks/handlers.py`,
   `workflows/handlers.py`, `artifacts/handlers.py`, `lexicon/handlers.py`,

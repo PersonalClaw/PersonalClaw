@@ -21,8 +21,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw.dashboard.fallbacks import spa_fallback
 from personalclaw.dashboard.request_boundary import request_boundary_middleware
-from personalclaw.dashboard.server import spa_fallback
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "personalclaw"
 
@@ -153,8 +153,8 @@ class TestGateIsInstalled:
         assert "request_boundary_middleware()" in src
         # Ordering: boundary guard OUTSIDE invalid_id (so invalid_id, whose
         # UnsafeRecordId is not a ValueError, still runs closest to the handler and is
-        # never shadowed), and both precede spa_fallback.
+        # never shadowed), and both precede the fallback.
         boundary = src.index("request_boundary_middleware()")
         invalid_id = src.index("invalid_id_middleware()")
-        fallback = src.index("spa_fallback,\n    ]")
+        fallback = src.index("spa_fallback if web_app else api_fallback,\n    ]")
         assert boundary < invalid_id < fallback

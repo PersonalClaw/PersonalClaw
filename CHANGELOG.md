@@ -191,6 +191,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **`personalclaw gateway --headless` serves your channels: it starts your installed apps, answers on Telegram, Slack, Discord or email, asks its approvals there and runs your automations as the full gateway does, behind the same sign-in, with none of the dashboard's pages.**
 - **A chat you continue on another channel answers there: a chat from Telegram continued in a Slack thread answers in that thread, and your Telegram DM is told once where it went, where its answers kept going to Telegram and nothing reached the thread. A channel link now names the channel it is on (`link_channel(…, provider=…)`, `SessionManager.get_channel_provider`, the `links-name-their-channel` core feature; a channel contract change used by `slack-channel` and `*-channel`).**
 - **A new chat is never given the name of a chat already kept, so a chat opened in the second the gateway restarted, or after the clock was set back, no longer replaces that chat's saved conversation; a save never writes over another chat's conversation, a document's Send to a new chat opens a new chat each time, and `personalclaw run --session` continues the conversation it names.**
 - **A memory consolidation no longer undoes what you change in your preferences or projects while it runs: it applies its rewrite to the files as they are when its model answers, and where you changed the same lines, or the lines beside them, it leaves them as you wrote them and the gateway log says so.**

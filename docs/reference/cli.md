@@ -49,7 +49,7 @@ of the start before it, when no browser opened that link.
 
 | Flag | Effect |
 |---|---|
-| `--headless` | Serve channels only; skip the dashboard web server and SSH tunnel instructions. |
+| `--headless` | Run without the dashboard: none of its pages are served (the dashboard itself, its sign-in and device-pairing pages), and no dashboard address, sign-in link or SSH tunnel instructions are printed. Everything else runs as it does with it: the installed apps, channels, automations, and the API that the CLI and the agent's tools use, behind the same sign-in. |
 | `--no-crons` | Skip the cron scheduler — use when another instance handles cron execution. |
 | `--no-open` | Do not auto-open the dashboard URL in the browser on startup. |
 | `--port PORT` | Override the dashboard port — an integer, or `auto` for an OS-assigned ephemeral port. Falls back to config when omitted. |

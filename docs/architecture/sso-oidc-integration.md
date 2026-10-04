@@ -101,9 +101,8 @@ login module's rule forbids. Therefore:
 
 The mode switch itself stays what it is today: `src/personalclaw/auth/modes.py::AuthConfig.from_env`
 returns `src/personalclaw/auth/modes.py::classify_auth_mode_request`'s `effective` mode, and the
-only three runtime construction sites are all `from_env()`:
-`src/personalclaw/dashboard/server.py::start_dashboard`,
-`src/personalclaw/dashboard/api_server.py::start_api_server` and
+only two runtime construction sites are both `from_env()`:
+`src/personalclaw/dashboard/server.py::start_dashboard` (the headless gateway's too) and
 `src/personalclaw/dashboard/origin.py::auth_is_off`.
 
 ### 1.3 The two identity strings this must respect (issue #960)
