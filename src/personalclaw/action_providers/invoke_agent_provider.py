@@ -9,10 +9,13 @@ blocks on the child:
   into the payload from the originating agent's depth; at the cap we refuse.
 * **Approval**: the agent starts on the Allow its trigger was given — the owner allowed the
   trigger "to use the “Invoke Agent” action when it runs" — so its start does not ask again
-  (`triggers.grants.allows_its_agent`). Its own tool calls approve themselves only when the step
-  opts in (``approval_mode: "auto"``) or the global ``auto_approve_subagent_spawn`` is set, and
-  ask otherwise. A spawn with no trigger's Allow behind it takes SubagentManager.spawn's normal
-  approval gate (rejected if no interactive approver).
+  (`triggers.grants.allows_its_agent`). A spawn with no trigger's Allow behind it takes
+  SubagentManager.spawn's normal approval gate: the hook setting that starts subagents without
+  asking (``auto_approve_subagent_spawn``) starts it, else it asks (rejected if no interactive
+  approver). Starting it decides nothing about its own tool calls. They approve themselves only
+  when the step opts in (``approval_mode: "auto"``, saved with the owner's yes), and are otherwise
+  decided as any subagent's are (`SubagentManager._standing_grant`): asked, unless the owner's
+  Approval mode "Auto" or the hook setting for subagents' tool calls approves them.
 * **An app's scheduled job** (a fire of an ``app:`` trigger, ``app_crons.app_of``) is none of the
   above: its agent runs at the agent tier the app holds, as the app's work, and approves none of
   its calls (``app_crons.start_job``). The step's approval, write access, files to change and
@@ -63,24 +66,6 @@ logger = logging.getLogger(__name__)
 # Depth 0 = the user's top-level agent. A child spawned by a hook is depth 1, its
 # child depth 2, … We refuse at the cap so coder→reviewer→… can't recurse forever.
 _HOOK_INVOKE_MAX_DEPTH = 3
-
-
-def approval_mode_of(action_config: dict[str, Any]) -> str:
-    """Whether the agent an invoke-agent action starts approves its own tool calls: ``"auto"``
-    when the step opts in, or when the global ``auto_approve_subagent_spawn`` is set; ``""``
-    (it asks) otherwise. The run reads it, and so does the Allow that describes the run."""
-    approval_mode = str(action_config.get("approval_mode") or "").strip()
-    if approval_mode:
-        return approval_mode
-    try:
-        from personalclaw.config.loader import AppConfig
-        from personalclaw.hooks import HooksConfig
-
-        if HooksConfig.from_dict(AppConfig.load().hooks).auto_approve_subagent_spawn:
-            return "auto"
-    except Exception:
-        logger.debug("invoke-agent: auto-approve config lookup failed", exc_info=True)
-    return ""
 
 
 class InvokeAgentActionProvider(ActionProvider):

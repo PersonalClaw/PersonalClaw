@@ -78,7 +78,9 @@ TRIGGER = "trigger_grant"
 #: The owner's Settings → Agent defaults → Approval mode "Auto", for an agent no chat started. The
 #: mode ships asking, so this stands only once the owner has chosen it (:func:`setting_grant`).
 SETTING = "setting"
-#: ``hooks.auto_approve_subagent_spawn`` / ``hooks.auto_approve_subagent_tools``.
+#: ``hooks.auto_approve_subagent_spawn``, which starts a subagent and covers the start alone (the
+#: agent's own calls are decided as any agent's are), or ``hooks.auto_approve_subagent_tools``,
+#: which approves a subagent's own calls.
 HOOK_SETTING = "hook_setting"
 #: A pattern in ``hooks.auto_approve_tools``.
 HOOK_PATTERN = "hook_pattern"

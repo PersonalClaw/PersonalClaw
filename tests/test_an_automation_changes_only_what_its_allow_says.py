@@ -213,10 +213,7 @@ def test_the_allow_says_so_when_its_agent_may_change_anything():
     )
 
 
-def test_an_invoke_agent_that_asks_before_it_acts_is_said_to_ask(monkeypatch):
-    from personalclaw.action_providers import invoke_agent_provider
-
-    monkeypatch.setattr(invoke_agent_provider, "approval_mode_of", lambda config: "")
+def test_an_invoke_agent_that_asks_before_it_acts_is_said_to_ask():
     said = grants.consent(
         _trigger({"task_template": KITCHEN}, provider="invoke-agent"), ["invoke-agent"]
     )

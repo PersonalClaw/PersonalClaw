@@ -225,7 +225,9 @@ says what that means.
   auto`) or gives it write access (`capability: mutating`) needs `"confirm": true`
   (`automation_posture.py`). So does an agent sync that folds a looser `approval_mode` in
   from disk, and a run override that raises `max_cycles`
-  (`workflows/supervisor_policy.py::POLICY_OVERRIDE_SECURITY`). An agent's `subagent_run`
+  (`workflows/supervisor_policy.py::POLICY_OVERRIDE_SECURITY`). The hook setting that starts
+  subagents without asking stands in for none of these: it starts a step's agent and approves
+  none of its calls. An agent's `subagent_run`
   batch with a task that may change things never sends that confirm: the gateway asks you once,
   naming each task and what it may change, and saves and starts it only on your own Allow
   (`workflows/batch_start.py`). So does an agent's `workflow_author` save of a step that would do

@@ -352,7 +352,7 @@ loads as the nearest end of it; the dashboard and `personalclaw config set` refu
 
 | Key | Type | Default | Where to set | Description |
 |---|---|---|---|---|
-| `hooks` | object | `{}` | Triggers page / `/api/hooks` | Webhook trigger config by hook id, plus `webhook_token` (kept in the credential store — the file holds a `{{secret:…}}` reference; set it with `personalclaw config set hooks.webhook_token <token>`) and `auto_approve_sources`. Managed via the Triggers UI; documented here because the raw shape is config-visible. |
+| `hooks` | object | `{}` | Triggers page / `/api/hooks` | Webhook trigger config by hook id, plus `webhook_token` (kept in the credential store — the file holds a `{{secret:…}}` reference; set it with `personalclaw config set hooks.webhook_token <token>`) and `auto_approve_sources`. Managed via the Triggers UI; documented here because the raw shape is config-visible. Two switches decide for subagents, each `false` unless set, each bounded by the operator ceiling: `auto_approve_subagent_spawn` starts a subagent without asking you (a chat's, a workflow step's, an Invoke Agent step's) and decides nothing it then does, so its calls are decided as any subagent's are; `auto_approve_subagent_tools` approves a subagent's own tool calls, and an Invoke Agent step's Allow says so. |
 | `observe_max_messages` | integer | `200` | backend-only | Channel-observation ring-buffer size (messages kept per channel for context). |
 | `observe_ttl_hours` | number | `168.0` | backend-only | How long observed channel messages stay usable as context. |
 | `agents` | object | `{}` | Agents page | Named agent definitions (see below). |

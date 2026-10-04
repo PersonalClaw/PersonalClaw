@@ -776,6 +776,16 @@ the ceiling did not bound.
   is kept, and the Doctor's `security.approval_mode` row and the Settings row name it. A gateway
   with nowhere to ask (no dashboard, no channel) refuses such a call rather than approving it
   (`approval_grants.NO_SURFACE` names the refusal).
+- **Starting an agent without asking approves none of its calls.** Starting a subagent and
+  approving what it does are two decisions. The hook setting that starts subagents without
+  asking (`hooks.auto_approve_subagent_spawn`) decides the start alone
+  (`SubagentManager._start_grant`), as a trigger's Allow decides its agent's start. The agent it
+  starts has its calls decided as any subagent's are (`SubagentManager._standing_grant`), never
+  by that setting: an Invoke Agent step's agent asks before each call unless the step approves
+  its own calls, the owner's Approval mode "Auto" does, or the hook setting for subagents' tool
+  calls (`hooks.auto_approve_subagent_tools`) does, and the step's Allow names the one that will
+  (`automation_posture.AgentRunPolicy.approved_by`). The operator ceiling bounds every one of
+  them.
 - **What a workflow's step may do is the owner's yes, at every door that writes one.** A step that
   approves its own tool calls (`approval_mode: "auto"`) or may change things (`capability:
   "mutating"`) does so each time its workflow runs, so every write of a definition goes through

@@ -122,10 +122,14 @@ class AgentRunPolicy:
     * ``writes`` are the files its job changes, as the owner wrote them (``write_scope``): a
       reading run may change those and nothing else, unless its agent runs on an agent CLI
       (``runtime``), which changes files with its own tools and is given none of them.
-    * ``owners_auto`` is the owner's Approval mode "Auto" approving the calls of an agent whose
-      step does not (`approval_grants.setting_grant`, for an agent no chat started, as a
-      trigger's is). The run is handed nothing for it: the subagent manager reads the setting at
-      each call. So the Allow names it, rather than say an agent asks that will not.
+    * ``approved_by`` is the grant that approves the calls of an agent whose step does not, for an
+      agent no chat started, as a trigger's is: the owner's Approval mode "Auto"
+      (`approval_grants.setting_grant`), or the hook setting that approves every subagent's tool
+      calls (``hooks.auto_approve_subagent_tools``), whichever the subagent manager would read
+      first (`SubagentManager._standing_grant`); ``""`` when neither stands. The run is handed
+      nothing for it: the subagent manager reads each at every call. So the Allow names it, rather
+      than say an agent asks that will not. The hook setting that starts subagents without asking
+      is not one of them: it decides a start, never a call.
 
     An automation's own agent may always tell its owner what it found (``notify``, to the owner
     only: ``tool_providers.base.only_tells_the_owner``), and that message leaves the machine when
@@ -135,7 +139,7 @@ class AgentRunPolicy:
     approval_mode: str
     capability_class: str
     writes: tuple[str, ...] = ()
-    owners_auto: bool = False
+    approved_by: str = ""
     #: The step's working folder as written, when its owner has not trusted it and that holds back
     #: the write access the step asks for; "" otherwise.
     untrusted_folder: str = ""
@@ -145,7 +149,7 @@ class AgentRunPolicy:
 
     @property
     def asks(self) -> bool:
-        return self.approval_mode != "auto" and not self.owners_auto
+        return self.approval_mode != "auto" and not self.approved_by
 
     @property
     def reads_only(self) -> bool:
@@ -218,12 +222,23 @@ def _with_write_access(policy: AgentRunPolicy) -> str:
     """What the agent *policy* describes does with write access, after "Its agent" or "it"."""
     if policy.asks:
         return "asks you before it changes a file, runs a command or sends a message."
-    if policy.owners_auto:
+    acts = "may change files, run commands and send messages without asking you"
+    if policy.approved_by:
+        return f"{acts}, because {_why_it_does_not_ask(policy.approved_by)}."
+    return f"{acts}."
+
+
+def _why_it_does_not_ask(grant: str) -> str:
+    """Why the agent of a step that does not approve its own calls will not ask, as its Allow says
+    it: the grant :attr:`AgentRunPolicy.approved_by` names."""
+    from personalclaw import approval_grants
+
+    if grant == approval_grants.HOOK_SETTING:
         return (
-            "may change files, run commands and send messages without asking you, because "
-            "Settings → Agent defaults → Approval mode is Auto."
+            "the hook settings approve every subagent's tool calls "
+            "(hooks.auto_approve_subagent_tools)"
         )
-    return "may change files, run commands and send messages without asking you."
+    return "Settings → Agent defaults → Approval mode is Auto"
 
 
 def agent_run_policy(provider: str, config: Mapping[str, Any]) -> AgentRunPolicy:
@@ -231,11 +246,13 @@ def agent_run_policy(provider: str, config: Mapping[str, Any]) -> AgentRunPolicy
     may do when it runs, from its step *config*, read without changing anything.
 
     ``run-prompt`` always runs its agent with nobody to ask; ``invoke-agent`` does when its step
-    (or the hook setting) lets the agent approve its own calls (``approval_mode_of``), and its
-    agent asks otherwise, unless the owner chose Approval mode "Auto" (:attr:`owners_auto`). The
-    class is ``subagent.resolve_capability_class``'s: read-only for a run nobody is asked in,
-    unless the step carries ``capability: "mutating"``, and read-only in a working folder its
-    owner has not trusted (``project_trust.held_to``)."""
+    lets the agent approve its own calls (its own ``approval_mode``, saved with the owner's yes),
+    and its agent asks otherwise, unless a grant that approves any such agent's calls stands
+    (:attr:`AgentRunPolicy.approved_by`). What starts the agent decides none of this: the Allow of
+    its trigger, or the hook setting that starts subagents without asking, starts it and approves
+    no call it makes. The class is ``subagent.resolve_capability_class``'s: read-only for a run
+    nobody is asked in, unless the step carries ``capability: "mutating"``, and read-only in a
+    working folder its owner has not trusted (``project_trust.held_to``)."""
     from personalclaw.guardrails.project_trust import held_to
 
     return _policy(provider, config, held_to)
@@ -279,11 +296,8 @@ def _policy(
     from personalclaw import write_scope
     from personalclaw.subagent import resolve_capability_class
 
-    approval = "auto"
-    if provider == "invoke-agent":
-        from personalclaw.action_providers.invoke_agent_provider import approval_mode_of
-
-        approval = approval_mode_of(dict(config))
+    # An Invoke Agent step's own approval, as the runtime compares it; nothing else is read for it.
+    approval = _posture_value(config, "approval_mode") if provider == "invoke-agent" else "auto"
     asked = resolve_capability_class(
         capability_class=_posture_value(config, "capability"), approval_mode=approval
     )
@@ -293,19 +307,34 @@ def _policy(
         approval_mode=approval,
         capability_class=capability,
         writes=tuple(write_scope.entries(dict(config))),
-        owners_auto=provider == "invoke-agent" and approval != "auto" and _the_owners_auto_stands(),
+        approved_by=(
+            _approved_unasked() if provider == "invoke-agent" and approval != "auto" else ""
+        ),
         untrusted_folder=folder if capability != asked else "",
         runtime=_runtime_of(config),
     )
 
 
-def _the_owners_auto_stands() -> bool:
-    """Whether the owner's Approval mode "Auto" approves an agent no chat started now, as the
-    operator ceiling lets it (`approval_grants`); a sentence asks it, so nothing is audited."""
+def _approved_unasked() -> str:
+    """The grant that approves the calls of an agent no chat started whose step does not, as the
+    operator ceiling lets it stand now, or ``""``: the owner's Approval mode "Auto"
+    (`approval_grants.setting_grant`), else the hook setting that approves every subagent's tool
+    calls, in the order the subagent manager reads them (`SubagentManager._standing_grant`). A
+    hook value that does not parse approves nothing, as the hook manager reads it
+    (`hooks.HookManager`). A sentence asks it, so nothing is audited."""
     from personalclaw import approval_grants
 
     grant = approval_grants.setting_grant()
-    return bool(grant) and approval_grants.stands(grant, caller="automation", audit=False)
+    if not grant:
+        try:
+            tools = approval_grants.hooks_now().auto_approve_subagent_tools
+        except Exception:  # noqa: BLE001 - see the docstring: it approves nothing
+            logger.debug("hook settings unreadable for an automation's Allow", exc_info=True)
+            tools = False
+        grant = approval_grants.HOOK_SETTING if tools is True else ""
+    if grant and approval_grants.stands(grant, caller="automation", audit=False):
+        return grant
+    return ""
 
 
 def _posture_value(config: Mapping[str, Any], key: str) -> str:
