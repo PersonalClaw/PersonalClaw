@@ -19,6 +19,11 @@ whose prompt offers them declares it.
 approval prompt and keeps none of its own (``personalclaw.sdk.channel.approval_brief_for(event,
 chat=...)``, ``answer_in_chat`` and ``chat_grant``). A channel app that uses them declares it.
 
+``DIGEST_REPLIES``: a channel that runs a conversation itself offers PersonalClaw the owner's
+message before its own turn (``services.answer_channel_reply``), so the owner's answer to the
+Morning triage digest that DM received is answered as the digest's card answers it. A channel app
+that offers it declares it.
+
 ``GUARDED_DOWNLOAD``: a download streams through the egress guard
 (``personalclaw.sdk.net.open_url``). An app that downloads with it declares it.
 
@@ -38,6 +43,7 @@ from personalclaw.apps.core_features import (
     APPROVAL_ANSWERS,
     CHAT_TRUST,
     CORE_FEATURES,
+    DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
     TURNS_NAME_THEIR_CHANNEL,
@@ -48,6 +54,7 @@ __all__ = [
     "APPROVAL_ANSWERS",
     "CHAT_TRUST",
     "CORE_FEATURES",
+    "DIGEST_REPLIES",
     "GUARDED_DOWNLOAD",
     "LINKS_NAME_THEIR_CHANNEL",
     "TURNS_NAME_THEIR_CHANNEL",

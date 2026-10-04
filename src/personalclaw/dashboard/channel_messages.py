@@ -11,9 +11,12 @@ is addressed.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.config import loader as config_loader
+
+if TYPE_CHECKING:
+    from personalclaw.channel_delivery import OwnerDelivery
 
 logger = logging.getLogger(__name__)
 
@@ -40,15 +43,35 @@ def dashboard_link(fragment: str) -> str:
 
 
 def channel_dm_text(note: dict[str, Any]) -> str:
-    """What the ``channel_dm`` target sends for ``note``: its title, its body, and its link.
+    """What the ``channel_dm`` target sends for ``note``: its title, its body, how to answer it
+    there when a reply on the channel answers it (the Morning triage digest:
+    ``proactive.channel_reply.reply_footer``), and its link.
 
     Redacted here as every outbound channel text is (a channel app redacts again), because this
     leaves the machine."""
+    from personalclaw.proactive.channel_reply import reply_footer
     from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
-    parts = [str(note.get("title") or "").strip(), str(note.get("body") or "").strip()]
+    parts = [
+        str(note.get("title") or "").strip(),
+        str(note.get("body") or "").strip(),
+        reply_footer(note),
+    ]
     text = "\n\n".join(p for p in parts if p)
     text, _ = redact_exfiltration_urls(text)
     text, _ = redact_credentials(text)
     link = dashboard_link(str(note.get("statusUrl") or ""))
     return f"{text}\n{link}" if link else text
+
+
+async def send_to_owner(note: dict[str, Any], text: str) -> "OwnerDelivery":
+    """Send *text*, the ``channel_dm`` message for *note*, to the owner's DM on the first channel
+    that reaches them (``channel_delivery.reach_owner``), and record the DM it reached for a note a
+    reply there answers (the Morning triage digest: ``proactive.channel_reply.note_delivered``)."""
+    from personalclaw.channel_delivery import reach_owner
+    from personalclaw.proactive.channel_reply import note_delivered
+
+    outcome = await reach_owner(lambda delivery, dm: delivery.deliver_text(dm, text))
+    if outcome.delivered:
+        note_delivered(note, provider=outcome.provider, channel=outcome.channel)
+    return outcome

@@ -91,6 +91,11 @@ _ADMISSION_CACHE_MAX = 512
 #: provider + message identity → the verdict already reached for it.
 _ADMITTED: "OrderedDict[str, TrustVerdict]" = OrderedDict()
 
+#: The reason of a verdict whose message was the owner's answer to the Morning triage digest
+#: (`proactive.channel_reply`). Not allowed: it reached no session and is no message for a trigger
+#: source, as a pairing code is none. It was answered, and the DM was told what it did.
+ANSWERED_DIGEST = "answered_digest"
+
 
 def _message_key(provider: str, msg: "ChannelMessage") -> str:
     """A stable identity for one inbound message, for admission caching.
@@ -269,6 +274,11 @@ async def deliver_inbound(
     gate holds it, with the hold this door hands it, before it tells the owner, so the notice
     names only a message that is in the Inbox.
 
+    An admitted direct message that is the channel owner's answer to the Morning triage digest
+    that DM received (``3 yes``) is answered as the digest's card answers it
+    (`proactive.channel_reply.answer_on_channel`) and reaches no session: the verdict comes back
+    not allowed, with :data:`ANSWERED_DIGEST`, and the DM has been told what the answer did.
+
     ``turn_runner`` is INJECTED, never imported: driving a turn means calling
     ``dashboard.chat_runner.run_chat``, and importing that here would make ``channel_inbound``
     (domain) depend on the HTTP surface — the ``core-must-not-import-the-http-surface``
@@ -291,6 +301,15 @@ async def deliver_inbound(
         # verdict, which is also why the three transports that call `guard_inbound` directly
         # (and therefore never reach this line) are fixed by the same change.
         return verdict
+    # The owner's answer to the Morning triage digest this DM received (`3 yes`): the digest's
+    # card's own answer path takes it and says what it did here, and no turn runs. Remembered as
+    # the message's verdict, so a redelivered copy of it answers nothing a second time.
+    from personalclaw.proactive.channel_reply import answer_on_channel
+
+    if await answer_on_channel(services, provider, msg, is_dm=is_dm):
+        answered = TrustVerdict(allowed=False, reason=ANSWERED_DIGEST, meta={"answered": True})
+        _remember(_message_key(provider, msg), answered)
+        return answered
     # The files ride along as the turn's own attached files only when the message enters as
     # someone the owner trusts (no fence): an attachment's text is read into the turn as the
     # user's, and a fenced sender's words are not the user's.

@@ -417,14 +417,20 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
     # `counted_complete` and `max_iterations` are a loop's `iteration` row in its run's journal:
     # the word a loop ends with, written where a cycle its owner ended with a Deny ends the loop
     # (`declines.end_cycle`). No audit row carries either.
+    # `acted`, `help` and `unreadable` are `proactive.answer.Answered(outcome=…)`: what an answer to
+    # the Morning triage digest came to, which the reply route turns into its wire answer and a
+    # channel into the sentence it says back. The answer's audit row is `triage_reply`, `success`.
     "not an audit record at all — an internal ledger row, or a function's return-value "
     "discriminator, whose field is also called `outcome` and which the deliberately tree-wide "
     "scan therefore also sees. Recorded rather than excluded, because narrowing the scan is "
     "the same make-a-word-invisible move #3443 is about": (
+        "acted",
         "counted_complete",
+        "help",
         "max_iterations",
         "scope_violation",
         "truncated",
+        "unreadable",
     ),
 }
 

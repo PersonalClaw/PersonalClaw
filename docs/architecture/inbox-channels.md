@@ -93,6 +93,25 @@ against core protocols). Paths are relative to
   digest's unattended set (which has no task list); the run's journal names her answer
   (`reply:you-approved`) as what allowed it, and one Yes needs no pattern, which only "always"
   remembers. Nothing performs a reminder, so the digest proposes none.
+- **Her answer is attended, wherever she gives it** (`proactive/answer.py`). The digest's card
+  (`POST /api/proactive/digest/reply`) and a reply on the chat channel the digest reached are two
+  doors to one answer path: who is answering (`approval_answer`: you, or you on that channel), the
+  current digest (a run that is no longer it is expired, never acted on against today's numbers),
+  the grammar, and each Yes through the digest's own stage with `answered=True`. So the action
+  denylist and the spend floor hold her answer as they hold the digest on its own, and the two
+  gates about work nobody answered do not: under an operator ceiling of `ask` her Yes needs no
+  auto-execute grant (she is the person the ceiling asks for), and in incident mode it runs, as a
+  chat's tool calls and a press in the Inbox run. The digest acting on its own is held by both, and
+  says so once ("Nothing ran on its own: …"). The digest's text names the card ("Yes on the Morning
+  triage card in your Inbox tries it again"), since PersonalClaw's notice takes no typed reply.
+  Where her rule sends the notice to a chat channel (`channel_dm`), the DM it reaches is recorded
+  against the digest's run (`digest_channels.json`, `proactive/channel_reply.py`) and is told how
+  to answer there (`approval.HELP_TEXT`). A reply there in that grammar, from the channel's owner
+  (`owner_id_for`), in that DM, answers that run through the same path, and the DM is told what it
+  did; it reaches no chat. Anything else (her ordinary message, `help`, anyone else's `3 yes`, a
+  group) reaches the chat as before. A DM that crosses the guarded door is answered there
+  (`channel_inbound`); a channel that runs a DM's conversation itself offers each direct message to
+  `GatewayServices.answer_channel_reply` first (the `digest-replies` core feature).
 - **Agents read it** with `inbox_list` (`agents/native/inbox_tool_defs.py`): the open items
   (`OPEN_STATUSES`), newest first, with what each is, who raised it, when, and its text, the
   sender and text fenced as untrusted data. It declares itself a read, so a read-only automation

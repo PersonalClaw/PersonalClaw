@@ -83,3 +83,17 @@ class GatewayServices(Protocol):
         transport can render the channel-specific outbound half (``canned_reply``) itself.
         """
         ...
+
+    async def answer_channel_reply(
+        self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True
+    ) -> bool:
+        """Offer core a message the transport runs a turn for itself, before it does.
+
+        For a channel that runs its conversations itself (as Slack does with a DM's threads)
+        rather than handing every message to :meth:`deliver_channel_inbound`, which answers this
+        on its own. True when the message was the channel owner's answer to the Morning triage
+        digest that DM received (``3 yes``): core answered it as the digest's card does and said
+        in the DM what it did, so the transport runs no turn for it. False for anything else,
+        which stays the transport's to handle as before.
+        """
+        ...

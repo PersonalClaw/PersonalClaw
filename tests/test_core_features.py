@@ -20,6 +20,7 @@ from personalclaw.sdk.features import (
     APPROVAL_ANSWERS,
     CHAT_TRUST,
     CORE_FEATURES,
+    DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
     TURNS_NAME_THEIR_CHANNEL,
@@ -31,6 +32,7 @@ from personalclaw.sdk.features import (
 OFFERED_ONCE = {
     "approval-answers",
     "chat-trust",
+    "digest-replies",
     "guarded-download",
     "links-name-their-channel",
     "turns-name-their-channel",
@@ -42,6 +44,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "APPROVAL_ANSWERS",
         "CHAT_TRUST",
         "CORE_FEATURES",
+        "DIGEST_REPLIES",
         "GUARDED_DOWNLOAD",
         "LINKS_NAME_THEIR_CHANNEL",
         "TURNS_NAME_THEIR_CHANNEL",
@@ -49,12 +52,14 @@ def test_the_sdk_publishes_the_names_and_the_question():
     }
     assert APPROVAL_ANSWERS == "approval-answers"
     assert CHAT_TRUST == "chat-trust"
+    assert DIGEST_REPLIES == "digest-replies"
     assert GUARDED_DOWNLOAD == "guarded-download"
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
     for name in (
         APPROVAL_ANSWERS,
         CHAT_TRUST,
+        DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
         TURNS_NAME_THEIR_CHANNEL,
@@ -270,10 +275,60 @@ def _turns_name_their_channel_holds() -> None:
         delete_credential(key)
 
 
+def _digest_replies_hold() -> None:
+    """The services handle takes the owner's answer to the digest her DM received, says in the DM
+    what it did, and returns True; her ordinary message, and the same answer from anyone else, it
+    leaves to the channel. The digest she answers here is no longer the current one (no digest is
+    installed in this home), so the answer acts on nothing and says so."""
+    import asyncio
+    import os
+
+    from personalclaw import channel_delivery
+    from personalclaw.config.credentials import owner_id_credential
+    from personalclaw.gateway import GatewayOrchestrator
+    from personalclaw.proactive.channel_reply import REPLY_ANSWERS_KEY, note_delivered
+    from personalclaw.sdk.channel import ChannelMessage
+
+    said: list[tuple[str, str]] = []
+
+    class _Chat:
+        async def deliver_text(self, channel: str, text: str, thread_ts: str = "", **_kw) -> str:
+            said.append((channel, text))
+            return "m1"
+
+    services = SimpleNamespace(ctx_builder=None)
+
+    def offered(text: str, sender: str = "owner-1") -> bool:
+        message = ChannelMessage(channel_id="dm-1", text=text, sender=sender, thread_id="dm-1")
+        return asyncio.run(
+            GatewayOrchestrator.answer_channel_reply(services, "achat", message, is_dm=True)
+        )
+
+    key = owner_id_credential("achat")
+    before = os.environ.get(key)
+    os.environ[key] = "owner-1"
+    channel_delivery.register(_Chat(), provider="achat")
+    try:
+        note_delivered({REPLY_ANSWERS_KEY: "run-gone"}, provider="achat", channel="dm-1")
+        assert offered("what is on today?") is False
+        assert offered("2 yes", sender="someone-else") is False
+        assert said == []
+        assert offered("2 yes") is True
+        ((where, text),) = said
+        assert where == "dm-1" and "nothing was done" in text
+    finally:
+        channel_delivery.register(None, provider="achat")
+        if before is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = before
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     APPROVAL_ANSWERS: _approval_answers_hold,
     CHAT_TRUST: _chat_trust_holds,
+    DIGEST_REPLIES: _digest_replies_hold,
     GUARDED_DOWNLOAD: _guarded_download_holds,
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
     TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,

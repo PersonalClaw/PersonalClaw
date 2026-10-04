@@ -885,6 +885,12 @@ used to allow:
 - **The digest.** Its replies were open to apps. Where every loopback caller is you, an agent's
   `triage_rules` tool could teach it an approve rule, which answers every matching proposal before
   it is asked. Approve rules are now yours, and a deny rule, which only takes away, is anyone's.
+  A reply on the chat channel the digest reached answers it as you on that channel only when the
+  channel's own owner sent it (`owner_id_for`, the id its owner pairing stored), in the DM that
+  digest reached; the channel's app does not decide that, core does (`proactive.channel_reply`).
+  Your answer is not a grant, so it is never refused for one: the operator ceiling's `ask` and
+  incident mode hold the digest's own auto-execution, and leave your answer running as attended
+  work, still held to the action denylist and the spend floor.
 
 What this cannot tell apart: a process running as you on this machine
 ([limitations §10](../security/limitations.md#10-a-process-running-as-you-can-answer-as-you)).

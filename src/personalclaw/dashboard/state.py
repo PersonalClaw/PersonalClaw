@@ -1789,16 +1789,14 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         channel never holds up the bell. When no channel can take it, the log says why; the note
         is already in the bell and the Inbox, so nothing is lost.
         """
-        from personalclaw.dashboard.channel_messages import channel_dm_text
+        from personalclaw.dashboard.channel_messages import channel_dm_text, send_to_owner
 
         text = channel_dm_text(note)
         if not text:
             return
 
         async def _send() -> None:
-            from personalclaw.channel_delivery import reach_owner
-
-            outcome = await reach_owner(lambda delivery, dm: delivery.deliver_text(dm, text))
+            outcome = await send_to_owner(note, text)
             if not outcome.delivered and not outcome.no_channel:
                 self._log.warning(
                     "channel DM for %r reached nobody: %s", note.get("title"), outcome.sentence()

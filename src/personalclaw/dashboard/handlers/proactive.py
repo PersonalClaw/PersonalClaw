@@ -4,23 +4,19 @@ Three endpoints, and the split between them is the "strictly read-only on view; 
 explicit" made structural:
 
 ``GET  /api/proactive/digest``        the whole card. Reads only.
-``POST /api/proactive/digest/reply``  one tap, or one typed channel reply. The only writer.
+``POST /api/proactive/digest/reply``  one tap on the card, or one typed reply. The only writer.
 ``POST /api/proactive/install``       the pack card: install the schedule, or reconcile it.
 
-**The reply route is the ONE new caller of an existing execution seam, not a new seam.** A tap
-on "yes" runs through :func:`personalclaw.proactive.autoexec.auto_execute` with a synthetic
-approve rule standing for the user's click — so the incident kill switch, the action denylist,
-``enforce_action``'s SEL row and the NEW-1 budget floor all apply to an attended approval exactly
-as they apply to an unattended one. Writing a second dispatch here would have been a sixth
-unattended-write seam (AG §1.2) that the chokepoint test would have caught and that nothing
-would have gated in the meantime.
-
-**Idempotency is the run's own ledger, not a new store.** Every answered ordinal leaves a
-``triage_reply`` row on the digest's run, so a reply that arrives twice — a double tap, a retried
-channel delivery, a reply typed after the gateway restarted — finds the first row and acks
-instead of acting again (criterion 9). A reply naming a run that is no longer the current digest
-is refused with ``digest_expired``: the ordinals in an old digest number a different window, so
-best-effort execution there is precisely the wrong-target execution the criterion forbids.
+**The reply route is one of two doors to ONE answer path**
+(:func:`personalclaw.proactive.answer.answer`); the other is a reply on the chat channel the
+digest reached (`proactive.channel_reply`). The path checks who is answering, reads the current
+digest, parses the reply and runs each Yes through
+:func:`personalclaw.proactive.autoexec.auto_execute` as answered work: the action denylist,
+``enforce_action``'s SEL row and the NEW-1 budget floor hold it as they hold the digest acting on
+its own, and the incident kill switch and the auto-execute grant, which hold only what nobody
+answered, do not. This route adds what is HTTP's: the session mode, the body, and the wire shape of
+each outcome. A reply naming a run that is no longer the current digest is refused with
+``triage_digest_expired``: the ordinals in an old digest number a different window.
 
 **Nothing here reports an unmeasured value as a zero.** A failed read returns the error and the
 card renders it; see :mod:`personalclaw.proactive.surface` for the state vocabulary that keeps
@@ -46,20 +42,6 @@ from personalclaw.request_validation import json_object_body
 
 logger = logging.getLogger(__name__)
 
-#: The schedule §5.4 installs, under a DETERMINISTIC id (the `system:heartbeat:fts` convention
-#: `triggers.models` documents). That is what makes the install idempotent with nothing to
-#: remember: a second install finds this row instead of adding a duplicate, and the reconcile can
-#: address it after a restart. `created_by="system"` is the closed three-value vocabulary the field
-#: declares (`user`/`agent`/`system`) — it is the id that carries the feature name, which is also
-#: what the dual-writer rule needs to edit-lock the row on the Automations page.
-TRIAGE_TRIGGER_ID = "system:triage:digest"
-TRIAGE_CREATED_BY = "system"
-#: The rule key recorded on a ledger row for an execution the USER authorised by tapping. Distinct
-#: from the `policy:trivial-tier`, because "you said yes to this one" and "the tier policy
-#: allowed it" are different authorities and an audit that conflated them would lose the user's
-#: own decision.
-REPLY_RULE = "reply:you-approved"
-
 
 def _sel():
     from personalclaw.dashboard import handlers as _h
@@ -67,113 +49,7 @@ def _sel():
     return _h.sel()
 
 
-def _config() -> Any:
-    from personalclaw.config.loader import AppConfig
-
-    return AppConfig.load()
-
-
-def _proactive(config: Any) -> Any:
-    return getattr(config, "proactive", None)
-
-
-# ── the schedule §5.4 installs ────────────────────────────────────────────────
-
-
-def _trigger_store() -> Any:
-    from personalclaw.triggers.store import TriggerStore
-
-    return TriggerStore()
-
-
-def _find_schedule(store: Any) -> Any:
-    """The digest schedule, by its deterministic id, or None.
-
-    `store.get` returns a `LoadedTrigger` — the row PLUS whatever was wrong with reading it. The
-    entity to write is the `.trigger` inside; upserting the pair would set attributes on the
-    wrapper and persist something with no id.
-    """
-    row = store.get(TRIAGE_TRIGGER_ID)
-    return None if row is None else row.trigger
-
-
-def _schedule_payload(trigger: Any) -> dict[str, Any]:
-    spec = getattr(trigger, "spec", None) or {}
-    return {
-        "id": str(getattr(trigger, "id", "") or ""),
-        "name": str(getattr(trigger, "name", "") or ""),
-        "cron": str(spec.get("expr", "") or "") if isinstance(spec, dict) else "",
-        "enabled": bool(getattr(trigger, "enabled", False)),
-        "created_by": str(getattr(trigger, "created_by", "") or ""),
-    }
-
-
-def _install_state() -> dict[str, Any]:
-    """Installedness + the drift between the config switch and the schedule's own flag.
-
-    ``drift`` is reported rather than silently repaired on a READ. Criterion 10 wants disabling
-    ``triage_enabled`` to retire the schedule, and the reconcile that does it is a POST — so a
-    GET that quietly fixed the divergence would hide from the user that two switches had
-    disagreed, and would make the read a writer.
-    """
-    config = _config()
-    proactive = _proactive(config)
-    enabled = bool(getattr(proactive, "triage_enabled", False))
-    trigger = _find_schedule(_trigger_store())
-    if trigger is None:
-        return {"installed": False, "enabled": enabled, "schedule": None, "drift": False}
-    payload = _schedule_payload(trigger)
-    return {
-        "installed": True,
-        "enabled": enabled,
-        "schedule": payload,
-        "drift": payload["enabled"] != enabled,
-    }
-
-
 # ── GET /api/proactive/digest ─────────────────────────────────────────────────
-
-
-def _latest_digest() -> tuple[dict | None, dict | None, list[dict]]:
-    """The most recent triage run, its node output and its ledger slice.
-
-    Returns ``(None, None, [])`` when no run exists — which the view turns into ``never_run``,
-    never into an empty digest.
-    """
-    from personalclaw.proactive.surface import TRIAGE_NODE_ID, TRIAGE_WORKFLOW
-    from personalclaw.workflows import journal, service, store
-
-    runs, _total = store.list_runs(workflow_name=TRIAGE_WORKFLOW, limit=1, offset=0)
-    if not runs:
-        return None, None, []
-    run = runs[0].to_dict()
-    run_id = str(run.get("run_id", "") or run.get("id", "") or "")
-    result = service.output(run_id, TRIAGE_NODE_ID)
-    output: dict | None = None
-    if result.get("ok"):
-        output = _decode_output(result.get("output"))
-    return run, output, journal.ledger(run_id)
-
-
-def _decode_output(value: Any) -> dict | None:
-    """The triage node's output as a dict, whether it was stored as JSON text or as an object.
-
-    The provider returns its summary as `ActionResult.stdout` (a JSON string), and the engine may
-    hand it back either already-parsed or verbatim depending on the node's transform. Both are
-    accepted; anything else is `None`, which the view reports as `never_run` rather than as a
-    digest with every section empty.
-    """
-    import json
-
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str) and value.strip():
-        try:
-            parsed = json.loads(value)
-        except ValueError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
-    return None
 
 
 async def api_proactive_digest(request: web.Request) -> web.Response:
@@ -184,14 +60,15 @@ async def api_proactive_digest(request: web.Request) -> web.Response:
     an empty card — "nothing happened yet" is the most confident possible way to say the opposite
     of what is known.
     """
+    from personalclaw.proactive import digest_state
     from personalclaw.proactive.surface import build_digest_view
 
     def read() -> dict:
-        state = _install_state()
+        state = digest_state.install_state()
         if not state["installed"] or not state["enabled"]:
             view = build_digest_view(enabled=state["enabled"], installed=state["installed"])
         else:
-            run, output, events = _latest_digest()
+            run, output, events = digest_state.latest_digest()
             view = build_digest_view(
                 enabled=True, installed=True, run=run, output=output, events=events
             )
@@ -304,7 +181,9 @@ async def api_proactive_install(request: web.Request) -> web.Response:
     editable. So the precedence is now: the body's cron (an explicit edit) → the INSTALLED row's
     own cron (the edit is the state) → the config default (only ever for a first install).
     """
+    from personalclaw.config.loader import AppConfig
     from personalclaw.dashboard.handlers import _is_restricted_session
+    from personalclaw.proactive import digest_state
     from personalclaw.proactive.surface import TRIAGE_WORKFLOW
     from personalclaw.schedule import validate_cron_expr
 
@@ -315,8 +194,7 @@ async def api_proactive_install(request: web.Request) -> web.Response:
             status=403,
         )
     body = await json_object_body(request)
-    config = _config()
-    proactive = _proactive(config)
+    proactive = getattr(AppConfig.load(), "proactive", None)
     asked = str(body.get("cron", "") or "").strip()
     default_cron = str(getattr(proactive, "digest_schedule", "") or "")
     if asked and not validate_cron_expr(asked):
@@ -333,15 +211,15 @@ async def api_proactive_install(request: web.Request) -> web.Response:
         from personalclaw.triggers.models import Trigger
         from personalclaw.triggers.restore_hold import switch_from_config
 
-        store = _trigger_store()
-        trigger = _find_schedule(store)
+        store = digest_state.trigger_store()
+        trigger = digest_state.find_schedule(store)
         created = trigger is None
         if trigger is None:
             trigger = Trigger(
-                id=TRIAGE_TRIGGER_ID,
+                id=digest_state.TRIAGE_TRIGGER_ID,
                 name="Morning triage",
                 kind="clock",
-                created_by=TRIAGE_CREATED_BY,
+                created_by=digest_state.TRIAGE_CREATED_BY,
                 # `delivery: none` — the digest delivers ITSELF, through `DashboardState.notify`
                 # inside the run. A cron-result notification on top would be a second
                 # notification about the same digest arriving.
@@ -377,7 +255,7 @@ async def api_proactive_install(request: web.Request) -> web.Response:
             if when:
                 trigger.next_fire_at = when
         store.upsert(trigger)
-        return _schedule_payload(trigger), created
+        return digest_state.schedule_payload(trigger), created
 
     try:
         payload, created = await asyncio.to_thread(ensure)
@@ -400,209 +278,21 @@ async def api_proactive_install(request: web.Request) -> web.Response:
 # ── POST /api/proactive/digest/reply ──────────────────────────────────────────
 
 
-def _pending_row(view: dict, ordinal: str) -> dict | None:
-    for row in view.get("pending") or []:
-        if str(row.get("ordinal", "")) == ordinal:
-            return row
-    return None
-
-
-def _write_reply_row(run_id: str, ordinal: str, *, verb: str, outcome: str, detail: str) -> bool:
-    """Record the answer on the digest's own run. Returns False when there is no run to write to.
-
-    The row IS the idempotency record, so a failure to write it is reported to the caller rather
-    than swallowed: a reply that acted but left no row would act again on the next tap.
-    """
-    from personalclaw.ledger.kinds import TRIAGE_REPLY
-    from personalclaw.proactive.surface import TRIAGE_NODE_ID
-    from personalclaw.workflows.journal import Journal
-
-    try:
-        Journal(run_id=run_id).write(
-            TRIAGE_REPLY,
-            node_id=TRIAGE_NODE_ID,
-            instance_path=TRIAGE_NODE_ID,
-            epoch=0,
-            actor="user",
-            item_ordinal=ordinal,
-            verb=verb,
-            outcome=outcome,
-            detail=detail,
-        )
-    except Exception:  # noqa: BLE001
-        logger.warning("proactive: reply row not written for %s/%s", run_id, ordinal, exc_info=True)
-        return False
-    return True
-
-
-def _persist_rule(request: web.Request, pattern: str, approve: bool) -> tuple[str, str]:
-    """Teach one approval rule through the SAME guarded write the rules manager POSTs to.
-
-    Returns ``(key, error)``. The write goes through ``MemoryService.set_semantic``, so the
-    injection scanner still sees the pattern text even though the user ratified it (§1.4). A
-    proposal with no pattern has nothing to remember, which is said rather than raised: the card
-    offers no "always" for one, and a typed "always" still answers the proposal once.
-    """
-    from personalclaw.dashboard.handlers.memory import _global_service
-    from personalclaw.proactive.approval import ApprovalRule, Verdict, rule_to_value
-
-    if not pattern.strip():
-        return "", "this proposal has no pattern to remember, so nothing was taught"
-    rule = ApprovalRule(
-        pattern=pattern,
-        verdict=Verdict.APPROVE if approve else Verdict.DENY,
-        created_from_digest="digest-card",
-    )
-    svc = _global_service(request.app["state"])
-    err = svc.set_semantic(rule.key, rule_to_value(rule), 1.0, "user_explicit")
-    if err is not None:
-        _code, message = err
-        return rule.key, message
-    return rule.key, ""
-
-
-#: Why a "yes" did not reach the action stage at all, beside the stage's own reasons
-#: (`autoexec.SKIP_*`).
-_NOTHING_RETURNED = "nothing_returned"
-
-
-def _answer_outcome(approves: bool, reason: str) -> str:
-    """What became of one answer, as its ``triage_reply`` row records it.
-
-    A "no" is declined. A "yes" is executed when its action landed (no ``reason``), failed when
-    it was tried and failed, and refused when a guard or the item stopped it first — never
-    declined, which would say she turned it down.
-    """
-    from personalclaw.proactive.autoexec import SKIP_FAILED
-    from personalclaw.proactive.surface import (
-        OUTCOME_ANSWER_DECLINED,
-        OUTCOME_ANSWER_EXECUTED,
-        OUTCOME_ANSWER_FAILED,
-        OUTCOME_ANSWER_REFUSED,
-    )
-
-    if not approves:
-        return OUTCOME_ANSWER_DECLINED
-    if not reason:
-        return OUTCOME_ANSWER_EXECUTED
-    if reason == SKIP_FAILED:
-        return OUTCOME_ANSWER_FAILED
-    return OUTCOME_ANSWER_REFUSED
-
-
-async def _dispatch_approved(
-    view: dict, row: dict, *, session_key: str, run_id: str
-) -> tuple[str, str]:
-    """Run ONE approved proposal through PA-3's stage. Returns ``(reason, detail)``.
-
-    ``reason`` is empty when the action landed, and otherwise says why it did not (the stage's
-    `autoexec.SKIP_*`, or that it never reached the stage); ``detail`` is then the sentence the
-    card and the response show, in the words the digest uses (`autoexec.not_done_note`).
-
-    The user's tap is expressed as an in-memory approve rule for exactly this one proposal —
-    never persisted, so a single "yes" does not silently become an "always" — keyed
-    :data:`REPLY_RULE`, so the run's journal names her answer as what allowed it rather than a
-    taught rule, and `cap=1`, so a tap can dispatch one action and no more. Its pattern is the
-    proposal's own, or its kind when the run recorded none: the rule is handed this one proposal
-    alone, so it authorises exactly what she saw, and a pattern is what "always" remembers, not
-    what one "yes" needs. The proposal runs as its run recorded it (its arguments), and the
-    capability the answer admits is its own kind's alone (`autoexec.answer_capabilities`), not
-    the digest's unattended set, which holds no task list. Every guard PA-3 put in front of an
-    unattended write therefore runs here too, in the order it runs there.
-    """
-    from datetime import datetime, timezone
-
-    from personalclaw.proactive.approval import ApprovalRule, Verdict
-    from personalclaw.proactive.autoexec import (
-        SKIP_NO_PROVIDER,
-        answer_capabilities,
-        auto_execute,
-        not_done_note,
-    )
-    from personalclaw.proactive.manifest import manifest_from_projection
-    from personalclaw.proactive.proposals import Proposal
-
-    action_type = str(row.get("action_type", "") or "")
-    pattern = str(row.get("pattern_key", "") or "") or action_type
-    if not pattern:
-        # A row with no kind names nothing to do.
-        return SKIP_NO_PROVIDER, not_done_note(SKIP_NO_PROVIDER, answered=True)
-    manifest = manifest_from_projection(
-        [
-            {
-                "ordinal": str(item.get("ordinal", "") or ""),
-                "source": str(item.get("source", "") or ""),
-                "source_id": str(item.get("source_id", "") or ""),
-                "title": str(item.get("title", "") or ""),
-                "permalink": str(item.get("item_permalink", "") or ""),
-                "materiality": str(item.get("materiality", "") or ""),
-            }
-            for item in (view.get("pending") or []) + (view.get("auto_done") or [])
-        ],
-        window_start=str(view.get("window_start", "") or ""),
-    )
-    arguments = row.get("action_config")
-    proposal = Proposal(
-        item_id=str(row.get("ordinal", "") or ""),
-        action_type=action_type,
-        tier=str(row.get("tier", "") or ""),
-        action_config=dict(arguments) if isinstance(arguments, dict) else {},
-        pattern_key=pattern,
-    )
-    result = await auto_execute(
-        [proposal],
-        manifest=manifest,
-        rules=[ApprovalRule(pattern=pattern, verdict=Verdict.APPROVE, key=REPLY_RULE)],
-        now=datetime.now(timezone.utc),
-        enabled=True,
-        cap=1,
-        capabilities=answer_capabilities(action_type),
-        session_key=session_key,
-        ledger=_run_ledger(run_id),
-    )
-    if result.executed:
-        action = result.executed[0]
-        return "", f"{proposal.action_type} on {action.source_id}"
-    if result.deferred:
-        deferred = result.deferred[0]
-        return deferred.reason, not_done_note(deferred.reason, deferred.detail, answered=True)
-    return (
-        _NOTHING_RETURNED,
-        "Not done: the action stage returned nothing. Open the item to do it yourself.",
-    )
-
-
-def _run_ledger(run_id: str):
-    """PA-3's `LedgerFn`, bound to the digest's run so an approved action lands in ITS journal."""
-    from personalclaw.proactive.surface import TRIAGE_NODE_ID
-    from personalclaw.workflows.journal import Journal
-
-    journal = Journal(run_id=run_id)
-
-    def write(kind: str, fields: dict) -> None:
-        journal.write(
-            kind,
-            node_id=TRIAGE_NODE_ID,
-            instance_path=TRIAGE_NODE_ID,
-            epoch=0,
-            actor="user",
-            **fields,
-        )
-
-    return write
-
-
 async def api_proactive_reply(request: web.Request) -> web.Response:
     """POST /api/proactive/digest/reply — one tap or one typed reply. Body ``{run_id, text}``.
 
-    The response always says which of five things happened, because a card that cannot tell them
-    apart will show the wrong one: ``expired`` (the run is not the current digest), ``help`` (the
-    grammar refused and returned a help line — never an interpretation), ``already`` (this
-    ordinal was answered before, so nothing ran again), ``acted``, or an error.
+    The card's door to the one answer path (:func:`personalclaw.proactive.answer.answer`), as
+    the owner's signed-in session or whoever else the request proves (`approval_answer`), who is
+    refused before anything is read. The response always says which of five things happened,
+    because a card that cannot tell them apart will show the wrong one: ``expired`` (the run is
+    not the current digest), ``help`` (the grammar refused and returned a help line — never an
+    interpretation), ``already`` (this ordinal was answered before, so nothing ran again),
+    ``acted``, or an error.
     """
+    from personalclaw import approval_answer
     from personalclaw.dashboard.handlers import _is_restricted_session
-    from personalclaw.proactive.approval import HELP_TEXT, ReplyAction, parse_reply
-    from personalclaw.proactive.surface import ANSWERS_NOT_DONE, OUTCOME_ANSWER_EXECUTED
+    from personalclaw.dashboard.handlers.memory import _global_service
+    from personalclaw.proactive import answer as triage_answer
 
     if _is_restricted_session(request.app["state"], request):
         return json_error(
@@ -613,137 +303,39 @@ async def api_proactive_reply(request: web.Request) -> web.Response:
     text = str(body.get("text", "") or "")
     if not run_id:
         return json_error("invalid_request", message="run_id is required", status=400)
-    # A reply approves (or declines) what the digest's run proposed, so only you give one
-    # (`approval_answer`): not an app, not an agent's tool, and not the run that proposed it.
-    from personalclaw import approval_answer
 
-    refused = approval_answer.forbidden(
-        request, what=f"digest:{run_id}", asked_by=approval_answer.run(run_id).label
+    session_key = request.headers.get("X-Session-Key", "") or ""
+    state = request.app["state"]
+    done = await triage_answer.answer(
+        run_id,
+        text,
+        door=triage_answer.Door(
+            by=approval_answer.of_request(request),
+            caller=session_key,
+            source="dashboard",
+            session_key=session_key,
+            memory=lambda: _global_service(state),
+        ),
     )
-    if refused is not None:
-        return refused
-
-    from personalclaw.proactive.surface import STATE_READY, build_digest_view
-
-    def read() -> dict:
-        state = _install_state()
-        run, output, events = _latest_digest()
-        return build_digest_view(
-            enabled=state["enabled"],
-            installed=state["installed"],
-            run=run,
-            output=output,
-            events=events,
-        )
-
-    try:
-        view = await asyncio.to_thread(read)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("proactive: reply read failed", exc_info=True)
-        return json_error(
-            "triage_digest_unreadable", message=f"{type(exc).__name__}: {exc}", status=500
-        )
-
-    if view.get("state") != STATE_READY or str(view.get("run_id", "")) != run_id:
-        # An ordinal numbers ONE window. Acting on a stale digest's "3" would address whatever
-        # happens to be third today, which is criterion 9's wrong-target execution.
+    if done.outcome == triage_answer.REFUSED:
+        return json_error("approval_owner_only", message=done.error, status=403)
+    if done.outcome == triage_answer.UNREADABLE:
+        return json_error("triage_digest_unreadable", message=done.error, status=500)
+    if done.outcome == triage_answer.EXPIRED:
         return json_error(
             "triage_digest_expired",
             message="that digest expired — open the current one and answer there",
             status=409,
             ok=False,
             outcome="expired",
-            current_run_id=str(view.get("run_id", "") or ""),
+            current_run_id=done.current_run_id,
         )
-
-    ordinals = [str(row.get("ordinal", "")) for row in (view.get("pending") or [])]
-    parsed = parse_reply(text, max_ordinal=view.get("collected") or None)
-    if parsed.action in (ReplyAction.HELP, ReplyAction.UNPARSEABLE):
+    if done.outcome == triage_answer.HELP:
         # A 200, not an error envelope: the grammar REFUSED and answered with a help line, which
         # is the documented outcome ("ambiguity gets a help line, not a guess"), not a
         # failure of the request. `help_text` rather than `error` so the census's flat shape is not
         # minted for something that is not an error at all.
         return web.json_response(
-            {"ok": False, "outcome": "help", "help": HELP_TEXT, "help_reason": parsed.error or ""}
+            {"ok": False, "outcome": "help", "help": done.help, "help_reason": done.help_reason}
         )
-    targets = ordinals if parsed.applies_to_all else [str(parsed.ordinal)]
-
-    results: list[dict[str, Any]] = []
-    for ordinal in targets:
-        row = _pending_row(view, ordinal)
-        if row is None:
-            results.append(
-                {"ordinal": ordinal, "outcome": "unknown", "detail": "not pending in this digest"}
-            )
-            continue
-        if row.get("answered"):
-            results.append(
-                {
-                    "ordinal": ordinal,
-                    "outcome": "already",
-                    "detail": f"already answered {row.get('answer') or 'earlier'}",
-                }
-            )
-            continue
-        rule_key, rule_error = "", ""
-        if parsed.persists_rule:
-            rule_key, rule_error = await asyncio.to_thread(
-                _persist_rule, request, str(row.get("pattern_key", "") or ""), parsed.approves
-            )
-        reason, detail = "", ""
-        if parsed.approves:
-            reason, detail = await _dispatch_approved(
-                view,
-                row,
-                session_key=request.headers.get("X-Session-Key", "") or "",
-                run_id=run_id,
-            )
-        answer = _answer_outcome(parsed.approves, reason)
-        not_done = detail if answer in ANSWERS_NOT_DONE else ""
-        verb = _verb(parsed)
-        recorded = await asyncio.to_thread(
-            _write_reply_row,
-            run_id,
-            ordinal,
-            verb=verb,
-            outcome=_answer_outcome(parsed.approves, reason),
-            # The sentence, when the yes did not happen: the card shows it on the answered row.
-            detail=not_done or rule_error or detail,
-        )
-        results.append(
-            {
-                "ordinal": ordinal,
-                "outcome": "acted",
-                "verb": verb,
-                "executed": answer == OUTCOME_ANSWER_EXECUTED,
-                # A "yes" whose action did not happen, said as the card says it. Empty otherwise.
-                "not_done": not_done,
-                "detail": rule_error or detail,
-                "rule": rule_key,
-                "rule_error": rule_error,
-                # False means the answer was NOT durably recorded, so the next tap will act
-                # again. Surfaced rather than hidden — the user is the only one who can retry.
-                "recorded": recorded,
-            }
-        )
-    _sel().log_api_access(
-        caller=request.headers.get("X-Session-Key", ""),
-        operation="triage_reply",
-        outcome="success",
-        source="dashboard",
-        resources=f"run:{run_id}:{_verb(parsed)}:{','.join(targets)}",
-    )
-    return web.json_response({"ok": True, "outcome": "acted", "results": results})
-
-
-def _verb(parsed: Any) -> str:
-    from personalclaw.proactive.approval import ReplyAction
-
-    return {
-        ReplyAction.APPROVE_ONCE: "yes",
-        ReplyAction.DENY_ONCE: "no",
-        ReplyAction.APPROVE_ALWAYS: "always yes",
-        ReplyAction.DENY_ALWAYS: "always no",
-        ReplyAction.APPROVE_ALL: "yes all",
-        ReplyAction.DENY_ALL: "no all",
-    }.get(parsed.action, str(parsed.action))
+    return web.json_response({"ok": True, "outcome": "acted", "results": list(done.results)})

@@ -33,6 +33,14 @@ anyway. Nothing is lost by refusing, so refusing is the honest direction.
 Nothing here reads the clock or the config: ``now``, ``cap`` and ``enabled`` are parameters, so
 a test drives the whole ladder without a config file and the caller stays the only place that
 decides what "today" and "the ceiling" mean.
+
+**Your answer runs here too, and it is attended.** A Yes on the digest (its card, or a reply on the
+chat channel it reached: ``proactive.answer``) dispatches through this stage with ``answered=True``,
+so the capability set, the item's lane, the spend floor and the action denylist hold it as they hold
+everything else. Two gates do not, because both are about work nobody answered: the incident kill
+switch suspends unattended work, and the operator ceiling's ``ask`` refuses the auto-execute grant
+that approves without asking. A person answered, so the answer needs no grant, and incident mode
+treats it as it treats every attended action (a chat's tool calls, a press in the Inbox): it runs.
 """
 
 from __future__ import annotations
@@ -106,12 +114,14 @@ SKIP_FAILED = "auto_failed"
 #: The two PLATFORM gates, above the four. This module is a fifth UNATTENDED dispatch seam
 #: (AUTONOMY-GUARDRAILS §1.2), so it carries the kill switch and the action denylist like the
 #: other four — a digest that kept archiving through an incident would be the quiet exception
-#: that makes the kill switch useless.
+#: that makes the kill switch useless. The kill switch holds only what nobody answered: your Yes
+#: is attended work, which incident mode leaves running, as it leaves a chat's tool calls.
 SKIP_INCIDENT = "incident_active"
 SKIP_DENYLIST = "denied_by_denylist"
 #: The operator ceiling says a person decides every action on this machine
 #: (``{"approval": {"value": "ask"}}``). Auto-execution is a grant (`approval_grants`) like any
-#: other: neither the trivial tier nor a taught always-approve rule loosens the ceiling.
+#: other: neither the trivial tier nor a taught always-approve rule loosens the ceiling. Your Yes
+#: is a person deciding, so it asks for no grant and is never refused for one.
 SKIP_CEILING = "refused_by_ceiling"
 
 #: The rule name a trivial-tier execution with no taught rule behind it records. The ledger row
@@ -328,6 +338,7 @@ async def auto_execute(
     dispatch: DispatchFn | None = None,
     budget_check: BudgetCheckFn | None = None,
     ledger: LedgerFn | None = None,
+    answered: bool = False,
 ) -> AutoExecResult:
     """Run the eligible proposals, defer the rest, and record BOTH.
 
@@ -335,6 +346,11 @@ async def auto_execute(
     ``executed`` (it landed) or in ``deferred`` with a reason (a failed dispatch included), and
     the counts always reconcile with the input. A caller that supplies `ledger` also gets one row
     per outcome.
+
+    ``answered`` says the owner answered these proposals (their Yes): attended work. It runs in
+    incident mode and under an ``ask`` ceiling, which suspend and refuse only what nobody
+    answered, and everything else here holds it as it holds the digest's own run. Off, the
+    default, is the digest acting on its own, held by both.
     """
     from personalclaw.ledger.kinds import AUTO_EXECUTED, AUTO_FAILED, SKIPPED_BUDGET
 
@@ -366,11 +382,12 @@ async def auto_execute(
     from personalclaw.guardrails.denylist import enforce_action
     from personalclaw.guardrails.incident import incident_active
 
-    if incident_active():
+    if not answered and incident_active():
         # FAIL-CLOSED, and before the loop: the kill switch exists to suspend unattended work,
         # and a digest that kept archiving through an incident would be the quiet exception that
         # makes it useless. The proposals still come back — pending, with the reason — so the
-        # user sees an incident as a deferral rather than as a digest that went silent.
+        # user sees an incident as a deferral rather than as a digest that went silent. Her own
+        # answer is not unattended work: it runs, as a chat's tool calls run in incident mode.
         return AutoExecResult(
             deferred=tuple(
                 DeferredProposal(
@@ -384,13 +401,14 @@ async def auto_execute(
 
     from personalclaw import approval_grants
 
-    if not approval_grants.stands(
+    if not answered and not approval_grants.stands(
         approval_grants.AUTO_EXECUTE,
         caller=session_key or "proactive:auto_execute",
         subject=f"proposals={len(proposals)}",
     ):
         # Before the loop, like the kill switch: every proposal comes back pending with the
-        # reason, so the digest shows what waits for you rather than going quiet.
+        # reason, so the digest shows what waits for you rather than going quiet. Her answer asks
+        # for no grant: the grant approves what nobody answered, and she answered.
         return AutoExecResult(
             deferred=tuple(
                 DeferredProposal(
@@ -630,11 +648,16 @@ def why_not_done(reason: str, detail: str = "", *, on_its_own: bool = False) -> 
     return why
 
 
+#: Where the digest's text sends you to answer a proposal: its card. The text is shown in
+#: PersonalClaw (the notification), where nothing takes a typed reply, and on a chat channel, which
+#: adds how to answer there (`channel_reply.reply_footer`), so the card is what it names everywhere.
+_ON_THE_CARD = "on the Morning triage card in your Inbox"
+
+
 def not_done_note(
     reason: str,
     detail: str = "",
     *,
-    ordinal: str = "",
     answered: bool = False,
     on_card: bool = False,
 ) -> str:
@@ -643,21 +666,20 @@ def not_done_note(
     Unanswered (the digest acting on its own), only :data:`NOT_DONE_ON_ITS_OWN` gets one: every
     other deferral is a plain proposal waiting for you, or a stage stop said once. ``answered``
     is a "yes" that did not happen, so every reason gets one, and the next step is the item
-    itself — the answer is recorded, and a second tap would not act again. ``on_card`` names the
-    card's Yes button as the way to try again; the digest's text, which a channel delivers too,
-    names the reply that does it.
+    itself — the answer is recorded, and a second tap would not act again. ``on_card`` is the
+    card's own row, whose Yes button is the way to try again; the digest's text names that card.
     """
     if not answered and reason not in NOT_DONE_ON_ITS_OWN:
         return ""
     why = why_not_done(reason, detail, on_its_own=not answered)
+    yes = "Yes" if on_card else f"Yes {_ON_THE_CARD}"
     if answered or reason == SKIP_DENYLIST:
         # The same rule holds a "yes", so offering one would offer a refusal.
         then = "Open the item to do it yourself."
     elif reason == SKIP_CAP:
-        then = "Yes does it now." if on_card else f"Reply `{ordinal} yes` to do it now."
+        then = f"{yes} does it now."
     else:
-        retry = "Yes tries it again" if on_card else f"Reply `{ordinal} yes` to try again"
-        then = f"{retry}, or open the item to do it yourself."
+        then = f"{yes} tries it again, or open the item to do it yourself."
     return f"Not done: {why}. {then}"
 
 

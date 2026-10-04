@@ -184,8 +184,10 @@ async def test_the_digest_says_a_failed_action_failed_why_and_what_to_do() -> No
     needs = _section(body, "Needs you:")
     assert _TITLE in needs
     assert "failed" in needs and _ERROR in needs
-    # What she can do next, in the reply grammar the digest accepts.
-    assert "`1 yes`" in needs
+    # What she can do next, where the notice is shown: the card's Yes. Nothing in PersonalClaw's
+    # notice takes a typed reply; the chat channel it reaches adds that itself.
+    assert "Yes on the Morning triage card in your Inbox tries it again" in needs
+    assert "`1 yes`" not in needs
 
     # The pair: the same window with a dispatch that landed.
     done = await _digest(ok=True)
@@ -500,7 +502,9 @@ def test_an_answer_that_did_not_happen_says_so_on_the_card() -> None:
 def reply(monkeypatch: Any):
     """POST /api/proactive/digest/reply against one digest, with the stores replaced in memory."""
     import personalclaw.dashboard.handlers.proactive as mod
+    import personalclaw.proactive.answer as answer
     import personalclaw.proactive.autoexec as autoexec
+    import personalclaw.proactive.digest_state as digest_state
 
     written: list[dict] = []
     dispatch = _Dispatch(ok=True)
@@ -508,18 +512,17 @@ def reply(monkeypatch: Any):
     output = {k: v for k, v in _output([]).items() if not k.startswith(("auto_", "budget_"))}
 
     monkeypatch.setattr(
-        mod,
-        "_install_state",
+        digest_state,
+        "install_state",
         lambda: {"installed": True, "enabled": True, "schedule": None, "drift": False},
     )
-    monkeypatch.setattr(mod, "_latest_digest", lambda: (dict(_RUN), output, []))
+    monkeypatch.setattr(digest_state, "latest_digest", lambda: (dict(_RUN), output, []))
     monkeypatch.setattr(
-        mod,
-        "_write_reply_row",
+        answer,
+        "write_reply_row",
         lambda run_id, ordinal, **kw: written.append({"ordinal": ordinal, **kw}) or True,
     )
-    monkeypatch.setattr(mod, "_run_ledger", lambda run_id: lambda kind, fields: None)
-    monkeypatch.setattr(mod, "_sel", lambda: SimpleNamespace(log_api_access=lambda **kw: None))
+    monkeypatch.setattr(answer, "run_ledger", lambda run_id: lambda kind, fields: None)
     monkeypatch.setattr(autoexec, "_default_dispatch", dispatch)
     monkeypatch.setattr(autoexec, "default_budget_check", lambda *a, **k: _clean_budget)
 

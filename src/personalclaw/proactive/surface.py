@@ -235,9 +235,7 @@ def build_digest_view(
                 # tried and could not do, or one a guard held, is said as not done, never as done
                 # and never as a proposal nobody tried.
                 "not_done": (
-                    not_done_note(
-                        reason, str(row.get("detail", "") or ""), ordinal=ordinal, on_card=True
-                    )
+                    not_done_note(reason, str(row.get("detail", "") or ""), on_card=True)
                     if auto_stage_ran
                     else ""
                 ),

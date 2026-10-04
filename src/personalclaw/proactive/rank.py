@@ -138,10 +138,7 @@ def render_digest(
     proposal_ids = {p.item_id for p in ranked_proposals}
     acted_on = {a.proposal.item_id for a in auto.executed} if auto is not None else set()
     deferred = auto.deferred if auto is not None else ()
-    not_done = {
-        d.proposal.item_id: not_done_note(d.reason, d.detail, ordinal=d.proposal.item_id)
-        for d in deferred
-    }
+    not_done = {d.proposal.item_id: not_done_note(d.reason, d.detail) for d in deferred}
     stopped = (
         stopped_note((d.reason for d in deferred), budget_reason=auto.budget_reason)
         if auto is not None

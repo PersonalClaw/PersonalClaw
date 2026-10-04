@@ -1974,6 +1974,21 @@ INVENTORY: tuple[StateEntry, ...] = (
         merge=MERGE_REPLACE_ONLY,
         help="notifications waiting for the next digest",
     ),
+    # Which Morning triage digest each chat channel's DM last received
+    # (`proactive.channel_reply`), so a reply typed there answers that digest's run and no other.
+    # It names this machine's workflow runs, so it has their posture: one machine's account of
+    # what it sent, never synced or merged in, and brought back whole by a replace restore with
+    # the runs it names. Lost, a reply there reaches the chat as any message does.
+    StateEntry(
+        id="digest_channels",
+        kind=KIND_JSON_FILE,
+        path="digest_channels.json",
+        domain=DOMAIN_AUTOMATION,
+        merge=MERGE_REPLACE_ONLY,
+        help="the Morning triage digest each chat channel's DM last received",
+        machine_local=True,
+        merged_in=False,
+    ),
     # Kanban columns over tags (`DashboardState.save_tag_boards`): a bare list of `id` rows,
     # the same shape as its `tags.json` neighbour, so the same merge, one record at a time.
     StateEntry(

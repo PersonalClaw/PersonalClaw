@@ -1264,6 +1264,15 @@
   },
   "kind": "class",
   "members": {
+   "answer_channel_reply": {
+    "kind": "async method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
+     {"annotation": "ChannelMessage", "kind": "positional_or_keyword", "name": "msg"},
+     {"annotation": "bool", "default": "True", "kind": "keyword_only", "name": "is_dm"}
+    ],
+    "returns": "bool"
+   },
    "config": {"kind": "property", "returns": "AppConfig", "settable": false},
    "deliver_channel_inbound": {
     "kind": "async method",
@@ -4855,7 +4864,8 @@
  },
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'guarded-download', 'links-name-their-channel', 'turns-name-their-channel'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'turns-name-their-channel'})"},
+ "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
  "personalclaw.sdk.features.GUARDED_DOWNLOAD": {"kind": "value", "type": "str", "value": "'guarded-download'"},
  "personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'links-name-their-channel'"},
  "personalclaw.sdk.features.TURNS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'turns-name-their-channel'"},

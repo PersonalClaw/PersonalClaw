@@ -222,6 +222,21 @@ A channel that uses these declares the core feature in its `app.json`:
 `"requiresCoreFeatures": ["chat-trust"]` (`personalclaw.sdk.features.CHAT_TRUST`). A PersonalClaw
 without it has neither function, and refuses to install or update the app.
 
+### The owner's answer to the Morning triage digest
+
+When the owner's notification rule sends the Morning triage digest to their DM on your channel, the
+DM says how to answer it there: `3 yes`, `3 no`, `always yes 3`, `yes all`. A DM that crosses the
+guarded door (`services.deliver_channel_inbound`) needs nothing from you: the door takes the
+owner's answer to the digest that DM received, answers it as the digest's card does, says in the DM
+what it did, and hands you back a verdict that is not allowed (`reason` `answered_digest`), so you
+run nothing and publish nothing for it. A channel that runs a DM's conversation itself offers each
+direct message to `await services.answer_channel_reply(<your provider key>, msg, is_dm=True)` before
+its own turn, and runs no turn when it returns `True`. Who may answer (the owner your channel keeps,
+`owner_id_for`), which DM (the one the digest reached) and what counts as an answer (the digest's
+grammar, and nothing else) are core's to decide: offer every direct message, and let a `False` mean
+the message is yours as before. Declare `"requiresCoreFeatures": ["digest-replies"]`
+(`personalclaw.sdk.features.DIGEST_REPLIES`); a PersonalClaw without it has no such method.
+
 ### A compaction the agent did on its own is said
 
 The agent can compact the conversation on its own in the middle of a turn: an

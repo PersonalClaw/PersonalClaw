@@ -327,7 +327,6 @@ from personalclaw.dashboard.handlers.optimizer import (  # noqa: E402, F401
     handle_optimize,
 )
 from personalclaw.dashboard.handlers.proactive import (  # noqa: E402, F401
-    TRIAGE_TRIGGER_ID,
     api_proactive_digest,
     api_proactive_install,
     api_proactive_reply,

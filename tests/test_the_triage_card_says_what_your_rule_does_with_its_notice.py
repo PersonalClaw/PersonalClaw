@@ -210,14 +210,16 @@ def test_unreadable_settings_are_unknown_not_off(home, monkeypatch):
 def test_the_ready_view_carries_the_notice_for_its_own_digest(home, monkeypatch):
     _settings(quiet=True)
     _rule("digest")
+    from personalclaw.proactive import digest_state
+
     monkeypatch.setattr(
-        P,
-        "_install_state",
+        digest_state,
+        "install_state",
         lambda: {"installed": True, "enabled": True, "schedule": None, "drift": False},
     )
     monkeypatch.setattr(
-        P,
-        "_latest_digest",
+        digest_state,
+        "latest_digest",
         lambda: (
             {"run_id": "run-1", "status": "completed", "finished_at": "2026-09-30T03:10:00Z"},
             {"digest_title": _TITLE, "digest_body": _BODY, "delivered": True, "collected": 3},

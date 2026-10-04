@@ -566,6 +566,17 @@ class GatewayOrchestrator:
             turn_runner=functools.partial(run_chat, arrived_from_channel=True),
         )
 
+    async def answer_channel_reply(
+        self, provider: str, msg: "ChannelMessage", *, is_dm: bool = True
+    ) -> bool:
+        """The owner's answer to the Morning triage digest, from a channel that runs its own turns.
+
+        The door above answers one itself; a transport that runs a conversation itself offers the
+        message here first (`proactive.channel_reply.answer_on_channel`)."""
+        from personalclaw.proactive.channel_reply import answer_on_channel
+
+        return await answer_on_channel(self, provider, msg, is_dm=is_dm)
+
     # ------------------------------------------------------------------
     # Tool approval callback (shared by cron, heartbeat, subagent, task)
     # ------------------------------------------------------------------

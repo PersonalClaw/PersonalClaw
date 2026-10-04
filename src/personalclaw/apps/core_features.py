@@ -31,6 +31,14 @@ import re
 #: answers, so a prompt that offers the brief's answers has nothing to offer.
 APPROVAL_ANSWERS = "approval-answers"
 
+#: A channel that runs a conversation itself offers core the owner's message before its own turn
+#: (``GatewayServices.answer_channel_reply(provider, msg, is_dm=…)``): core takes the owner's
+#: answer to the Morning triage digest that DM received (``3 yes``), answers it as the digest's card
+#: does, says in the DM what it did, and returns True, so the channel runs no turn for it; anything
+#: else returns False and stays the channel's. A core without it has no such method on the services
+#: handle, so an app that calls it fails on every direct message.
+DIGEST_REPLIES = "digest-replies"
+
 #: An app can stream a download through the egress guard: ``personalclaw.sdk.net.open_url`` opens
 #: a URL with every request it sends, each redirect hop included, asked of the guard first under
 #: the connector policy and the owner's Network egress settings, and raises ``EgressBlocked`` for
@@ -71,6 +79,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
     {
         APPROVAL_ANSWERS,
         CHAT_TRUST,
+        DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
         TURNS_NAME_THEIR_CHANNEL,

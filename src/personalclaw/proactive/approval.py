@@ -359,10 +359,13 @@ class ReplyAction(str, Enum):
     UNPARSEABLE = "unparseable"  # → help line, never an interpretation
 
 
+#: The grammar, as a reply on the chat channel the digest reached uses it: said under the digest
+#: there, and with the reason when a reply was not read. It names no ``help`` reply: a bare
+#: ``help`` there is a message for the chat, never this line.
 HELP_TEXT = (
     "Reply with: `3 yes` / `3 no` to act on item 3 once · "
     "`always yes 3` / `always no 3` to act and remember the pattern · "
-    "`yes all` / `no all` for every pending item · `help` for this line."
+    "`yes all` / `no all` for every pending item."
 )
 
 _VERBS: dict[str, bool] = {"yes": True, "y": True, "no": False, "n": False}

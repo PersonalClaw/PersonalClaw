@@ -204,7 +204,9 @@ _PROPOSALS = [
 def reply(inbox: Any, monkeypatch: Any):
     """POST /api/proactive/digest/reply against the digest *output*, with its run's record kept."""
     import personalclaw.dashboard.handlers.proactive as mod
+    import personalclaw.proactive.answer as answer
     import personalclaw.proactive.autoexec as autoexec
+    import personalclaw.proactive.digest_state as digest_state
 
     output: dict = {}
     events: list[dict] = []
@@ -213,23 +215,22 @@ def reply(inbox: Any, monkeypatch: Any):
     run = {"run_id": "run-yes", "status": "complete"}
 
     monkeypatch.setattr(
-        mod,
-        "_install_state",
+        digest_state,
+        "install_state",
         lambda: {"installed": True, "enabled": True, "schedule": None, "drift": False},
     )
-    monkeypatch.setattr(mod, "_latest_digest", lambda: (dict(run), output, list(events)))
+    monkeypatch.setattr(digest_state, "latest_digest", lambda: (dict(run), output, list(events)))
 
     def write_reply_row(run_id: str, ordinal: str, **kw: Any) -> bool:
         events.append({"kind": "triage_reply", "item_ordinal": ordinal, **kw})
         return True
 
-    monkeypatch.setattr(mod, "_write_reply_row", write_reply_row)
+    monkeypatch.setattr(answer, "write_reply_row", write_reply_row)
     monkeypatch.setattr(
-        mod,
-        "_run_ledger",
+        answer,
+        "run_ledger",
         lambda run_id: lambda kind, fields: ledger.append({"kind": kind, **fields}),
     )
-    monkeypatch.setattr(mod, "_sel", lambda: SimpleNamespace(log_api_access=lambda **kw: None))
     monkeypatch.setattr(autoexec, "default_budget_check", lambda *a, **k: lambda: (False, ""))
 
     real_auto_execute = autoexec.auto_execute

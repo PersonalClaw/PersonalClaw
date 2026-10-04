@@ -32,6 +32,11 @@ COUNTERS: dict[str, tuple[dict, dict]] = {
     ),
     "durability_state": ({"last_snapshot": 1000.0}, {"last_snapshot": 9_999_999_999.0}),
     "task_due_notices": ({"notified": {"task-1": "2026-09-28"}}, {"notified": {"t-9": "x"}}),
+    # Which Morning triage digest each chat channel's DM last received: this machine's runs.
+    "digest_channels": (
+        {"version": 1, "channels": {"telegram": {"channel": "4401", "run_id": "run-here"}}},
+        {"version": 1, "channels": {"telegram": {"channel": "9900", "run_id": "run-there"}}},
+    ),
 }
 
 

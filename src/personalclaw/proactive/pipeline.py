@@ -168,10 +168,15 @@ def make_notify_deliver(*, run_id: str = "", trigger_id: str = "") -> DeliverFn:
     quiet-hours suppression for anything below `error`. A digest is `info`, so quiet hours DEFER
     it, which is the behaviour criterion 1 asks for. Building the `Delivery` here and then
     sending it some other way would be the second path R18 forbids.
+
+    A digest with proposals waiting for an answer says so in its notice
+    (`channel_reply.REPLY_ANSWERS_KEY`, naming its run): where your rule sends the notice to a chat
+    channel, the DM it reaches is told how to answer there, and a reply there answers this run.
     """
 
     def deliver(digest: Digest) -> bool:
         from personalclaw.action_providers.services import get_action_services
+        from personalclaw.proactive.channel_reply import REPLY_ANSWERS_KEY
         from personalclaw.triggers.delivery import (
             EVENT_SUCCEEDED,
             Delivery,
@@ -192,6 +197,7 @@ def make_notify_deliver(*, run_id: str = "", trigger_id: str = "") -> DeliverFn:
             trigger_id=trigger_id,
             run_id=run_id,
             kind=digest.kind,
+            meta={REPLY_ANSWERS_KEY: run_id} if run_id and digest.proposed else {},
         )
         try:
             services.state.notify(**payload.to_notify_kwargs())
