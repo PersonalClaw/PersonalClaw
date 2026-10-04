@@ -636,7 +636,7 @@ def approval_channel() -> str:
 def approval_providers(origin: str = "") -> list[str]:
     """The channels an approval may ask on, in the order they are tried.
 
-    ``origin`` is the channel the chat asking started on (``DashboardState.channel_provider_for``):
+    ``origin`` is the channel the chat asking is on (``DashboardState.channel_provider_for``):
     it comes FIRST, because the person asking is there. "Send approvals to" governs what has no
     channel origin (a chat in PersonalClaw, an unattended run, a trigger), and what is tried after
     an origin that cannot ask: the chosen channel alone when the owner chose one, and none while

@@ -81,8 +81,9 @@ class SessionMap:
     Only used for long-lived conversational sessions (channel DM, dashboard).
     Stateless sessions (cron, subagent) are excluded.
 
-    Each entry is a dict with keys: ``sid``, ``thread_ts``, ``channel_id``.
-    A reverse index ``_thread_to_session`` maps thread_ts → session_key
+    Each entry is a dict with keys: ``sid``, ``thread_ts``, ``channel_id``, and, for a session
+    linked to a thread, ``channel_provider``: the channel the thread is on (``"telegram"``), where
+    the session's answers go. A reverse index ``_thread_to_session`` maps thread_ts → session_key
     for bidirectional sync lookups.
     """
 
@@ -210,11 +211,10 @@ class SessionMap:
         if not entry.get("thread_ts"):
             self._remove_entry(key)
             return
-        self._data[key] = {
-            "sid": "",
-            "thread_ts": entry["thread_ts"],
-            "channel_id": entry.get("channel_id"),
-        }
+        kept = {"sid": "", "thread_ts": entry["thread_ts"], "channel_id": entry.get("channel_id")}
+        if entry.get("channel_provider"):
+            kept["channel_provider"] = entry["channel_provider"]
+        self._data[key] = kept
         self._save()
 
     def prune(self) -> int:
@@ -241,9 +241,16 @@ class SessionMap:
             logger.info("Pruned %d stale session map entries", len(stale))
         return len(stale)
 
-    def set_channel_link(self, key: str, thread_ts: str, channel_id: str | None) -> None:
+    def set_channel_link(
+        self, key: str, thread_ts: str, channel_id: str | None, *, channel_provider: str = ""
+    ) -> None:
         """Link a session to a channel thread, or with an empty *thread_ts* unlink it. Creates
         the entry if needed.
+
+        *channel_provider* names the channel the thread is on (``"telegram"``): a thread's id
+        means nothing without the channel that issued it, and the session's answers go to that
+        channel (:meth:`get_channel_provider`). A link that names none says only which thread;
+        an unlink drops the channel with the thread.
 
         The thread index says which session a thread continues (:meth:`get_session_for_thread`),
         and reading the file again rebuilds it in the file's order, the last entry naming a
@@ -252,9 +259,14 @@ class SessionMap:
         thread leaves the index only while the index still names it, since another session may
         have linked that thread since, and an empty thread is never indexed.
         """
+        provider = channel_provider if thread_ts else ""
         entry = self._data.get(key)
         if entry:
-            if entry.get("thread_ts") == thread_ts and entry.get("channel_id") == channel_id:
+            if (
+                entry.get("thread_ts") == thread_ts
+                and entry.get("channel_id") == channel_id
+                and (entry.get("channel_provider") or "") == provider
+            ):
                 if thread_ts:
                     self._thread_to_session.setdefault(thread_ts, key)
                 return
@@ -266,6 +278,10 @@ class SessionMap:
             entry["channel_id"] = channel_id
         else:
             entry = {"sid": "", "thread_ts": thread_ts, "channel_id": channel_id}
+        if provider:
+            entry["channel_provider"] = provider
+        else:
+            entry.pop("channel_provider", None)
         self._data[key] = entry
         if thread_ts:
             self._thread_to_session[thread_ts] = key
@@ -277,6 +293,13 @@ class SessionMap:
         if not entry:
             return None, None
         return entry.get("thread_ts"), entry.get("channel_id")
+
+    def get_channel_provider(self, key: str) -> str:
+        """The channel a session's thread is on, as its link names it (``"slack"``), or ``""``
+        when the session is on no thread or its link names no channel."""
+        entry = self._data.get(key)
+        provider = entry.get("channel_provider") if entry and entry.get("thread_ts") else ""
+        return provider if isinstance(provider, str) else ""
 
     def get_session_for_thread(self, thread_ts: str) -> str | None:
         """Return the session key linked to a channel thread_ts, or None."""

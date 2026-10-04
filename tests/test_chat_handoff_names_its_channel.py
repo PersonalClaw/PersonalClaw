@@ -250,7 +250,10 @@ async def test_a_reply_in_the_thread_continues_it_where_dms_have_threads(real_st
     reached = await _reply(real_state, "slackish", channel="U0OWNER", thread="77", sender="U0OWNER")
     assert reached is not None and reached.key == "chat-9"
     # The link is persisted where a channel with its own routing (and the next restart) reads it.
-    real_state.sessions.set_channel_link.assert_called_with("dashboard:chat-9", "77", "U0OWNER")
+    real_state.sessions.set_channel_link.assert_called_with(
+        "dashboard:chat-9", "77", "U0OWNER", channel_provider="slackish"
+    )
+    assert real_state.channel_provider_for("chat-9") == "slackish"
 
 
 @pytest.mark.asyncio

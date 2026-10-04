@@ -469,9 +469,10 @@ class _ChatSession(ChatQueue):
         self.memory_mode: str = memory_mode
         self._ephemeral: bool = ephemeral  # Incognito mode: no memory writes
         self._pending_context: list[dict[str, Any]] = []
-        # Where the conversation came from, for display and routing: a hidden worker's tag
-        # ("loop", "loops"), the channel it arrived on ("slack"), or an app's name. It is NOT who
-        # owns it — those tags are ordinary strings an installed app can also be named.
+        # Where the conversation came from, for display and for what its turns are counted under: a
+        # hidden worker's tag ("loop", "loops"), the channel it arrived on ("slack"), or an app's
+        # name. It is NOT who owns it — those tags are ordinary strings an installed app can also
+        # be named — and not where it answers, which is its link's (`channel_provider_for`).
         self._app: str = ""
         # The app whose token started this conversation, or "" for yours. Set only from a
         # VERIFIED app identity (`get_or_create_session(created_by_app=…)`), persisted on the meta
@@ -1152,21 +1153,23 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         return delivery_for(provider)
 
     def channel_provider_for(self, session_key: str) -> str:
-        """Which channel a session's messages came FROM, or "" for a dashboard session.
+        """The channel a chat continues on, or "" for a chat on no channel thread.
 
-        Stamped at session creation by the one inbound door
-        (`channel_inbound._route_to_session` → `get_or_create_session(app=provider)`), which is
-        also the code that already knows the provider — it just had nowhere to put it that the
-        outbound side could read — or by a link or handoff (`chat_channel._continue_there`). It
-        rides the chat's meta line, and a restart reads it back where it mints the chat.
+        The channel its link names (:func:`~personalclaw.dashboard.channel_links.chat_channel`),
+        read where links are kept: the inbound door links every chat it opens to the thread its
+        message came on, and a handoff or a link from the dashboard, or a channel app's import or
+        resume, links a chat to the thread it opened (:meth:`link_channel`). Its answers, its
+        notices and its approval prompts go there, so a chat moved to another channel answers on
+        that one, before a restart and after it. It used to be the chat's origin tag, where it
+        came from, which a handoff set only for a chat that had none: a chat from Telegram
+        continued in a Slack thread kept answering on Telegram.
 
         Takes either key a caller holds: the chat's name, which ``_sessions`` is keyed by, or its
         history key (``dashboard:<name>``), which is what a turn carries. The mirror in
         ``chat_runner`` asks with the history key, and reading it as a name is how every answer
         to a channel message stayed in the dashboard.
         """
-        session = self._sessions.get(session_key.removeprefix(DASHBOARD_SESSION_PREFIX))
-        return str(getattr(session, "_app", "") or "") if session is not None else ""
+        return channel_links.chat_channel(self, session_key.removeprefix(DASHBOARD_SESSION_PREFIX))
 
     _LAST_SPOKEN_MAX_SESSIONS = 32
     _LAST_SPOKEN_MAX_CHARS = 4000
@@ -1244,8 +1247,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         """Say *text* on the channel thread a conversation is linked to, where its replies go.
 
         For a notice PersonalClaw adds to a conversation, not the agent's answer: a compaction's
-        outcome, a restart at the context threshold. A chat that came from a channel is told on
-        that channel (:meth:`channel_provider_for`, the rule its replies follow), and a channel's
+        outcome, a restart at the context threshold. A chat is told on the channel its link names
+        (:meth:`channel_provider_for`, the rule its replies follow), and a channel's
         own thread, which is no chat here (a Slack thread its app runs), on the channel that issued
         the thread's id (``channel_delivery.channel_of_id``), never on one that merely happens to
         be connected. With no linked thread, or that channel not connected, nothing is sent. The
@@ -2186,10 +2189,13 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
                 return s
         return None
 
-    def link_channel(self, session_name: str, thread_ts: str, channel_id: str) -> None:
-        """Link the chat *session_name* to a channel thread, so a message there continues it
+    def link_channel(
+        self, session_name: str, thread_ts: str, channel_id: str, *, provider: str
+    ) -> None:
+        """Link the chat *session_name* to a thread on the channel *provider*, so a message there
+        continues it and its answers go there; the owner's own DM it was in is told where it went
         (:func:`~personalclaw.dashboard.channel_links.link`)."""
-        channel_links.link(self, session_name, thread_ts, channel_id)
+        channel_links.link(self, session_name, thread_ts, channel_id, provider)
 
     def get_or_create_session(
         self,
@@ -2243,11 +2249,11 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         session.created_by_app = (
             persisted_creator if persisted_creator is not None else created_by_app
         )
-        # The origin tag: the channel the chat came from or continues on, the worker or app it is
-        # for. Its answers go back out on that channel (`channel_provider_for`) and its turns'
-        # usage is attributed to it, so it is read back from the meta line it is saved on: a
-        # restart brought a channel's chat back with none, and its answers stayed here. An app's
-        # conversation carries the app as its origin tag when it has no other.
+        # The origin tag: the channel the chat came from, the worker or app it is for. Its turns'
+        # usage is attributed to it and the chat list says where it came from by it, so it is read
+        # back from the meta line it is saved on. Where the chat answers is its link's
+        # (`channel_provider_for`), not this. An app's conversation carries the app as its origin
+        # tag when it has no other.
         persisted_origin = persisted.get("app") if persisted else ""
         session._app = (
             app

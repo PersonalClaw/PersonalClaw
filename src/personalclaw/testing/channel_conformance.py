@@ -246,7 +246,7 @@ class CapturingState:
         self.sessions: Any = None
         self._background_tasks: set[Any] = set()
         self.sessions_created: list[CapturedSession] = []
-        self.links: list[tuple[str, str, str]] = []
+        self.links: list[tuple[str, str, str, str]] = []
         self._by_thread: dict[str, CapturedSession] = {}
         self._counter = 0
 
@@ -266,8 +266,10 @@ class CapturingState:
         self.sessions_created.append(session)
         return session
 
-    def link_channel(self, session_key: str, thread_key: str, channel_id: str) -> None:
-        self.links.append((session_key, thread_key, channel_id))
+    def link_channel(
+        self, session_key: str, thread_key: str, channel_id: str, *, provider: str
+    ) -> None:
+        self.links.append((session_key, thread_key, channel_id, provider))
         for s in self.sessions_created:
             if s.key == session_key:
                 self._by_thread[thread_key] = s

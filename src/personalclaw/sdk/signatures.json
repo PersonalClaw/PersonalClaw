@@ -624,7 +624,8 @@
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "session_key"},
      {"annotation": "str", "kind": "positional_or_keyword", "name": "thread_key"},
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "channel_id"}
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "channel_id"},
+     {"annotation": "str", "kind": "keyword_only", "name": "provider"}
     ],
     "returns": "None"
    },
@@ -2645,6 +2646,13 @@
     ],
     "returns": "tuple[str | None, str | None]"
    },
+   "get_channel_provider": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
+    ],
+    "returns": "str"
+   },
    "get_or_create": {
     "kind": "async method",
     "params": [
@@ -2808,7 +2816,8 @@
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "key"},
      {"annotation": "str", "kind": "positional_or_keyword", "name": "thread_ts"},
-     {"annotation": "str | None", "kind": "positional_or_keyword", "name": "channel_id"}
+     {"annotation": "str | None", "kind": "positional_or_keyword", "name": "channel_id"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel_provider"}
     ],
     "returns": "None"
    },
@@ -2911,6 +2920,13 @@
     ],
     "returns": "tuple[str | None, str | None]"
    },
+   "get_channel_provider": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "key"}
+    ],
+    "returns": "str"
+   },
    "get_cwd": {
     "kind": "method",
     "params": [
@@ -2952,7 +2968,8 @@
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "key"},
      {"annotation": "str", "kind": "positional_or_keyword", "name": "thread_ts"},
-     {"annotation": "str | None", "kind": "positional_or_keyword", "name": "channel_id"}
+     {"annotation": "str | None", "kind": "positional_or_keyword", "name": "channel_id"},
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel_provider"}
     ],
     "returns": "None"
    }
@@ -4807,8 +4824,9 @@
  },
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'guarded-download'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'guarded-download', 'links-name-their-channel'})"},
  "personalclaw.sdk.features.GUARDED_DOWNLOAD": {"kind": "value", "type": "str", "value": "'guarded-download'"},
+ "personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'links-name-their-channel'"},
  "personalclaw.sdk.features.core_has": {
   "kind": "function",
   "params": [

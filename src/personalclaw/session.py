@@ -1879,13 +1879,22 @@ class SessionManager:
 
     # ── Channel thread linking (persisted via SessionMap) ──
 
-    def set_channel_link(self, key: str, thread_ts: str, channel_id: str | None) -> None:
-        """Link a session to a channel thread. Persists to session map."""
-        self._session_map.set_channel_link(key, thread_ts, channel_id)
+    def set_channel_link(
+        self, key: str, thread_ts: str, channel_id: str | None, *, channel_provider: str = ""
+    ) -> None:
+        """Link a session to a channel thread, on the channel *channel_provider* names, where its
+        answers go; an empty *thread_ts* unlinks it. Persists to session map."""
+        self._session_map.set_channel_link(
+            key, thread_ts, channel_id, channel_provider=channel_provider
+        )
 
     def get_channel_link(self, key: str) -> tuple[str | None, str | None]:
         """Return (thread_ts, channel_id) for a session."""
         return self._session_map.get_channel_link(key)
+
+    def get_channel_provider(self, key: str) -> str:
+        """The channel a session's thread is on, as its link names it, or ``""``."""
+        return self._session_map.get_channel_provider(key)
 
     def get_session_for_thread(self, thread_ts: str) -> str | None:
         """Return the session key linked to a channel thread, or None."""
@@ -1893,9 +1902,12 @@ class SessionManager:
 
     # Convenience aliases over the channel-link helpers
     async def set_channel(self, key: str, channel_id: str) -> None:
-        """Update only the channel of a session's channel link, keeping its thread_ts."""
+        """Update only the channel id of a session's channel link, keeping its thread_ts and the
+        channel it is on."""
         thread_ts, _ = self.get_channel_link(key)
-        self.set_channel_link(key, thread_ts or "", channel_id)
+        self.set_channel_link(
+            key, thread_ts or "", channel_id, channel_provider=self.get_channel_provider(key)
+        )
 
     def get_channel(self, key: str) -> str | None:
         """Return the channel ID for a session key, or None."""
@@ -1913,7 +1925,9 @@ class SessionManager:
     async def set_thread(self, key: str, thread_ts: str) -> None:
         """Update only the thread_ts of a session's channel link, keeping its channel."""
         _, channel_id = self.get_channel_link(key)
-        self.set_channel_link(key, thread_ts, channel_id)
+        self.set_channel_link(
+            key, thread_ts, channel_id, channel_provider=self.get_channel_provider(key)
+        )
 
     def get_thread(self, key: str) -> str | None:
         """Return the channel thread_ts for a session key, or None."""

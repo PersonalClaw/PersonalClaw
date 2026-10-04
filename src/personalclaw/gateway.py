@@ -639,7 +639,7 @@ class GatewayOrchestrator:
                 return ToolDecision(True, "auto_approved", grant)
 
             # Prompt on the channel that asks the owner approvals: the channel the parent chat
-            # started on first, since the person asking is there, then their "Send approvals
+            # is on first, since the person asking is there, then their "Send approvals
             # to" choice, else the first connected channel that knows them
             # (`channel_delivery.approval_delivery`). The channel owns its approval UI +
             # owner-response wait; core races it against the dashboard prompt via the

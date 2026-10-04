@@ -27,6 +27,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from chat_test_helpers import a_chat_from_a_channel, links_kept_in_a_session_map
 
 from personalclaw import channel_delivery
 from personalclaw import notification_kinds as nk
@@ -107,8 +108,10 @@ def _state(tmp_path):
     from personalclaw.dashboard.state import DashboardState
     from personalclaw.history import ConversationLog
 
+    sessions = MagicMock(count=0)
+    links_kept_in_a_session_map(sessions)  # where the door links each chat it opens
     state = DashboardState(
-        sessions=MagicMock(count=0),
+        sessions=sessions,
         start_time=0.0,
         conversation_log=ConversationLog(base_dir=tmp_path),
     )
@@ -261,7 +264,7 @@ async def test_a_chat_that_started_on_a_channel_is_asked_there_first(tmp_path):
     first, last = _connect(FIRST), _connect(LAST)
     _send_approvals_to(LAST)
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=FIRST)  # what FIRST's inbound door creates
+    chat = a_chat_from_a_channel(state, FIRST)  # what FIRST's inbound door creates
 
     waiter = asyncio.ensure_future(state.request_approval("ap-5", "chat", "bash", session=chat.key))
     await _until(lambda: first.prompts, f"{FIRST} asked")
@@ -278,7 +281,7 @@ async def test_an_origin_that_cannot_ask_hands_over_to_send_approvals_to(tmp_pat
     first, last = _connect(FIRST, knows_owner=False), _connect(LAST)
     _send_approvals_to(LAST)
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=FIRST)
+    chat = a_chat_from_a_channel(state, FIRST)
 
     waiter = asyncio.ensure_future(state.request_approval("ap-6", "chat", "bash", session=chat.key))
     await _until(lambda: last.prompts, f"{LAST} asked")

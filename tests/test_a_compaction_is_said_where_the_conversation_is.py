@@ -115,11 +115,16 @@ def _state(tmp_path, monkeypatch, client: Any = None):
 
     monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
     links: dict[str, tuple[str, str]] = {}
+    on: dict[str, str] = {}  # the channel each link names
+
+    def _link(key: str, ts: str, channel: str, *, channel_provider: str = "") -> None:
+        links[key] = (ts, channel)
+        on[key] = channel_provider if ts else ""
+
     sessions = MagicMock(count=0)
     sessions.get_channel_link = MagicMock(side_effect=lambda key: links.get(key, (None, None)))
-    sessions.set_channel_link = MagicMock(
-        side_effect=lambda key, ts, channel: links.__setitem__(key, (ts, channel))
-    )
+    sessions.get_channel_provider = MagicMock(side_effect=lambda key: on.get(key, ""))
+    sessions.set_channel_link = MagicMock(side_effect=_link)
     sessions.get_pid = MagicMock(return_value=None)
     sessions.record_failure = AsyncMock()
     sessions.check_context_usage = MagicMock()
@@ -147,7 +152,7 @@ def _state(tmp_path, monkeypatch, client: Any = None):
 def _from_telegram(state):
     """A chat someone started on Telegram, linked to their chat there as the inbound door does."""
     session = state.get_or_create_session(app="telegram")
-    state.link_channel(session.key, TELEGRAM_CHAT, TELEGRAM_CHAT)
+    state.link_channel(session.key, TELEGRAM_CHAT, TELEGRAM_CHAT, provider="telegram")
     session._titled = True
     return session
 

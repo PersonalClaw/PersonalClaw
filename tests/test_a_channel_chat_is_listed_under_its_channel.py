@@ -82,7 +82,7 @@ async def test_a_chat_the_channel_door_opened_lists_under_its_channel(home):
     # What the inbound door does for a channel's first message
     # (`channel_inbound._route_to_session`).
     chat = state.get_or_create_session(app=PROVIDER)
-    state.link_channel(chat.key, "thread-1", "chat-42")
+    state.link_channel(chat.key, "thread-1", "chat-42", provider=PROVIDER)
     mine = state.get_or_create_session()
 
     rows = await _rows(state)

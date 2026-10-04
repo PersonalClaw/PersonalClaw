@@ -21,6 +21,11 @@ chat=...)``, ``answer_in_chat`` and ``chat_grant``). A channel app that uses the
 
 ``GUARDED_DOWNLOAD``: a download streams through the egress guard
 (``personalclaw.sdk.net.open_url``). An app that downloads with it declares it.
+
+``LINKS_NAME_THEIR_CHANNEL``: a chat's link to a channel thread names the channel it is on, where
+the chat answers (``link_channel(chat, thread, channel_id, provider=…)``,
+``SessionManager.get_channel_provider``). A channel app that links a chat to one of its threads
+declares it.
 """
 
 from personalclaw.apps.core_features import (
@@ -28,7 +33,15 @@ from personalclaw.apps.core_features import (
     CHAT_TRUST,
     CORE_FEATURES,
     GUARDED_DOWNLOAD,
+    LINKS_NAME_THEIR_CHANNEL,
     core_has,
 )
 
-__all__ = ["APPROVAL_ANSWERS", "CHAT_TRUST", "CORE_FEATURES", "GUARDED_DOWNLOAD", "core_has"]
+__all__ = [
+    "APPROVAL_ANSWERS",
+    "CHAT_TRUST",
+    "CORE_FEATURES",
+    "GUARDED_DOWNLOAD",
+    "LINKS_NAME_THEIR_CHANNEL",
+    "core_has",
+]

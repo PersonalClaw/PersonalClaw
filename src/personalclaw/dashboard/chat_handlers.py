@@ -610,8 +610,9 @@ def _origin_of(name: str, app: str = "") -> tuple[str, str]:
     return "manual", ""
 
 
-def _channel_link(state: DashboardState, name: str) -> tuple[str | None, str | None]:
-    """The channel thread the chat *name* is linked to, as ``(thread, channel id)``.
+def _channel_link(state: DashboardState, name: str) -> tuple[str | None, str | None, str]:
+    """The channel thread the chat *name* is linked to, as ``(thread, channel id, channel)``,
+    the channel being the one the link names (``""`` when it names none).
 
     The inbound door and "send to a channel" keep a chat's link under its history key
     (``DashboardState.link_channel``); a channel thread's own conversation is keyed by the
@@ -620,15 +621,16 @@ def _channel_link(state: DashboardState, name: str) -> tuple[str | None, str | N
     for key in (_history_key_for(name), name):
         try:
             thread, channel_id = state.sessions.get_channel_link(key)
+            on = state.sessions.get_channel_provider(key) if thread else ""
         except Exception:
             continue
         if thread:
-            return thread, channel_id
-    return None, None
+            return thread, channel_id, on if isinstance(on, str) else ""
+    return None, None, ""
 
 
 def _chat_origin(
-    link: tuple[str | None, str | None], name: str, app: str, channels: dict[str, str]
+    link: tuple[str | None, str | None, str], name: str, app: str, channels: dict[str, str]
 ) -> tuple[str, str, str]:
     """``(origin, source_id, source_label)`` for the history row of the chat *name*.
 
@@ -636,10 +638,12 @@ def _chat_origin(
     channel: the inbound door stamps the channel on every chat it opens
     (``channel_inbound._route_to_session``), so the tag says where it came from after its link is
     gone too. Its label is the channel's name as registered (*channels*, key → name), empty for
-    a channel no longer set up here. Anything else is classified by :func:`_origin_of`."""
-    thread, channel_id = link
+    a channel no longer set up here: the channel its link names, where it continues now (a chat
+    from Telegram continued on Slack is Slack's), else the one its origin tag names. Anything else
+    is classified by :func:`_origin_of`."""
+    thread, channel_id, on = link
     if thread or app in channels:
-        provider = app if app in channels else ""
+        provider = on or (app if app in channels else "")
         if not provider and channel_id:
             from personalclaw.channel_delivery import channel_of_id
 

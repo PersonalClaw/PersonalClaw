@@ -28,6 +28,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from chat_test_helpers import a_chat_from_a_channel, links_kept_in_a_session_map
 
 from personalclaw import channel_delivery
 from personalclaw.approval_brief import APPROVAL_BRIEF_META_KEY, compose_approval_brief
@@ -103,8 +104,8 @@ def _state(tmp_path):
 
     sessions = MagicMock(count=0)
     sessions.get_pid = MagicMock(return_value=None)
-    # The chat's thread on the channel: none is linked, so the prompt asks the owner's DM there.
-    sessions.get_channel_link = MagicMock(return_value=("", ""))
+    # A chat's thread is kept where the gateway keeps it: the door links each chat it opens.
+    links_kept_in_a_session_map(sessions)
     state = DashboardState(
         sessions=sessions, start_time=0.0, conversation_log=ConversationLog(base_dir=tmp_path)
     )
@@ -154,7 +155,7 @@ def _keys(prompt) -> list[str]:
 async def test_a_prompt_in_the_chat_that_asks_offers_allow_for_this_chat(tmp_path):
     channel = _connect()
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=CHANNEL)
+    chat = a_chat_from_a_channel(state, CHANNEL)
 
     waiting = await _ask(state, chat)
     await _until(lambda: channel.prompts, "the chat's channel asked")
@@ -189,7 +190,7 @@ async def test_a_call_that_may_destroy_something_is_offered_this_call_alone(tmp_
     a prompt has no unlock."""
     channel = _connect()
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=CHANNEL)
+    chat = a_chat_from_a_channel(state, CHANNEL)
 
     waiting = await _ask(state, chat, risk=risk)
     await _until(lambda: channel.prompts, "asked")
@@ -206,7 +207,7 @@ async def test_a_call_to_a_host_off_the_allowed_hosts_is_offered_this_call_alone
 
     channel = _connect()
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=CHANNEL)
+    chat = a_chat_from_a_channel(state, CHANNEL)
     reach = ask_note(Reach(hosts=("pkgs.example.com",)))
 
     waiting = await _ask(state, chat, reach=reach)
@@ -263,7 +264,7 @@ async def test_under_a_ceiling_that_asks_for_a_person_the_chat_answer_is_not_off
     monkeypatch.setattr(policy, "ceiling_permits_approval", lambda level: False)
     channel = _connect()
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=CHANNEL)
+    chat = a_chat_from_a_channel(state, CHANNEL)
 
     waiting = await _ask(state, chat)
     await _until(lambda: channel.prompts, "asked")
@@ -326,7 +327,7 @@ async def test_allow_for_this_chat_approves_the_next_call_in_that_chat_without_a
 
     channel = _connect()
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=CHANNEL)
+    chat = a_chat_from_a_channel(state, CHANNEL)
     events = [_permission("r-1"), _permission("r-2"), LLMEvent(kind=EVENT_COMPLETE)]
 
     async def press_allow_for_this_chat() -> None:
@@ -356,8 +357,8 @@ async def test_allow_for_this_chat_approves_the_next_call_in_that_chat_without_a
 async def test_allow_for_this_chat_never_reaches_another_chat(tmp_path):
     channel = _connect()
     state = _state(tmp_path)
-    first = state.get_or_create_session(app=CHANNEL)
-    second = state.get_or_create_session(app=CHANNEL)
+    first = a_chat_from_a_channel(state, CHANNEL)
+    second = a_chat_from_a_channel(state, CHANNEL)
 
     waiting_first = await _ask(state, first, "r-1")
     await _until(lambda: len(channel.prompts) == 1, "the first chat asked")
@@ -382,7 +383,7 @@ async def test_an_answer_the_prompt_did_not_offer_decides_nothing(tmp_path):
     Trust anyway is not one of them, so the approval waits on, and the chat is not trusted."""
     channel = _connect()
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=CHANNEL)
+    chat = a_chat_from_a_channel(state, CHANNEL)
 
     waiting = await _ask(state, chat, risk="destructive")
     await _until(lambda: channel.prompts, "asked")
@@ -399,7 +400,7 @@ async def test_an_answer_the_prompt_did_not_offer_decides_nothing(tmp_path):
 async def test_allow_once_and_deny_on_the_channel_answer_as_before(tmp_path):
     channel = _connect()
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=CHANNEL)
+    chat = a_chat_from_a_channel(state, CHANNEL)
 
     once = await _ask(state, chat, "r-1")
     await _until(lambda: len(channel.prompts) == 1, "asked")
@@ -419,7 +420,7 @@ async def test_the_audit_row_names_the_channel_that_answered(tmp_path):
 
     channel = _connect()
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=CHANNEL)
+    chat = a_chat_from_a_channel(state, CHANNEL)
     logged: list[dict[str, Any]] = []
     with patch.object(type(sel()), "log_api_access", lambda self, **kw: logged.append(kw)):
         waiting = await _ask(state, chat)

@@ -17,9 +17,27 @@ def links_kept_in_a_session_map(sessions: Any) -> SessionMap:
     call stays a mock, so a test can still assert what was linked."""
     store = SessionMap()
     sessions.get_channel_link = MagicMock(side_effect=store.get_channel_link)
+    sessions.get_channel_provider = MagicMock(side_effect=store.get_channel_provider)
     sessions.set_channel_link = MagicMock(side_effect=store.set_channel_link)
     sessions.get_session_for_thread = MagicMock(side_effect=store.get_session_for_thread)
     return store
+
+
+def a_chat_from_a_channel(
+    state: Any, provider: str, *, thread: str = "", channel_id: str = ""
+) -> Any:
+    """A chat as a channel's inbound door opens one (``channel_inbound._route_to_session``): made
+    as the channel's (``get_or_create_session(app=…)``) and linked to the thread its message came
+    on, on that channel, which is where it answers and is asked its approvals. Each chat gets a
+    thread of its own unless *thread* names one."""
+    chat = state.get_or_create_session(app=provider)
+    state.link_channel(
+        chat.key,
+        thread or f"{provider}-thread-{chat.key}",
+        channel_id or f"{provider}-chat",
+        provider=provider,
+    )
+    return chat
 
 
 def _make_state(tmp_path, **kwargs):

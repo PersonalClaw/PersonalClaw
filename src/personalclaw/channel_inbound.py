@@ -334,7 +334,7 @@ async def _route_to_session(
     session = state.get_linked_session(thread_key)
     if session is None:
         session = state.get_or_create_session(app=provider)
-        state.link_channel(session.key, thread_key, msg.channel_id)
+        state.link_channel(session.key, thread_key, msg.channel_id, provider=provider)
 
     # The links in the message are the user's for the chat's web_fetch, as a message typed in the
     # dashboard is — when it entered as the user's words. Text the gate fenced (someone the owner

@@ -21,12 +21,13 @@ from personalclaw.sdk.features import (
     CHAT_TRUST,
     CORE_FEATURES,
     GUARDED_DOWNLOAD,
+    LINKS_NAME_THEIR_CHANNEL,
     core_has,
 )
 
 #: Every name a core has offered. A name leaves this set only with a deliberate break of every app
 #: that declares it, so a removal from CORE_FEATURES fails here first.
-OFFERED_ONCE = {"approval-answers", "chat-trust", "guarded-download"}
+OFFERED_ONCE = {"approval-answers", "chat-trust", "guarded-download", "links-name-their-channel"}
 
 
 def test_the_sdk_publishes_the_names_and_the_question():
@@ -35,12 +36,14 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "CHAT_TRUST",
         "CORE_FEATURES",
         "GUARDED_DOWNLOAD",
+        "LINKS_NAME_THEIR_CHANNEL",
         "core_has",
     }
     assert APPROVAL_ANSWERS == "approval-answers"
     assert CHAT_TRUST == "chat-trust"
     assert GUARDED_DOWNLOAD == "guarded-download"
-    for name in (APPROVAL_ANSWERS, CHAT_TRUST, GUARDED_DOWNLOAD):
+    assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
+    for name in (APPROVAL_ANSWERS, CHAT_TRUST, GUARDED_DOWNLOAD, LINKS_NAME_THEIR_CHANNEL):
         assert name in CORE_FEATURES
         assert core_has(name) is True
 
@@ -187,11 +190,34 @@ def _chat_trust_holds() -> None:
             native_source.set_dashboard_state(before)
 
 
+def _links_name_their_channel_holds() -> None:
+    """A chat linked to a thread on a channel answers on that channel, the session store names it,
+    and linking it on another channel moves it there."""
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.dashboard.state import DashboardState
+    from personalclaw.history import ConversationLog
+    from personalclaw.session import SessionManager
+
+    sessions = SessionManager(AppConfig())
+    state = DashboardState(
+        sessions=sessions, start_time=0.0, conversation_log=ConversationLog(base_dir=None)
+    )
+    chat = state.get_or_create_session("chat-linked")
+    state.link_channel(chat.key, "1712793600.000200", "C0123ABC456", provider="achat")
+    assert state.channel_provider_for(chat.key) == "achat"
+    assert sessions.get_channel_provider("dashboard:chat-linked") == "achat"
+
+    state.link_channel(chat.key, "5550123", "5550123", provider="bchat")
+    assert state.channel_provider_for(chat.key) == "bchat"
+    assert sessions.get_channel_link("dashboard:chat-linked") == ("5550123", "5550123")
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     APPROVAL_ANSWERS: _approval_answers_hold,
     CHAT_TRUST: _chat_trust_holds,
     GUARDED_DOWNLOAD: _guarded_download_holds,
+    LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
 }
 
 

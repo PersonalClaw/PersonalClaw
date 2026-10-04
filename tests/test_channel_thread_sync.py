@@ -60,28 +60,40 @@ class TestDashboardStateLinkChannel:
     def test_link_channel_links_the_chat(self, tmp_path):
         state = _make_state(tmp_path)
         session = state.get_or_create_session("s1")
-        state.link_channel("s1", "1234.5678", "C123")
+        state.link_channel("s1", "1234.5678", "C123", provider="slack")
         assert session.channel_link == ("1234.5678", "C123")
+        assert state.channel_provider_for("s1") == "slack"
 
     def test_link_channel_persists_to_session_store(self, tmp_path):
         state = _make_state(tmp_path)
         state.get_or_create_session("s1")
-        state.link_channel("s1", "1234.5678", "C123")
+        state.link_channel("s1", "1234.5678", "C123", provider="slack")
         state.sessions.set_channel_link.assert_called_once_with(
-            _history_key_for("s1"), "1234.5678", "C123"
+            _history_key_for("s1"), "1234.5678", "C123", channel_provider="slack"
         )
 
     def test_link_channel_missing_session_noop(self, tmp_path):
         state = _make_state(tmp_path)
-        state.link_channel("nonexistent", "1234.5678", "C123")
+        state.link_channel("nonexistent", "1234.5678", "C123", provider="slack")
         state.sessions.set_channel_link.assert_not_called()
+
+    def test_a_chat_on_disk_only_is_brought_back_and_linked(self, tmp_path):
+        """A channel app can link a chat the dashboard no longer holds (one from its list of recent
+        chats, after a restart): it comes back from disk, as the inbound door brings one back."""
+        state = _make_state(tmp_path)
+        state.conversation_log.append("dashboard:s1", "user", "Plan the launch week.")
+
+        state.link_channel("s1", "1234.5678", "C123", provider="slack")
+
+        assert "s1" in state._sessions
+        assert state._sessions["s1"].channel_link == ("1234.5678", "C123")
 
     def test_link_multiple_sessions(self, tmp_path):
         state = _make_state(tmp_path)
         state.get_or_create_session("s1")
         state.get_or_create_session("s2")
-        state.link_channel("s1", "111.000", "C1")
-        state.link_channel("s2", "222.000", "C2")
+        state.link_channel("s1", "111.000", "C1", provider="slack")
+        state.link_channel("s2", "222.000", "C2", provider="slack")
         assert state._sessions["s1"].channel_link == ("111.000", "C1")
         assert state._sessions["s2"].channel_link == ("222.000", "C2")
 
@@ -89,9 +101,9 @@ class TestDashboardStateLinkChannel:
         state = _make_state(tmp_path)
         first = state.get_or_create_session("s1")
         second = state.get_or_create_session("s2")
-        state.link_channel("s1", "111.000", "C1")
+        state.link_channel("s1", "111.000", "C1", provider="slack")
 
-        state.link_channel("s2", "111.000", "C1")
+        state.link_channel("s2", "111.000", "C1", provider="slack")
 
         assert first.channel_link == ("", "")
         assert second.channel_link == ("111.000", "C1")

@@ -150,7 +150,7 @@ def _chat(tmp_path: Path, tools: _Tools) -> tuple[DashboardState, Any]:
     state.push_sessions_update = MagicMock()
     # A chat that came in from the channel, answered in its thread there.
     session = state.get_or_create_session(app=PROVIDER)
-    state.link_channel(session.key, "thread-1", "chan-1")
+    state.link_channel(session.key, "thread-1", "chan-1", provider=PROVIDER)
     return state, session
 
 
@@ -265,7 +265,7 @@ def _asks_before_it_shows(tmp_path: Path, monkeypatch) -> tuple[DashboardState, 
     state.broadcast_ws = MagicMock()
     state.push_sessions_update = MagicMock()
     session = state.get_or_create_session(app=PROVIDER)
-    state.link_channel(session.key, "thread-1", "chan-1")
+    state.link_channel(session.key, "thread-1", "chan-1", provider=PROVIDER)
     return state, session, model
 
 

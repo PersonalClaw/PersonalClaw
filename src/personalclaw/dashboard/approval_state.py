@@ -1051,7 +1051,7 @@ class DashboardApprovalState:
         exchange for nothing the phone needs.
 
         A chat channel asks too (:meth:`_ask_on_a_channel`), with Approve/Deny where it has them:
-        the channel the chat started on, whatever the rule says, and the rule's ``channel_dm``
+        the channel the chat is on, whatever the rule says, and the rule's ``channel_dm``
         target adds the owner's "Send approvals to" (:meth:`_asking_channels`).
         """
         try:
@@ -1070,7 +1070,7 @@ class DashboardApprovalState:
     def _asking_channels(self, approval_id: str, channel_dm: bool) -> list[str]:
         """The chat channels that may ask *approval_id*, in the order they are tried.
 
-        The channel the chat started on (``channel_provider_for``) asks whatever the Approval
+        The channel the chat is on (``channel_provider_for``) asks whatever the Approval
         needed row says. It is where the person asking is, so its prompt is that chat's approval
         card, which PersonalClaw shows for a chat of its own whatever the rule says too; waiting
         for a ``channel_dm`` target there left a chat started on Telegram asking nobody on
@@ -1122,7 +1122,7 @@ class DashboardApprovalState:
     ) -> None:
         """Ask on the first of *providers* that can: its answers where it has buttons, else a link.
 
-        *providers* is :meth:`_asking_channels`: the channel the chat started on first, asked in
+        *providers* is :meth:`_asking_channels`: the channel the chat is on first, asked in
         that chat, since the person asking is there; then, with the ``channel_dm`` target, the
         owner's "Send approvals to" channel alone when they chose one, else every connected
         channel in name order, as ``channel_delivery.reach_owner`` tries them. The first one with
@@ -1221,7 +1221,7 @@ class DashboardApprovalState:
         """What a channel's prompt for *entry* offers: the dashboard card's answers, for that call.
 
         Allow once and Deny alone unless the approval is a chat's own and the prompt is asked in
-        that chat (*in_its_chat*: the channel the chat started on, asking in it). Anywhere else
+        that chat (*in_its_chat*: the channel the chat is on, asking in it). Anywhere else
         "this chat" would name the conversation the prompt is in rather than the one asking, and
         the surfaces outside a chat (Home, the Inbox, the phone) offer Approve and Deny alone. In
         its chat, the prompt offers what the card offers for the call: Allow for this chat too,
@@ -1418,8 +1418,8 @@ class DashboardApprovalState:
 
         Tried on the channels that could not prompt, in the same order (:meth:`_asking_channels`):
         the chat's own channel first, then "Send approvals to" — so the link never lands on a
-        channel the owner did not choose, and a chat that started on a channel hears about its
-        approval there."""
+        channel the owner did not choose, and a chat on a channel hears about its approval
+        there."""
         from personalclaw.channel_delivery import reach_owner
         from personalclaw.dashboard.channel_messages import dashboard_link
 

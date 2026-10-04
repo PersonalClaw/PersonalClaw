@@ -15,9 +15,11 @@ chat, channel thread, loop worker, webhook, subagent).
   a turn finishes before the next queued message starts.
 - **`session_map.py` — the persistent session↔thread map.** Stored at
   `~/.personalclaw/session_map.json` (atomic tmp+rename writes). Each entry
-  carries `sid`, `thread_ts`, `channel_id` — generic keys, no channel-vendor
-  shape assumed. `set_channel_link` / `get_channel_link` are the one API for
-  linking a dashboard session to a channel thread; a reverse index maps
+  carries `sid`, `thread_ts`, `channel_id` and, for a linked session,
+  `channel_provider` (the channel the thread is on) — generic keys, no
+  channel-vendor shape assumed. `set_channel_link` / `get_channel_link` /
+  `get_channel_provider` are the one API for linking a dashboard session to a
+  channel thread; a reverse index maps
   `thread_ts` → session key (`get_session_for_thread`). It is the ONE place a
   link is kept: nothing holds a copy of it in memory, so a restart loses none.
   A changed entry is written last and the index is rebuilt in file order, so
@@ -317,8 +319,10 @@ chat, channel thread, loop worker, webhook, subagent).
   one place every restore path mints a session, so a restart keeps an app's
   conversation the app's and never makes one of yours an app's. It is not
   `_app`: that is an origin tag (`loop`, a channel's provider name, an app's
-  name) saying where a conversation came from, which the chat list groups by,
-  and an app can share its name. A turn in an app's conversation needs the app's
+  name) saying where a conversation came from, which the chat list groups by and
+  its turns are counted under, and an app can share its name. It does not say
+  where a chat answers: that is its channel link's (see *Channel-linked
+  sessions*). A turn in an app's conversation needs the app's
   `agent` permission at the `tools` tier, and runs under it, never under your
   approval switches, whoever sends the message: the app approves none of its
   calls, so each one that needs approval asks you (`chat_runner.started_by_app`).
@@ -676,13 +680,28 @@ A dashboard session can be linked to a channel thread (and vice versa):
   its own link from the store too (`_ChatSession.channel_link`, which its frame
   and its question cards read), never from a copy. A thread whose chat is gone
   (deleted, archived, a Temporary chat that ended) starts a new chat.
-- **Which channel a chat answers on is its origin tag** (`_app`, the meta
-  line's `app`): the door stamps it on every chat it opens, a link or handoff
-  sets it when the chat has none, and a restart reads it back where it mints
-  the chat (`get_or_create_session`), so a restored chat's answers still go
-  back out on its channel. The door continues only a chat that carries one: a
-  channel thread's own conversation opened from the chat list (a Slack thread
-  the Slack app runs) has none, and its channel app answers it itself.
+- **A link names the channel its thread is on, and that is where the chat
+  answers** (`channel_provider_for`, which reads `channel_links.chat_channel`):
+  its replies, its notices and its approval prompts go there, before a restart
+  and after it. Every link is made with its channel
+  (`link_channel(chat, thread, channel_id, provider=…)`): the door's for the
+  channel a message came on, a handoff's or a link's for the channel it opened
+  the thread on. The door continues only a chat whose link names one: a channel
+  thread's own conversation opened from the chat list (a Slack thread the Slack
+  app runs) has none, and its channel app answers it itself. The origin tag
+  (`_app`, the meta line's `app`) still says where a chat came from; it no
+  longer says where it answers, and a chat that came from Telegram and was
+  continued in a Slack thread answers in the Slack thread.
+- **A chat continues in one place.** Continuing it somewhere else (the chat's
+  "Continue on …", a link from the dashboard, a channel app's resume) moves its
+  link: the thread it was on no longer continues it, so a message there starts
+  a chat of its own. When that thread is the owner's own DM on its channel (the
+  one the channel opens for the owner's id), it is told, once, where the chat
+  went ("This chat continues on Slack now. Messages here no longer reach it.").
+  A group, a shared channel, someone else's DM or a correspondent's mail thread
+  hears nothing: the note would tell other people where the owner went on, and
+  on a channel that speaks as the owner it would go out in the owner's name.
+  Continued where it already is, nothing changes and nothing is said.
 - `sync_bridge.py` implements the dashboard↔channel handoff
   (`handoff_to_channel` over `ChannelDelivery`): the conversation continues in
   the channel with context intact.

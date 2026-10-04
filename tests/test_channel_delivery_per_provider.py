@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -242,40 +243,54 @@ class TestDashboardStateIsAViewNotASlot:
         assert orch._channel_delivery.inner is handle
 
 
-class TestSessionProvider:
-    def test_a_channel_session_reports_the_provider_it_came_from(self) -> None:
-        """The routing key for a reply, read where it was already stamped: the one inbound door
-        creates the session with `app=provider` (`channel_inbound._route_to_session`)."""
-        from personalclaw.dashboard.state import DashboardState
+def _state_whose_links_are_kept():
+    """A dashboard state over a session store, nothing else of it set up."""
+    from chat_test_helpers import links_kept_in_a_session_map
 
-        state = DashboardState.__new__(DashboardState)
-        session = type("S", (), {"_app": "discord"})()
-        state._sessions = {"chan-1": session}
+    from personalclaw.dashboard.state import DashboardState
+
+    state = DashboardState.__new__(DashboardState)
+    state.sessions = MagicMock()
+    links_kept_in_a_session_map(state.sessions)
+    return state
+
+
+class TestSessionProvider:
+    def test_a_channel_session_reports_the_channel_its_link_names(self) -> None:
+        """The routing key for a reply, read where the link is kept: the one inbound door links
+        the chat it opens to its thread on `provider` (`channel_inbound._route_to_session`)."""
+        state = _state_whose_links_are_kept()
+        state.sessions.set_channel_link(
+            "dashboard:chan-1", "thread-1", "chan-1", channel_provider="discord"
+        )
         assert state.channel_provider_for("chan-1") == "discord"
 
     def test_the_history_key_a_turn_carries_finds_it_too(self) -> None:
         """`chat_runner` asks with `dashboard:<name>`. Only the name used to resolve, so every
         answer to a channel message stayed in the dashboard."""
-        from personalclaw.dashboard.state import DashboardState
-
-        state = DashboardState.__new__(DashboardState)
-        state._sessions = {"chan-1": type("S", (), {"_app": "discord"})()}
+        state = _state_whose_links_are_kept()
+        state.sessions.set_channel_link(
+            "dashboard:chan-1", "thread-1", "chan-1", channel_provider="discord"
+        )
         assert state.channel_provider_for("dashboard:chan-1") == "discord"
 
     def test_a_dashboard_session_reports_no_provider(self) -> None:
         """Which makes `delivery_for("")` None, so a dashboard turn mirrors nowhere — correct,
         and the reason the empty case is asserted in `TestReplyResolution` too."""
-        from personalclaw.dashboard.state import DashboardState
-
-        state = DashboardState.__new__(DashboardState)
+        state = _state_whose_links_are_kept()
         state._sessions = {"web-1": type("S", (), {"_app": ""})()}
         assert state.channel_provider_for("web-1") == ""
         assert state.delivery_for(state.channel_provider_for("web-1")) is None
 
-    def test_an_unknown_session_reports_no_provider_rather_than_raising(self) -> None:
-        from personalclaw.dashboard.state import DashboardState
+    def test_a_chat_that_came_from_a_channel_and_is_on_no_thread_answers_on_none(self) -> None:
+        """Its origin tag says where it came from, not where it answers: a chat whose thread was
+        taken by another has no thread there to answer in."""
+        state = _state_whose_links_are_kept()
+        state._sessions = {"chan-1": type("S", (), {"_app": "discord"})()}
+        assert state.channel_provider_for("chan-1") == ""
 
-        state = DashboardState.__new__(DashboardState)
+    def test_an_unknown_session_reports_no_provider_rather_than_raising(self) -> None:
+        state = _state_whose_links_are_kept()
         state._sessions = {}
         assert state.channel_provider_for("gone") == ""
 

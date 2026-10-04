@@ -363,9 +363,10 @@ reads "Denied: bash … asked for your decision on bash. It was denied.", from t
 ("It was approved.", "It expired: nobody answered within 2 hours.", "It was cancelled: its turn was
 stopped.").
 
-**Which chat channel asks.** A chat that started on a chat channel is asked in that chat, whatever
-the `approval/requested` rule says (`_asking_channels`, the channel from
-`DashboardState.channel_provider_for`): the person asking is there, and its prompt is that chat's
+**Which chat channel asks.** A chat on a chat channel is asked in that chat, whatever
+the `approval/requested` rule says (`_asking_channels`, the channel its link names, from
+`DashboardState.channel_provider_for`; a chat continued on another channel is asked there): the
+person asking is there, and its prompt is that chat's
 approval card, which PersonalClaw shows for a chat of its own under any rule too. It used to wait for
 the rule's `channel_dm` target, which the default rule does not have, so a chat started on Telegram
 asked nobody on Telegram. The rule's `channel_dm` target (off under `never`) adds the owner's **Send
@@ -830,18 +831,24 @@ remain in core — is covered in [provider-boundary.md](provider-boundary.md).
   link is kept, and the inbound door reads it (`get_linked_session`), so a
   channel thread continues its chat after a restart, with the chat brought back
   from disk when it is not resident; a chat whose transcript is gone starts
-  over. A chat answers on the channel its origin tag names, which rides its
-  meta line across restarts; a chat a channel app imports from a thread is made
-  as that channel's (`get_or_create_session(app=…)`), as the door makes one.
+  over. A link names the channel its thread is on (`channel_provider`), and a
+  chat answers on that channel (`DashboardState.channel_provider_for`), across
+  restarts too; a chat a channel app imports from a thread is made as that
+  channel's (`get_or_create_session(app=…)`) and linked on it
+  (`link_channel(…, provider=…)`), as the door makes one.
 - Dashboard-side link/handoff routes are `dashboard/chat_channel.py`
   (`POST /api/chat/sessions/{session}/channel-link`,
   `GET /api/channels/reply-targets`) — provider-blind, `ChannelDelivery` only.
   A link and a handoff both record the chat through one function
   (`_continue_there`): the thread's key where the inbound door reads it, and the
   channel the chat is now on, so its answers and notices go to the thread and a
-  reply there continues it. A thread target opens on the channel `provider`
-  names, else the one channel that issued its id (`channel_of_id`); an id two
-  channels could take is refused, and nothing is posted.
+  reply there continues it, whichever channel the chat came from. The thread it
+  was on loses it, and is told where the chat went when it is the owner's own DM
+  there (`channel_links._tell_the_thread_it_left`); a chat already on the channel
+  asked for (and in the conversation, when one is named) stays where it is. A thread
+  target opens on the channel `provider` names, else the one channel that issued
+  its id (`channel_of_id`); an id two channels could take is refused, and
+  nothing is posted.
 - `sync_bridge.py` hands a dashboard conversation off to a channel thread
   (`handoff_to_channel`); `voice_reply.py` uploads TTS voice replies
   (`upload_voice_to_channel`).

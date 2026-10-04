@@ -13,8 +13,9 @@ approval is listed. Its mode is about pings, so a chat's own channel asks even u
 the chat's card still shows.
 
 Only the channels' outbound halves are fakes. The rules file, the owner ids and the approval
-registry are real, in a scratch home, and the chat is created by the door a channel's message
-comes in through (``get_or_create_session(app=…)``).
+registry are real, in a scratch home, and the chat is made as the door a channel's message comes
+in through makes it: as that channel's, and linked to the thread the message came on, on that
+channel (``get_or_create_session(app=…)``, ``link_channel(…, provider=…)``).
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from chat_test_helpers import a_chat_from_a_channel, links_kept_in_a_session_map
 
 from personalclaw import channel_delivery
 from personalclaw.config.credentials import owner_id_credential, save_credential
@@ -114,8 +116,10 @@ def _state(tmp_path):
     from personalclaw.dashboard.state import DashboardState
     from personalclaw.history import ConversationLog
 
+    sessions = MagicMock(count=0)
+    links_kept_in_a_session_map(sessions)  # where the door links each chat it opens
     state = DashboardState(
-        sessions=MagicMock(count=0),
+        sessions=sessions,
         start_time=0.0,
         conversation_log=ConversationLog(base_dir=tmp_path),
     )
@@ -160,7 +164,7 @@ async def _settle(times: int = 50) -> None:
 async def test_with_no_rule_set_a_chat_from_a_channel_is_asked_in_that_chat(tmp_path):
     origin, other = _connect(ORIGIN), _connect(OTHER)
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=ORIGIN)  # what ORIGIN's inbound door creates
+    chat = a_chat_from_a_channel(state, ORIGIN)  # what ORIGIN's inbound door creates
 
     waiting = await _ask(state, chat)
     await _until(lambda: origin.prompts, f"{ORIGIN} asked")
@@ -178,7 +182,7 @@ async def test_the_setting_does_not_move_a_channel_chat_off_its_own_channel(tmp_
     origin, other = _connect(ORIGIN), _connect(OTHER)
     _approvals_go_to(OTHER)
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=ORIGIN)
+    chat = a_chat_from_a_channel(state, ORIGIN)
 
     waiting = await _ask(state, chat)
     await _until(lambda: origin.prompts, f"{ORIGIN} asked")
@@ -194,7 +198,7 @@ async def test_a_rule_that_says_never_still_asks_the_chat_s_own_channel(tmp_path
     origin = _connect(ORIGIN)
     _approval_rule(tmp_path, mode="never", targets=["dashboard", "channel_dm"])
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=ORIGIN)
+    chat = a_chat_from_a_channel(state, ORIGIN)
 
     waiting = await _ask(state, chat)
     await _until(lambda: origin.prompts, f"{ORIGIN} asked")
@@ -211,7 +215,7 @@ async def test_a_channel_chat_whose_channel_has_no_buttons_is_sent_the_link_ther
         channel_messages, "dashboard_link", lambda frag: f"https://claw.example{frag[1:]}"
     )
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=ORIGIN)
+    chat = a_chat_from_a_channel(state, ORIGIN)
 
     waiting = await _ask(state, chat)
     await _until(lambda: origin.sent, f"{ORIGIN} was told")
@@ -259,7 +263,7 @@ async def test_without_the_target_no_other_channel_stands_in_for_the_chat_s_own(
     Channel DM target it hands over to "Send approvals to" (the next case, the floor)."""
     origin, other = _connect(ORIGIN, knows_owner=False), _connect(OTHER)
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=ORIGIN)
+    chat = a_chat_from_a_channel(state, ORIGIN)
 
     waiting = await _ask(state, chat)
     await _settle()
@@ -273,7 +277,7 @@ async def test_with_the_target_an_origin_that_cannot_ask_hands_over(tmp_path):
     origin, other = _connect(ORIGIN, knows_owner=False), _connect(OTHER)
     _approval_rule(tmp_path, mode="immediate", targets=["dashboard", "channel_dm"])
     state = _state(tmp_path)
-    chat = state.get_or_create_session(app=ORIGIN)
+    chat = a_chat_from_a_channel(state, ORIGIN)
 
     waiting = await _ask(state, chat)
     await _until(lambda: other.prompts, f"{OTHER} asked")

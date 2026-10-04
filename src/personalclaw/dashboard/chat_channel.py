@@ -5,8 +5,9 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.dashboard import channel_links
 from personalclaw.dashboard.chat_persistence import save_session_to_history
-from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
+from personalclaw.dashboard.chat_utils import persisted_history_key
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.request_validation import json_object_body
 from personalclaw.security import redact_and_truncate
@@ -25,7 +26,9 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
     the channels to choose from, and nothing is posted. Without ``channel`` the thread opens in the
     owner's DM, on ``provider`` or the first connected channel that reaches the owner. The chat is
     linked as a handoff links it (:func:`_continue_there`), so its answers and notices go to the
-    thread, and a reply there continues it.
+    thread, a reply there continues it, and the owner's own DM it was in elsewhere is told where it
+    went. A chat already on the channel asked for (and in the conversation, when one is named)
+    stays where it is, and that thread is told it continues there.
     """
     from personalclaw.channel_delivery import channel_of_id, delivery_for, reach_owner
     from personalclaw.http_errors import json_error
@@ -38,12 +41,32 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
     if not state.channel_delivery:
         return web.json_response({"error": "Channel not connected"}, status=503)
 
-    session_key = _history_key_for(name)
+    body = await json_object_body(request)
+    raw_channel = str(body.get("channel") or "").strip()
+    provider = str(body.get("provider") or "").strip()
+    if provider and delivery_for(provider) is None:
+        return json_error("channel_unknown", status=404)
+    to_dm = not raw_channel or raw_channel == "dm"
+    if not to_dm and not provider:
+        # A thread target goes through the channel that issued it, never the first one connected.
+        provider, problem = channel_of_id(raw_channel)
+        if not provider:
+            return json_error(
+                "invalid_request",
+                message=problem or "No chat channel is set up here.",
+                status=400,
+            )
 
-    # Already linked: said in the thread, on the channel the chat is on.
-    existing_ts, existing_chan = state.sessions.get_channel_link(session_key)
-    if existing_ts and existing_chan:
-        linked_on = state.channel_provider_for(session_key) or channel_of_id(existing_chan)[0]
+    # Already there: said in the thread, and nothing moves. A chat on another channel, or in
+    # another conversation than the one named, is moved below as a handoff moves it.
+    existing_ts, existing_chan = channel_links.chat_link(state, session.key)
+    linked_on = state.channel_provider_for(session.key)
+    if (
+        existing_ts
+        and linked_on
+        and (not provider or provider == linked_on)
+        and (to_dm or raw_channel == existing_chan)
+    ):
         linked = delivery_for(linked_on)
         if linked is not None:
             try:
@@ -58,15 +81,10 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
             {"ok": True, "already_linked": True, "thread_ts": existing_ts, "channel": existing_chan}
         )
 
-    body = await json_object_body(request)
-    raw_channel = str(body.get("channel") or "").strip()
-    provider = str(body.get("provider") or "").strip()
-    if provider and delivery_for(provider) is None:
-        return json_error("channel_unknown", status=404)
     # redact_and_truncate applies both redact_exfiltration_urls + redact_credentials
     title = redact_and_truncate(session.title or name, max_chars=200)
     opening = f"*{title}*\nSession linked from the dashboard."
-    if not raw_channel or raw_channel == "dm":
+    if to_dm:
         # The owner's DM on the channel named, else the first channel that reaches the owner, with
         # the id that channel keeps for them.
         async def _open_thread(owner_delivery: Any, dm: str) -> str:
@@ -83,15 +101,6 @@ async def api_chat_session_channel_link(request: web.Request) -> web.Response:
         delivery, target_channel, thread_ts = owner.delivery, owner.channel, owner.result
         took, dm = owner.provider, True
     else:
-        # A thread target goes through the channel that issued it, never the first one connected.
-        if not provider:
-            provider, problem = channel_of_id(raw_channel)
-            if not provider:
-                return json_error(
-                    "invalid_request",
-                    message=problem or "No chat channel is set up here.",
-                    status=400,
-                )
         issuer = delivery_for(provider)
         if issuer is None:
             return json_error("channel_unknown", status=404)
@@ -154,10 +163,10 @@ def _continue_there(
     door finds a chat by the thread key a message carries (``channel_inbound._route_to_session``),
     and a reply opened a new chat. The key is the channel's call: in a DM that is one
     conversation (``ChannelCapabilities.dm_thread_is_channel``) every message carries the DM itself,
-    elsewhere the thread that was opened. ``state.link_channel`` records it where the door and
-    the next restart read it. The chat's channel origin is set to the channel it continues on, if it
-    had none, so its replies and notices go back out there too
-    (``DashboardState.channel_provider_for``).
+    elsewhere the thread that was opened. ``state.link_channel`` records it, with the channel it
+    is on, where the door and the next restart read it, so the chat's replies and notices go there
+    (``DashboardState.channel_provider_for``) whichever channel it came from, and the owner's own
+    DM it was in is told where it went.
     """
     from personalclaw.channel_transports import get_transport
 
@@ -168,13 +177,9 @@ def _continue_there(
         )
     except Exception:  # noqa: BLE001 - a broken capabilities() declares nothing
         dm_is_one_thread = False
-    if not session._app:
-        session._app = provider
-    state.link_channel(session.key, channel if dm_is_one_thread else thread_ts, channel)
-    try:
-        save_session_to_history(state, session)  # the origin rides the meta line across restarts
-    except Exception:
-        logger.warning("chat %s: saving its channel origin failed", session.key, exc_info=True)
+    state.link_channel(
+        session.key, channel if dm_is_one_thread else thread_ts, channel, provider=provider
+    )
 
 
 async def api_chat_session_handoff(request: web.Request) -> web.Response:

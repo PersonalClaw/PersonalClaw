@@ -383,14 +383,27 @@ What that one call gets you, and what you must not re-implement:
   a DM reaches core with the DM's channel id as its `thread_id` (Telegram's chat id, a Discord
   DM channel). A chat the owner hands to your channel from its menu ("Continue on …") is then
   linked to the DM itself, so the owner's next message there continues it; otherwise it is
-  linked to the thread the handoff opened.
+  linked to the thread the handoff opened. Either way it answers on your channel from then on,
+  whichever channel it came from. The thread it was on no longer continues it, and when that
+  thread is the owner's own DM (the one `open_dm` opens for the owner's id) it is told where the
+  chat went, through that thread's own channel; nothing is said in a group, a shared channel or
+  anyone else's conversation.
 - **Keep no thread-to-chat map of your own.** Core keeps which chat a thread continues in its
   session store, the one place a link is kept, so a restart keeps it: the next message on the
   thread continues its chat, brought back from disk when it is not open. A chat your channel
   makes for a thread itself (an import of a thread's history) is made with
-  `get_or_create_session(app=PROVIDER)`, as the door makes one, and linked with
-  `link_channel`: a chat that names no channel has nowhere to send its answers, and the door
-  does not continue it.
+  `get_or_create_session(app=PROVIDER)`, as the door makes one, and every chat your channel
+  links to a thread (that import, or a chat the owner resumes in one of your threads) is linked
+  with `link_channel(chat.key, thread, channel_id, provider=PROVIDER)`. The link names your
+  channel, and that is where the chat's answers, notices and approval prompts go: a link that
+  names no channel (one written straight to `SessionManager.set_channel_link` without
+  `channel_provider`) has nowhere to send them, and the door does not continue it. Linking moves
+  a chat that was on another thread or another channel (the owner's own DM it left is told where
+  it went), and `SessionManager.get_channel_provider(key)` says which channel a chat is on before
+  you decide it is already in one of your threads. A channel that links a chat itself declares
+  `"requiresCoreFeatures": ["links-name-their-channel"]`
+  (`personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL`): a PersonalClaw without it takes no
+  channel on a link, and refuses to install or update the app.
 - **Refuse an owner id you cannot reach.** An owner notification (a heartbeat or cron result,
   a hook result, a file, `send-message`) tries every connected channel in name order until one
   delivers it (`channel_delivery.reach_owner`). Your channel is passed over when it has no

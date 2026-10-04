@@ -311,7 +311,8 @@ async def test_linking_a_thread_after_a_restart_takes_it_from_the_chat_that_had_
     second = _restart(tmp_path, restore=True)
     other = second.state.get_or_create_session(app=PROVIDER)
     other.append("user", "Plan the trip", "msg msg-u")
-    second.state.link_channel(other.key, DM, DM)  # "Continue on Telegram": a DM is one thread
+    # "Continue on Telegram": a DM is one thread
+    second.state.link_channel(other.key, DM, DM, provider=PROVIDER)
 
     assert second.sessions.get_channel_link(f"dashboard:{old}") == ("", "")
     assert second.state._sessions[old].to_dict()["channel_linked"] is False
@@ -347,11 +348,12 @@ def test_a_chat_reads_its_link_where_the_link_is_kept(tmp_path):
 @pytest.mark.asyncio
 async def test_a_chat_linked_with_no_channel_is_not_continued_from_the_thread(tmp_path):
     """🔴 Red before: the door continued a chat that carried no channel to answer on (one a channel
-    app linked without naming its channel), so the turn ran and its answer reached nobody on the
-    thread. The message starts a chat on its own channel instead, and the old chat is left alone."""
+    app linked through the session store without naming its channel), so the turn ran and its
+    answer reached nobody on the thread. The message starts a chat on its own channel instead, and
+    the old chat is left alone."""
     gateway = _Gateway(tmp_path)
     nowhere = gateway.state.get_or_create_session("chat-nowhere")
-    gateway.state.link_channel(nowhere.key, DM, DM)
+    gateway.sessions.set_channel_link(f"dashboard:{nowhere.key}", DM, DM)
 
     reached = await gateway.message("Are you there?")
 
