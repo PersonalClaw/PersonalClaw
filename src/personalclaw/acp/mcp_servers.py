@@ -109,6 +109,24 @@ def _core_call(title: str, tool_kind: str, tool_input: object) -> tuple[str, Any
     return "", None, False
 
 
+def names_core_tool(title: str, tool_input: object) -> bool:
+    """Whether a call is to one of the ``personalclaw-core`` server's tools, read where the call's
+    kind is not known (``file_scope.memory_named_by_call``): its title names the tool as
+    claude-code or kiro-cli does (:func:`_core_call`), and every argument it carries is one that
+    tool takes, so a tool of the CLI's own cannot pass as ours by its title alone."""
+    from personalclaw import mcp_core
+
+    title = title or ""
+    for prefix in (f"mcp__{CORE_SERVER_NAME}__", f"Running: @{CORE_SERVER_NAME}/"):
+        if title.startswith(prefix):
+            tool = mcp_core.own_tool(title[len(prefix) :])
+            schema = tool.get("inputSchema") if tool else None
+            takes = schema.get("properties") if isinstance(schema, dict) else None
+            args = _arguments(tool_input)
+            return isinstance(takes, dict) and isinstance(args, dict) and set(args) <= set(takes)
+    return False
+
+
 class CoreDeclaration(NamedTuple):
     """What a call to one of PersonalClaw's own tools declares (:func:`core_tool_declaration`):
     the tool's risk (``""`` for none), whether it is a Build-mode producer, whether its only effect

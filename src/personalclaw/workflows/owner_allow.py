@@ -3,9 +3,11 @@
 Two things an agent may ask for put on a workflow step a posture key only the owner's consent may
 put there (`automation_posture.POSTURE_SPECS`: approving its own tool calls, the write grant): a
 subagent batch whose tasks may change things (`batch_start`), and a saved workflow whose steps
-would do more than before (`definition_ask`). The agent cannot give that consent, so each asks the
-owner once, through the approval registry itself (`DashboardState.request_approval`: the card in
-the chat that asked, the Inbox, the phone, a channel), and nothing is written before her answer:
+would do more than before (`definition_ask`). A third is a change to her memory in a turn someone
+else asked for (`dashboard.memory_holds`): only her word changes it. The agent cannot give that
+consent, so each asks the owner once, through the approval registry itself
+(`DashboardState.request_approval`: the card in the chat that asked, the Inbox, the phone, a
+channel), and nothing is written before her answer:
 
 * **Only her answer.** The ask goes to the registry itself, so no standing grant (a chat's Trust,
   YOLO, an operator's source list) answers it; it is kept out of the answers a Trust or YOLO switch
@@ -33,8 +35,10 @@ logger = logging.getLogger(__name__)
 BATCH_PREFIX = "batch:"
 #: The registry id of a workflow save's ask, before the workflow's name (`definition_ask`).
 SAVE_PREFIX = "workflow-save:"
+#: The registry id of a held change to her memory's ask, before its own id (`memory_holds`).
+MEMORY_PREFIX = "memory:"
 #: Every ask of this kind, by its registry-id prefix.
-PREFIXES: tuple[str, ...] = (BATCH_PREFIX, SAVE_PREFIX)
+PREFIXES: tuple[str, ...] = (BATCH_PREFIX, SAVE_PREFIX, MEMORY_PREFIX)
 
 
 def nobody_to_ask(state: Any, chat: str) -> str:

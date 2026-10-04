@@ -9,7 +9,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import memory_locality, memory_reads, memory_service
+from personalclaw import memory_locality, memory_reads, memory_service, memory_writes
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import ConfigWriteError
 from personalclaw.config.transactions import mutate_config_async
@@ -804,11 +804,37 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=422)
     svc = _global_service(request.app["state"])
+    sk = request.headers.get("X-Session-Key", "")
+    # A turn someone other than you asked for adds no rule on its own: held for your own word.
+    if memory_writes.asker():
+        from personalclaw.dashboard import memory_holds
+
+        async def _on_her_allow() -> None:
+            refused = await asyncio.to_thread(
+                svc.set_semantic, rule.key, rule_to_value(rule), 1.0, "user_explicit"
+            )
+            _sel().log_api_access(
+                caller=sk,
+                operation="approval_rule.write",
+                outcome="rejected" if refused else "success",
+                source="dashboard",
+                resources=f"{refused[0].value if refused else verdict.value}:{rule.key}",
+            )
+
+        add = memory_holds.Change(
+            operation="approval_rule.write",
+            tool="triage_rules",
+            said=f"Add the triage rule “{pattern}” ({verdict.value})",
+            to_do="add this triage rule",
+            ask="whether to add it, and it is added",
+            not_yet="No rule added yet",
+            answers="Allow adds it, Deny leaves your rules as they are.",
+        )
+        return memory_holds.held(request, add, _on_her_allow)
     # Off the event loop, as every memory write that can reach a model is (`set_semantic`).
     err = await asyncio.to_thread(
         svc.set_semantic, rule.key, rule_to_value(rule), 1.0, "user_explicit"
     )
-    sk = request.headers.get("X-Session-Key", "")
     if err is not None:
         code, message = err
         _sel().log_api_access(
@@ -859,6 +885,32 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
         # become a second, unaudited way to tombstone arbitrary memory keys.
         return web.json_response({"error": "not an approval rule key"}, status=400)
     svc = _global_service(request.app["state"])
+    # A turn someone other than you asked for revokes no rule on its own: held for your own word.
+    if memory_writes.asker():
+        from personalclaw.dashboard import memory_holds
+
+        sk = request.headers.get("X-Session-Key", "")
+
+        async def _on_her_allow() -> None:
+            if svc.delete_semantic(key, source="user_explicit"):
+                _sel().log_api_access(
+                    caller=sk,
+                    operation="approval_rule.delete",
+                    outcome="success",
+                    source="dashboard",
+                    resources=key,
+                )
+
+        revoke = memory_holds.Change(
+            operation="approval_rule.delete",
+            tool="triage_rules",
+            said=f"Revoke the triage rule {key}",
+            to_do="revoke this triage rule",
+            ask="whether to revoke it, and it is revoked",
+            not_yet="No rule revoked yet",
+            answers="Allow revokes it, Deny keeps it.",
+        )
+        return memory_holds.held(request, revoke, _on_her_allow)
     if not svc.delete_semantic(key, source="user_explicit"):
         return web.json_response({"error": "not found"}, status=404)
     _sel().log_api_access(

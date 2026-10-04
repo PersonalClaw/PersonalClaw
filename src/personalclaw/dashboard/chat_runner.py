@@ -169,7 +169,7 @@ from personalclaw.sel import sel
 from personalclaw.session_pid import tie_to_session
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
-from personalclaw.turn_source import shared_source
+from personalclaw.turn_source import QUEUED_FROM, asked_by, shared_source, source_of
 from personalclaw.turn_streams import close_stream
 from personalclaw.usage_ledger import Attribution, recorder, spent_rows
 
@@ -2196,6 +2196,9 @@ async def run_chat(
     # That row itself: what its sender typed is read off it once the turn is done (`own_words`).
     _turn_row = session.messages[_started_at] if _started_at is not None else None
     _asked_by_person = _turn_row is None or _turn_row.get("role") == "user"
+    # Who asked for the turn, when the owner did not (`turn_source.asked_by`): what the turn, its
+    # tools and the work it starts would change of her memory waits for her own word.
+    memory_writes.asked_for(asked_by(_turn_row) if _turn_row is not None else {})
     # What this attempt takes from the session that rides one turn only, as the way to put each
     # back: a retry of the turn (`_send_again`) is handed the same context the first attempt was.
     _taken_once: list[Callable[[], None]] = []
@@ -5674,12 +5677,17 @@ async def run_chat(
                 # And which of the row's words their senders typed (`queued_words`).
                 if (_queued_own := queued_words(consumed)) is not None:
                     queued_meta[OWN_WORDS] = _queued_own
+                # Messages from different places record no source of their own, so the row says
+                # whose each one was: who asked for its turn (`turn_source.asked_by`).
+                _queued_source = shared_source(consumed)
+                if len(consumed) > 1 and not _queued_source:
+                    queued_meta[QUEUED_FROM] = [source_of(item) for item in consumed]
                 session.append(
                     "subagent" if is_subagent else "inject" if is_cron else "user",
                     next_msg,
                     json.dumps({"cronLabel": cron_label}) if is_cron else "msg msg-u",
                     meta=queued_meta or None,
-                    source=shared_source(consumed),  # where its messages came from
+                    source=_queued_source,  # where its messages came from
                 )
                 # A queued user message is persisted here but session.append suppresses
                 # the SSE echo for role="user" (the live page normally adds the user

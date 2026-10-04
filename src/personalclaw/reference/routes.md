@@ -157,7 +157,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/chat/sessions/bound-project` — the CALLING session's bound Project id.
 - `POST /api/chat/sessions/bulk` — apply one op to many sessions.
 - `POST /api/chat/sessions/cleanup` — bulk-archive inactive sessions to history.
-- `GET /api/chat/sessions/model-reach` — whether the CALLING session keeps nothing.
+- `GET /api/chat/sessions/model-reach` — what the CALLING session keeps, and who asked.
 - `GET /api/chat/sessions/templates` — every saved session starter.
 - `POST /api/chat/sessions/templates` — save a chat setup as a reusable starter.
 - `DELETE /api/chat/sessions/templates/{template}` — remove a starter.

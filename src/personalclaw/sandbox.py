@@ -11,9 +11,9 @@ other SSH files (keys, config, etc.), using platform-native isolation:
 
 Both also keep what runs as the owner (``owner_only``) unwritable at every level, and, for a
 command started for work that may change none of your memory (an Incognito or Temporary chat's,
-an app's not given your memory), the memory folders too (:func:`_memory_fence`), which a command
-started for work that may read none of your memory (a Temporary chat's, an app's not given your
-memory) cannot read either (:func:`_memory_hidden`).
+an app's not given your memory, a turn someone other than you asked for), the memory folders too
+(:func:`_memory_fence`), which a command started for work that may read none of your memory (a
+Temporary chat's, an app's not given your memory) cannot read either (:func:`_memory_hidden`).
 
 A command a run starts is also held to the run's egress tier here (:func:`wrap_argv`): when the
 tier takes its network away, the Linux child gets a network namespace of its own with nothing in
@@ -1408,7 +1408,9 @@ def _memory_fence(*, realpath_only: bool) -> list[str]:
     home's memory documents and every working folder's memory), each in both of its spellings
     unless *realpath_only*: all of them when the work the command is started for may change none of
     your memory (``memory_writes.changes_no_memory``: an Incognito or Temporary chat's, an app's
-    not given your memory), none for any other. Asked when the command is wrapped, in its work."""
+    not given your memory, a turn someone other than you asked for), none for any other. Asked when
+    the command is wrapped, in its work: an agent CLI started then keeps the answer for as long as
+    its process lives."""
     from personalclaw import memory_writes
 
     if not memory_writes.changes_no_memory():

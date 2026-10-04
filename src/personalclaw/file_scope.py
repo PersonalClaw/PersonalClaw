@@ -48,14 +48,16 @@ refused before it is approved (:func:`store_named_in`), with the tool to use ins
 workspace (the home's preferences.md, projects.md and daily history, and every working folder's
 memory: ``memory.memory_folders``) are files the tools read and, with approval, change, and a
 change to a memory document is its store's own write (``memory.write_document``). Work that may
-change none of your memory, an Incognito or Temporary chat's or an app's not given your memory,
-changes nothing there: the file tools refuse it with the memory-write refusal, before anyone is
-asked (:func:`memory_kept_from_work`), and so does the shell for a command that names a path there
-and does more than read it (:func:`memory_named_in`), whose sandbox keeps the folders read-only.
-Work that may read none of your memory, a Temporary chat's or an app's not given your memory, reads
-nothing there either: the file tools refuse a path there in the words every memory read is refused
-in (``memory_reads.memory_read_refusal``) and leave the folders out of their listings, the shell
-refuses a command that names a path there, and its sandbox keeps the folders unreadable.
+change none of your memory (an Incognito or Temporary chat's, an app's not given your memory, a
+turn someone other than you asked for) changes nothing there: the file tools refuse it with the
+memory-write refusal, before anyone is asked (:func:`memory_kept_from_work`), and so does the shell
+for a command that names a path there and does more than read it (:func:`memory_named_in`), whose
+sandbox keeps the folders read-only. Work that may read none of your memory, a Temporary chat's or
+an app's not given your memory, reads nothing there either: the file tools refuse a path there in
+the words every memory read is refused in (``memory_reads.memory_read_refusal``) and leave the
+folders out of their listings, the shell refuses a command that names a path there, and its sandbox
+keeps the folders unreadable. The gate an agent CLI's own file and shell tools ask before a call
+runs holds both, whatever would approve the call (:func:`memory_named_by_call`).
 
 Inside every place the checks the Files view makes still hold (``file_roots.Admission``):
 symlinks and ``..`` are resolved first, so a link or a climb out of a place reaches nothing it
@@ -70,6 +72,7 @@ in the home is written from ``~`` (:mod:`personalclaw.home_paths`), and either f
 from __future__ import annotations
 
 import fnmatch
+import json
 import logging
 import os
 from collections.abc import Iterable, Mapping
@@ -578,8 +581,9 @@ def memory_kept_from_work(subject: str, real: str | os.PathLike[str]) -> OutOfSc
 
     *real* is in long-term memory (``memory.in_memory_folders``: the home's memory folder, or a
     working folder's memory) and the work may change none of it (``memory_writes``: an Incognito
-    or Temporary chat's, an app's not given your memory). Refused in the memory-write refusal's own
-    sentence and under its code, so the call is recorded as that refusal."""
+    or Temporary chat's, an app's not given your memory, a turn someone other than you asked for).
+    Refused in the memory-write refusal's own sentence and under its code, so the call is recorded
+    as that refusal."""
     from personalclaw import memory
 
     return _memory_kept(subject) if memory.in_memory_folders(real) else None
@@ -647,26 +651,122 @@ def memory_named_in(
     """Why a shell *command* that names a path in long-term memory is refused, or ``None``: one
     that does more than read it (``task_modes.is_read_only_bash``) in work that may change none of
     it (:func:`memory_kept_from_work`), and any one in work that may read none of it
-    (``memory_reads.memory_read_refusal``). A command that only reads runs where the work reads
-    your memory: an Incognito chat reads its memory.
+    (``memory_reads.memory_read_refusal``), decided by the one screen of long-term memory
+    (:func:`memory_screen`). A command that only reads runs where the work reads your memory: an
+    Incognito chat reads its memory.
 
     Every path the command names is read as its shell would find it (``command_paths.named_paths``,
     from *cwd*). Defence in depth, which says why before anyone is asked: the sandbox keeps the
     memory folders read-only to such work's commands, and unreadable to the commands of work that
     may read none of them, whatever their text says (``sandbox``)."""
-    from personalclaw import memory, memory_reads, memory_writes
     from personalclaw.command_paths import named_paths
     from personalclaw.task_modes import is_read_only_bash
 
-    changes = not is_read_only_bash(command) and memory_writes.memory_write_refusal() is not None
-    why = "" if changes else memory_reads.memory_read_refusal()
-    if not changes and not why:
-        return None
-    for word, path in named_paths(command, cwd=cwd):
-        if memory.in_memory_folders(path):
-            subject = f"Blocked: {word!r}"
-            return _memory_kept(subject) if changes else _memory_withheld(subject, why)
+    named = ((word, str(path)) for word, path in named_paths(command, cwd=cwd))
+    screened = memory_screen(named, reads=is_read_only_bash(command))
+    return screened[1] if screened is not None else None
+
+
+def memory_screen(
+    named: Iterable[tuple[str, str]], *, reads: bool
+) -> tuple[str, OutOfScope] | None:
+    """The one screen of long-term memory for a call or a command that names paths: the first of
+    *named* (each the word that names a path, and the path) in the memory folders, and why the call
+    is refused. One that does more than read it (*reads* false) is refused in work that may change
+    none of it (:func:`memory_kept_from_work`), and any one in work that may read none of it
+    (``memory_reads.memory_read_refusal``). ``None`` when the work may do what the call does
+    there, or it names no path there. The work is asked only once a path there is named: most
+    calls name none.
+
+    The shell's (:func:`memory_named_in`) and the gate an agent CLI's own tools ask
+    (:func:`memory_named_by_call`)."""
+    from personalclaw import memory, memory_reads
+
+    for word, path in named:
+        if not memory.in_memory_folders(path):
+            continue
+        subject = f"Blocked: {word!r}"
+        if not reads and (kept := _memory_kept(subject)) is not None:
+            return word, kept
+        why = memory_reads.memory_read_refusal()
+        return (word, _memory_withheld(subject, why)) if why else None
     return None
+
+
+#: The keys a call's input names the file it works on by: PersonalClaw's own file tools' ``path``,
+#: and those the file tools an agent CLI brings use (``file_path``, ``notebook_path``, …).
+_FILE_KEYS = (
+    "path",
+    "file_path",
+    "filePath",
+    "notebook_path",
+    "target_file",
+    "file",
+    "filename",
+    "destination",
+    "new_path",
+)
+
+
+def memory_named_by_call(
+    title: str, tool_input: Any, command: str, *, cwd: str | os.PathLike[str] | None = None
+) -> tuple[str, OutOfScope] | None:
+    """The path a call put to an approval gate names in long-term memory and why the call is
+    refused (:func:`memory_screen`), or ``None``: a change there in work that may change none of
+    your memory, and a read too in work that may read none of it.
+
+    An agent CLI brings file and shell tools of its own, which PersonalClaw's file tools' checks
+    never see: the gate the CLI asks before a call runs (``acp.permission_authority.
+    screen_tool_call``) has only the call's title and input. A call that runs a command (*command*,
+    or a title in the ``Running: `` form) is read as the shell's is (:func:`memory_named_in`); any
+    other is read for the paths its title names, its own description of what it does. Both are read
+    for the paths under the keys the input names a file by (:data:`_FILE_KEYS`), from *cwd* (the
+    workspace in the home when ``None``). A call reads only when its command only reads, or when
+    its title is the form the gate takes a read in (``Reading ``, as the deny-list reads one).
+    Deny-only, so reading more can only refuse more.
+
+    A call to one of PersonalClaw's own tools (``acp.mcp_servers.names_core_tool``) is left to
+    that tool: it changes memory only through the stores, which refuse the change for such work,
+    and it holds back from what it reads what the file tools hold back (:func:`held_from_reads`)."""
+    from personalclaw.acp.mcp_servers import names_core_tool
+    from personalclaw.command_paths import named_paths
+    from personalclaw.task_modes import is_read_only_bash
+
+    if names_core_tool(title, tool_input):
+        return None
+    shown = str(title or "")
+    run = command or (shown.removeprefix("Running: ") if shown.startswith("Running: ") else "")
+    named = [(word, str(path)) for word, path in named_paths(run or shown, cwd=cwd)]
+    named.extend(_files_in_input(tool_input, cwd=cwd))
+    return memory_screen(
+        named, reads=is_read_only_bash(run) if run else shown.startswith("Reading ")
+    )
+
+
+def _files_in_input(
+    tool_input: Any, *, cwd: str | os.PathLike[str] | None
+) -> list[tuple[str, str]]:
+    """The files a call's input names under :data:`_FILE_KEYS`, each as written and as the path it
+    names: a relative one from *cwd*, the workspace in the home when ``None``. The input is the
+    parsed arguments, or their JSON text, as an agent CLI's permission request carries them."""
+    args = tool_input
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            return []
+    if not isinstance(args, Mapping):
+        return []
+    from personalclaw.config.loader import memory_root
+
+    base = Path(cwd) if cwd is not None else memory_root()
+    named: list[tuple[str, str]] = []
+    for key in _FILE_KEYS:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            path = Path(os.path.expanduser(value.strip()))
+            named.append((value, str(path if path.is_absolute() else base / path)))
+    return named
 
 
 def pattern_refusal(arg: str, pattern: str) -> OutOfScope | None:

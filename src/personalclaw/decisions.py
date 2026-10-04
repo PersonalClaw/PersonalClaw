@@ -30,6 +30,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from personalclaw.memory_writes import MemoryWriteRefused
+
 logger = logging.getLogger(__name__)
 
 #: The item_type. One string, imported by every registration site, so the type cannot be
@@ -609,11 +611,16 @@ def resolve_decision(
     )
     svc = _memory(memory)
     key: str | None = None
+    # Why memory took no lesson, when it refused one: the work keeps nothing, it is an app's not
+    # given your memory, or someone other than you asked for the turn. Said to whoever resolved it.
+    not_kept = ""
     try:
         # source="user_explicit": the user typed this outcome, and a weaker source lets the
         # memory write blocker drop it.
         if svc.write_lesson(rule, category=LESSON_CATEGORY, source="user_explicit"):
             key = _lesson_key_for(svc, rule)
+    except MemoryWriteRefused as refused:
+        not_kept = refused.reason
     except Exception:
         logger.warning("decision journal: lesson write failed for %s", item_id, exc_info=True)
     if key:
@@ -622,7 +629,10 @@ def resolve_decision(
     # Re-enqueue so the outcome text embeds too — a resolved decision whose outcome is not
     # searchable is half a record.
     _reingest(item_id, enqueue)
-    return projection(_require_decision(ks, item_id))
+    resolved = projection(_require_decision(ks, item_id))
+    if not_kept:
+        resolved["lesson_not_kept"] = not_kept
+    return resolved
 
 
 def _defer(

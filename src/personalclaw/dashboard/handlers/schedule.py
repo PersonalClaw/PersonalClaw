@@ -13,6 +13,9 @@ A folder's chats keep lessons in that folder's memory too (``memory_locality``).
 ``?partition=``: an id names the folder's memory it is about (Settings → Memory's pick), none the
 global memory, and :data:`EVERY_MEMORY` every memory she has, each lesson named by the memory it is
 in: the inventory ``memory_list`` reads and ``memory_forget`` removes from.
+
+A lesson to save or remove that a turn someone other than you asked for wants is held for your own
+word (``memory_holds``): nothing changes until you allow it, and the agent is told so.
 """
 
 import asyncio
@@ -23,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from personalclaw import memory_locality, memory_reads, memory_writes
+from personalclaw.dashboard import memory_holds
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.security import MaskConflict, redact_values_for_display, stored_name
@@ -124,13 +128,17 @@ async def api_lessons_create(request: web.Request) -> web.Response:
             error=memory_writes.REFUSAL,
         )
         return web.json_response({"error": memory_writes.REFUSAL}, status=403)
-    _sel().log_api_access(
-        caller=sk,
-        operation="memory_remember",
-        outcome="allowed",
-        source="dashboard",
-        resources=reach.keys[-1] if reach.keys else "dashboard_ui",
-    )
+    # A turn someone other than you asked for saves nothing on its own: the lesson is held for
+    # your own word below, once it is one memory would take (`memory_holds`).
+    asked_by_someone_else = bool(memory_writes.asker())
+    if not asked_by_someone_else:
+        _sel().log_api_access(
+            caller=sk,
+            operation="memory_remember",
+            outcome="allowed",
+            source="dashboard",
+            resources=reach.keys[-1] if reach.keys else "dashboard_ui",
+        )
     rule = body.get("rule", "").strip()
     if not rule:
         return web.json_response({"error": "rule is required"}, status=400)
@@ -193,27 +201,51 @@ async def api_lessons_create(request: web.Request) -> web.Response:
             status=400,
         )
     svc = service_for(memories[0][1])
-    # Off the event loop: the lesson is embedded, and may be judged against the lessons it could
-    # contradict, each a round trip to a model.
-    refusal = await asyncio.to_thread(
-        _save_lesson, svc, rule, category, negative, scope=scope, scope_ref=scope_ref
-    )
-    if refusal is not None:
-        code, reason = refusal
+
+    async def _save() -> tuple[SemanticRejectCode, str] | None:
+        # Off the event loop: the lesson is embedded, and may be judged against the lessons it
+        # could contradict, each a round trip to a model.
+        refusal = await asyncio.to_thread(
+            _save_lesson, svc, rule, category, negative, scope=scope, scope_ref=scope_ref
+        )
+        if refusal is None:
+            state.push_refresh("lessons")
+            return None
         _sel().log_api_access(
             caller=sk,
             operation="memory_remember",
             outcome="rejected",
             source="dashboard",
-            resources=f"{code.value}:lesson",
+            resources=f"{refusal[0].value}:lesson",
         )
+        return refusal
+
+    if asked_by_someone_else:
+
+        async def _on_her_allow() -> None:
+            refused = await _save()
+            if refused is not None:
+                logger.warning("A lesson the owner allowed was not saved: %s", refused[1])
+
+        remember = memory_holds.Change(
+            operation="memory_remember",
+            tool="memory_remember",
+            said=f"Remember: “{rule}”" + (f"\nNot: “{negative}”" if negative else ""),
+            to_do="remember this",
+            ask="whether to keep it, and it is saved",
+            not_yet="Not saved yet",
+            answers="Allow saves it as a lesson of yours, Deny keeps nothing.",
+        )
+        return memory_holds.held(request, remember, _on_her_allow)
+    refusal = await _save()
+    if refusal is not None:
+        code, reason = refusal
         return json_error(
             "lesson_refused",
             message=f"Lesson not saved, and nothing in memory changed: {reason}.",
             status=409 if code is SemanticRejectCode.CONFLICT else 422,
             error_extra={"reason": code.value},
         )
-    state.push_refresh("lessons")
     return web.json_response({"ok": True})
 
 
@@ -282,9 +314,30 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
             named.append((part, svc, stored_name(rule_sub, _stored_rules(svc))))
         except MaskConflict as exc:
             return web.json_response({"error": str(exc)}, status=409)
-    removed = [_named(part) for part, svc, rule in named if rule and svc.delete_lesson(rule)]
-    if removed:
-        state.push_refresh("lessons")
+
+    def _remove() -> list[dict[str, Any]]:
+        removed = [_named(part) for part, svc, rule in named if rule and svc.delete_lesson(rule)]
+        if removed:
+            state.push_refresh("lessons")
+        return removed
+
+    # A turn someone other than you asked for removes nothing on its own: held for your own word.
+    if memory_writes.asker():
+
+        async def _on_her_allow() -> None:
+            _remove()
+
+        forget = memory_holds.Change(
+            operation="lessons.delete",
+            tool="memory_forget",
+            said=f"Forget the lessons matching “{rule_sub}”",
+            to_do="remove the lessons matching this",
+            ask=f"whether to remove the lessons matching “{rule_sub}”, and they are removed",
+            not_yet="Nothing removed yet",
+            answers="Allow removes them, Deny keeps them.",
+        )
+        return memory_holds.held(request, forget, _on_her_allow)
+    removed = _remove()
     return web.json_response({"ok": bool(removed), "removed": removed})
 
 

@@ -90,6 +90,13 @@ TURNS_NAME_THEIR_CHANNEL = "turns-name-their-channel"
 #: ``closing_stream``, so an app that imports it does not load.
 CLOSING_STREAMS = "closing-streams"
 
+#: A turn a channel runs itself names who asked for it: ``with turn_asked_by(session_key,
+#: arrived_on(thread, sender, channel)):`` around the turn says whose message it answers, and while
+#: it runs what its tools would change of the owner's memory waits for her own word unless that
+#: sender is the owner the channel keeps (``owner_id_for``), as for a turn the door hands a chat. A
+#: core without it has no ``turn_asked_by``, so an app that imports it does not load.
+TURNS_NAME_WHO_ASKED = "turns-name-who-asked"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
@@ -101,6 +108,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         LINKS_NAME_THEIR_CHANNEL,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
+        TURNS_NAME_WHO_ASKED,
     }
 )
 

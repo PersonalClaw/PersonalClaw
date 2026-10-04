@@ -34,6 +34,21 @@ your content rather than your memory. What such work writes with the grant names
 source (:func:`written_by`), so it never reads as yours: not as a fact you set or a lesson you
 taught, which outrank everything else written, nor as one of PersonalClaw's own passes.
 
+A turn someone other than the owner started changes none of her memory on its own: a colleague's
+message in a shared channel thread, a correspondent's, a program's through the OpenAI-compatible
+door (``turn_source.asked_by``, the rule memory reads her words by). The turn names who asked for
+it once it knows its message (:func:`asked_for`, said by the turn engine; a channel that runs a
+conversation itself says it with :func:`turn_asked_by`), and :func:`asker` is then the answer for
+the turn's work, the requests its tools make while it runs, and a subagent it starts (handed on
+when it is spawned, :func:`hand_on`). The stores refuse such work's changes
+(:func:`refuse_memory_write`, the memory database's statement check) saying who asked, so do the
+file tools, the shell and the gate an agent CLI's own tools ask (``file_scope``), a read leaves no
+mark on memory, and the turn's own learning takes nothing. A change the agent's memory tools ask
+for in such a turn is held for her own word instead (``dashboard.memory_holds``): she is asked, and
+what she allows is written as hers (:func:`on_the_owners_word`). Memory consolidation is
+PersonalClaw's own pass over the whole conversation, which takes only her words from it, so it
+runs as the session's own (:func:`as_its_session`), whoever asked for the turn it follows.
+
 Nothing of such a session is handed to a background model either: its title, tags and suggested
 follow-ups, a condensed copy of its history, the suggestions built from recent chats. Each of those
 chores asks :func:`blocks_background_models`, the same answer, before it reads the session to a
@@ -80,7 +95,7 @@ import contextvars
 import functools
 import logging
 import re
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -130,25 +145,27 @@ _BY_STRICTNESS = ("temporary", UNREADABLE, "incognito", PERSISTENT, _GARBLED, _N
 REFUSAL = "Memory writes are not allowed in this session mode."
 
 #: The codes a refused write is recorded under (:attr:`MemoryWriteRefused.code`): work that derives
-#: from a session that keeps nothing, and an app's work that may not change your memory.
+#: from a session that keeps nothing, an app's work that may not change your memory, and the work of
+#: a turn someone other than you asked for.
 RESTRICTED_SESSION_BLOCK = "restricted_session_block"
 APP_MEMORY_NOT_GRANTED = "app_memory_not_granted"
+ASKED_BY_SOMEONE_ELSE = "asked_by_someone_else"
 
 
 class MemoryWriteRefused(Exception):
     """A write to long-term memory was refused because the work derives from a session that keeps
-    nothing, or is an app's that may not change your memory (see the module docstring). Raised by
-    the stores, answered 403 on the API with :attr:`reason`."""
+    nothing, is an app's that may not change your memory, or was asked for by someone other than
+    you (see the module docstring). Raised by the stores, answered 403 on the API with
+    :attr:`reason`; :attr:`code` says which, as the security log and a refused tool call's audit
+    row name it."""
 
-    def __init__(self, what: str = "", *, reason: str = "") -> None:
+    def __init__(
+        self, what: str = "", *, reason: str = "", code: str = RESTRICTED_SESSION_BLOCK
+    ) -> None:
         self.reason = reason or REFUSAL
+        self.code = code
         super().__init__(f"{self.reason} ({what})" if what else self.reason)
         self.what = what
-
-    @property
-    def code(self) -> str:
-        """Why, as the security log and a refused tool call's audit row name it."""
-        return RESTRICTED_SESSION_BLOCK if self.reason == REFUSAL else APP_MEMORY_NOT_GRANTED
 
 
 class OtherModelRefused(RuntimeError):
@@ -166,35 +183,46 @@ class _Source:
     """One session the current work derives from: the spellings of its key, the mode the code
     that named it holds (``None`` when it holds none), the model its turn runs on as
     ``"<entry>:<model>"`` once the turn has named it (``""`` until then), whether the work is
-    reading what the person gave the chat (:func:`reading_their_input`), and the app whose work it
-    is (:class:`_Whose`; ``None`` for yours)."""
+    reading what the person gave the chat (:func:`reading_their_input`), the app whose work it
+    is (:class:`_Whose`; ``None`` for yours), who asked for the turn it is the work of
+    (:func:`asked_for`: ``{}`` for you, ``None`` when this scope does not say, so the running turns'
+    marks are read, :func:`asker`), and the marks this scope made for its turn, taken off when the
+    scope ends."""
 
     keys: tuple[str, ...]
     mode: str | None
     model: str = ""
     their_input: bool = False
     whose: "_Whose | None" = None
+    asker: Mapping[str, str] | None = None
+    marks: tuple[tuple[str, object], ...] = ()
 
 
 class _Whose:
     """Whose work a scope is: the app's (``""`` for yours), why that app's work may change none of
-    your memory (``""`` when it may), and the session at the top of the chain the work is done for
-    (``""`` when nothing says: the scope's own session then). Found when first asked and kept for
-    the work's whole length, so work that writes nothing (most of a tool's calls) never looks.
-    *find* answers ``(app, session the work is for)``."""
+    your memory (``""`` when it may), the session at the top of the chain the work is done for
+    (``""`` when nothing says: the scope's own session then), and every session along that chain.
+    Found when first asked and kept for the work's whole length, so work that writes nothing (most
+    of a tool's calls) never looks. *find* answers ``(app, session the work is for, the chain)``."""
 
-    __slots__ = ("_find", "_found")
+    __slots__ = ("_find", "_found", "_chain")
 
-    def __init__(self, find: Callable[[], tuple[str, str]]) -> None:
+    def __init__(self, find: Callable[[], tuple[str, str, tuple[str, ...]]]) -> None:
         self._find = find
         self._found: tuple[str, str, str] | None = None
+        self._chain: tuple[str, ...] = ()
 
     def get(self) -> tuple[str, str, str]:
         if self._found is None:
-            app, works_for = self._find()
+            app, works_for, self._chain = self._find()
             app = (app or "").strip()
             self._found = (app, _app_may_not_change(app), (works_for or "").strip())
         return self._found
+
+    def chain(self) -> tuple[str, ...]:
+        """The sessions the work is done for, from its own up to the chat at the top."""
+        self.get()
+        return self._chain
 
 
 _SCOPE: contextvars.ContextVar[_Source | None] = contextvars.ContextVar(
@@ -428,10 +456,14 @@ def derived_from(
     nothing either.
     """
     keys = tuple(k for k in ((session_key or "").strip(), *(a.strip() for a in aliases if a)) if k)
-    token = _SCOPE.set(_Source(keys or ("",), memory_mode, whose=_whose_of(app)))
+    # The session's own work, on no one's say-so but yours, until its turn says who asked for it
+    # (`asked_for`): a pass PersonalClaw makes over the session (consolidation, a chore) reads
+    # only your words, and is asked for by nobody else.
+    token = _SCOPE.set(_Source(keys or ("",), memory_mode, whose=_whose_of(app), asker={}))
     try:
         yield
     finally:
+        _unmark(_SCOPE.get())
         _SCOPE.reset(token)
 
 
@@ -442,13 +474,13 @@ def _whose_of(app: str = "", reach: "Callable[[], Reach] | None" = None) -> _Who
     if reach is not None:
         found = reach
 
-        def find() -> tuple[str, str]:
+        def find() -> tuple[str, str, tuple[str, ...]]:
             whose = found()
-            return whose.app, whose.keys[-1] if whose.keys else ""
+            return whose.app, whose.keys[-1] if whose.keys else "", tuple(whose.keys)
 
         return _Whose(find)
     named = (app or "").strip()
-    return _Whose(lambda: (named, "")) if named else None
+    return _Whose(lambda: (named, "", ())) if named else None
 
 
 def _source_blocks(source: _Source) -> bool:
@@ -509,20 +541,25 @@ def work_app() -> str:
 
 def changes_no_memory() -> bool:
     """Whether the current work may change none of your memory: it derives from a session that
-    keeps nothing (:func:`writes_refused`), or it is an app's not given your memory. Asked where a
-    read would leave a mark on memory (a recall's count, an episode's last read), so such work
-    reads without leaving one rather than being refused part-way through a read."""
-    return writes_refused() or bool(app_change_refusal())
+    keeps nothing (:func:`writes_refused`), it is an app's not given your memory, or someone other
+    than you asked for its turn (:func:`asker`). Asked where a read would leave a mark on memory (a
+    recall's count, an episode's last read), so such work reads without leaving one rather than
+    being refused part-way through a read."""
+    return writes_refused() or bool(app_change_refusal()) or bool(asker())
 
 
 def refuse_memory_write(what: str) -> None:
     """Raise :class:`MemoryWriteRefused` when the current work may not write ``what`` to your
-    memory: it derives from a session that keeps nothing (:func:`refuse_write`), or it is an app's
-    that may change none of your memory, refused in the app's words."""
+    memory: it derives from a session that keeps nothing (:func:`refuse_write`), it is an app's
+    that may change none of your memory, refused in the app's words, or someone other than you
+    asked for its turn (:func:`asker`), refused saying who."""
     refuse_write(what)
     refused = app_change_refusal()
     if refused:
-        raise MemoryWriteRefused(what, reason=refused)
+        raise MemoryWriteRefused(what, reason=refused, code=APP_MEMORY_NOT_GRANTED)
+    someone = asker()
+    if someone:
+        raise MemoryWriteRefused(what, reason=others_refusal(someone), code=ASKED_BY_SOMEONE_ELSE)
 
 
 def memory_write_refusal(what: str = "") -> MemoryWriteRefused | None:
@@ -543,6 +580,133 @@ def written_by(source: str) -> str:
     is weighed as an app's, never as yours."""
     app = _whose()[0]
     return f"{APP_SOURCE_PREFIX}{app}" if app else source
+
+
+# ── who asked for the turn ──────────────────────────────────────────────────────────────────
+
+
+def asked_for(source: Mapping[str, str]) -> None:
+    """Name who asked for the current work's turn: the source of the message that started it when
+    someone other than you sent it (``turn_source.asked_by``), ``{}`` when you did.
+
+    The turn engine says it once the turn knows its message (``chat_runner.run_chat``). It holds
+    for the rest of the scope it is said in, and while that scope lasts for every request the
+    turn's tools make, which name its session (:func:`asker` reads the marks it leaves here), so
+    none of them changes your memory on someone else's say-so. Outside any scope it does nothing.
+    """
+    scope = _SCOPE.get()
+    if scope is None:
+        return
+    from personalclaw import session_restrictions
+
+    named = dict(source)
+    _unmark(scope)
+    marks = tuple(
+        (key, session_restrictions.mark_asked_by(key, named)) for key in scope.keys if key
+    )
+    _SCOPE.set(replace(scope, asker=named, marks=marks))
+
+
+def _unmark(scope: _Source | None) -> None:
+    """Take off the marks *scope* made for its turn (:func:`asked_for`): the turn is over."""
+    if scope is None or not scope.marks:
+        return
+    from personalclaw import session_restrictions
+
+    for key, token in scope.marks:
+        session_restrictions.unmark_asked_by(key, token)
+
+
+def _spellings(key: str) -> tuple[str, ...]:
+    """A session's key and, for a dashboard chat's, its bare name: a turn marks the keys its scope
+    names, and a request names the chat by its history key."""
+    return (key, key.removeprefix(_DASHBOARD)) if key.startswith(_DASHBOARD) else (key,)
+
+
+def asker() -> dict[str, str]:
+    """Who asked for the turn the current work is done for, when it was not you: the source of the
+    message that started that turn (``{}`` when you did, or when no turn did).
+
+    The turn's own work says it (:func:`asked_for`). Work that does not, a request the turn's tools
+    make and a subagent it started, reads the mark the running turn left for each session the work
+    is done for, its own first and then the chain up to the chat at the top
+    (``memory_reads.reach_of``). Work in no scope at all, a call the built-in agent makes for a
+    conversation a channel runs itself, reads the mark of the session the call names."""
+    from personalclaw import session_restrictions
+
+    scope = _SCOPE.get()
+    if scope is not None and scope.asker is not None:
+        return dict(scope.asker)
+    if scope is not None:
+        keys = list(scope.keys) + list(scope.whose.chain() if scope.whose is not None else ())
+    else:
+        from personalclaw.mcp_core import get_current_session_key
+
+        keys = [get_current_session_key()]
+    for key in keys:
+        for spelling in _spellings((key or "").strip()):
+            marked = session_restrictions.asked_by(spelling) if spelling else None
+            if marked is not None:
+                return marked
+    return {}
+
+
+def others_refusal(source: Mapping[str, str]) -> str:
+    """What a write refused for someone else's turn says (:func:`refuse_memory_write`): who asked,
+    and that only your word changes your memory."""
+    from personalclaw.turn_source import named
+
+    return (
+        f"Nothing was written to the owner's memory: {named(source)} asked for this, and nothing "
+        "says they are the owner, whose memory changes only on their own word."
+    )
+
+
+@contextmanager
+def on_the_owners_word() -> Iterator[None]:
+    """Run the enclosed change as yours: you allowed it yourself (``dashboard.memory_holds``), so
+    who asked for the turn it came from no longer decides it. Everything else still does: whether
+    the session keeps anything, and whether an app's work may change your memory."""
+    scope = _SCOPE.get()
+    if scope is None:
+        yield
+        return
+    token = _SCOPE.set(replace(scope, asker={}, marks=()))
+    try:
+        yield
+    finally:
+        _SCOPE.reset(token)
+
+
+@contextmanager
+def turn_asked_by(session_key: str, source: Mapping[str, str], *aliases: str) -> Iterator[None]:
+    """Run a turn a channel runs itself, for the conversation ``session_key`` (and the other keys
+    *aliases* name it by), as the one the message *source* records asked for (``arrived_on(thread,
+    sender, channel)``). While it runs, what the turn's tools would change of your memory waits for
+    your own word unless the channel knows *source* as you (``turn_source.asked_by``), as a turn
+    the door hands a chat does: the requests its tools make read the marks it leaves for each key,
+    and the turn's own work in the channel's process (the gate its calls are put to,
+    ``acp.permission_authority.screen_tool_call``) runs as asked for by *source*."""
+    from personalclaw import session_restrictions
+    from personalclaw.turn_source import asked_by
+
+    named = asked_by(dict(source))
+    keys = tuple(dict.fromkeys(k.strip() for k in (session_key, *aliases) if k and k.strip()))
+    marks = [(key, session_restrictions.mark_asked_by(key, named)) for key in keys]
+    # The conversation's own work, under no mode of its own (its records say it): a scope that
+    # names no conversation at all would refuse every write, so none is opened without a key.
+    scope = _SCOPE.get()
+    held = replace(scope, asker=named) if scope is not None else None
+    if held is None and keys:
+        held = _Source(keys, None, asker=named)
+    token = _SCOPE.set(held) if held is not None else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _SCOPE.reset(token)
+        for key, mark in marks:
+            session_restrictions.unmark_asked_by(key, mark)
 
 
 # ── the models a session's work reaches ─────────────────────────────────────────────────────
@@ -816,9 +980,16 @@ def hand_on(
     saying why. Work for any other session that keeps nothing is Incognito, so its agent's calls
     back over the API are refused writes as its parent's are. Either way it is handed the one model
     it may reach (:func:`handed_model`), its chat's own, which its runtime is built on and its own
-    calls back over the API stay on."""
+    calls back over the API stay on.
+
+    Work started on someone else's say-so stays on it: when someone other than you asked for the
+    turn that starts it (:func:`asker`), the subagent is marked with who did, so what it would
+    change of your memory waits for your own word as the turn's own changes do."""
     from personalclaw import memory_reads, session_restrictions
 
+    someone = asker()
+    if someone:
+        session_restrictions.mark_asked_by(child_key, someone)
     asked = reach or functools.partial(memory_reads.reach_of, None)
     parent = asked(parent_key) if parent_key else memory_reads.Reach()
     modes = {restricted_mode(), parent.mode}

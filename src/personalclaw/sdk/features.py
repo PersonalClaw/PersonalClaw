@@ -46,6 +46,11 @@ channel (``personalclaw.sdk.channel.save_conversation_turn(â€¦, source_channel=â
 into a chat itself records where it came from (``arrived_on(thread, sender, channel)``), and memory
 takes a line as the owner's own words only when its sender is that channel's owner. A channel app
 that saves its turns or imports a thread with them declares it.
+
+``TURNS_NAME_WHO_ASKED``: a turn a channel runs itself names who asked for it
+(``with personalclaw.sdk.channel.turn_asked_by(session_key, arrived_on(thread, sender, channel)):``
+around the turn), and what its tools would change of the owner's memory waits for her own word
+unless that sender is the owner. A channel app that runs a conversation's turns itself declares it.
 """
 
 from personalclaw.apps.core_features import (
@@ -58,6 +63,7 @@ from personalclaw.apps.core_features import (
     LINKS_NAME_THEIR_CHANNEL,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
+    TURNS_NAME_WHO_ASKED,
     core_has,
 )
 
@@ -71,5 +77,6 @@ __all__ = [
     "LINKS_NAME_THEIR_CHANNEL",
     "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",
+    "TURNS_NAME_WHO_ASKED",
     "core_has",
 ]

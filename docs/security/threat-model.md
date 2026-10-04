@@ -644,7 +644,11 @@ Data leaving the running system:
   refused. The same grant governs writes: the memory store refuses every change an
   app's work makes without it (`memory_writes.check_memory_statement`), and with
   it records the app as the source (`memory_writes.written_by`), so an app cannot
-  write as you.
+  write as you. Nor can anyone else in a conversation with you: a turn someone
+  other than you asked for (`turn_source.asked_by`) changes none of your memory on
+  its own (`memory_writes.asker`, read by the stores, the turn's own learning,
+  every request its tools make and the gate an agent CLI's own tools ask), and
+  what its memory tools ask for waits for your own Allow (`dashboard/memory_holds.py`).
 
 ## OWASP Agentic Security (ASI) Top-10 mapping
 

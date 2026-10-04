@@ -224,6 +224,18 @@ owner can neither see nor revoke.
   `"requiresCoreFeatures": ["turns-name-their-channel"]`
   (`personalclaw.sdk.features.TURNS_NAME_THEIR_CHANNEL`): a PersonalClaw without it takes no
   `source_channel`, and refuses to install or update the app.
+- **Say whose message each turn answers, for as long as it runs.** Wrap the turn, from before you
+  stream it to after its tools are done, in
+  `with turn_asked_by(session_key, arrived_on(thread, sender, PROVIDER)):`, with the source you save
+  the turn with. While it runs, what the turn's tools would change of the owner's memory (a lesson
+  to remember or forget, a triage rule, a skill draft) waits for her own word unless the sender is
+  the owner your channel keeps: nothing is written, she is asked, and the agent is told so. Put
+  each call the turn's agent asks about to `screen_tool_call` inside it as well: a change its own
+  file or shell tools would make to one of her memory documents is refused there, whatever would
+  approve it. A channel that runs its turns itself declares
+  `"requiresCoreFeatures": ["turns-name-who-asked"]`
+  (`personalclaw.sdk.features.TURNS_NAME_WHO_ASKED`): a PersonalClaw without it has no
+  `turn_asked_by`, and refuses to install or update the app.
 
 A channel that uses these declares the core features in its `app.json`:
 `"requiresCoreFeatures": ["chat-trust", "tool-call-screen"]` (`personalclaw.sdk.features.CHAT_TRUST`,

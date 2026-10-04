@@ -26,6 +26,7 @@ from personalclaw.sdk.features import (
     LINKS_NAME_THEIR_CHANNEL,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
+    TURNS_NAME_WHO_ASKED,
     core_has,
 )
 
@@ -40,6 +41,7 @@ OFFERED_ONCE = {
     "links-name-their-channel",
     "tool-call-screen",
     "turns-name-their-channel",
+    "turns-name-who-asked",
 }
 
 
@@ -54,6 +56,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "LINKS_NAME_THEIR_CHANNEL",
         "TOOL_CALL_SCREEN",
         "TURNS_NAME_THEIR_CHANNEL",
+        "TURNS_NAME_WHO_ASKED",
         "core_has",
     }
     assert APPROVAL_ANSWERS == "approval-answers"
@@ -64,6 +67,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
     assert TOOL_CALL_SCREEN == "tool-call-screen"
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
+    assert TURNS_NAME_WHO_ASKED == "turns-name-who-asked"
     for name in (
         APPROVAL_ANSWERS,
         CHAT_TRUST,
@@ -73,6 +77,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         LINKS_NAME_THEIR_CHANNEL,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
+        TURNS_NAME_WHO_ASKED,
     ):
         assert name in CORE_FEATURES
         assert core_has(name) is True
@@ -439,6 +444,39 @@ def _closing_streams_hold() -> None:
     asyncio.run(check())
 
 
+def _turns_name_who_asked_holds() -> None:
+    """A turn a channel runs itself names who asked for it, and while it runs the work its tools do
+    for that conversation is asked for by them, unless they are the owner the channel keeps: the
+    calls its tools make for the conversation, and the turn's own work in the channel's process."""
+    from personalclaw import mcp_core, memory_writes
+    from personalclaw.config.credentials import (
+        delete_credential,
+        owner_id_credential,
+        save_credential,
+    )
+    from personalclaw.sdk.channel import arrived_on, turn_asked_by
+
+    key = owner_id_credential("askchat")
+    save_credential(key, "U0OWNER")
+    thread = "1712793600.000400"
+    theirs = arrived_on(thread, "U0OTHER", "askchat")
+    try:
+        with turn_asked_by(thread, theirs):
+            assert memory_writes.asker() == theirs, "the turn's own work"
+            token = mcp_core.set_current_session_key(thread)
+            try:
+                with memory_writes.as_work_of(thread):
+                    assert memory_writes.asker() == theirs, "a call its tools make"
+            finally:
+                mcp_core.reset_current_session_key(token)
+        with turn_asked_by(thread, arrived_on(thread, "U0OWNER", "askchat")):
+            assert memory_writes.asker() == {}
+        with memory_writes.as_work_of(thread):
+            assert memory_writes.asker() == {}, "the turn's mark ends with it"
+    finally:
+        delete_credential(key)
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     APPROVAL_ANSWERS: _approval_answers_hold,
@@ -449,6 +487,7 @@ WITNESSES = {
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
     TOOL_CALL_SCREEN: _tool_call_screen_holds,
     TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,
+    TURNS_NAME_WHO_ASKED: _turns_name_who_asked_holds,
 }
 
 

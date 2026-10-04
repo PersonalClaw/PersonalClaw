@@ -224,6 +224,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # and an app's keeps nothing unless the app was given your memory.
         if d.get("error"):
             return tool_failure(f"{d['error']}")
+        # Held for the owner's own word, in a turn someone else asked for: the gateway says so.
+        if d.get("held"):
+            return str(d.get("message") or "")
         return f"Saved lesson ({scope}): {rule}"
 
     if name == "memory_list":
@@ -254,6 +257,8 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         d = _delete("/api/lessons?partition=*", {"rule": query})
         if d.get("error"):
             return tool_failure(f"{d['error']}")
+        if d.get("held"):
+            return str(d.get("message") or "")
         removed = d.get("removed") or []
         if not removed:
             return f"No lesson matches: {query}"
@@ -391,6 +396,8 @@ def _triage_rules(args: dict[str, Any]) -> str:
         d = _post("/api/memory/approval-rules", payload)
         if d.get("error"):
             return tool_failure(f"{d['error']}")
+        if d.get("held"):
+            return str(d.get("message") or "")
         rule = d.get("rule") or {}
         return f"Added {verdict} rule for {pattern} (id: {rule.get('key', '?')})"
 
@@ -401,6 +408,8 @@ def _triage_rules(args: dict[str, Any]) -> str:
         d = _delete(f"/api/memory/approval-rules/{urllib.parse.quote(rule_id)}", {})
         if d.get("error"):
             return tool_failure(f"{d['error']}")
+        if d.get("held"):
+            return str(d.get("message") or "")
         return f"Revoked rule {rule_id}"
 
     return tool_failure(

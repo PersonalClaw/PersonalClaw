@@ -998,6 +998,54 @@ item vector).
   owner as hers. A row that records no source at all (an imported conversation)
   reads as before. What you send on a channel counts as yours once
   the channel knows you as its owner: its Configure page says who that is.
+- Memory changes only on the owner's word. A turn someone else asked for (the row
+  that started it, by the same rule: `turn_source.asked_by`; a row several queued
+  messages run as is asked for by everyone who sent one, which it records under
+  `meta.queued_from`) names who asked once its row is known
+  (`memory_writes.asked_for`, said by the turn engine), and a channel that runs a
+  conversation itself names it around each turn (`turn_asked_by`, the
+  `turns-name-who-asked` core feature). `memory_writes.asker` is then the answer
+  for the turn's own work, for every request its tools make while it runs (which
+  name its session, read from the registry the turn marks), and for a subagent it
+  starts (`hand_on` marks it). Such work writes nothing to her memory: the stores
+  refuse its changes (`refuse_memory_write`, the memory database's statement
+  check), saying who asked, under the code `asked_by_someone_else`, and so do the
+  file tools, the shell, and the gate an agent CLI asks before one of its own
+  tools runs, for a memory document (see
+  [chat-sessions.md](chat-sessions.md#session-model)); a read leaves no mark, and
+  the turn's own learning takes nothing (`GateReason.ASKED_BY_SOMEONE_ELSE`). What the agent's memory
+  tools ask for in such a turn is held for her instead (`dashboard/memory_holds`):
+  `memory_remember`, `memory_forget` and `triage_rules` answer 202 with a
+  sentence the agent reads (nothing written, who asked, the owner was asked),
+  and she is asked once through the approval registry (`workflows.owner_allow`),
+  wherever an approval reaches her: the card, the Inbox, the phone, the channel
+  the chat is on, and her "Send approvals to" channel when the Approval needed
+  rule sends there. No standing grant or Trust answers it. Her Allow writes the change as hers
+  (`memory_writes.on_the_owners_word`: a lesson is `user_explicit`); a Deny, an
+  ask nobody answered in her approval window and one whose turn was stopped write
+  nothing, and each hold and each answer is a security-log row under the route's
+  operation. A skill drafted from such a turn (`skill_remember`) is refused, the
+  agent told to propose it with `skill_promote`, which the owner accepts in the
+  review queue; a decision resolved in it says why it kept no lesson.
+  Consolidation is PersonalClaw's own pass over the whole conversation, which
+  takes only the owner's words from it, so it runs as before, whoever asked for
+  the turn it follows: its gate is asked as the session's own pass, never as that
+  turn's work (`chat_utils._maybe_consolidate`).
+- Every history a model is handed of a conversation names who said each line, by
+  the same rule (`turn_source.turn_line`): the owner's line as `User:`, anyone
+  else's shown as consolidation shows it, whole and fenced as
+  `SENT BY SOMEONE OTHER THAN THE USER (not the user's words)` (a merged row that
+  holds both as `SENT BY THE USER AND SOMEONE ELSE TOGETHER`). That is the turns a
+  fresh runtime is given back after a restart (`prior_turns_transcript`,
+  `history.model_view`, `history_for_model`), the compressed history
+  (`compress_thread_history`), the summary background compression keeps for an
+  idle chat (`bg_compress`), and a stopped turn handed back to the next one; each
+  row keeps what it records of where it came from on the way
+  (`turn_source.provenance`), as `ConversationLog.recent` does for what a promoted
+  skill's and a project review's excerpts quote. The turn itself reaches a live
+  runtime as the request it is, so an agent CLI that resumes its own session, and
+  the native runtime's own compaction, keep a colleague's earlier request as it
+  was sent.
 - What learning took from such text before is settled at each gateway start
   (`learning/composed_text.settle`, over every memory store in the home): a
   correction lesson that quoted the platform's own opening is retracted through

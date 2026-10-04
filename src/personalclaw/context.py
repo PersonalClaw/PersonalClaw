@@ -917,6 +917,13 @@ def build_cancelled_turn_preamble(
     # later part masks it. Masked here (`redact_for_model`), before the caps below cut it: a cut
     # first could leave the front of a key, which no pattern recognises.
     user_text = redact_for_model((recent[user_idx].get("content") or "").strip())
+    if len(user_text) > user_cap:
+        user_text = user_text[:user_cap] + "… [truncated]"
+    # A request someone other than the owner sent is handed back as theirs, its fence whole.
+    from personalclaw.turn_source import asked_by, theirs
+
+    if asked_by(recent[user_idx]):
+        user_text = theirs(recent[user_idx], user_text)
     assistant_parts: list[str] = []
     for i in range(user_idx + 1, boundary):
         if recent[i].get("role") == "assistant":
@@ -924,8 +931,6 @@ def build_cancelled_turn_preamble(
             if t:
                 assistant_parts.append(t)
     assistant_text = redact_for_model("\n".join(assistant_parts))
-    if len(user_text) > user_cap:
-        user_text = user_text[:user_cap] + "… [truncated]"
     if len(assistant_text) > assist_cap:
         assistant_text = assistant_text[:assist_cap] + "… [truncated]"
     # The preamble lives in the prompt system (bundled ``cancelled-turn-preamble``
@@ -996,13 +1001,16 @@ async def compress_thread_history(
     if not recent:
         return None
 
+    from personalclaw.turn_source import turn_line
+
     lines: list[str] = []
     for m in recent:
         # Compression path: no per-message cap, no code stripping.
         # The LLM compressor sees full content and decides what to keep. Masked as each line is
         # read (`redact_for_model`): the transcript is the compressor's own prompt, and its head
-        # and tail go into the result verbatim.
-        lines.append(f"{m['role'].title()}: {redact_for_model(str(m['content']))}")
+        # and tail go into the result verbatim. Each names its speaker: a line someone other
+        # than the owner sent reads as theirs (`turn_line`).
+        lines.append(turn_line(m, redact_for_model(str(m["content"]))))
     transcript = "\n".join(lines)
 
     if len(transcript) <= _COMPRESSED_HISTORY_CAP:
@@ -1559,6 +1567,8 @@ class ContextBuilder:
                     len(recent),
                 )
                 if recent:
+                    from personalclaw.turn_source import turn_line
+
                     budget = _HISTORY_BUDGET_CHARS
                     history_lines: list[str] = []
                     for m in reversed(recent):
@@ -1567,7 +1577,8 @@ class ContextBuilder:
                             content = _compress_assistant_message(content)
                         if len(content) > _PER_MESSAGE_CAP:
                             content = content[:_PER_MESSAGE_CAP] + "…[truncated]"
-                        line = f"{m['role'].title()}: {content}"
+                        # Cut before it is fenced, so a line someone else sent keeps its fence.
+                        line = turn_line(m, content)
                         if budget - len(line) < 0:
                             break
                         history_lines.append(line)

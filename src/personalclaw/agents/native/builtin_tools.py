@@ -2370,6 +2370,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             )
         lesson = row["lesson_memory_key"]
         tail = f"Lesson written to memory as {lesson}." if lesson else "No lesson was written."
+        if not lesson and row.get("lesson_not_kept"):  # memory refused it, and says why
+            tail += f" {row['lesson_not_kept']}"
         return ToolResult(
             success=True,
             output=(

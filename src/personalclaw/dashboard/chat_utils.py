@@ -890,12 +890,19 @@ def _maybe_consolidate(state, session) -> None:
     to every other cadence's, and it is the live `Cadence.SESSION_END` reference that lets
     `assert_gate_covers_cadences()` see this cadence as wired. A denial (ephemeral, incognito,
     temporary, or learning disabled) is audited with its reason rather than silently skipped.
+
+    Asked as the session's own pass, never as the work of the turn that just ended
+    (``memory_writes.as_its_session``): consolidation reads the whole conversation and takes only
+    the owner's words from it, so who asked for that turn (``memory_writes.asker``) decides
+    nothing of it. The session's mode and the app that started it still do.
     """
     if not state.consolidator:
         return
+    from personalclaw import memory_writes
     from personalclaw.learning.gate import Cadence, LearningGate
 
-    decision = LearningGate.for_session(session).decide(Cadence.SESSION_END)
+    with memory_writes.as_its_session(session):
+        decision = LearningGate.for_session(session).decide(Cadence.SESSION_END)
     if decision.permitted:
         state.consolidator.maybe_consolidate(_history_key_for(session.key))
     else:

@@ -186,16 +186,25 @@ chat, channel thread, loop worker, webhook, subagent).
     folder, with preferences.md, projects.md and the daily history, and `_ext`,
     every working folder's memory) are changed by no tool in work that may
     change none of your memory (an Incognito or Temporary chat's, an app's not
-    given your memory). `write_file` and `edit_file` refuse the change before
-    anyone is asked to approve it (`file_scope.memory_kept_from_work`, in the
-    one check every file tool makes), in the memory-write refusal's sentence
-    and under its code (`restricted_session_block`, `app_memory_not_granted`),
-    and tell the agent nothing was written. The shell refuses a command that
+    given your memory, a turn someone other than you asked for). `write_file`
+    and `edit_file` refuse the change before anyone is asked to approve it
+    (`file_scope.memory_kept_from_work`, in the one check every file tool
+    makes), in the memory-write refusal's sentence and under its code
+    (`restricted_session_block`, `app_memory_not_granted`,
+    `asked_by_someone_else`), and tell the agent nothing was written. The shell refuses a command that
     names a path there and does more than read it (`file_scope.memory_named_in`),
     and the OS sandbox keeps the folders read-only to every command started for
     such work (`sandbox._memory_fence`), whatever the command says; for work that
     may read none of your memory either, nothing there is read (see
-    `memory_reads.py` above). An ordinary
+    `memory_reads.py` above). An agent CLI's own file and shell tools are held
+    where the CLI asks before a call runs: the one screen every approval path
+    asks (`screen_tool_call`) refuses a call that names a path there, a change
+    in work that may change none of your memory and a read too in work that may
+    read none of it, in the same sentences and under the same codes, before a
+    chat's Trust or a standing grant could approve it or anyone be asked
+    (`file_scope.memory_named_by_call`, which reads the paths in the call's
+    title, its command and the keys its input names a file by, and asks the
+    shell's own screen, `file_scope.memory_screen`). An ordinary
     chat's write of a memory document, and the owner's save of one in Files,
     is the document's store's own write (`memory.write_document`), under the
     documents' lock and indexed. What this does not hold is in
@@ -458,7 +467,11 @@ chat, channel thread, loop worker, webhook, subagent).
   What memory takes as your own words reads these fields
   (`turn_source.sent_by_owner`, see
   [knowledge-memory.md](knowledge-memory.md)): a line is yours when the
-  dashboard took it in, or when its sender is the owner its channel keeps. What
+  dashboard took it in, or when its sender is the owner its channel keeps. So
+  does who asked for a turn (`turn_source.asked_by`), which a change to your
+  memory that turn makes waits on, and how every history a model is handed of
+  the conversation shows each line (`turn_source.turn_line`): yours as the
+  user's, anyone else's fenced as theirs, after a restart and a compression too. What
   `web_fetch` may open, and a channel conversation's Trust and approvals, are
   decided from how a message was taken in (in process), from its fence, or from
   the chat's own link. The agent's `chat_search` names a channel turn's sender

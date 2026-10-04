@@ -1062,11 +1062,12 @@ be installed where its code runs as you (§7).
 
 ## 19. A private chat is kept out of the memory folders, not out of every store
 
-In an Incognito or Temporary chat, and in the work of an app you did not give your memory, the agent
-changes nothing in the memory folders: `workspace/memory` in the home (preferences.md, projects.md
-and the daily history) and `workspace/_ext` (each working folder's memory, its documents and its
-database). In a Temporary chat, and in the work of such an app, it reads nothing there either: a
-Temporary chat starts blank. An Incognito chat reads its memory, as its notice says.
+In an Incognito or Temporary chat, in the work of an app you did not give your memory, and in a turn
+someone other than you asked for (a colleague in a shared thread), the agent changes nothing in the
+memory folders: `workspace/memory` in the home (preferences.md, projects.md and the daily history)
+and `workspace/_ext` (each working folder's memory, its documents and its database). In a Temporary
+chat, and in the work of such an app, it reads nothing there either: a Temporary chat starts blank.
+An Incognito chat reads its memory, as its notice says, and so does a turn someone else asked for.
 
 - `write_file` and `edit_file` refuse the change before you are asked to approve it, and tell the
   agent nothing was written and why, and an artifact that shows a memory document (one you saved
@@ -1078,7 +1079,11 @@ Temporary chat starts blank. An Incognito chat reads its memory, as its notice s
   you are asked; where the work reads no memory, it refuses any command that names a path there.
 - The OS sandbox keeps those folders read-only to every command started for such work, whatever its
   text says, and unreadable to every command started for work that reads no memory: the native
-  agent's shell, and an agent CLI started for that chat.
+  agent's shell, and an agent CLI started for that chat or in that turn.
+- An agent CLI's own file and shell tools: a call there that the CLI asks about before it runs is
+  refused where it asks, by the shell's own screen, before you are asked or a chat's Trust or a
+  standing grant could approve it: a change in such work, and a read too where the work reads no
+  memory.
 
 What this does not hold:
 
@@ -1086,8 +1091,13 @@ What this does not hold:
   reading of the command's text holds, and a path a command builds while it runs is not seen.
 - **An agent CLI that was already running.** A CLI that serves several chats on one process is
   fenced or not by the chat it was started for, and one the session warm pool starts ahead of any
-  chat is not fenced. In a private chat on such a process, the CLI's own file and shell tools are
-  not held, and a tool it runs without asking first is screened by nothing (§1, §11).
+  chat is not fenced. In a private chat on such a process, a change its own tools ask about is
+  refused, and so is a read in a Temporary chat, but a tool it runs without asking first is
+  screened by nothing (§1, §11).
+- **A turn is not a process.** Who asked for a turn changes from one turn to the next, and an agent
+  CLI's fence is set when its process starts: one started in a colleague's turn keeps the memory
+  folders read-only for as long as it runs, your own later turns on it included, and one started in
+  your turn holds a colleague's turn only where the CLI asks before a call runs.
 - **PersonalClaw's databases.** A command that opens one itself is not fenced: `memory.db` at the
   top of the home is not refused either, and the databases in the workspace (the knowledge
   library's, the vocabulary's, and each working folder's memory database and learning log) are
@@ -1097,10 +1107,12 @@ What this does not hold:
   read back into memory or knowledge by the next sync, as your edit. A vault, or any other copy of
   your memory, kept in a folder the agent's tools reach is read as any file there is.
 
-**What this means for you:** a private chat's agent cannot save to your memory by writing its files,
-and a Temporary chat's cannot read your memory from them. Keep the sandbox on, run private chats on
-the native agent or on an agent CLI that runs one chat per process, and keep the vaults one-way, and
-out of the folders the agent's tools reach, if a private chat's commands could reach them.
+**What this means for you:** neither a private chat's agent nor a turn someone else asked for can
+save to your memory by writing its files, and a Temporary chat's cannot read your memory from them.
+Keep the sandbox on, run private chats on the native agent or on an agent CLI that runs one chat per
+process, run shared threads on the native agent or on an agent CLI that asks before its tools run,
+and keep the vaults one-way, and out of the folders the agent's tools reach, if such work's commands
+could reach them.
 
 ## Why these are listed, not fixed
 
@@ -1125,7 +1137,7 @@ out, for #17; a proxy the guard answers for, through which a run's commands reac
 tier lists, and a network fence, enforced by the OS, around an app's own requests, an MCP server's
 program and an agent CLI's own tools, for #18; a fence, enforced by the OS, around every store of
 long-term memory a private chat's commands could reach, an agent CLI's process kept to one private
-chat, and a vault that reads back no edit made by such a chat's commands, for #19). This page will
+chat and to one person's turns, and a vault that reads back no edit made by such a chat's commands, for #19). This page will
 shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

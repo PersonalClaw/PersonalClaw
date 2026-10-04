@@ -42,14 +42,13 @@ from personalclaw.guardrails.incident import incident_active
 from personalclaw.instants import as_instant, utc_iso, utc_now_iso
 from personalclaw.security import (
     MaskConflict,
-    fence_untrusted,
     keep_masked_lines,
     redact_credentials,
     redact_exfiltration_urls,
 )
 from personalclaw.sel import sel
 from personalclaw.skills import AutoSkillProvenance
-from personalclaw.turn_source import arrived_on, sent_by_owner, source_of
+from personalclaw.turn_source import arrived_on, provenance, sent_by_owner, theirs
 
 
 def config_dir() -> Path:
@@ -249,7 +248,9 @@ def model_view(messages: list[dict], record: dict | None) -> list[dict]:
     for the turns it summarized and the turns after them are read capped to
     ``reduced_cap`` characters. Every later turn, including every one written since the
     record was made, is read as written. *messages* is only ever READ here: the file, or a
-    session's buffer — any list whose turns are the conversation's.
+    session's buffer — any list whose turns are the conversation's. Each turn keeps what it
+    records of where it came from (``turn_source.provenance``), which every history the view
+    becomes names its speaker by (``turn_source.turn_line``).
     """
     turns = _turns(messages)
     view: list[dict] = []
@@ -262,8 +263,10 @@ def model_view(messages: list[dict], record: dict | None) -> list[dict]:
             content = str(m.get("content", ""))
             if len(content) > cap:
                 content = content[:cap] + " …"
-            view.append({"role": m["role"], "content": content})
-    view.extend({"role": m["role"], "content": m.get("content", "")} for m in turns[start:])
+            view.append({"role": m["role"], "content": content, **provenance(m)})
+    view.extend(
+        {"role": m["role"], "content": m.get("content", ""), **provenance(m)} for m in turns[start:]
+    )
     return view
 
 
@@ -726,7 +729,8 @@ class ConversationLog:
         max_messages: int = 20,
         roles: set[str] | None = None,
     ) -> list[dict]:
-        """Return last *max_messages* entries as ``[{role, content}]``.
+        """Return last *max_messages* entries as ``[{role, content}]``, each with what it records
+        of where it came from (``turn_source.provenance``), so a reader tells whose words it holds.
 
         When *roles* is provided, only messages with matching roles are
         counted toward the limit.  This filters out low-signal entries
@@ -736,7 +740,10 @@ class ConversationLog:
         messages = self._read_messages(key)
         if roles:
             messages = [m for m in messages if m["role"] in roles]
-        return [{"role": m["role"], "content": m["content"]} for m in messages[-max_messages:]]
+        return [
+            {"role": m["role"], "content": m["content"], **provenance(m)}
+            for m in messages[-max_messages:]
+        ]
 
     def get_unconsolidated(self, key: str) -> tuple[list[dict], int]:
         """Return (messages_after_last_consolidated, total_message_count)."""
@@ -1294,10 +1301,7 @@ def consolidation_line(m: dict) -> str:
     if m.get("role") != "user":
         return f"{stamp} {str(m.get('role', '')).upper()}{tools}: {m.get('content', '')}"
     if not sent_by_owner(m):
-        src = source_of(m)
-        who = f"channel:{src['source_channel']}:" if "source_channel" in src else "sender:"
-        said = fence_untrusted(str(m.get("content") or ""), source=who + src.get("source_user", ""))
-        return f"{stamp} SENT BY SOMEONE OTHER THAN THE USER (not the user's words): {said}"
+        return f"{stamp} {theirs(m)}"
     raw_meta = m.get("meta")
     meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
     typed = own_words(m)

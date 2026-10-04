@@ -211,6 +211,11 @@ from personalclaw.llm.events import COMPACTION_AUTOMATIC
 from personalclaw.llm_helpers import save_conversation_turn
 from personalclaw.mcp_discovery import McpServerInfo, list_servers
 from personalclaw.memory_service import MemoryService, QueryVector
+
+# Who asked for a turn a channel runs itself: the source of the message it answers, recorded as the
+# door records each message it hands a chat (`arrived_on`). While the turn runs, what its tools
+# would change of the owner's memory waits for her own word unless that source is the owner.
+from personalclaw.memory_writes import turn_asked_by
 from personalclaw.prompt_providers.runtime import render_use_case_prompt
 from personalclaw.providers.settings import ProviderSettings
 from personalclaw.providers.use_cases import (
@@ -445,6 +450,7 @@ __all__ = [
     "transcribe_audio",
     "trust_mode",
     "trust_policies",
+    "turn_asked_by",
     "untrack",
     "validate_file_path",
     "voice_reply",

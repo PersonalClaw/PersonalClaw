@@ -1167,13 +1167,17 @@ def prior_turns_transcript(
     :func:`in_flight_index` finds.
 
     Returns ``[{role, content}]`` of the user/assistant turns only, oldest first — the
-    roles the history bootstrap has always restored.
+    roles the history bootstrap has always restored — each with what it records of where it came
+    from (``turn_source.provenance``), so the history names who said each turn
+    (``turn_source.turn_line``): a line someone other than the owner sent is shown as theirs.
     """
+    from personalclaw.turn_source import provenance
+
     msgs = session.messages
     at = in_flight_index(session, in_flight, nested=nested)
     cut = len(msgs) if at is None else at
     return [
-        {"role": m["role"], "content": m.get("content", "")}
+        {"role": m["role"], "content": m.get("content", ""), **provenance(m)}
         for m in msgs[:cut]
         if m.get("role") in ("user", "assistant")
     ]

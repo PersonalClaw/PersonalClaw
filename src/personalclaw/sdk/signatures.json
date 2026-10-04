@@ -4238,6 +4238,15 @@
   ],
   "returns": "dict[str, str]"
  },
+ "personalclaw.sdk.channel.turn_asked_by": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "session_key"},
+   {"annotation": "Mapping[str, str]", "kind": "positional_or_keyword", "name": "source"},
+   {"annotation": "str", "kind": "var_positional", "name": "aliases"}
+  ],
+  "returns": "Iterator[None]"
+ },
  "personalclaw.sdk.channel.untrack": {
   "kind": "function",
   "params": [
@@ -4877,12 +4886,13 @@
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
  "personalclaw.sdk.features.CLOSING_STREAMS": {"kind": "value", "type": "str", "value": "'closing-streams'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'tool-call-screen', 'turns-name-their-channel'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked'})"},
  "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
  "personalclaw.sdk.features.GUARDED_DOWNLOAD": {"kind": "value", "type": "str", "value": "'guarded-download'"},
  "personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'links-name-their-channel'"},
  "personalclaw.sdk.features.TOOL_CALL_SCREEN": {"kind": "value", "type": "str", "value": "'tool-call-screen'"},
  "personalclaw.sdk.features.TURNS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'turns-name-their-channel'"},
+ "personalclaw.sdk.features.TURNS_NAME_WHO_ASKED": {"kind": "value", "type": "str", "value": "'turns-name-who-asked'"},
  "personalclaw.sdk.features.core_has": {
   "kind": "function",
   "params": [

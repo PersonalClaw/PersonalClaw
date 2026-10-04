@@ -20,6 +20,12 @@ as its source. A request an app's own token makes with no session of its own is 
 The same walk names the chat at the top the request's work is done for, which what it writes is
 filed under (``memory_writes.filed_under``): a subagent's lesson is its chat's.
 
+A request made while a turn someone other than you asked for is running in the session it names,
+or one a subagent such a turn started makes, changes none of your memory on its own
+(``memory_writes.asker``): the stores refuse the change, and the 403 says who asked. The memory
+tools' own routes hold what they were asked to change for your own word instead
+(``dashboard.memory_holds``).
+
 ``dashboard:ui`` is the dashboard's own pages acting for the owner, not a session, and a request of
 yours that names no session is yours. A request made with the gateway's internal credential is
 not yours: PersonalClaw's own processes present it (an agent's tools, a tool the gateway runs for a

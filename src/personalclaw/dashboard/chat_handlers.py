@@ -918,23 +918,30 @@ async def api_chat_session_bound_project(request: web.Request) -> web.Response:
 
 
 async def api_chat_session_model_reach(request: web.Request) -> web.Response:
-    """GET /api/chat/sessions/model-reach — whether the CALLING session keeps nothing.
+    """GET /api/chat/sessions/model-reach — what the CALLING session keeps, and who asked.
 
     An agent CLI's tools run in the separate ``mcp-core`` process, where the session scope a
     chat's turn holds in the gateway (``memory_writes``) is empty, so each of their calls asks this
     first and runs under the answer: ``{"memory_mode": "incognito"}`` (or ``"temporary"``, or
     ``"unreadable"`` when no record says which) for a session that keeps nothing, whose work no
     model but its own may read and whose writes the stores refuse, and ``{"memory_mode":
-    "persistent"}`` for any other. The request runs as deriving from the session it names
-    (``memory_write_gate``), so this is the answer the gateway's own stores give it.
+    "persistent"}`` for any other. ``asked_by`` names who asked for the turn the session is running
+    when someone other than the owner did (``memory_writes.asker``), ``""`` when she did: a tool
+    that writes a skill from the turn writes none then. The request runs as deriving from the
+    session it names (``memory_write_gate``), so this is the answer the gateway's own stores give.
 
     Keyed off the ``X-Session-Key`` header, never off a path segment or a query parameter: the
     caller asks about the session it is. No header, or the dashboard's own, is no session.
     """
     from personalclaw import memory_writes
+    from personalclaw.turn_source import named
 
+    someone = memory_writes.asker()
     return web.json_response(
-        {"memory_mode": memory_writes.restricted_mode() or memory_writes.PERSISTENT}
+        {
+            "memory_mode": memory_writes.restricted_mode() or memory_writes.PERSISTENT,
+            "asked_by": named(someone) if someone else "",
+        }
     )
 
 

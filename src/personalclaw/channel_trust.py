@@ -451,6 +451,17 @@ def _sender_entry(sender_id: str, meta: Any) -> dict[str, str]:
     }
 
 
+def sender_name(provider: str, sender_id: str) -> str:
+    """The name the trust list holds for *sender_id* on *provider*, read as Sender trust reads it
+    (:func:`_sender_entry`); ``""`` when it lists no such sender or holds no name for them. What a
+    sentence names a person by, beside their id, when they asked for something only the owner may
+    allow."""
+    senders = _provider_record(_read_store(), provider).get("allowed_senders")
+    if not isinstance(senders, dict) or sender_id not in senders:
+        return ""
+    return _sender_entry(sender_id, senders[sender_id])["name"]
+
+
 def _messages_counted(meta: Any) -> int:
     """How many refused messages a ``seen_senders`` entry counts; one it holds badly counts none."""
     try:

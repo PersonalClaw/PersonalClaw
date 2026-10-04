@@ -49,6 +49,7 @@ from personalclaw.history import (
     summary_holds,
     summary_record,
 )
+from personalclaw.turn_source import turn_line
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,9 @@ async def _summarize_oldest(rows: list[dict], *, key: str) -> str:
     recorded as ``dashboard:<id>``.
     """
     turns = [m for m in rows if m.get("role") in TURN_ROLES]
-    body = "\n".join(f"{m['role']}: {str(m.get('content', '')).strip()}" for m in turns)
+    # Each turn names its speaker: a line someone other than the owner sent reads as theirs, so
+    # the summary that stands in for them is not written as though she said it (`turn_line`).
+    body = "\n".join(turn_line(m, str(m.get("content", "")).strip()) for m in turns)
     if not body:
         return ""
     from personalclaw.tool_providers.prose_compress import compress_prose

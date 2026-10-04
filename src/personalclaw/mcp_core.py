@@ -1368,6 +1368,15 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         body = (args.get("body") or "").strip()
         if not title or not body:
             return tool_failure("both title and body are required.")
+        # A skill is drafted only on the owner's word: in a turn someone else asked for, none is.
+        someone = _asked_by_someone_else()
+        if someone:
+            return tool_failure(
+                f"Not drafted: {someone} asked for this, and nothing says they are the owner. A "
+                "skill is kept only on the owner's own word, so if it is worth keeping, propose "
+                "it with skill_promote: it is created only if the owner accepts it in the "
+                "Learning review queue."
+            )
         from personalclaw.skills import ephemeral
 
         session_key = get_current_session_key() or "default"
@@ -1797,6 +1806,18 @@ def _resolve_review_project_id(explicit: str) -> str:
         return current_project_id() or ""
     except Exception:
         return ""
+
+
+def _asked_by_someone_else() -> str:
+    """Who asked for the turn this call serves, named, when it was not the owner; ``""`` when she
+    did. The gateway's answer for the session the call names (``GET
+    /api/chat/sessions/model-reach``), which reads the turn that session is running: a call made in
+    this process, an agent CLI's tool server, holds no turn of its own. A gateway that does not
+    answer cannot say the owner asked, so the call is not made on her word either."""
+    reply = _get("/api/chat/sessions/model-reach")
+    if reply.get("error"):
+        return "someone PersonalClaw could not name (the gateway did not say who asked)"
+    return str(reply.get("asked_by") or "")
 
 
 def _review_transcript(session_key: str) -> list[dict]:

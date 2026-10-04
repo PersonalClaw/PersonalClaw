@@ -22,7 +22,11 @@ dashboard, in the one record of a message the door let in.
 
 What a row records decides whose words it holds (:func:`sent_by_owner`), which every reader of
 the owner's own words asks (``own_words.own_words``): a channel's conversation can have other
-people in it, and the door lets in everyone the owner trusts to talk to the agent.
+people in it, and the door lets in everyone the owner trusts to talk to the agent. It decides who
+asked for the turn a row starts too (:func:`asked_by`), which is what a change to her memory that
+turn makes waits on (``memory_writes.asker``), and how a model is shown such a line in any history
+of the conversation (:func:`turn_line`): as memory consolidation shows it, whole, fenced, and
+labelled as someone else's words.
 """
 
 from __future__ import annotations
@@ -30,12 +34,27 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 #: The fields a row records where it came from: the thread it arrived on, who sent it, and the
 #: chat channel that took it in.
 SOURCE_FIELDS = ("source_thread", "source_user", "source_channel")
+
+#: The ``meta`` key of a row several queued messages run as when they came from different places:
+#: the source each of them records, in order, written by the chat's queue as it merges them. Such a
+#: row records no source of its own (:func:`shared_source`), so this is what says whose they were.
+QUEUED_FROM = "queued_from"
+
+#: How a model is told a user line someone other than the owner sent is not hers, ahead of the
+#: line, fenced (:func:`theirs`): memory consolidation and every history of the conversation a
+#: model is handed show such a line this way.
+NOT_THE_USERS_WORDS = "SENT BY SOMEONE OTHER THAN THE USER (not the user's words)"
+#: The same for a row the owner's queued message and someone else's were run as together.
+PARTLY_THE_USERS_WORDS = (
+    "SENT BY THE USER AND SOMEONE ELSE TOGETHER (not all of it is the user's words)"
+)
 
 #: What a row the dashboard's own chat takes in records for its thread and its sender.
 DASHBOARD = "dashboard"
@@ -101,3 +120,85 @@ def sent_by_owner(row: object) -> bool:
         logger.warning("channel %r: its owner could not be read", channel, exc_info=True)
         return False
     return same_user(owner, sender)
+
+
+def _queued(row: object) -> list[dict[str, str]] | None:
+    """The sources a row several queued messages run as records for them (:data:`QUEUED_FROM`),
+    or ``None`` for any other row."""
+    meta = row.get("meta") if isinstance(row, Mapping) else None
+    queued = meta.get(QUEUED_FROM) if isinstance(meta, Mapping) else None
+    return [source_of(s) for s in queued] if isinstance(queued, list) else None
+
+
+def provenance(row: object) -> dict[str, Any]:
+    """What *row* records of where it came from, for a copy of it that keeps its role and text: its
+    source (:func:`source_of`) and, for a row queued messages from different places run as, theirs.
+    A reader the copy reaches tells whose words it holds as it would from the row itself."""
+    kept: dict[str, Any] = source_of(row)
+    queued = _queued(row)
+    if queued is not None:
+        kept["meta"] = {QUEUED_FROM: queued}
+    return kept
+
+
+def asked_by(row: object) -> dict[str, str]:
+    """Who asked for the turn *row* starts, when the owner did not: the source of the first of its
+    messages someone other than the owner sent (:func:`sent_by_owner`). ``{}`` when the owner sent
+    all of it: a row with no source reads as hers, as it does for memory. A row several queued
+    messages run as is asked for by everyone who sent one of them (:data:`QUEUED_FROM`)."""
+    sources = _queued(row)
+    if sources is None:
+        sources = [source_of(row)]
+    return next((source for source in sources if not sent_by_owner(source)), {})
+
+
+def fence_source(source: Mapping[str, str]) -> str:
+    """What a fence around *source*'s words names as their source: ``channel:<channel>:<sender>``,
+    or ``sender:<sender>`` for a source that names no channel."""
+    channel = source.get("source_channel", "")
+    return (f"channel:{channel}:" if channel else "sender:") + source.get("source_user", "")
+
+
+def theirs(row: object, text: str | None = None) -> str:
+    """*row*, a user line the owner did not send (:func:`asked_by`), as a model is shown it:
+    labelled as not the user's words, then *text* (the row's own by default) whole and fenced as
+    its sender's. A row the owner's queued message and someone else's were run as together is
+    labelled as only partly hers. Memory consolidation and every history a model is handed read
+    such a line so."""
+    from personalclaw.security import fence_untrusted
+
+    said = str(row.get("content") or "") if text is None and isinstance(row, Mapping) else text
+    queued = _queued(row) or []
+    label = (
+        PARTLY_THE_USERS_WORDS
+        if any(map(sent_by_owner, queued)) and not all(map(sent_by_owner, queued))
+        else NOT_THE_USERS_WORDS
+    )
+    return f"{label}: {fence_untrusted(said or '', source=fence_source(asked_by(row)))}"
+
+
+def turn_line(row: Mapping[str, Any], text: str | None = None) -> str:
+    """One turn of a conversation as a model reads it in a history of it: its role and *text* (the
+    row's own by default), ``User: …``, ``Assistant: …``, ``Summary: …``, except that a user line
+    someone other than the owner asked for reads as :func:`theirs` shows it. The history a fresh
+    runtime is given back, a compressed one, and the summary background compression keeps read
+    each turn through this."""
+    said = str(row.get("content", "")) if text is None else text
+    if row.get("role") == "user" and asked_by(row):
+        return theirs(row, said)
+    return f"{str(row.get('role', '')).title()}: {said}"
+
+
+def named(source: Mapping[str, str]) -> str:
+    """Who *source* names, in words a sentence can hold: the name the channel's trust list holds
+    for the sender with their id, on the channel as the owner calls it (``Jonas (U0JONAS) on
+    Slack``); a source that names no channel, by the sender it records."""
+    sender = source.get("source_user", "")
+    channel = source.get("source_channel", "")
+    if not channel:
+        return f"“{sender}”" if sender else "a sender no record names"
+    from personalclaw.channel_trust import channel_display_name, sender_name
+
+    name = sender_name(channel, sender) if sender else ""
+    who = f"{name} ({sender})" if name and name != sender else (sender or "someone")
+    return f"{who} on {channel_display_name(channel)}"

@@ -85,6 +85,10 @@ class GateReason(str, Enum):
     #: The work of an app that does not hold the ``memory`` permission (a conversation or a run
     #: it started): it changes nothing in your memory (``memory_reads.app_refusal``).
     APP_WITHOUT_MEMORY = "app_without_memory"
+    #: Someone other than you asked for the turn (``memory_writes.asker``): it teaches nothing. A
+    #: pass over the whole session is not that turn's work and is asked as the session's own
+    #: (``chat_utils._maybe_consolidate``), so consolidation is never refused for this.
+    ASKED_BY_SOMEONE_ELSE = "asked_by_someone_else"
     #: Permitted, but this cadence's cost threshold wasn't met.
     NOT_WORTHWHILE = "below_threshold"
     #: Permitted, but this specific cadence is disabled by config.
@@ -139,12 +143,15 @@ class LearningGate:
         min_tool_calls: int = 4,
         correction_heuristic: bool = True,
         app_refusal: str = "",
+        asked_by_someone_else: bool = False,
     ) -> None:
         self.enabled = bool(enabled)
         self.is_ephemeral = bool(is_ephemeral)
         self.is_restricted = bool(is_restricted)
         #: Why the session's work, an app's, may change none of your memory ("" when it may).
         self.app_refusal = str(app_refusal or "")
+        #: Someone other than you asked for the turn whose work this is (``memory_writes.asker``).
+        self.asked_by_someone_else = bool(asked_by_someone_else)
         self.min_tool_calls = int(min_tool_calls)
         self.correction_heuristic = bool(correction_heuristic)
 
@@ -202,6 +209,9 @@ class LearningGate:
             min_tool_calls=int(getattr(cfg, "min_tool_calls", 4) or 4),
             correction_heuristic=bool(getattr(cfg, "correction_heuristic", True)),
             app_refusal=app_refused,
+            # A turn someone other than you asked for teaches nothing, as its writes are refused:
+            # the answer the stores give the same work (`memory_writes.asker`).
+            asked_by_someone_else=bool(memory_writes.asker()),
         )
 
     # ── The decision ──
@@ -230,6 +240,8 @@ class LearningGate:
             return GateDecision(False, False, GateReason.RESTRICTED, cadence)
         if self.app_refusal:
             return GateDecision(False, False, GateReason.APP_WITHOUT_MEMORY, cadence)
+        if self.asked_by_someone_else:
+            return GateDecision(False, False, GateReason.ASKED_BY_SOMEONE_ELSE, cadence)
 
         # Permitted from here on: a cheap path may proceed even when the
         # expensive threshold below is not met.

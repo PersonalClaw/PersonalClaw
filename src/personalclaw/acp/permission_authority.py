@@ -226,15 +226,30 @@ def screen_tool_call(
     The command is read from the call's input as text or as a list of words
     (``task_modes.command_words``), and the probe is deny-only, so only the title's verdict can
     auto-approve. A refusal made on the command says so (``on_command``).
+
+    A call that names a path in long-term memory is refused here too, by the one screen of it the
+    shell asks (``file_scope.memory_named_by_call``): a change there in work that may change none
+    of it (an Incognito or Temporary chat's, an app's not given your memory, a turn someone other
+    than you asked for), and a read too in work that may read none of it (a Temporary chat's, an
+    app's not given your memory), in the refusal's own words and under its code. An agent CLI's
+    own file and shell tools reach the memory folders past every check of PersonalClaw's own tools.
     """
-    from personalclaw.hooks import TOOL_DENY, live_hook_manager
+    from personalclaw.file_scope import memory_named_by_call
+    from personalclaw.hooks import TOOL_DENY, ToolHookResult, live_hook_manager
 
     chain = hooks if hooks is not None else live_hook_manager()
-    probe = command_probe(title, command_of(tool_input))
+    command = command_of(tool_input)
+    probe = command_probe(title, command)
     if probe:
         verdict = chain.on_tool_call(probe, cwd=cwd)
         if verdict.action == TOOL_DENY:
             return replace(verdict, on_command=True)
+    held = memory_named_by_call(title, tool_input, command, cwd=cwd)
+    if held is not None:
+        named, refused = held
+        return ToolHookResult.refuse(
+            f"{refused} {refused.hint}", control=refused.control, rule=named
+        )
     return chain.on_tool_call(title, cwd=cwd)
 
 

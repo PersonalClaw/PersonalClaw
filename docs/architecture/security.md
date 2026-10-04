@@ -1502,6 +1502,15 @@ holds the `memory` permission its install consent showed you. The same grant
 governs what such work changes: without it the memory store refuses every change
 made in the app's work (`memory_writes.check_memory_statement`), and with it each
 record names the app as its source (`memory_writes.written_by`), so an app's
-write never outranks one of yours. Details in
+write never outranks one of yours. A turn someone other than you asked for (a
+colleague in a shared thread, a correspondent, a program through the
+OpenAI-compatible endpoint: `turn_source.asked_by`) changes none of your memory
+on its own: the turn names who asked (`memory_writes.asked_for`, or
+`turn_asked_by` for a channel that runs its turns itself), the requests its tools
+make and the subagents it starts read it (`memory_writes.asker`), the stores
+refuse their changes saying who asked, as do the file tools, the shell and the
+gate an agent CLI's own tools ask (`screen_tool_call`), and what the memory tools ask for is held
+for your own Allow (`dashboard/memory_holds`, through the approval registry, no
+standing grant answering it). Details in
 [chat-sessions.md](chat-sessions.md#session-model) and
 [knowledge-memory.md](knowledge-memory.md#recall--the-privacy-guard).
