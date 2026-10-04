@@ -37,7 +37,7 @@ from contextlib import closing
 from pathlib import Path
 
 from personalclaw.atomic_write import SQLITE_SIDECARS
-from personalclaw.sqlite_compat import sqlite3
+from personalclaw.sqlite_compat import connect
 
 #: The first bytes of every SQLite database file.
 _HEADER = b"SQLite format 3\x00"
@@ -76,8 +76,8 @@ def copy_file(src: Path | str, dst: Path | str) -> str:
         try:
             Path(dst).parent.mkdir(parents=True, exist_ok=True)
             with (
-                closing(sqlite3.connect(str(src))) as there,
-                closing(sqlite3.connect(str(dst))) as here,
+                closing(connect(str(src))) as there,
+                closing(connect(str(dst))) as here,
             ):
                 there.backup(here)
             return str(dst)
