@@ -76,30 +76,36 @@ class TestParseLlmJsonList:
 
 
 class TestSaveConversationTurn:
+    #: What a turn saved with no provenance records of where it came from.
+    NONE = {"source_thread": None, "source_user": None, "source_channel": None}
+
     def test_saves_user_and_assistant(self) -> None:
         log = MagicMock()
         save_conversation_turn(log, "key1", "hello", "world")
         assert log.append.call_count == 2
-        log.append.assert_any_call("key1", "user", "hello", source_thread=None, source_user=None)
-        log.append.assert_any_call(
-            "key1", "assistant", "world", source_thread=None, source_user=None
-        )
+        log.append.assert_any_call("key1", "user", "hello", **self.NONE)
+        log.append.assert_any_call("key1", "assistant", "world", **self.NONE)
 
     def test_saves_with_provenance(self) -> None:
         log = MagicMock()
-        save_conversation_turn(log, "key1", "hello", "world", source_thread="t1", source_user="u1")
-        log.append.assert_any_call("key1", "user", "hello", source_thread="t1", source_user="u1")
-        log.append.assert_any_call(
-            "key1", "assistant", "world", source_thread="t1", source_user="u1"
+        save_conversation_turn(
+            log,
+            "key1",
+            "hello",
+            "world",
+            source_thread="t1",
+            source_user="u1",
+            source_channel="achat",
         )
+        source = {"source_thread": "t1", "source_user": "u1", "source_channel": "achat"}
+        log.append.assert_any_call("key1", "user", "hello", **source)
+        log.append.assert_any_call("key1", "assistant", "world", **source)
 
     def test_skips_empty_assistant(self) -> None:
         log = MagicMock()
         save_conversation_turn(log, "key1", "hello", "")
         assert log.append.call_count == 1
-        log.append.assert_called_once_with(
-            "key1", "user", "hello", source_thread=None, source_user=None
-        )
+        log.append.assert_called_once_with("key1", "user", "hello", **self.NONE)
 
 
 class TestToolApprovalPolicy:

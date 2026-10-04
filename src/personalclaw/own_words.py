@@ -1,4 +1,4 @@
-"""What of a message its sender wrote: the one answer every reader of "what they said" asks.
+"""What of a message the owner wrote: the one answer every reader of her words asks.
 
 A turn's message is rarely only what the person typed. The composer expands each pasted block
 into it, the turn builder runs a saved prompt in place of its ``@name`` and puts an attached
@@ -14,12 +14,20 @@ turn builder records them on the row when it runs a saved prompt in the row's pl
 prompt and the text the agent was sent for it (:func:`record_prompt_run`), which the chat shows
 under her message as the prompt's. Every reader of her words then asks :func:`own_words`, which
 also leaves out what the person pasted and anything a sender the owner does not trust wrote.
+
+A conversation can also have other people in it: a channel's door lets in everyone the owner
+trusts to talk to the agent, in a group, a shared thread, a mailbox or an open direct message, and
+a program can send through the OpenAI-compatible door. What they write is theirs, so
+:func:`own_words` reads a row only when the owner sent it (``turn_source.sent_by_owner``, from the
+source the row records); :func:`sender_words` is what a row's sender typed, whoever that was.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+from personalclaw.turn_source import sent_by_owner
 
 #: The ``meta`` key of a message whose text holds more than its sender typed: the words they did
 #: type, ``""`` when none. Written only by the code that composed the row; a send's own meta never
@@ -63,7 +71,7 @@ def record_prompt_run(row: object, *, name: str, text: str, words: int) -> dict[
     ran = {"name": name, "text": text}
     if not isinstance(row, dict):
         return ran
-    rest = own_words(row).split(None, words)
+    rest = sender_words(row).split(None, words)
     meta = row.get("meta")
     if not isinstance(meta, dict):
         meta = {}
@@ -74,24 +82,43 @@ def record_prompt_run(row: object, *, name: str, text: str, words: int) -> dict[
 
 
 def queued_words(items: Sequence[Mapping[str, Any]]) -> str | None:
-    """The words of *items*, messages taken off a chat's queue to run as one turn, that their
-    senders typed, for the row that turn starts with (:data:`OWN_WORDS`). ``None`` when that row is
-    one message that is all its sender's. A merge heads the messages with a line of its own, and a
-    queued message may hold more than its sender typed, so each one gives what it recorded. Redacted
-    as the queued message is."""
+    """The words the owner typed in *items*, messages taken off a chat's queue to run as one turn,
+    for the row that turn starts with (:data:`OWN_WORDS`). ``None`` when that row is one message
+    that is all its sender's. A merge heads the messages with a line of its own, and a queued
+    message may hold more than its sender typed, so each one gives what it recorded; one someone
+    else sent (``turn_source.sent_by_owner``, from the source each records) gives nothing, since a
+    row made of messages from different places records no source of its own. Redacted as the
+    queued message is."""
     if len(items) <= 1 and not any(OWN_WORDS in item for item in items):
         return None
     from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
     words, _ = redact_exfiltration_urls(
-        "\n\n".join(str(item.get(OWN_WORDS, item.get("content") or "")) for item in items)
+        "\n\n".join(
+            str(item.get(OWN_WORDS, item.get("content") or ""))
+            for item in items
+            if sent_by_owner(item)
+        )
     )
     words, _ = redact_credentials(words)
     return words
 
 
 def own_words(row: object) -> str:
-    """The words the sender of *row*, the message that started a turn, typed in it.
+    """The words the owner typed in *row*, the message that started a turn: what every reader of
+    her words asks, learning and memory among them.
+
+    Its sender's words (:func:`sender_words`) when the owner sent it, and ``""`` when someone else
+    did (``turn_source.sent_by_owner``): another person in a channel's group, thread, mailbox or
+    open direct message, or a program through the OpenAI-compatible door. Their words are never
+    the owner's, whatever they say about her.
+    """
+    return sender_words(row) if sent_by_owner(row) else ""
+
+
+def sender_words(row: object) -> str:
+    """The words the sender of *row*, the message that started a turn, typed in it, whoever sent
+    it: what a reply weighs as the request (a word limit it asked for), never what memory learns.
 
     ``""`` when nobody typed it: a row an automation, a subagent's report or a loop's nudge
     started the turn with (any role but ``user``), or no row at all. A person's row is read less

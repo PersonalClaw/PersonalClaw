@@ -352,9 +352,10 @@ async def _route_to_session(
     from personalclaw.turn_source import arrived_on
 
     paths = keep_for_chat(files) if files else []
-    # Where the message came from, recorded on its row (in the queue as well): the thread and
-    # its sender, which every save of the chat writes back as they are.
-    source = arrived_on(thread_key, msg.sender)
+    # Where the message came from, recorded on its row (in the queue as well): the thread, its
+    # sender and this channel, which every save of the chat writes back as they are. Memory reads
+    # them to tell the owner's words from those of anyone else the door let in.
+    source = arrived_on(thread_key, msg.sender, provider)
 
     if getattr(session, "running", False):
         # Queued the way a message typed in the dashboard mid-turn is: the queue adds it to

@@ -26,6 +26,12 @@ chat=...)``, ``answer_in_chat`` and ``chat_grant``). A channel app that uses the
 the chat answers (``link_channel(chat, thread, channel_id, provider=…)``,
 ``SessionManager.get_channel_provider``). A channel app that links a chat to one of its threads
 declares it.
+
+``TURNS_NAME_THEIR_CHANNEL``: a turn a channel writes for a conversation it runs itself names the
+channel (``personalclaw.sdk.channel.save_conversation_turn(…, source_channel=…)``), a line it takes
+into a chat itself records where it came from (``arrived_on(thread, sender, channel)``), and memory
+takes a line as the owner's own words only when its sender is that channel's owner. A channel app
+that saves its turns or imports a thread with them declares it.
 """
 
 from personalclaw.apps.core_features import (
@@ -34,6 +40,7 @@ from personalclaw.apps.core_features import (
     CORE_FEATURES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
+    TURNS_NAME_THEIR_CHANNEL,
     core_has,
 )
 
@@ -43,5 +50,6 @@ __all__ = [
     "CORE_FEATURES",
     "GUARDED_DOWNLOAD",
     "LINKS_NAME_THEIR_CHANNEL",
+    "TURNS_NAME_THEIR_CHANNEL",
     "core_has",
 ]

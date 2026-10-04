@@ -311,29 +311,36 @@ chat, channel thread, loop worker, webhook, subagent).
   it is decided. The save records `message_count` in the metadata line, which
   `ConversationLog.list_sessions` serves as the chat list's count.
 - **Where each line came from is the line's own, and a save never writes one**
-  (`turn_source.py`). A line records the thread it arrived on and who sent it
-  there (`source_thread`, `source_user`), the same two fields in the buffer and
-  the file, written once by the code that takes the line in. The dashboard's own
-  chat records `dashboard` for both: what you type there, and the rows the chat
-  adds itself (its answers, a tool's card, a notice). The inbound door records a
-  channel message's thread and sender (`channel_inbound._route_to_session`), on
-  its queued item too, so the row it runs as records them. A channel that runs a
-  conversation itself writes its turns with theirs (`save_conversation_turn`), and
-  the chat open for that conversation takes each turn as written
-  (`take_channel_turn`). The OpenAI-compatible door records the conversation and
-  the client that sent the message. A copy carries the line's own: the chat
-  loaded from its file (`_seed_transcript`), a fork, a rewound tail; a row that
-  several queued messages run as records the source they share, or none when they
-  came from different places. `save_session_to_history` writes back what each
-  line records. It used to write `dashboard` on every line, so once the dashboard
-  saved a channel's chat, the channel's turns read as typed in the dashboard. No
-  decision reads these fields: what `web_fetch` may open, a channel conversation's
-  Trust and approvals, and what memory takes as your own words are decided from
-  how a message was taken in (in process), from its fence, or from the chat's own
-  link. The agent's `chat_search` names a channel turn's sender from
-  `source_user`, and `GET /api/sessions/{key}` serves the lines as written. A line
-  saved before this change keeps the `dashboard` it was given: nothing else
-  recorded where it came from.
+  (`turn_source.py`). A line records the thread it arrived on, who sent it there
+  and, when a chat channel took it in, which channel (`source_thread`,
+  `source_user`, `source_channel`), the same fields in the buffer and the file,
+  written once by the code that takes the line in. The dashboard's own chat
+  records `dashboard` for the thread and the sender: what you type there, and the
+  rows the chat adds itself (its answers, a tool's card, a notice). The inbound
+  door records a channel message's thread, sender and channel
+  (`channel_inbound._route_to_session`), on its queued item too, so the row it
+  runs as records them. A channel that runs a conversation itself writes its
+  turns with theirs (`save_conversation_turn(…, source_channel=…)`), and the chat
+  open for that conversation takes each turn as written (`take_channel_turn`).
+  The OpenAI-compatible door records the conversation and the client that sent
+  the message. A copy carries the line's own: the chat loaded from its file
+  (`_seed_transcript`), a fork, a rewound tail; a row that several queued
+  messages run as records the source they share, or none when they came from
+  different places. `save_session_to_history` writes back what each line
+  records. It used to write `dashboard` on every line, so once the dashboard
+  saved a channel's chat, the channel's turns read as typed in the dashboard.
+  What memory takes as your own words reads these fields
+  (`turn_source.sent_by_owner`, see
+  [knowledge-memory.md](knowledge-memory.md)): a line is yours when the
+  dashboard took it in, or when its sender is the owner its channel keeps. What
+  `web_fetch` may open, and a channel conversation's Trust and approvals, are
+  decided from how a message was taken in (in process), from its fence, or from
+  the chat's own link. The agent's `chat_search` names a channel turn's sender
+  from `source_user`, and `GET /api/sessions/{key}` serves the lines as written. A
+  line saved before lines recorded their source keeps the `dashboard` it was
+  given: nothing else recorded where it came from. A channel's line saved before
+  lines named their channel names a sender and no channel, and memory reads it as
+  nobody's.
 - **A reload shows the turn the live page showed.** The page builds a turn's
   steps from the gateway's frames (`web/src/pages/chat/liveToolFrames.ts`) and a
   reload rebuilds them from the persisted rows (`hydrateTurns`), so what one

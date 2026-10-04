@@ -56,9 +56,25 @@ CHAT_TRUST = "chat-trust"
 #: fails to link it.
 LINKS_NAME_THEIR_CHANNEL = "links-name-their-channel"
 
+#: A turn a channel writes for a conversation it runs itself names the channel it came on:
+#: ``save_conversation_turn(log, key, user_text, assistant_text, source_thread=…, source_user=…,
+#: source_channel=…)`` records the channel on each line, beside its thread and sender, and memory
+#: takes a line as the owner's own words only when its sender is the owner that channel keeps
+#: (``owner_id_for``), so another person in the conversation is never read as the owner. A line a
+#: channel takes into a chat itself (a thread it imports) records the same with ``arrived_on(thread,
+#: sender, channel)`` as its ``source``. A core without it takes no ``source_channel``, so a channel
+#: app that names one fails to save its turns.
+TURNS_NAME_THEIR_CHANNEL = "turns-name-their-channel"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
-    {APPROVAL_ANSWERS, CHAT_TRUST, GUARDED_DOWNLOAD, LINKS_NAME_THEIR_CHANNEL}
+    {
+        APPROVAL_ANSWERS,
+        CHAT_TRUST,
+        GUARDED_DOWNLOAD,
+        LINKS_NAME_THEIR_CHANNEL,
+        TURNS_NAME_THEIR_CHANNEL,
+    }
 )
 
 #: The shape of a feature name: lowercase words joined by hyphens.

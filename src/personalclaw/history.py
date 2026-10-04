@@ -42,12 +42,14 @@ from personalclaw.guardrails.incident import incident_active
 from personalclaw.instants import as_instant, utc_iso, utc_now_iso
 from personalclaw.security import (
     MaskConflict,
+    fence_untrusted,
     keep_masked_lines,
     redact_credentials,
     redact_exfiltration_urls,
 )
 from personalclaw.sel import sel
 from personalclaw.skills import AutoSkillProvenance
+from personalclaw.turn_source import arrived_on, sent_by_owner, source_of
 
 
 def config_dir() -> Path:
@@ -653,8 +655,10 @@ class ConversationLog:
         agent: str | None = None,
         tab_id: str | None = None,
         speaker: str = "",
+        source_channel: str | None = None,
     ) -> None:
-        """Append a message with optional provenance to the session log.
+        """Append a message with optional provenance to the session log: the thread it came on,
+        its sender and the chat channel that took it in (``turn_source.arrived_on``).
 
         If the session file does not yet exist, it will be created with an
         initial metadata line.  When *agent* is supplied, the agent name is
@@ -701,10 +705,7 @@ class ConversationLog:
         }
         if tools:
             msg["tools"] = tools
-        if source_thread:
-            msg["source_thread"] = source_thread
-        if source_user:
-            msg["source_user"] = source_user
+        msg.update(arrived_on(source_thread, source_user, source_channel))
         if speaker:
             msg["speaker"] = speaker
 
@@ -1272,13 +1273,19 @@ def consolidation_line(m: dict) -> str:
     not: each block they pasted, and the whole text of a row sent in their turn with nothing of
     theirs in it (an automation's result, plan mode carrying an approved plan back). What else the
     platform put into their row (the dictation note, a merge's header, plan mode's wrapper around
-    their feedback) is left out, and a saved prompt they ran is named, not quoted."""
+    their feedback) is left out, and a saved prompt they ran is named, not quoted. A row someone
+    else sent (``turn_source.sent_by_owner``) is shown whole and fenced, as their words."""
     from personalclaw.own_words import RAN_PROMPT, own_words, pasted_blocks
 
     stamp = f"[{str(m.get('ts', '?'))[:16]}]"
     tools = f" [tools: {', '.join(m['tools'])}]" if m.get("tools") else ""
     if m.get("role") != "user":
         return f"{stamp} {str(m.get('role', '')).upper()}{tools}: {m.get('content', '')}"
+    if not sent_by_owner(m):
+        src = source_of(m)
+        who = f"channel:{src['source_channel']}:" if "source_channel" in src else "sender:"
+        said = fence_untrusted(str(m.get("content") or ""), source=who + src.get("source_user", ""))
+        return f"{stamp} SENT BY SOMEONE OTHER THAN THE USER (not the user's words): {said}"
     raw_meta = m.get("meta")
     meta: dict = raw_meta if isinstance(raw_meta, dict) else {}
     typed = own_words(m)

@@ -22,12 +22,19 @@ from personalclaw.sdk.features import (
     CORE_FEATURES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
+    TURNS_NAME_THEIR_CHANNEL,
     core_has,
 )
 
 #: Every name a core has offered. A name leaves this set only with a deliberate break of every app
 #: that declares it, so a removal from CORE_FEATURES fails here first.
-OFFERED_ONCE = {"approval-answers", "chat-trust", "guarded-download", "links-name-their-channel"}
+OFFERED_ONCE = {
+    "approval-answers",
+    "chat-trust",
+    "guarded-download",
+    "links-name-their-channel",
+    "turns-name-their-channel",
+}
 
 
 def test_the_sdk_publishes_the_names_and_the_question():
@@ -37,13 +44,21 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "CORE_FEATURES",
         "GUARDED_DOWNLOAD",
         "LINKS_NAME_THEIR_CHANNEL",
+        "TURNS_NAME_THEIR_CHANNEL",
         "core_has",
     }
     assert APPROVAL_ANSWERS == "approval-answers"
     assert CHAT_TRUST == "chat-trust"
     assert GUARDED_DOWNLOAD == "guarded-download"
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
-    for name in (APPROVAL_ANSWERS, CHAT_TRUST, GUARDED_DOWNLOAD, LINKS_NAME_THEIR_CHANNEL):
+    assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
+    for name in (
+        APPROVAL_ANSWERS,
+        CHAT_TRUST,
+        GUARDED_DOWNLOAD,
+        LINKS_NAME_THEIR_CHANNEL,
+        TURNS_NAME_THEIR_CHANNEL,
+    ):
         assert name in CORE_FEATURES
         assert core_has(name) is True
 
@@ -212,12 +227,56 @@ def _links_name_their_channel_holds() -> None:
     assert sessions.get_channel_link("dashboard:chat-linked") == ("5550123", "5550123")
 
 
+def _turns_name_their_channel_holds() -> None:
+    """A turn a channel saves names the channel on each line, a line it takes into a chat itself
+    records where it came from, and only the lines its owner sent there are read as the owner's
+    own words."""
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from personalclaw.config.credentials import (
+        delete_credential,
+        owner_id_credential,
+        save_credential,
+    )
+    from personalclaw.history import ConversationLog
+    from personalclaw.own_words import own_words
+    from personalclaw.sdk.channel import arrived_on, save_conversation_turn
+
+    key = owner_id_credential("turnchat")
+    save_credential(key, "U0OWNER")
+    try:
+        with TemporaryDirectory() as scratch:
+            log = ConversationLog(base_dir=Path(scratch))
+            for sender, text in (("U0OWNER", "mine"), ("U0OTHER", "theirs")):
+                save_conversation_turn(
+                    log,
+                    "1712793600.000300",
+                    text,
+                    "Noted.",
+                    source_thread="1712793600.000300",
+                    source_user=sender,
+                    source_channel="turnchat",
+                )
+            lines = log.read_messages("1712793600.000300")
+            assert {m.get("source_channel") for m in lines} == {"turnchat"}
+            assert [own_words(m) for m in lines if m["role"] == "user"] == ["mine", ""]
+        taken_in = [
+            {"role": "user", "content": text, **arrived_on("1712793600.000300", sender, "turnchat")}
+            for sender, text in (("U0OWNER", "mine"), ("U0OTHER", "theirs"))
+        ]
+        assert [own_words(m) for m in taken_in] == ["mine", ""]
+    finally:
+        delete_credential(key)
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     APPROVAL_ANSWERS: _approval_answers_hold,
     CHAT_TRUST: _chat_trust_holds,
     GUARDED_DOWNLOAD: _guarded_download_holds,
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
+    TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,
 }
 
 

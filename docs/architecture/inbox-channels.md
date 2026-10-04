@@ -421,6 +421,9 @@ or a Trust switched off in the dashboard, makes the next call ask, and a call no
 asked on the channel's prompt. The turns the channel writes reach the chat
 open for the conversation (`save_conversation_turn` → `DashboardState.take_channel_turn`): the chat
 rewrites the conversation's file from what it holds, and a turn it lacked was lost at the next save.
+Each turn names who sent it and the channel (`source_user`, `source_channel`), and memory takes a
+turn as the owner's own words only when its sender is that channel's owner
+([knowledge-memory.md](knowledge-memory.md)): a colleague in the thread is never the owner.
 The name the channel gives the conversation (`ConversationLog.set_title`, a thread's title) reaches
 that chat as well (`DashboardState.take_conversation_title`, a listener of the log's): a chat opened
 before the conversation was named shows the name, and its saves keep it.

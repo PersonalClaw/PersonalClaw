@@ -287,6 +287,11 @@ from personalclaw.triggers.tools import delete as delete_automation
 from personalclaw.triggers.tools import delete_all as delete_all_automations
 from personalclaw.triggers.tools import set_paused as set_automation_paused
 from personalclaw.tts.registry import active_voice_params
+
+# Where a line a channel takes into a chat itself came from (a thread it imports), recorded as the
+# door records each message it hands a chat: the thread, the sender and the channel. Memory takes a
+# line as the owner's own words only when its sender is that channel's owner.
+from personalclaw.turn_source import arrived_on
 from personalclaw.usage_ledger import Attribution
 from personalclaw.voice_reply import voice_reply
 
@@ -370,6 +375,7 @@ __all__ = [
     "apply_trust_action",
     "approval_brief_for",
     "approval_window_secs",
+    "arrived_on",
     "assert_channel_contract",
     "atomic_write",
     "build_cancelled_turn_preamble",

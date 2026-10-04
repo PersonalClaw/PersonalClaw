@@ -945,6 +945,27 @@ item vector).
   and a row sent in their turn as material that is not, and a prompt they ran
   by its name; a promoted skill's and a project review's proposals quote only
   what they typed.
+- Learning reads only the owner's words. A conversation on a chat channel can
+  have other people in it, and the door lets in everyone the owner trusts to talk
+  to the agent: a friend in a group, a colleague in a shared thread, a
+  correspondent writing to the mailbox, anyone an open direct message admits.
+  What they write enters the chat as a user line, unfenced, because the agent may
+  act on what they ask, and none of it is the owner's. `own_words.own_words(row)`
+  reads a row only when the owner sent it (`turn_source.sent_by_owner`): the
+  dashboard took it in, or the row names its channel (`source_channel`) and its
+  sender (`source_user`) is the owner that channel keeps (`owner_id_for`, the id
+  its owner pairing or first contact stored; Slack's two spellings of one member
+  both match). On a channel that knows no owner nobody is the owner, and any
+  other source is nobody's too: a program through the OpenAI-compatible door, a
+  channel's row saved before rows named their channel, one saved with no sender.
+  So a turn someone else started teaches no lesson, preference, veto or glossary
+  line; a row several queued messages run as keeps only the words the owner sent
+  (`own_words.queued_words`); and consolidation shows another sender's row whole
+  and fenced, as `SENT BY SOMEONE OTHER THAN THE USER (not the user's words)`, so
+  its model can follow the conversation without taking what they say about the
+  owner as hers. A row that records no source at all (an imported conversation)
+  reads as before. What you send on a channel counts as yours once
+  the channel knows you as its owner: its Configure page says who that is.
 - What learning took from such text before is settled at each gateway start
   (`learning/composed_text.settle`, over every memory store in the home): a
   correction lesson that quoted the platform's own opening is retracted through

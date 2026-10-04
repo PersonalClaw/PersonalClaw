@@ -207,6 +207,16 @@ owner can neither see nor revoke.
   `set_title`.** The chat the dashboard opens for your conversation is given each turn you write
   there and each name you give it, so it shows the conversation as it is and its own saves keep
   your turns and its name.
+- **Name who sent each turn and your channel.** Pass the thread, the sender's id as your channel
+  knows them and your channel's provider key:
+  `save_conversation_turn(log, key, text, reply, source_thread=thread, source_user=sender,
+  source_channel=PROVIDER)`. Memory takes a turn as the owner's own words only when its sender is
+  the owner your channel keeps (`owner_id_for(PROVIDER)`), so what someone else in the
+  conversation writes is never learned as the owner's; a turn saved without your channel is read
+  as nobody's. A channel that saves its turns this way declares
+  `"requiresCoreFeatures": ["turns-name-their-channel"]`
+  (`personalclaw.sdk.features.TURNS_NAME_THEIR_CHANNEL`): a PersonalClaw without it takes no
+  `source_channel`, and refuses to install or update the app.
 
 A channel that uses these declares the core feature in its `app.json`:
 `"requiresCoreFeatures": ["chat-trust"]` (`personalclaw.sdk.features.CHAT_TRUST`). A PersonalClaw
@@ -277,9 +287,11 @@ Notes that bite:
   message, not after. A crash mid-dispatch must not replay the message forever.
 - Set `ChannelMessage.sender` to the id your channel knows the person by, and `thread_id` to
   the conversation. The door records both on the turn it adds to the chat, as where the
-  message came from (`source_user`, `source_thread`), and every save of the chat keeps them.
-  A stand-in session in your tests takes `source=` on `append` and `queue_append`, as the
-  chat does.
+  message came from (`source_user`, `source_thread`), with your channel (`source_channel`),
+  and every save of the chat keeps them. Memory reads them: only a message whose sender is the
+  owner your channel keeps is the owner's own words, so use the same id for the owner here as
+  the one your owner pairing stores. A stand-in session in your tests takes `source=` on
+  `append` and `queue_append`, as the chat does.
 - `health()` is passive and cheap (credentials present? socket up?). `test()` is allowed to
   make one round-trip. If they can disagree, you have two truths and the owner will find
   the wrong one.

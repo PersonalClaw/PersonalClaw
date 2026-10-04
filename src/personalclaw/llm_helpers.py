@@ -540,15 +540,19 @@ def save_conversation_turn(
     assistant_text: str,
     source_thread: str | None = None,
     source_user: str | None = None,
+    source_channel: str | None = None,
 ) -> None:
     """Save a user+assistant conversation turn to the history log, with its provenance, and to
     the chat the dashboard has open for the conversation, if it has one.
 
-    A channel that runs a conversation itself records its turns here. The dashboard's chat for
-    that conversation rewrites the whole file from what it holds, so it is given the turn too
-    (``DashboardState.take_channel_turn``), with the same provenance: left out, the chat showed
-    the conversation as it was when it was opened, and its next save wrote that over every turn
-    since.
+    A channel that runs a conversation itself records its turns here: the thread, who sent the
+    message (*source_user*) and the channel itself (*source_channel*, its provider key). Memory
+    takes a line as the owner's words only when its sender is the owner that channel keeps
+    (``turn_source.sent_by_owner``), so a turn saved without its channel is nobody's. The
+    dashboard's chat for that conversation rewrites the whole file from what it holds, so it is
+    given the turn too (``DashboardState.take_channel_turn``), with the same provenance: left out,
+    the chat showed the conversation as it was when it was opened, and its next save wrote that
+    over every turn since.
     """
     log.append(
         key,
@@ -556,6 +560,7 @@ def save_conversation_turn(
         user_text,
         source_thread=source_thread,
         source_user=source_user,
+        source_channel=source_channel,
     )
     if assistant_text:
         log.append(
@@ -564,6 +569,7 @@ def save_conversation_turn(
             assistant_text,
             source_thread=source_thread,
             source_user=source_user,
+            source_channel=source_channel,
         )
     from personalclaw.inbox_providers.native_source import get_dashboard_state
     from personalclaw.turn_source import arrived_on
@@ -573,7 +579,11 @@ def save_conversation_turn(
         return
     try:
         state.take_channel_turn(
-            log, key, user_text, assistant_text, arrived_on(source_thread, source_user)
+            log,
+            key,
+            user_text,
+            assistant_text,
+            arrived_on(source_thread, source_user, source_channel),
         )
     except Exception:  # noqa: BLE001 - the turn is written; the channel's reply must not fail
         logger.warning("could not give the open chat for %s its turn", key, exc_info=True)

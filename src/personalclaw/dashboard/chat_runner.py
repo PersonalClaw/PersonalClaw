@@ -150,7 +150,13 @@ from personalclaw.llm_helpers import (
     is_model_call_failure,
 )
 from personalclaw.loop import posture as loop_posture
-from personalclaw.own_words import OWN_WORDS, own_words, queued_words, record_prompt_run
+from personalclaw.own_words import (
+    OWN_WORDS,
+    own_words,
+    queued_words,
+    record_prompt_run,
+    sender_words,
+)
 from personalclaw.restart_request import RESTARTING, SHUTTING_DOWN
 from personalclaw.security import (
     is_sensitive_path,
@@ -5284,10 +5290,14 @@ async def run_chat(
         stamp_finish_reason(session, _stop_reason)
         stamp_model_substitution(session, _substitution_note)
         # An answer that ran past its agent's own word limit says so under it (`answer_rules`); one
-        # cut at the output cap is not the whole answer, and its own mark says so.
+        # cut at the output cap is not the whole answer, and its own mark says so. A limit the
+        # request sets counts whoever sent it (`sender_words`).
         if _answered and not (_unanswered or is_slash or session._last_turn_errored):
             _over = over_limit_notice(
-                session.agent or "", agent_system_prompt, turn_answer(session), own_words(_turn_row)
+                session.agent or "",
+                agent_system_prompt,
+                turn_answer(session),
+                sender_words(_turn_row),
             )
             if _over and not is_length_stop(_stop_reason):
                 session.append("notice", _over, "msg msg-notice")
@@ -5310,7 +5320,8 @@ async def run_chat(
             # each computed their own, the two copies of the rule could disagree —
             # which is exactly the drift the LearningGate exists to prevent.
             # Both read what she typed (`own_words`), not the message the model was sent: a saved
-            # prompt's body, a file's text, a persona, or an automation's message with none of hers.
+            # prompt's body, a file's text, a persona, an automation's message with none of hers,
+            # or what someone else in a channel's conversation sent.
             _typed = own_words(_turn_row)
             try:
                 _turn_learning = learning_decision_for_turn(session, _typed, _turn_tool_call_count)

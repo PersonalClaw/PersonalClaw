@@ -33,6 +33,20 @@ describe('the owner section', () => {
     expect(screen.getByRole('button', { name: /Pair as owner/ })).toBeTruthy()
   })
 
+  // Memory takes a message on a channel as your own words only when the channel's owner sent it:
+  // a group, a shared thread or a mailbox has other people in it, and what they write is theirs.
+  it('says memory takes only what the owner sends there as your own words', async () => {
+    vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ owner_id: '4242', owner_name: 'Ada Example', source: 'channel' }))
+    render(<ChannelOwnerSection channel="telegram" />)
+    expect(await screen.findByText('Memory takes only what Ada Example sends there as your own words.')).toBeTruthy()
+  })
+
+  it('says memory takes nothing said there as yours while the channel does not know you', async () => {
+    vi.spyOn(api, 'channelOwner').mockResolvedValue(status())
+    render(<ChannelOwnerSection channel="telegram" />)
+    expect(await screen.findByText('Until it does, memory takes nothing said there as your own words.')).toBeTruthy()
+  })
+
   it('shows the code, waits for it, and says who the channel reaches once it is sent', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const read = vi.spyOn(api, 'channelOwner').mockResolvedValue(status())

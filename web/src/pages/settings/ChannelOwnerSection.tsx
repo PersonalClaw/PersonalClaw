@@ -29,6 +29,13 @@ function ownerLine(s: ChannelOwnerStatus): string {
   return `${channel} reaches you as ${who}.`
 }
 
+/** Whose words on this channel memory takes as yours: only what its owner sends there. A group, a
+ *  shared thread or a mailbox has other people in it, and what they write is theirs. */
+function memoryLine(s: ChannelOwnerStatus): string {
+  if (!s.owner_id) return 'Until it does, memory takes nothing said there as your own words.'
+  return `Memory takes only what ${ownerWho(s.display_name, ownerOf(s))} sends there as your own words.`
+}
+
 /** Why the last pairing ended, when it did not end in a pairing. */
 function endedLine(s: ChannelOwnerStatus): string {
   const p = s.pairing
@@ -134,6 +141,7 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
                 onClick={() => void copyText(status.owner_id, `your ${who} id`)} />
             </span>
           )}
+          <span data-type="caption" className="text-on-surface-low">{memoryLine(status)}</span>
         </div>
       </div>
 
