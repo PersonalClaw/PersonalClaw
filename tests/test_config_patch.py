@@ -883,7 +883,7 @@ class TestVersionPinShape:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "bad",
-        ["not-a-version!!", "0.2", "0.2.x", ">=0.2", "latest", "0.3.0rc1", "v", "0.1.3 extra"],
+        ["not-a-version!!", "0.2", "0.2.x", ">=0.2", "latest", "v", "0.1.3 extra"],
     )
     async def test_a_pin_that_can_never_name_a_release_is_refused(self, tmp_config, bad) -> None:
         before = tmp_config.read_text(encoding="utf-8")
@@ -907,6 +907,7 @@ class TestVersionPinShape:
             ("v0.1.3", "0.1.3"),  # the resolvers' spelling
             ("  0.1.3  ", "0.1.3"),
             ("0.3.0-rc.1", "0.3.0-rc.1"),
+            ("0.3.0rc1", "0.3.0rc1"),  # the same candidate as `personalclaw --version` prints it
             ("", ""),  # clearing the pin — back to following the channel
         ],
     )
