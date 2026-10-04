@@ -61,7 +61,7 @@ class TestValidSpecs:
                     {
                         "kind": "transform",
                         "id": "rank",
-                        "config": {"expr": "{{nodes.lenses.output | count}}"},
+                        "config": {"expr": "{{nodes.c.output}} after {{nodes.a.output}}"},
                     },
                 ],
             }
@@ -873,14 +873,20 @@ class TestDependencyOrdering:
     # ── containment and exclusivity ──
 
     def test_a_container_cannot_be_read_by_its_own_descendant(self) -> None:
-        """A container's output is not available until after the children that produce it."""
+        """A container's output is not available until after the children that produce it. A
+        loop records one, its last cycle's, so reading it from inside is the ordering defect; a
+        sequence records none at all, which is the other rule's refusal
+        (`test_a_step_reads_what_a_loop_produced`)."""
         spec = _wrap(
             {
-                "kind": "sequence",
+                "kind": "loop",
                 "id": "outer",
-                "children": [
-                    {"kind": "infer", "id": "a", "config": {"prompt": "{{nodes.outer.output}}"}}
-                ],
+                "config": {"mode": "counted", "n": 2},
+                "body": {
+                    "kind": "infer",
+                    "id": "a",
+                    "config": {"prompt": "{{nodes.outer.output}}"},
+                },
             }
         )
         assert "WF_UNORDERED_DEP" in _codes(spec)

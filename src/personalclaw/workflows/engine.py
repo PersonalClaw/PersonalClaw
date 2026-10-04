@@ -66,6 +66,7 @@ from personalclaw.workflows.judge_contract import (
 )
 from personalclaw.workflows.liveness import wait_with_progress
 from personalclaw.workflows.models import (
+    REFUSED_TO_START,
     Failure,
     FailureClass,
     GateKind,
@@ -715,6 +716,7 @@ async def dispatch_stage(
             FailureClass.PERMISSION,
             f"workflow nesting depth cap ({MAX_WF_DEPTH}) reached — not spawning",
             "flatten the workflow, or move the nested work into a separate run",
+            terminal_reason=REFUSED_TO_START,
         )
     cfg, failure = engine_support.resolve_config(node, ctx)
     if failure:
@@ -748,6 +750,7 @@ async def dispatch_stage(
             FailureClass.PERMISSION,
             beyond,
             "switch the app on, or update it to a version whose agent tier covers this step",
+            terminal_reason=REFUSED_TO_START,
         )
 
     if subagents is None:
@@ -1231,6 +1234,7 @@ async def dispatch_action(
             FailureClass.PERMISSION,
             refused,
             "start the workflow yourself to run this step as yours",
+            terminal_reason=REFUSED_TO_START,
         )
 
     from personalclaw.action_providers.base import ActionContext
@@ -1288,7 +1292,9 @@ async def dispatch_action(
     key = unattended_dispatch_key(f"workflow:{run_id}")
     if (denied := enforce_action(name, action_config, context, session_key=key)).blocked:
         fix = "change what this step runs, then run the workflow again; until then it is refused"
-        return _fail(FailureClass.PERMISSION, denied.refusal(), fix)
+        return _fail(
+            FailureClass.PERMISSION, denied.refusal(), fix, terminal_reason=REFUSED_TO_START
+        )
     from personalclaw.net.policy import egress_held_to
 
     try:
@@ -1315,8 +1321,9 @@ async def dispatch_action(
 
     if not getattr(result, "success", False):
         # Classified at the cause, never assumed TRANSIENT: that offered Retry for a rejected
-        # key, a missing model and a missing config field alike.
-        failure = classify_action_result(result)
+        # key, a missing model and a missing config field alike. The cause is the command's own
+        # reason when its answer gives one.
+        failure = classify_action_result(result, output)
         return NodeResult(state=InstanceState.FAILED, output=output, failure=failure)
     if getattr(result, "outcome", "") == "launched":
         return NodeResult(

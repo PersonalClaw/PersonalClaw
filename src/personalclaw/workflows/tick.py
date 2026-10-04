@@ -561,7 +561,7 @@ def _visit(
             # approval a person refused is ever visited, whatever the child declares.
             if derived == InstanceState.DECLINED:
                 break
-            if cst == InstanceState.FAILED and _on_error(child) == "fail_run":
+            if cst == InstanceState.FAILED and fails_the_run(child):
                 break
         return
 
@@ -1200,6 +1200,17 @@ def foreach_outcome(policy: ItemErrorPolicy, item_states: list[InstanceState]) -
 
 def _on_error(node: Node) -> str:
     return str((node.config or {}).get("on_error", "null_continue") or "null_continue")
+
+
+def fails_the_run(node: Node | None) -> bool:
+    """Does this step declare that its failure ends the run (`on_error: fail_run`)?
+
+    One reading for both halves of what the declaration means: a sequence visits nothing after
+    such a step once it failed (`_visit`), and the controller ends the run there, saying why
+    (`gate_answers.stopping_gate`). Without the second half the first only stopped the
+    scheduling, and the run ended "run deadlocked" with the step's reason left on the step.
+    """
+    return node is not None and _on_error(node) == "fail_run"
 
 
 # ── derived container state ──────────────────────────────────────────────────

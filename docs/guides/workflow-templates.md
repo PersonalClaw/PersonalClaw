@@ -82,6 +82,32 @@ program, wherever it is installed, while the `python3` on `PATH` has no Personal
 in a `uv tool` install or the desktop app, so a step written that way fails there on
 its first run.
 
+**A command that fails says why in its answer.** Print one JSON object whose `error`
+is the reason, and exit non-zero: that reason is the step's failure on the run page
+and in the run's ending. A command that says nothing is named by its exit status.
+
+**A step whose failure must stop the run says so.** Steps after a failed step run by
+default (`on_error: null_continue`). A step whose failure means nothing after it may
+run, such as a preflight that refuses its inputs, declares `"on_error": "fail_run"`:
+the run then ends there, failed, with the step's reason ("“Check the inputs” failed:
+…, so nothing after it ran"). A step a safety control refused before it ran (the
+action denylist, an app's limits on a run that is its work) stops the run the same
+way, whatever it declares.
+
+## Reading what a container produced
+
+`{{nodes.<id>.output}}` reads what a step recorded, and a container records only
+what its kind gives it:
+
+| Kind | Its output |
+|---|---|
+| `loop` | its last cycle's output, as `{{last.output}}` reads a cycle, once it ends done; nothing when it is handed to you instead, and a step reading it is then skipped |
+| `branch` | its routing, `{"case": "<the case it took>"}` |
+| `sequence`, `parallel`, `foreach` | nothing: validation refuses the read when you save (`WF_UNSATISFIABLE_OUTPUT_REF`), so read the step inside whose output you need |
+
+A loop's output is its last cycle's, so a loop that should hand on a running account
+has each cycle return one, built on `{{last.output.…}}`.
+
 ## Macros: the patterns, as one-liners
 
 Four ship, and they expand into core nodes **at definition time** — so what is

@@ -109,6 +109,7 @@
         "label": "Refuse or report, before the first model call",
         "config": {
           "provider": "bash",
+          "on_error": "fail_run",
           "payload": {
             "PC_OPT_SUBJECT": "{{inputs.target_template}}",
             "PC_OPT_LIVE_TARGET": "{{inputs.live_target}}",
@@ -139,6 +140,21 @@
           "id": "iterate",
           "children": [
             {
+              "kind": "action",
+              "id": "experience",
+              "label": "What the search already tried",
+              "config": {
+                "provider": "bash",
+                "payload": {
+                  "PC_OPT_SANDBOX": "{{inputs.sandbox}}"
+                },
+                "with": {
+                  "command": "personalclaw optimize-harness experience </dev/null",
+                  "timeout": 120
+                }
+              }
+            },
+            {
               "kind": "stage",
               "id": "propose",
               "config": {
@@ -149,7 +165,7 @@
                   "{{inputs.sandbox}}"
                 ],
                 "write_scope_mode": "reject",
-                "prompt": "You are running ONE iteration of a budgeted search over a PClaw artifact. You may only READ and PROPOSE. Your tool set enforces that; do not fight it.\n\nThe artifact under optimization:\n{{inputs.target_template}}\n\nThe LIVE copy, which is frozen:\n{{inputs.live_target}}\n\nYour sandbox — the ONLY path you may write to:\n{{inputs.sandbox}}\n\nWhat the preflight measured, including the score you have to beat:\n{{nodes.preflight.output}}\n\nWhat previous iterations of this search already tried is in `{{inputs.sandbox}}/.experience/index.json`, with each candidate's raw diff beside it. Read the diffs, not just the index: the point of keeping them is that the raw prior attempt tells you more than a summary of it.\n\nMethod, in order:\n  1. Call `refiner_evidence` for the target. Work from its ranked failure clusters, not from a hunch.\n  2. Read `.experience/index.json`. A fix whose fingerprint is already there and already failed is not a candidate — repeating it is how a search burns its budget confirming a wrong diagnosis.\n  3. Propose ONE candidate edit as typed ops (`update_node` / `insert` / `delete` / `move` / `set_input`). You may NOT touch the artifact's id, name, triggers, or surfacing metadata — those decide WHEN it runs and are frozen.\n  4. Write the candidate's diff into your sandbox. Writing anywhere else — above all into {{inputs.live_target}} — is a scope violation, and the adjudicator kills the candidate for it whatever it scored.\n  5. Score the candidate against the target's harvested suite and report the number honestly. A score you inflated wins this iteration and loses the search.\n  6. Give the fix a stable `fix_fingerprint`: the same string for the same DIAGNOSIS, even when you word the edit differently. That is what lets the search abandon a wrong hypothesis instead of rewording it forever.\n\nReturn JSON: {\"fix_fingerprint\": string, \"score\": number, \"diff_text\": string, \"rationale\": string, \"ops\": array}",
+                "prompt": "You are running ONE iteration of a budgeted search over a PClaw artifact. You may only READ and PROPOSE. Your tool set enforces that; do not fight it.\n\nThe artifact under optimization:\n{{inputs.target_template}}\n\nThe LIVE copy, which is frozen:\n{{inputs.live_target}}\n\nYour sandbox, where the adjudicator keeps the search's ledger:\n{{inputs.sandbox}}\n\nWhat the preflight measured, including the score you have to beat:\n{{nodes.preflight.output}}\n\nWhat previous iterations of this search already tried, oldest first: each candidate's ledger row with its raw diff beside it, and an empty list on the first iteration. Read the diffs, not just the rows: the point of keeping them is that the raw prior attempt tells you more than a summary of it.\n{{nodes.experience.output.candidates}}\n\nMethod, in order:\n  1. Call `refiner_evidence` for the target. Work from its ranked failure clusters, not from a hunch.\n  2. Check the candidates above. A fix whose fingerprint is already there and already failed is not a candidate — repeating it is how a search burns its budget confirming a wrong diagnosis.\n  3. Propose ONE candidate edit as typed ops (`update_node` / `insert` / `delete` / `move` / `set_input`). You may NOT touch the artifact's id, name, triggers, or surfacing metadata — those decide WHEN it runs and are frozen.\n  4. Put the candidate's diff in `diff_text`: the adjudicator writes it into the sandbox's ledger. Your tools read and propose, and write nothing: a write anywhere, above all into {{inputs.live_target}}, is a scope violation the adjudicator kills whatever it scored.\n  5. Score the candidate against the target's harvested suite, from the evidence: you cannot run the suite, so say in `rationale` what the number rests on. A score you inflated wins this iteration and loses the search.\n  6. Give the fix a stable `fix_fingerprint`: the same string for the same DIAGNOSIS, even when you word the edit differently. That is what lets the search abandon a wrong hypothesis instead of rewording it forever.\n\nReturn JSON: {\"fix_fingerprint\": string, \"score\": number, \"diff_text\": string, \"rationale\": string, \"ops\": array}",
                 "schema": {
                   "fix_fingerprint": "string",
                   "score": "number",
@@ -201,6 +217,7 @@
                   "PC_OPT_SCORE": "{{nodes.propose.output.score}}",
                   "PC_OPT_FIX_FINGERPRINT": "{{nodes.propose.output.fix_fingerprint}}",
                   "PC_OPT_DIFF_TEXT": "{{nodes.propose.output.diff_text}}",
+                  "PC_OPT_OPS": "{{nodes.propose.output.ops | json}}",
                   "PC_OPT_BUDGET_USD": "{{inputs.budget_usd}}",
                   "PC_OPT_ABANDON_AFTER": "{{inputs.hypothesis_abandon_after}}",
                   "PC_OPT_NO_IMPROVEMENT_HALT": "{{inputs.no_improvement_halt}}",
@@ -216,6 +233,21 @@
         }
       },
       {
+        "kind": "action",
+        "id": "ledger",
+        "label": "The search's ledger, and its winner",
+        "config": {
+          "provider": "bash",
+          "payload": {
+            "PC_OPT_SANDBOX": "{{inputs.sandbox}}"
+          },
+          "with": {
+            "command": "personalclaw optimize-harness experience </dev/null",
+            "timeout": 120
+          }
+        }
+      },
+      {
         "kind": "stage",
         "id": "file-proposal",
         "label": "The winner becomes a proposal a human installs",
@@ -223,7 +255,7 @@
           "agent": "personalclaw-template-refiner",
           "model_tier": "reasoning",
           "tools_posture": "verify",
-          "prompt": "The search has halted. File its winner — if it has one — as a proposal, and nothing else.\n\nWhy it stopped, and the last adjudication:\n{{nodes.search.output}}\n\nThe candidate ledger, every iteration including the discards:\n{{inputs.sandbox}}/.experience/index.json\n\nDo exactly one of these:\n  * If the ledger's last `admitted` candidate exists, call `propose_template_diff` with ITS ops, a rationale that cites the score it reached and both halves of the gate it cleared (the suite threshold AND the best-ever), and the halt reason. You are filing a proposal for a person to read and install — you are NOT applying it, and you have no tool that could.\n  * If nothing was admitted, propose NOTHING and say so. A search that found no improvement has produced a result, not a failure; inventing a proposal to have something to show is the one outcome worse than an empty one.\n\nNever file a candidate whose outcome was `scope_violation`. It touched the frozen region, which makes it dead regardless of what it scored.\n\nReturn JSON: {\"proposed\": boolean, \"halt_reason\": string, \"winner_score\": number, \"rationale\": string, \"proposal_id\": string}",
+          "prompt": "The search has halted. File its winner — if it has one — as a proposal, and nothing else.\n\nWhy it stopped: {{nodes.search.output.halt}}\nIts last adjudication: that candidate was `{{nodes.search.output.outcome}}`, the best score the search reached is {{nodes.search.output.best_so_far}}, and the gate every candidate was held to is {{nodes.search.output.gate}}\n\nThe winner, the ledger's last `admitted` candidate with the ops it is filed with, or null when nothing was admitted:\n{{nodes.ledger.output.winner}}\n\nEvery candidate the search tried, the discards included:\n{{nodes.ledger.output.candidates}}\n\nDo exactly one of these:\n  * If there is a winner, call `propose_template_diff` for {{inputs.target_template}} with ITS ops, a rationale that cites the score it reached and both halves of the gate it cleared (the suite threshold AND the best-ever), and the halt reason. You are filing a proposal for a person to read and install — you are NOT applying it, and you have no tool that could.\n  * If the winner is null, propose NOTHING and say so. A search that found no improvement has produced a result, not a failure; inventing a proposal to have something to show is the one outcome worse than an empty one.\n\nNever file a candidate whose outcome was `scope_violation`. It touched the frozen region, which makes it dead regardless of what it scored.\n\nReturn JSON: {\"proposed\": boolean, \"halt_reason\": string, \"winner_score\": number, \"rationale\": string, \"proposal_id\": string}",
           "schema": {
             "proposed": "boolean",
             "halt_reason": "string",

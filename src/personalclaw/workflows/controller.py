@@ -795,9 +795,11 @@ class RunController:
 
         # Untaken branch paths become SKIPPED before scheduling. A skipped node is
         # terminal, which is what satisfies a downstream `needs` edge instead of leaving
-        # a join waiting on a leg that will never run.
+        # a join waiting on a leg that will never run. A loop cycle a skip finished is read at
+        # its boundary, as a settle would have read it.
         for path in fr.to_skip:
             self._skip(path)
+        loop_iteration.advance_skipped(self, fr.to_skip)
 
         # PP-12 admission: the two rules the frontier structurally cannot apply, because both need
         # a clock and one needs the disk. Skipped entirely for a spec that declares none of their

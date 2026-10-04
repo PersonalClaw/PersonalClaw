@@ -4,7 +4,8 @@ The counter advance, the `until_dry` streak, the breaker fed and asked, steering
 consumed between iterations, the long-run seen-set
 and the continue/stop decision. Both settle paths reach it — `RunController._apply` for an awaited
 dispatch and `stage_settlement.reconcile_dispatched_stages` for a spawned stage — which is why
-`advance_loop` takes the settled leaf's path and id rather than a `ReadyNode`. What a TRIPPED
+`advance_loop` takes the settled leaf's path and id rather than a `ReadyNode`, and so does a cycle
+the frontier finished by skipping its last open steps (`advance_skipped`). What a TRIPPED
 breaker means is `loop_convergence`'s question, and what a cycle its owner ended with a Deny means
 is `declines`'.
 """
@@ -25,8 +26,8 @@ from personalclaw.workflows.models import (
     LoopMode,
     Node,
     NodeKind,
+    instance_order,
     loop_parent,
-    now_stamp,
     spec_path,
     walk,
 )
@@ -235,9 +236,59 @@ def advance_loop(ctl: RunController, path: str, node_id: str) -> None:
         loop_convergence.surface_loop(ctl, parent_path, node, reason="judge_escalated", detail="")
         return
 
-    loop_inst = ctl._instance(parent_path)
-    loop_inst.state = InstanceState.DONE
-    loop_inst.completed_at = now_stamp()
+    # Nor is one that could not read its own exit condition: it stops, since it cannot tell, and
+    # it is handed to a person, because DONE would hand the steps after it its output as a result
+    # (`finish_loop`). Its ending names the step that failed in its cycle when one did, which is
+    # the usual reason the condition had nothing to read.
+    if reason == "condition_unresolvable":
+        loop_convergence.surface_loop(
+            ctl,
+            parent_path,
+            node,
+            reason=reason,
+            detail="It could not read its exit condition from what its last cycle produced",
+        )
+        return
+
+    loop_convergence.finish_loop(ctl, parent_path, node, iteration)
+
+
+def advance_skipped(ctl: RunController, skipped: list[str]) -> None:
+    """Read the boundary of each loop cycle the frontier just finished by skipping steps in it.
+
+    A step whose producer ended with no output is skipped by the frontier (`tick`), and a skip is
+    not a settle: the two settle paths are where `advance_loop` runs, so a cycle whose LAST open
+    steps were skipped had finished with nothing left to say so. The loop then waited on a cycle
+    with nothing to run, and the run ended "run deadlocked: no runnable nodes and none in flight"
+    in place of the failure that skipped them. So each such cycle's boundary is read here, once,
+    as if its first failed step had just settled: that failure is what the breaker counts and what
+    the loop's ending names. A cycle that is not the loop's current one, or a loop already ended,
+    has had its boundary read.
+    """
+    cycles: dict[tuple[str, int], str] = {}
+    for path in skipped:
+        loop_path, iteration = loop_parent(path)
+        if loop_path is not None:
+            cycles.setdefault((loop_path, iteration), path)
+    for (loop_path, iteration), path in cycles.items():
+        loop_inst = ctl.instances.get(loop_path)
+        if int(ctl._iterations.get(loop_path, 0)) != iteration or (
+            loop_inst is not None and loop_inst.state in TERMINAL_STATES
+        ):
+            continue
+        prefix = f"{loop_path}.body@{iteration}"
+        failed = sorted(
+            (
+                p
+                for p, inst in ctl.instances.items()
+                if (p == prefix or p.startswith(f"{prefix}."))
+                and inst.state is InstanceState.FAILED
+            ),
+            key=instance_order,
+        )
+        settled = failed[0] if failed else path
+        node = dict(walk(ctl.root)).get(spec_path(settled))
+        advance_loop(ctl, settled, node.id if node is not None else "")
 
 
 def _journal_breaker_trip(

@@ -161,6 +161,23 @@ One consequence worth knowing: an *untouched* container derives as `RUNNING`,
 not `PENDING` — "has unfinished children" is running by that definition. Code
 that asks "has this subtree started?" must look for recorded state, not derive.
 
+**What a step can read of a container** is fixed by its kind, in one definition the
+engine records by and validation checks against (`models.NO_OUTPUT_KINDS`). A `loop`
+that ends done records its last cycle's output, layered the way `{{last.output}}` and
+its own `condition` read a cycle (`loop_convergence.finish_loop`), stored with its
+instance so a resumed run reads it back, and a step after the loop reads it as
+`{{nodes.<loop>.output}}`. A loop handed to a person (its budget spent without its
+exit met, a judge that would not decide, a cycle that failed, an exit condition it
+could not read) records nothing, and a step that reads it is skipped. A `branch`
+records its routing, `{"case": label}`. A `sequence`, `parallel` or `foreach`
+records nothing of its own, so validation refuses a read of one when the spec is saved
+(`WF_UNSATISFIABLE_OUTPUT_REF`): read the step inside it whose output you need. A loop
+that should carry a running account across its cycles has each cycle return it, built
+on `{{last.output.…}}`, since its output is its last cycle's. Until loops recorded
+theirs, a step after a loop failed "unresolved reference" on every run while
+validation accepted the read, which is where optimize-harness, design-project and
+goal-pursuit-open-ended stopped.
+
 ## Scheduling: three rules that carry the weight
 
 **Active-edge join gating.** A join waits only on predecessors whose
@@ -243,8 +260,11 @@ gateway that runs the CLI uses (`bash_provider.own_cli_function`, through
 install as the gateway that started it, alone or in a pipeline, a subshell or a
 substitution. A program the command starts (`env`, `nohup`, `xargs`, another
 `sh -c`) looks the name up on `PATH` like any other, and `command personalclaw` asks
-`PATH` on purpose. The bundled `optimize-harness` template's three steps are
-`personalclaw optimize-harness <step>`, a CLI command its help does not list.
+`PATH` on purpose. The bundled `optimize-harness` template's bash steps run
+`personalclaw optimize-harness <step>`, a CLI command its help does not list. Its
+`experience` step hands the template's model steps the search's own ledger (every
+candidate so far with its raw diff, and the winner with its ops), since the template
+refiner's tools read evidence and file proposals and cannot open a file.
 Nothing the package ships runs PersonalClaw through an interpreter found on `PATH`
 (`tests/test_bare_interpreter_census.py`).
 
@@ -265,7 +285,8 @@ A refused step never reaches its provider and fails `permission` with the words 
 trigger's fire records for the same rule, its code and its sentence
 (`DenyDecision.refusal`: "blocked by the guardrails denylist: self_destruct:stop —
 unattended action refused: it would stop the PersonalClaw gateway that is executing it
-…"); the run's ending names it, the audit log has its `guardrails.denylist` row and the
+…"); the run stops there and its ending names it (a control's refusal stops the run
+whatever the step declares), the audit log has its `guardrails.denylist` row and the
 gateway log a warning. You can still stop or update PersonalClaw yourself, from your own
 shell or Settings → Updates. `tests/test_action_provider_chokepoints.py` fails an
 execution site that reaches a provider, under any name, without asking. What the step then
@@ -374,6 +395,14 @@ Two asymmetries that are easy to get backwards:
   nonsense that reads like a real answer;
 - **declared input defaults are applied at run start**, not lazily at each
   binding, so the run record shows the values the run actually used.
+
+A value that is exactly one reference keeps that value's type; any other value,
+one holding a second reference included, interpolates. Which it is, is decided by the
+scan that splits a value into its references (`bindings._whole_ref`), the one
+validation reads a spec with. A pattern of its own used to read any value that began
+with `{{` and ended with `}}` as a single reference, so `{{inputs.a}} changed:
+{{nodes.b.output}}` failed as a path named `a}} changed: {{nodes` while validation
+saw two good references; market-monitor's alert title was such a value.
 
 ## The journal: two jobs, one file
 
@@ -755,6 +784,39 @@ from the run's own outcome through the scheduler's derivation, so a failure the 
 tolerated (`allow_failure`, a `skip` fan-out, a leg of an `any` join) is never named
 as its reason. That ending used to be empty — the completion path's terminal write
 took no `error` — so the run page read "Failed" over nothing.
+
+**A step's failure is said in its own words.** A command a step runs says why it
+failed by printing one JSON object whose `error` is the reason, as the bundled steps'
+refusals do (`evals.optimize.main`), and that reason is the step's failure, ahead of its
+stderr; a command that says nothing is named by its exit status
+(`failure_taxonomy.classify_action_result`). It used to read "action failed" with the
+reason left in the step's output. The run's way forward follows the reason: what it names
+is what to change, the step or what the run was started with (`ending_sentence.step_stop`),
+where it used to say "change the step that gave up" under a refusal of the run's own budget.
+
+**A step can declare that its failure ends the run.** `on_error: fail_run` says
+nothing after the step may run once it failed, which is what a preflight that refuses
+its inputs means. The run stops there the way it stops at a check gate that failed
+(`stopping_gate`, through `tick.fails_the_run`): it ends `failed` with the step's
+reason ("“Refuse or report, before the first model call” failed: optimize-harness
+refuses to search without a positive `budget_usd` …, so nothing after it ran"), and
+each step after it is marked skipped, saying why. The frontier already stopped
+scheduling after such a step, and nothing ended the run, which ended "run
+deadlocked". A step a control refused before it did anything stops the run the same
+way, whatever the step declares (`models.REFUSED_TO_START`, stamped where the engine
+refuses one: the action denylist, an app's limits on a run that is its work, the
+nesting cap): what the step was for never happened, the steps after it were written
+expecting it to have, and a failure policy does not walk past a control's refusal.
+
+**A loop cycle that ends in skipped steps is read at its boundary.** A step whose
+producer failed is skipped, and a skip is not a settle, so a cycle whose last open
+steps were skipped finished with nothing to read its boundary: the loop waited on it
+and the run ended "run deadlocked". The frontier's skips now read each such cycle's
+boundary as if its first failed step had just settled (`loop_iteration.advance_skipped`),
+so the loop goes on to its next cycle, its breaker counts the failure, and it ends by
+its own rules. A loop that cannot read its own exit condition stops and is handed to a
+person, naming the step that failed when one did, since DONE would hand the steps
+after it its output as a result.
 
 A run that ends closes whatever it was still asking, whichever way it ended:
 `gate_answers.close_waits` cancels each waiting step and withdraws its ask, and

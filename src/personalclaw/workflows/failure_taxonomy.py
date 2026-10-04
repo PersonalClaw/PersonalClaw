@@ -29,9 +29,11 @@ from personalclaw.guardrails.failure import use_case_binding
 from personalclaw.workflows.models import RETRYABLE_CLASSES, Failure, FailureClass
 
 __all__ = [
+    "OWN_REASON_FIX",
     "binding_failure",
     "classify_action_result",
     "classify_exception",
+    "gave_its_own_reason",
     "http_status_class",
     "with_breaker_window",
 ]
@@ -40,6 +42,13 @@ __all__ = [
 #: page's Retry is offered only for a failure the same attempt can clear, and a fork keeps every
 #: step that finished.
 _THEN_FORK = "then fork this run to try again"
+
+#: The fix for a step whose command said why it failed, in its own answer: what its reason names
+#: is what to change, and that is as often what the run was started with as the step itself.
+OWN_REASON_FIX = (
+    "the step's command gave this reason itself: change what it names (the step, or what the run "
+    f"was started with), {_THEN_FORK}"
+)
 
 #: What to do about each class when the provider named the class but not the fix.
 _CLASS_FIX: dict[FailureClass, str] = {
@@ -348,7 +357,7 @@ def _by_text(name: str, text: str, *, timed_out: bool) -> Failure:
     )
 
 
-def classify_action_result(result: Any) -> Failure:
+def classify_action_result(result: Any, output: Any = None) -> Failure:
     """The typed failure for a failed ``ActionResult``, classified where the cause is known.
 
     A provider that knows why it failed says so: ``failure_class`` in this taxonomy's
@@ -357,9 +366,19 @@ def classify_action_result(result: Any) -> Failure:
     rules an exception's message is, and is never assumed retryable. Every failed action used
     to be filed TRANSIENT, so the run page offered Retry for a missing config field, a rejected
     key and a model that does not exist, each of which fails the same way again.
+
+    A command run by a step can say why itself, in its own answer: *output* is that answer as the
+    step parsed it (`engine._action_output`), and a JSON object's ``error`` is its reason — how the
+    bundled template's steps refuse (`evals.optimize.main`, "refuses to search without a positive
+    `budget_usd` …"). It is the cause when the provider said nothing, ahead of the command's
+    stderr; it used to be left in the step's output while the failure read "action failed". A
+    command that said nothing at all is named by its exit status.
     """
-    cause = str(getattr(result, "error", "") or getattr(result, "stderr", "") or "action failed")
-    cause = cause[:500]
+    provider_said = str(getattr(result, "error", "") or "")
+    own = "" if provider_said else _own_reason(output)
+    cause = (
+        provider_said or own or str(getattr(result, "stderr", "") or "") or _exit_status(result)
+    )[:500]
     err = getattr(result, "agent_error", None)
     fix = str(getattr(err, "fix", "") or "") if err is not None else ""
     declared = str(getattr(result, "failure_class", "") or "")
@@ -380,12 +399,31 @@ def classify_action_result(result: Any) -> Failure:
     failure = _by_text("", cause, timed_out=False)
     if fix:
         failure.remediation = fix
+    elif failure.failure_class is FailureClass.INTERNAL and own:
+        failure.remediation = OWN_REASON_FIX
     elif failure.failure_class is FailureClass.INTERNAL:
         failure.remediation = (
             "the action reported this failure without saying whether a retry can help; check "
             "this step's `config.with` and the gateway log"
         )
     return failure
+
+
+def gave_its_own_reason(failure: Failure) -> bool:
+    """Whether *failure* is a step whose command said why it failed (:data:`OWN_REASON_FIX`)."""
+    return failure.remediation == OWN_REASON_FIX
+
+
+def _own_reason(output: Any) -> str:
+    """The reason a step's command gave in its own JSON answer (``{"error": "…"}``), or ""."""
+    reason = output.get("error") if isinstance(output, dict) else None
+    return " ".join(reason.split()) if isinstance(reason, str) else ""
+
+
+def _exit_status(result: Any) -> str:
+    """A failed action that gave no reason at all: its command's exit status, when it ran one."""
+    code = int(getattr(result, "exit_code", 0) or 0)
+    return f"the command exited with status {code}" if code else "action failed"
 
 
 def binding_failure(exc: Any, what: str = "binding failed") -> Failure:

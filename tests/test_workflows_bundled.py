@@ -534,6 +534,69 @@ class TestOutputContractCensus:
         assert subpath_scoped < unscoped, "sub-path scoping should reduce the volume"
 
 
+#: The codes a `{{nodes.<id>…}}` read that no run could resolve is refused under: a node that does
+#: not exist, one that cannot have finished first, a dependency cycle, and a node that records no
+#: output (or a key its contract does not promise).
+_REFERENCE_CODES = {
+    "WF_UNKNOWN_NODE_REF",
+    "WF_UNORDERED_DEP",
+    "WF_CYCLE",
+    "WF_UNSATISFIABLE_OUTPUT_REF",
+}
+
+
+def test_every_shipped_read_names_a_step_a_run_can_read() -> None:
+    """ONE table over the library: each template's reference graph through the validator, the
+    refusals it would meet at save time listed under its name, and the table must be empty.
+
+    The rows a library edit is most likely to get wrong are reads of a container, so the table
+    carries one planted row, a shipped template with a read of its `parallel` added, which must be
+    refused: a table that came back empty for every row could be a validator that sees nothing.
+    🔴 Red before: validation accepted a read of any node while the engine recorded no loop's
+    output and records none for a sequence, parallel or foreach, so the planted read passed and the
+    three templates that read a loop failed at that step on every run.
+    """
+    planted = _raw("design-project")
+    judge = next(n for n in planted["root"]["children"] if n["id"] == "judge")
+    judge["config"]["prompt"] += "\n\nBoth options as developed:\n{{nodes.explore.output}}"
+    rows = {name: _raw(name) for name in sorted(EXPECTED)}
+    rows["design-project, reading its parallel"] = planted
+
+    table: dict[str, list[str]] = {}
+    examined = 0
+    loop_reads: set[tuple[str, str, str]] = set()
+    for name, raw in rows.items():
+        spec = _pipeline(raw)
+        root = Node.from_dict(spec["root"])
+        kinds = {path: node.kind.value for path, node in walk(root)}
+        edges = [e for e in dep_edges_for_root(root) if e.origin == "binding"]
+        examined += len(edges)
+        loop_reads |= {
+            (name, e.reader_id, e.producer_id) for e in edges if kinds[e.producer_path] == "loop"
+        }
+        refused = [
+            f"{i.code}: {i.message}"
+            for i in validate_spec(spec, strict=True).issues
+            if i.code in _REFERENCE_CODES
+        ]
+        if refused:
+            table[name] = refused
+
+    planted_refusals = table.pop("design-project, reading its parallel", [])
+    assert table == {}, table
+    assert [r.split(":")[0] for r in planted_refusals] == [
+        "WF_UNSATISFIABLE_OUTPUT_REF"
+    ], planted_refusals
+    # The population the table judged: far above zero, and holding the three loop reads that
+    # were broken, so a derivation that stopped seeing them reds here rather than going quiet.
+    assert examined >= 150, examined
+    assert {
+        ("design-project", "judge", "refine"),
+        ("goal-pursuit-open-ended", "deliverable", "work"),
+        ("optimize-harness", "file-proposal", "search"),
+    } <= loop_reads, loop_reads
+
+
 #: The two codes a pipe call resolution cannot evaluate is refused under.
 _PIPE_CODES = {"WF_BAD_PIPE", "WF_UNKNOWN_PIPE"}
 
@@ -797,8 +860,9 @@ class TestActionArgShape:
                     continue
                 cfg = node.config or {}
                 # The engine's own keys are not arguments: the provider, its arguments, the
-                # context and payload it is handed, and whether the step files a task.
-                engine_keys = ("provider", "with", "context", "payload", OPT_OUT_KEY)
+                # context and payload it is handed, what its failure does to the run, and whether
+                # the step files a task.
+                engine_keys = ("provider", "with", "context", "payload", "on_error", OPT_OUT_KEY)
                 stray = [k for k in cfg if k not in engine_keys]
                 assert not stray, f"{name} at {path}: arguments outside `with`: {stray}"
 

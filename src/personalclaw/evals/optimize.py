@@ -522,6 +522,9 @@ class LedgerRow:
     best_so_far: float = 0.0
     scope: dict[str, Any] = field(default_factory=dict)
     note: str = ""
+    #: The candidate's typed edit, as the proposer gave it: what a winner is FILED with
+    #: (``propose_template_diff``), so the row of an admitted candidate carries it.
+    ops: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def scored(self) -> bool:
@@ -552,7 +555,40 @@ class LedgerRow:
             "best_so_far": self.best_so_far,
             "scope": dict(self.scope),
             "note": self.note,
+            "ops": [dict(op) for op in self.ops],
         }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> LedgerRow:
+        """A row read back out of ``index.json``, every field it was written with kept.
+
+        :func:`_cmd_adjudicate` rewrites the whole index from the rows it reads back, so a field
+        this dropped would be gone from the ledger after the next iteration. ``score`` is read
+        through :func:`_as_float`, and the rendered ``None`` of an unscored row comes back
+        ``0.0``; :attr:`scored` reads ``outcome``, so the row still renders unscored.
+        """
+        scope = raw.get("scope")
+        return cls(
+            iteration=int(raw.get("iteration") or 0),
+            outcome=str(raw.get("outcome") or ""),
+            score=_as_float(raw.get("score")),
+            fix_fingerprint=str(raw.get("fix_fingerprint") or ""),
+            best_so_far=_as_float(raw.get("best_so_far")),
+            scope=dict(scope) if isinstance(scope, dict) else {},
+            note=str(raw.get("note") or ""),
+            ops=_ops(raw.get("ops")),
+        )
+
+
+def _ops(raw: Any) -> list[dict[str, Any]]:
+    """A candidate's typed ops from a list, or from the JSON text of one (the ``PC_OPT_OPS``
+    environment value); ``[]`` for anything else, so a malformed value files nothing."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else []
+        except ValueError:
+            return []
+    return [dict(op) for op in raw if isinstance(op, dict)] if isinstance(raw, list) else []
 
 
 @dataclass
@@ -758,6 +794,7 @@ def run_search(
                     best_so_far=best,
                     scope=scope_report.to_dict(),
                     note="frozen-region touch or write outside allowed_write_paths",
+                    ops=[dict(op) for op in candidate.ops],
                 )
             )
         elif candidate.no_change:
@@ -772,6 +809,7 @@ def run_search(
                     best_so_far=best,
                     scope=scope_report.to_dict(),
                     note="empty candidate — inherited the incumbent score unscored",
+                    ops=[dict(op) for op in candidate.ops],
                 )
             )
         else:
@@ -788,6 +826,7 @@ def run_search(
                     best_so_far=best,
                     scope=scope_report.to_dict(),
                     note=json.dumps(checks, sort_keys=True, default=str)[:400],
+                    ops=[dict(op) for op in candidate.ops],
                 )
             )
 
@@ -945,6 +984,7 @@ ENV_PAYLOAD_KEYS: dict[str, str] = {
     "PC_OPT_ROWS_CONSIDERED": "rows_considered",
     "PC_OPT_FIX_FINGERPRINT": "fix_fingerprint",
     "PC_OPT_DIFF_TEXT": "diff_text",
+    "PC_OPT_OPS": "ops",
 }
 
 #: The same, for the fields that nest under ``stops`` — the three declared halt conditions
@@ -1102,27 +1142,24 @@ def _cmd_adjudicate(payload: dict[str, Any]) -> dict[str, Any]:
         best_so_far,
     ]
 
+    # The iteration floor halts here too, as it ends `run_search`: the template's loop stops on
+    # this verdict, and a loop that ran out of cycles with no halt said is handed to a person
+    # instead of ending, so its winner was never filed.
+    iteration = len(prior) + 1
     halt = ""
     if hypothesis_abandoned(fingerprints, stops.hypothesis_abandon_after):
         halt = HaltReason.HYPOTHESIS_ABANDONED.value
     elif no_improvement(marks, stops.no_improvement_halt):
         halt = HaltReason.NO_IMPROVEMENT.value
+    elif iteration >= stops.max_iterations:
+        halt = HaltReason.ITERATIONS_EXHAUSTED.value
 
     if sandbox:
-        iteration = len(prior) + 1
+        ops = _ops(payload.get("ops"))
         write_experience(
             Path(sandbox),
             [
-                *(
-                    LedgerRow(
-                        iteration=int(r.get("iteration") or 0),
-                        outcome=str(r.get("outcome") or ""),
-                        score=_as_float(r.get("score")),
-                        fix_fingerprint=str(r.get("fix_fingerprint") or ""),
-                        best_so_far=_as_float(r.get("best_so_far")),
-                    )
-                    for r in prior
-                ),
+                *(LedgerRow.from_dict(r) for r in prior),
                 LedgerRow(
                     iteration=iteration,
                     outcome=outcome.value,
@@ -1130,12 +1167,14 @@ def _cmd_adjudicate(payload: dict[str, Any]) -> dict[str, Any]:
                     fix_fingerprint=fingerprint,
                     best_so_far=best_so_far,
                     scope={"frozen_touched": frozen_touched},
+                    ops=ops,
                 ),
             ],
             candidate=Candidate(
                 iteration=iteration,
                 fix_fingerprint=fingerprint,
                 diff_text=str(payload.get("diff_text") or ""),
+                ops=tuple(ops),
             ),
             iteration=iteration,
         )
@@ -1161,6 +1200,49 @@ def _cmd_adjudicate(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: How much of one prior candidate's raw diff the ``experience`` step hands on, and of all of them
+#: together. Its answer is bound into a model step's prompt, and a step's output past
+#: ``ledger.writer.MAX_INLINE_OUTPUT_BYTES`` (64 KiB) is kept behind a stub that no binding can read
+#: a field of, so the newest diffs are kept whole first and every cut one says it was cut.
+EXPERIENCE_DIFF_CHARS = 6000
+EXPERIENCE_TOTAL_DIFF_CHARS = 24000
+
+
+def _cmd_experience(payload: dict[str, Any]) -> dict[str, Any]:
+    """The search's own ledger as the template's model steps read it.
+
+    ``candidates`` is every candidate so far, oldest first, each ledger row with its raw diff
+    beside it; ``winner`` is the last ADMITTED one, the candidate the in-process search ends with
+    too (:func:`run_search`), with the typed ops it is filed with, or ``None`` when nothing was
+    admitted. A step of its own because the model steps cannot open these files: the template
+    refiner holds only its evidence and proposal tools (``TEMPLATE_REFINER_TOOLS``), so a prompt
+    that told it to read ``.experience/index.json`` asked for a read it is refused. The candidates
+    carry no ops (the diff says the same), which keeps the answer small enough to stay a value a
+    binding can read; the winner carries them.
+
+    A diff is read from the iteration's own file in this sandbox, never from a path the index
+    names.
+    """
+    sandbox = str(payload.get("sandbox") or "")
+    if not sandbox:
+        raise OptimizeRefusedError("experience needs a `sandbox` — it holds the ledger")
+    exp = Path(sandbox) / EXPERIENCE_DIR
+    budget = EXPERIENCE_TOTAL_DIFF_CHARS
+    candidates: list[dict[str, Any]] = []
+    winner: dict[str, Any] | None = None
+    for row in reversed(read_experience(sandbox)):
+        path = exp / f"{int(row.get('iteration') or 0):03d}.diff"
+        text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+        keep = min(len(text), EXPERIENCE_DIFF_CHARS, budget)
+        budget -= keep
+        shown = {**row, "diff": text[:keep], "diff_cut": keep < len(text)}
+        if winner is None and row.get("outcome") == CandidateOutcome.ADMITTED.value:
+            winner = shown
+        candidates.append({k: v for k, v in shown.items() if k != "ops"})
+    candidates.reverse()
+    return {"ok": True, "candidates": candidates, "winner": winner}
+
+
 #: The subcommand table. The bundled ``optimize-harness`` template names these in its bash
 #: nodes, so ``tests/test_evals_optimize.py`` asserts the template's names against THIS
 #: dict — a renamed subcommand fails the template, not just this module.
@@ -1168,6 +1250,7 @@ COMMANDS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "preflight": _cmd_preflight,
     "scope-check": _cmd_scope_check,
     "adjudicate": _cmd_adjudicate,
+    "experience": _cmd_experience,
 }
 
 

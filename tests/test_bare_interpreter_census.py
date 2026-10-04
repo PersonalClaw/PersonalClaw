@@ -157,12 +157,12 @@ def test_the_scan_finds_the_three_steps_the_template_shipped_with(tmp_path: Path
         (_TEMPLATE, "root.children[0].config.with.command", "python3 -m personalclaw"),
         (
             _TEMPLATE,
-            "root.children[1].body.children[1].config.with.command",
+            "root.children[1].body.children[2].config.with.command",
             "python3 -m personalclaw",
         ),
         (
             _TEMPLATE,
-            "root.children[1].body.children[3].config.with.command",
+            "root.children[1].body.children[4].config.with.command",
             "python3 -m personalclaw",
         ),
     ]

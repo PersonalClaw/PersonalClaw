@@ -9,7 +9,8 @@ pending half of the typed confirmation, the escalation's outcome question and th
 again; the `revise` verb — "change step 3, then carry on" — is `resume_revise`, and a human
 overriding a judge on the same gate is recorded by `emit_judge_divergence`. A NO is `decline`, and a
 gate is a gate: `stopping_gate` finds the step the run stops at — a decline, an approval never given
-in time, a check that failed — and `end_at_gate` ends the run there. When the run
+in time, a check that failed, a step whose failure it declares ends the run — and `end_at_gate`
+ends the run there. When the run
 ends, `close_waits` ends every wait it still holds, and an ask that closes with nobody answering it
 is `withdraw_asks`'s: its confirmation resolves `withdrawn`, saying why.
 """
@@ -27,6 +28,7 @@ from personalclaw.workflows import judge_calibration, mid_flight, mutations, rev
 from personalclaw.workflows.bindings import node_deps
 from personalclaw.workflows.human_input import drop_continuations
 from personalclaw.workflows.models import (
+    REFUSED_TO_START,
     SUCCESS_STATES,
     TERMINAL_STATES,
     InstanceState,
@@ -38,6 +40,7 @@ from personalclaw.workflows.models import (
     walk,
 )
 from personalclaw.workflows.step_usage import NOTHING_SENT
+from personalclaw.workflows.tick import fails_the_run
 
 if TYPE_CHECKING:
     from personalclaw.approval_answer import Principal
@@ -331,7 +334,12 @@ def stopping_gate(ctl: RunController) -> str | None:
     * a step a person DECLINED;
     * an approval gate that ended FAILED — nobody answered in time, or it could not even ask;
     * a check gate that did not pass — FAILED, or ESCALATED (a judge that would not rule either
-      way) — unless the gate itself says its failure may be walked past (`tolerates_failure`).
+      way) — unless the gate itself says its failure may be walked past (`tolerates_failure`);
+    * any step that FAILED and declares its failure ends the run (`on_error: fail_run`,
+      `tick.fails_the_run`): a step whose refusal means nothing after it may run, such as a
+      preflight that refuses its inputs;
+    * any step a control refused before it did anything (`models.REFUSED_TO_START`: the action
+      denylist, an app's limits on its work, the nesting cap), whatever it declares.
 
     `needs` means AFTER, not after-success, and `on_error: null_continue` is the default, so the
     frontier would schedule what follows behind any of them; this is read before the frontier
@@ -340,14 +348,17 @@ def stopping_gate(ctl: RunController) -> str | None:
     """
     nodes: dict[str, Any] | None = None
     for path in sorted(ctl.instances):
-        state = ctl.instances[path].state
+        inst = ctl.instances[path]
+        state = inst.state
         if state == InstanceState.DECLINED:
             return path
         if state not in (InstanceState.FAILED, InstanceState.ESCALATED):
             continue
+        if inst.failure is not None and inst.failure.terminal_reason == REFUSED_TO_START:
+            return path
         nodes = nodes if nodes is not None else dict(walk(ctl.root))
         node = nodes.get(spec_path(path))
-        if state == InstanceState.FAILED and is_approval_gate(node):
+        if state == InstanceState.FAILED and (is_approval_gate(node) or fails_the_run(node)):
             return path
         if is_check_gate(node) and not tolerates_failure(node):
             return path
@@ -361,8 +372,8 @@ async def end_at_gate(ctl: RunController, path: str) -> None:
     the run page shows what the gate stopped instead of those steps simply never appearing.
     Anything still in flight elsewhere is stopped, as a cancel stops it, and every other open
     question closes with the run (`close_waits`). The run ends `declined` for a person's no,
-    `failed` for an approval nobody gave or a check that failed, and `escalated` for a judge that
-    would not rule — and its error names the gate and why.
+    `failed` for an approval nobody gave, a check that failed or a step whose failure ends the run,
+    and `escalated` for a judge that would not rule — and its error names the step and why.
     """
     inst = ctl.instances[path]
     nodes = dict(walk(ctl.root))

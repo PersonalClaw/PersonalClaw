@@ -230,8 +230,10 @@ WF_ERROR_CODES: dict[str, str] = {
         "right tool for ordering that is not dataflow."
     ),
     "WF_UNSATISFIABLE_OUTPUT_REF": (
-        "A node reads `{{nodes.<id>.output.<key>}}` for a key the producer's "
-        "`output_contract.required_keys` does not guarantee, so the binding cannot resolve."
+        "A node reads `{{nodes.<id>...}}` that cannot resolve: `<id>` is a sequence, parallel "
+        "or foreach, which records no output of its own, or the key read under "
+        "`{{nodes.<id>.output.<key>}}` is not one the producer's "
+        "`output_contract.required_keys` guarantees."
     ),
     "WF_UNCONTRACTED_OUTPUT_REF": (
         "A node whose output is read declares no `output_contract`, so nothing checks the "

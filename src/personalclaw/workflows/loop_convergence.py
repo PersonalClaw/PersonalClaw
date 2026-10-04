@@ -16,6 +16,7 @@ from personalclaw.loop import tick as convergence
 from personalclaw.workflows import ending_sentence, supervisor_policy
 from personalclaw.workflows.loop_middleware import call_fingerprint, classify_failure
 from personalclaw.workflows.models import InstanceState, Node, now_stamp
+from personalclaw.workflows.node_bindings import iteration_output
 from personalclaw.workflows.resilience import BreakerState
 from personalclaw.workflows.supervisor_policy import tick_config as convergence_config
 
@@ -288,3 +289,23 @@ def surface_loop(
     loop_inst.state = InstanceState.ESCALATED
     loop_inst.completed_at = now_stamp()
     ctl._escalate(parent_path, node.id, reason=reason, stop=stop)
+
+
+def finish_loop(ctl: RunController, parent_path: str, node: Node, iteration: int) -> None:
+    """End a loop DONE after cycle *iteration*, recording what it produced.
+
+    A loop's output is what its last cycle produced, layered the way `{{last.output}}` and the
+    loop's own `condition` read a cycle (`node_bindings.iteration_output`): the value it stopped
+    on. It is recorded the way every step's output is, stored with the loop's instance and entered
+    under the loop's id, so a step after the loop can read `{{nodes.<loop>.output}}` and a resumed
+    run reads the same value back (`RunController._load_outputs`). Only a loop that ended done
+    records one: a loop handed to a person (`surface_loop`) produced no result to read on, and a
+    step that reads it is not run.
+    """
+    loop_inst = ctl._instance(parent_path)
+    loop_inst.state = InstanceState.DONE
+    loop_inst.completed_at = now_stamp()
+    produced, _present = iteration_output(ctl, parent_path, iteration)
+    loop_inst.output_ref, preview = ctl.journal.store_output(parent_path, produced)
+    if node.id:
+        ctl._outputs[node.id] = preview

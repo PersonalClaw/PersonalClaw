@@ -25,10 +25,9 @@ MAX_JUDGE_SAMPLES = 5
 def _condition_keys(node: Node) -> frozenset[str]:
     """Config keys holding a CONDITION — parsed by `conditions`, never interpolated.
 
-    Interpolating one can only do harm. `resolve` reads a value that both starts and ends
-    with braces as ONE whole reference (`bindings._WHOLE_RE`), so a two-term
-    `{{a}} && {{b}}` resolves as a single path named `a}} && {{b` and fails — a gate would
-    report a broken binding for an expression that is perfectly well formed. The dispatcher
+    Interpolating one can only do harm. `resolve` would write each operand's value into the
+    expression's text, so a two-term `{{a}} && {{b}}` would reach the condition parser as
+    `True && some text` rather than as the two references it is written in. The dispatcher
     re-reads the raw value anyway, so nothing is lost by leaving these alone.
 
     `expr` is a condition ONLY on a gate: on a `transform` it is the value-producing

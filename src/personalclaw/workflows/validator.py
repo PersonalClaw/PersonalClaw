@@ -24,6 +24,7 @@ from personalclaw.workflows.bindings import PIPES, BindingError, node_deps, pars
 from personalclaw.workflows.materialize import OPT_OUT_KEY
 from personalclaw.workflows.models import (
     LLM_KINDS,
+    NO_OUTPUT_KINDS,
     GateKind,
     ItemErrorPolicy,
     JoinMode,
@@ -214,7 +215,8 @@ def validate_node_tree(root: Node, *, strict: bool = False) -> ValidationResult:
     # and `tick.ordering_for` re-reads the same derivation to admit work. Deriving it twice is
     # the defect all three changes exist to remove.
     edges = dep_ordering_edges(nodes, ids_seen)
-    _validate_dep_ordering(res, edges)
+    unreadable = _validate_recorded_outputs(res, dict(nodes), edges)
+    _validate_dep_ordering(res, [edge for edge in edges if edge not in unreadable])
     _validate_output_contract(res, nodes, edges)
     _validate_needs(res, edges)
     if res.ok:
@@ -1099,6 +1101,43 @@ def _validate_dep_ordering(res: ValidationResult, edges: list[DepEdge]) -> None:
             ),
             edge.reader_path,
         )
+
+
+def _validate_recorded_outputs(
+    res: ValidationResult, tree: dict[str, Node], edges: list[DepEdge]
+) -> set[DepEdge]:
+    """Refuse a binding that reads a node which records no output (`models.NO_OUTPUT_KINDS`).
+
+    A `sequence`, `parallel` or `foreach` runs the steps inside it and has no output of its own,
+    so a `{{nodes.<id>…}}` naming one can never resolve: the reader met "unresolved reference"
+    mid-run, after everything before it had spent its tokens. The kinds come from the one
+    definition the engine records outputs by, so a read this accepts is one a run can resolve: a
+    `loop` records its last cycle's output and a `branch` its routing. This used to accept a read
+    of any node while the engine recorded no loop's output, so three bundled templates failed at
+    the step after their loop. Refused under the code an unresolvable read already carries, and
+    returned so the ordering rule does not also advise moving a producer that will never produce
+    anything to read.
+    """
+    unreadable: set[DepEdge] = set()
+    for edge in edges:
+        producer = tree.get(edge.producer_path)
+        if edge.origin != EDGE_BINDING or producer is None:
+            continue
+        if producer.kind not in NO_OUTPUT_KINDS:
+            continue
+        unreadable.add(edge)
+        reader = repr(edge.reader_id) if edge.reader_id else edge.reader_path
+        _add(
+            res,
+            "WF_UNSATISFIABLE_OUTPUT_REF",
+            (
+                f"{reader} reads {{{{nodes.{edge.producer_id}…}}}}, but {edge.producer_id!r} is a "
+                f"{producer.kind.value}, which records no output of its own, so the binding can "
+                "never resolve. Read the step inside it whose output you need"
+            ),
+            edge.reader_path,
+        )
+    return unreadable
 
 
 def _validate_needs(res: ValidationResult, edges: list[DepEdge]) -> None:

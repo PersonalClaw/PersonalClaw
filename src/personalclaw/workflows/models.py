@@ -69,6 +69,15 @@ CONTAINER_KINDS = frozenset(
     {NodeKind.SEQUENCE, NodeKind.PARALLEL, NodeKind.FOREACH, NodeKind.LOOP, NodeKind.BRANCH}
 )
 
+#: The kinds that record no output of their own: a `sequence`, `parallel` or `foreach` runs the
+#: steps inside it and produces nothing itself, so a `{{nodes.<id>…}}` naming one can never
+#: resolve. Every other kind records one under its id: a step when it settles (a `branch` records
+#: its routing, `{"case": label}`), and a `loop` when it ends done, its last cycle's output
+#: (`loop_convergence.finish_loop`). ONE definition: the validator refuses a read of one of these
+#: when the spec is saved (`WF_UNSATISFIABLE_OUTPUT_REF`), and the binding error of a run that
+#: meets one names them.
+NO_OUTPUT_KINDS = frozenset({NodeKind.SEQUENCE, NodeKind.PARALLEL, NodeKind.FOREACH})
+
 #: Kinds that consume model tokens AND take an author-tunable `model_tier`. `visualize`
 #: is deliberately NOT here: it makes a model call but is pinned to the reasoning axis
 #: (AMBIENT-SURFACES §5.3), so a `model_tier` would mean nothing on it — and the
@@ -467,6 +476,14 @@ class FailureClass(str, Enum):
 
 
 RETRYABLE_CLASSES = frozenset({FailureClass.TRANSIENT, FailureClass.NETWORK})
+
+#: The `terminal_reason` of a step a control refused before it did anything: the action denylist
+#: (`guardrails.denylist`), the limits an app holds on a run that is its work (`apps.app_work`),
+#: the nesting cap. What the step was for never happened, and the steps after it were written
+#: expecting it to have, so its run stops there and says why (`gate_answers.stopping_gate`) the
+#: way a step declaring `on_error: fail_run` stops it, whatever the refused step declares: a
+#: failure policy does not walk past a control's refusal.
+REFUSED_TO_START = "refused_to_start"
 
 
 @dataclass

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, Iterator
 
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows import journal as journal_mod
+from personalclaw.workflows.failure_taxonomy import gave_its_own_reason
 from personalclaw.workflows.models import (
     SUCCESS_STATES,
     Failure,
@@ -161,10 +162,22 @@ def step_cause(failure: Failure | None) -> str:
     return SPEND_CAP if failure.failure_class is FailureClass.BUDGET else STEP
 
 
+#: The way forward for a step whose command said why it failed (`failure_taxonomy.OWN_REASON_FIX`):
+#: its reason names what to change, and when that is what the run was started with (a budget of 0),
+#: "change the step" sends the person to the one thing that was right.
+_CHANGE_WHAT_IT_NAMES = (
+    "The step said why it stopped: change what its reason names, the step or what the run was "
+    "started with, then fork the run and start it again."
+)
+
+
 def step_stop(failure: Failure | None) -> Stop:
     """A step that gave up, as the record of its own escalation: its failure is the sentence."""
     cause = step_cause(failure)
-    return Stop(cause, failure.cause_plain if failure is not None else "", remedy_for(cause))
+    remedy = remedy_for(cause)
+    if cause == STEP and failure is not None and gave_its_own_reason(failure):
+        remedy = _CHANGE_WHAT_IT_NAMES
+    return Stop(cause, failure.cause_plain if failure is not None else "", remedy)
 
 
 #: How much of a judge's own words a stop quotes. A reason is a sentence or three; a judge that

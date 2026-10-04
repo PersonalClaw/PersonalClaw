@@ -906,6 +906,131 @@ class TestCli:
         assert payload["ok"] is False and "budget_usd" in payload["error"]
 
 
+class TestTheLedgerTheTemplateReads:
+    """What the template's model steps are handed comes from the search's own ledger, through the
+    ``experience`` step: the refiner holds only its evidence and proposal tools, so it cannot open
+    the files itself. The ledger has to carry what the last step files: the winner's ops."""
+
+    @staticmethod
+    def _preflighted(live: Path, sandbox: Path) -> dict:
+        payload = {
+            "subject": "code-project",
+            "live_target": str(live),
+            "sandbox": str(sandbox),
+            "suite_threshold": "0.5",
+            "stops": {"budget_usd": "2.0"},
+        }
+        optimize._cmd_preflight(dict(payload))
+        return payload
+
+    @staticmethod
+    def _index(sandbox: Path) -> list[dict]:
+        return json.loads((sandbox / optimize.EXPERIENCE_DIR / "index.json").read_text())
+
+    def test_adjudicate_keeps_each_candidates_ops_and_scope_in_the_ledger(
+        self, live: Path, sandbox: Path, isolated_home: Path
+    ) -> None:
+        """🔴 Red before: no row carried ops, and the rewrite that adds each iteration's row
+        dropped every earlier row's scope, so the frozen-region evidence lasted one iteration."""
+        payload = self._preflighted(live, sandbox)
+        first_ops = [{"op": "update_node", "node_id": "audit", "fields": {"label": "Audit"}}]
+        optimize._cmd_adjudicate(
+            {**payload, "score": "0.9", "fix_fingerprint": "a", "ops": json.dumps(first_ops)}
+        )
+        optimize._cmd_adjudicate({**payload, "score": "0.4", "fix_fingerprint": "b", "ops": []})
+
+        rows = self._index(sandbox)
+        assert [row["ops"] for row in rows] == [first_ops, []]
+        assert [row["scope"] for row in rows] == [{"frozen_touched": []}] * 2
+
+    def test_experience_hands_on_each_candidates_raw_diff_and_the_winners_ops(
+        self, live: Path, sandbox: Path, isolated_home: Path
+    ) -> None:
+        """🔴 Red before: there was no such step, and the prompts sent the refiner to the files."""
+        payload = self._preflighted(live, sandbox)
+        ops = [{"op": "set_input", "name": "depth", "default": 2}]
+        optimize._cmd_adjudicate(
+            {**payload, "score": "0.9", "fix_fingerprint": "a", "diff_text": "+one", "ops": ops}
+        )
+        optimize._cmd_adjudicate(
+            {**payload, "score": "0.1", "fix_fingerprint": "b", "diff_text": "+two"}
+        )
+
+        answer = optimize.COMMANDS["experience"]({"sandbox": str(sandbox)})
+        assert answer["ok"] is True
+        assert [(c["iteration"], c["outcome"], c["diff"]) for c in answer["candidates"]] == [
+            (1, "admitted", "+one"),
+            (2, "below_suite_threshold", "+two"),
+        ]
+        assert all("ops" not in c for c in answer["candidates"]), "the diff already says it"
+        assert answer["winner"]["iteration"] == 1 and answer["winner"]["ops"] == ops
+
+    def test_experience_with_nothing_admitted_has_no_winner(
+        self, live: Path, sandbox: Path, isolated_home: Path
+    ) -> None:
+        payload = self._preflighted(live, sandbox)
+        optimize._cmd_adjudicate({**payload, "score": "0.1", "fix_fingerprint": "a"})
+
+        answer = optimize.COMMANDS["experience"]({"sandbox": str(sandbox)})
+        assert answer["winner"] is None and len(answer["candidates"]) == 1
+
+    def test_experience_keeps_the_newest_diffs_whole_and_says_which_it_cut(
+        self, live: Path, sandbox: Path, isolated_home: Path
+    ) -> None:
+        """Its answer is bound into a prompt and must stay a value a binding can read (an output
+        past 64 KiB is kept behind a stub), so the diffs it carries are bounded, newest first."""
+        payload = self._preflighted(live, sandbox)
+        long = "x" * (optimize.EXPERIENCE_DIFF_CHARS + 50)
+        count = optimize.EXPERIENCE_TOTAL_DIFF_CHARS // optimize.EXPERIENCE_DIFF_CHARS + 1
+        for i in range(count):
+            optimize._cmd_adjudicate(
+                {**payload, "score": "0.1", "fix_fingerprint": f"f{i}", "diff_text": long}
+            )
+
+        candidates = optimize.COMMANDS["experience"]({"sandbox": str(sandbox)})["candidates"]
+        shown = [len(c["diff"]) for c in candidates]
+        assert sum(shown) == optimize.EXPERIENCE_TOTAL_DIFF_CHARS
+        assert shown[-1] == optimize.EXPERIENCE_DIFF_CHARS and shown[0] == 0
+        assert all(c["diff_cut"] for c in candidates)
+
+    def test_experience_refuses_without_a_sandbox(self) -> None:
+        with pytest.raises(optimize.OptimizeRefusedError):
+            optimize.COMMANDS["experience"]({})
+
+    def test_adjudicate_halts_at_the_iteration_floor(
+        self, live: Path, sandbox: Path, isolated_home: Path
+    ) -> None:
+        """🔴 Red before: the floor halted only the in-process search; the template's loop got no
+        halt from it, ran out of cycles and was handed to a person, so its winner was never
+        filed."""
+        payload = {
+            **self._preflighted(live, sandbox),
+            "stops": {"budget_usd": "2.0", "max_iterations": "2"},
+        }
+        halts = [
+            optimize._cmd_adjudicate({**payload, "score": "0.9", "fix_fingerprint": f"f{i}"})[
+                "halt"
+            ]
+            for i in range(2)
+        ]
+        assert halts == ["", optimize.HaltReason.ITERATIONS_EXHAUSTED.value]
+
+    def test_the_in_process_search_writes_each_candidates_ops_into_its_ledger(
+        self, live: Path, sandbox: Path, meter: SpendMeter
+    ) -> None:
+        """The same ledger shape from both drivers: :func:`run_search` writes the ops too."""
+        ops = ({"op": "update_node", "node_id": "audit"},)
+
+        def propose(iteration: int, _sandbox: Path, _experience: list) -> optimize.Candidate:
+            return optimize.Candidate(
+                iteration=iteration, fix_fingerprint="same", diff_text="+x", ops=ops
+            )
+
+        outcome = _run(live, sandbox, meter, propose=propose, score=lambda *a: (0.95, {}))
+        assert all(row.ops == [dict(op) for op in ops] for row in outcome.rows)
+        assert all(row["ops"] == [dict(op) for op in ops] for row in self._index(sandbox))
+
+
 # ── the unscored candidate is LEGIBLE, not a zero ─────────────────────────────
 
 
@@ -966,9 +1091,9 @@ class TestUnscoredIsLegible:
     ) -> None:
         """Asserted on the FILES a real ``run_search`` wrote, not on ``to_dict()`` in isolation.
 
-        The bundled template's report node reads ``.experience/index.json`` and the search's own
-        output by path, so a rendering only reachable by calling the method by hand would be an
-        inert control dressed as a fix.
+        The bundled template's model steps are handed ``.experience/index.json`` by its own
+        ``experience`` step, so a rendering only reachable by calling the method by hand would be
+        an inert control dressed as a fix.
         """
         outcome = _one_unscored_one_scored(live, sandbox, meter)
 

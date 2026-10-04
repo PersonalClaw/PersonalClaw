@@ -41,12 +41,10 @@ from personalclaw.workflows import (
     store,
 )
 from personalclaw.workflows.models import (
-    InstanceState,
     LoopMode,
     Node,
     instance_order,
     loop_parent,
-    now_stamp,
     spec_path,
     walk,
 )
@@ -120,9 +118,7 @@ def end_cycle(ctl: RunController, loop_path: str, node: Node, iteration: int, ou
         return True
     if left:
         # A counted loop that has run its count: done, as it would have been after any last cycle.
-        loop_inst = ctl._instance(loop_path)
-        loop_inst.state = InstanceState.DONE
-        loop_inst.completed_at = now_stamp()
+        loop_convergence.finish_loop(ctl, loop_path, node, iteration)
         return True
     ctl._iterations[loop_path] = iteration + 1
     cycle = iteration + 1

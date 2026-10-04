@@ -31,13 +31,12 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from personalclaw.workflows.models import NO_OUTPUT_KINDS, NodeKind
+
 logger = logging.getLogger(__name__)
 
 #: One `{{ … }}` occurrence. Non-greedy so adjacent refs don't merge.
 _REF_RE = re.compile(r"\{\{(.+?)\}\}")
-
-#: The whole string is exactly one ref (whole-value path).
-_WHOLE_RE = re.compile(r"^\s*\{\{(.+?)\}\}\s*$")
 
 #: A pipe call: `name` or `name('a','b')` / `name(3)`.
 _PIPE_RE = re.compile(r"^([a-z_]+)\s*(?:\((.*)\))?$")
@@ -726,6 +725,14 @@ def _unresolved_remediation(seg: str, *, is_root: bool, head: str = "") -> str:
             f"this run was started without the input {seg!r}. Start the workflow again with a "
             "value for it, or give the input a default in the workflow."
         )
+    if [s.strip() for s in head.split(".")[:2]] == ["nodes", seg]:
+        # A step id with nothing recorded under it. Validation refuses the one case a run can
+        # reach here (`models.NO_OUTPUT_KINDS`); a spec saved before that rule still runs.
+        kinds = [kind.value for kind in NodeKind if kind in NO_OUTPUT_KINDS]
+        return (
+            f"no step has recorded an output under {seg!r}. A {', '.join(kinds[:-1])} or "
+            f"{kinds[-1]} records none of its own: read the step inside it whose output you need."
+        )
     return (
         f"check that the value really carries {seg!r}. A `| default(...)` pipe does not "
         "rescue a missing path, only one that resolves to null."
@@ -1029,14 +1036,30 @@ def resolve(template: Any, ctx: BindingContext) -> Any:
     if not isinstance(template, str):
         return template
 
-    whole = _WHOLE_RE.match(template)
-    if whole:
-        return resolve_expr(whole.group(1).strip(), ctx)
+    whole = _whole_ref(template)
+    if whole is not None:
+        return resolve_expr(whole.strip(), ctx)
 
     def _sub(m: re.Match[str]) -> str:
         return _stringify(resolve_expr(m.group(1).strip(), ctx))
 
     return _REF_RE.sub(_sub, template)
+
+
+def _whole_ref(template: str) -> str | None:
+    """The expression of a value that is exactly ONE reference, or None (the whole-value path).
+
+    Decided by the scan that splits a value into its references (`_REF_RE`, the one `refs_in` and
+    so validation use), so a run and its validation cannot disagree about how many a value holds.
+    A pattern of its own anchored at both ends read any value that began with `{{` and ended with
+    `}}` as one reference, so `{{inputs.a}} changed: {{nodes.b.output}}` resolved as a single path
+    named `a}} changed: {{nodes` while validation saw two good ones: the bundled market-monitor's
+    alert step failed that way on every alert, blaming an input the run was never given.
+    """
+    refs = list(_REF_RE.finditer(template))
+    if len(refs) == 1 and refs[0].group(0) == template.strip():
+        return refs[0].group(1)
+    return None
 
 
 def refs_in(template: Any) -> list[str]:

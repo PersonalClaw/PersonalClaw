@@ -150,7 +150,7 @@ def test_this_installs_cli_answers_an_unknown_step_in_json(isolated_install) -> 
     assert done.returncode == 2, (done.stdout, done.stderr)
     answer = json.loads(done.stdout)
     assert answer["ok"] is False
-    assert answer["commands"] == ["adjudicate", "preflight", "scope-check"]
+    assert answer["commands"] == ["adjudicate", "experience", "preflight", "scope-check"]
 
 
 def test_the_optimize_module_is_not_a_second_entry_point() -> None:
@@ -313,17 +313,19 @@ async def test_the_optimize_harness_template_runs_its_steps_in_an_isolated_insta
         if nodes[spec_path(path)].kind.value == "action"
     }
     assert controller.run.status == RunStatus.COMPLETE, (controller.run.error_message, steps)
-    assert set(steps) == {"preflight", "scope_check", "adjudicate"}
-    preflight, scope_check, adjudicate = (
-        steps[n] for n in ("preflight", "scope_check", "adjudicate")
+    assert set(steps) == {"preflight", "experience", "scope_check", "adjudicate", "ledger"}
+    preflight, experience, scope_check, adjudicate, ledger = (
+        steps[n] for n in ("preflight", "experience", "scope_check", "adjudicate", "ledger")
     )
     assert preflight[0] == "done" and preflight[1]["ok"] is True, preflight
     assert preflight[1]["witnessed_files"] == 2 and preflight[1]["rows_considered"] == 0
+    assert experience[0] == "done" and experience[1]["candidates"] == [], experience
     assert scope_check[0] == "done" and scope_check[1]["outcome"] == "clean", scope_check
     assert adjudicate[0] == "done", adjudicate
     assert (
         adjudicate[1]["outcome"] == "admitted" and adjudicate[1]["halt"] == "hypothesis_abandoned"
     )
-    ledger = json.loads((sandbox / optimize.EXPERIENCE_DIR / "index.json").read_text())
-    assert [(row["iteration"], row["outcome"]) for row in ledger] == [(1, "admitted")]
+    assert ledger[0] == "done" and ledger[1]["winner"]["ops"] == MODEL_ANSWERS["propose"]["ops"]
+    index = json.loads((sandbox / optimize.EXPERIENCE_DIR / "index.json").read_text())
+    assert [(row["iteration"], row["outcome"]) for row in index] == [(1, "admitted")]
     assert {p.name: p.read_bytes() for p in live.iterdir()} == before, "the live artifact changed"
