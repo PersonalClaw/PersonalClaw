@@ -112,6 +112,10 @@ export default defineConfig({
       // `preview` inherits `server.proxy` (vite defaults proxy/port/host from `server`), which is
       // why `/api` already works there and why one entry is enough for both.
       '/apps': { target: BACKEND, changeOrigin: true },
+      // A deployed artifact's page, for the same reason: the Deploy bar's Preview and Open use
+      // the ROOT-RELATIVE URL the gateway hands out, so unproxied it hit the SPA fallback and the
+      // pane showed the dashboard instead of the page.
+      '/artifacts/serve': { target: BACKEND, changeOrigin: true },
     },
   },
   build: { outDir: 'dist' },

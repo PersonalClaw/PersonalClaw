@@ -11,6 +11,10 @@ import { ArtifactDeploy, DeployedAppsMenu, isDeployableKind } from './ArtifactDe
 let deployments: ArtifactDeployment[]
 const tornDown: string[] = []
 
+/** What the server hands out: the slug, then the deployment's capability. */
+const CAPABILITY = 'K7rXw2QpLm9VtYbN4sHdF6gJcE8aZ1uR3oPiWqT5yUe'
+const servedAt = (slug: string) => `/artifacts/serve/${slug}/${CAPABILITY}/`
+
 vi.mock('../../lib/api', async (importActual) => {
   const actual = await importActual<typeof import('../../lib/api')>()
   return {
@@ -19,7 +23,7 @@ vi.mock('../../lib/api', async (importActual) => {
       ...actual.api,
       deployedArtifacts: async () => deployments,
       deployArtifact: async (slug: string) => {
-        const dep = { slug, entry: 'index.html', created_at: '', url: `/artifacts/serve/${slug}/` }
+        const dep = { slug, entry: 'index.html', created_at: '', url: servedAt(slug) }
         deployments = [dep]
         return { ok: true, deployment: dep }
       },
@@ -32,7 +36,7 @@ vi.mock('../../lib/api', async (importActual) => {
 })
 
 const dep = (slug: string): ArtifactDeployment => ({
-  slug, entry: 'index.html', created_at: '2026-08-15T00:00:00Z', url: `/artifacts/serve/${slug}/`,
+  slug, entry: 'index.html', created_at: '2026-08-15T00:00:00Z', url: servedAt(slug),
 })
 
 beforeEach(() => { deployments = []; tornDown.length = 0 })
@@ -62,11 +66,15 @@ describe('ArtifactDeploy', () => {
       expect(f).not.toBeNull()
       return f as HTMLIFrameElement
     })
-    expect(frame.getAttribute('src')).toBe('/artifacts/serve/my-app/')
+    expect(frame.getAttribute('src')).toBe(servedAt('my-app'))
     expect(frame.getAttribute('title')).toBe('Deployed artifact: my-app')
-    // …and a real link for a new tab, on the same URL.
+    // The page is model-authored: framed, it runs its scripts in an opaque origin of its own,
+    // with no reach into this window (no same-origin, no popups, no top-level navigation).
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts')
+    // …and a real link for a new tab, on the same URL. Opened there, the response's own
+    // `sandbox` directive gives it the same opaque origin.
     const link = screen.getByTitle('Open the deployed page in a new tab') as HTMLAnchorElement
-    expect(link.getAttribute('href')).toBe('/artifacts/serve/my-app/')
+    expect(link.getAttribute('href')).toBe(servedAt('my-app'))
     expect(link.getAttribute('rel')).toContain('noopener')
   })
 
@@ -81,7 +89,7 @@ describe('ArtifactDeploy', () => {
     await waitFor(() => expect(document.querySelector('iframe')).toBeNull())
     // Back to offering a deploy — no stale URL left on screen implying it still serves.
     expect(await screen.findByTitle(/Publish this artifact/)).toBeTruthy()
-    expect(screen.queryByText('/artifacts/serve/my-app/')).toBeNull()
+    expect(screen.queryByText(servedAt('my-app'))).toBeNull()
   })
 })
 
@@ -96,8 +104,9 @@ describe('DeployedAppsMenu', () => {
     render(<DeployedAppsMenu onOpen={() => {}} />)
     fireEvent.click(await screen.findByTitle('Artifacts currently served as pages'))
     for (const slug of ['one', 'two']) {
-      const link = await screen.findByTitle(`Open /artifacts/serve/${slug}/ in a new tab`)
-      expect(link.getAttribute('href')).toBe(`/artifacts/serve/${slug}/`)
+      const link = await screen.findByTitle(`Open ${slug} in a new tab`)
+      expect(link.getAttribute('href')).toBe(servedAt(slug))
+      expect(link.getAttribute('rel')).toContain('noopener')
     }
   })
 

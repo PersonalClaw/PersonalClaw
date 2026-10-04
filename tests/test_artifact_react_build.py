@@ -59,7 +59,7 @@ from personalclaw.artifacts.build import (
     needs_build,
     resolve_toolchain,
 )
-from personalclaw.artifacts.deploy import SERVE_URL_PREFIX, ArtifactDeployStore
+from personalclaw.artifacts.deploy import ArtifactDeployStore
 from personalclaw.artifacts.handlers import register_artifact_routes
 from personalclaw.artifacts.native import NativeArtifactProvider
 
@@ -561,18 +561,19 @@ async def test_deploy_builds_a_react_artifact_and_serves_the_static_bundle(
         payload = await resp.json()
         assert payload["deployment"]["entry"] == ENTRY_HTML
         assert sorted(payload["build"]["files"]) == sorted([ENTRY_HTML, BUNDLE_JS, BUNDLE_CSS])
+        url = payload["deployment"]["url"]
 
-        page = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")
+        page = await client.get(url)
         assert page.status == 200
         body = await page.text()
         assert f'src="./{BUNDLE_JS}"' in body
         assert "function App" not in body, "the raw JSX reached the served page"
 
-        js = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/{BUNDLE_JS}")
+        js = await client.get(url + BUNDLE_JS)
         assert js.status == 200
         assert "window.__built=42;" in await js.text()
 
-        css = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/{BUNDLE_CSS}")
+        css = await client.get(url + BUNDLE_CSS)
         assert css.status == 200
         assert "margin:0" in await css.text()
     finally:
@@ -608,7 +609,7 @@ async def test_deploy_reports_a_build_failure_and_publishes_nothing(
         assert "Fix:" in message
 
         assert ArtifactDeployStore(prov.root).get(art.slug) is None, "a failed build published"
-        assert (await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")).status == 404
+        assert await (await client.get("/api/artifacts/deployed")).json() == {"deployments": []}
     finally:
         await client.close()
 
@@ -624,10 +625,10 @@ async def test_a_react_artifact_with_no_bundle_is_never_served_as_its_own_body(
     art = prov.create(name="Unbuilt", content=JSX, kind="react")
     # Registered directly, bypassing the deploy route's build — the only way to reach the
     # unbuilt state, and exactly the state a stale registry row would leave behind.
-    ArtifactDeployStore(prov.root).deploy(art.slug)
+    url = ArtifactDeployStore(prov.root).deploy(art.slug).url
     client = await _client(prov)
     try:
-        page = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")
+        page = await client.get(url)
         assert page.status == 404
         assert "function App" not in await page.text()
     finally:

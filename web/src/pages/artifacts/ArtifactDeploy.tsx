@@ -18,12 +18,14 @@ export function isDeployableKind(kind: ArtifactKind | string): boolean {
 
 /** Deploy / Open / Tear down for one artifact.
  *
- *  Deploying publishes the artifact at a stable in-gateway URL served behind the
- *  dashboard's own session auth and a strict CSP fence (`connect-src 'none'` — the
- *  served page cannot call `/api`). "Preview" embeds that URL in a pane so the page
- *  can be driven without leaving the app; "Open" is the same URL in a new tab.
- *  "Tear down" removes the route and touches no content — it un-publishes, so it is a
- *  plain action rather than a destructive one. */
+ *  Deploying publishes the artifact at an in-gateway URL of its own, which carries the
+ *  deployment's capability (every deploy mints a new one, and tear down revokes it). The
+ *  page is model-authored, so the gateway serves it sandboxed into an opaque origin under a
+ *  strict CSP fence (`connect-src 'none'` — it cannot call `/api`): it runs its own scripts
+ *  and reaches nothing of the dashboard's. "Preview" embeds that URL in a pane so the page
+ *  can be driven without leaving the app; "Open" is the same URL in a new tab. "Tear down"
+ *  removes the route and touches no content — it un-publishes, so it is a plain action
+ *  rather than a destructive one. */
 export function ArtifactDeploy({ slug, kind }: { slug: string; kind: ArtifactKind | string }) {
   const [dep, setDep] = useState<ArtifactDeployment | null>(null)
   const [loaded, setLoaded] = useState(false)
@@ -106,13 +108,14 @@ export function ArtifactDeploy({ slug, kind }: { slug: string; kind: ArtifactKin
       </div>
       {dep && preview && (
         <div className="border-b border-outline/40 bg-surface-high/40 p-m">
-          {/* No `sandbox` attribute on purpose. The fence is the SERVE RESPONSE's CSP
-              (`connect-src 'none'` + `form-action`/`base-uri`/`object-src 'none'`), which a
-              browser enforces on the framed document. `sandbox="allow-scripts"` without
-              `allow-same-origin` would put the page in an opaque origin, and then `'self'`
-              in its own CSP would stop matching — the artifact's own js/css would be
-              blocked while the fence gained nothing. */}
-          <iframe key={nonce} src={dep.url} title={`Deployed artifact: ${slug}`}
+          {/* `allow-scripts` alone: the framed page runs its own scripts in an opaque origin,
+              so `window.parent` is a window it cannot touch, and it gets no popups, no
+              top-level navigation and no forms. The serve response sets the same `sandbox`
+              directive itself, which is what holds when the page is opened anywhere else; this
+              attribute holds it here even before the response says so. Its own files still
+              load: the URL's capability authorizes them, since a sandboxed page's requests
+              carry no session cookie. */}
+          <iframe key={nonce} src={dep.url} sandbox="allow-scripts" title={`Deployed artifact: ${slug}`}
             className="h-[28rem] w-full rounded-md border border-outline/40 bg-surface" />
         </div>
       )}
@@ -159,7 +162,7 @@ export function DeployedAppsMenu({ onOpen, onChanged }: {
             <div key={r.slug} className="flex items-center gap-s rounded-md px-2 py-1.5 text-[0.75rem] hover:bg-surface-high">
               {/* The row's primary action is the served page itself, so the row IS the link. */}
               <a href={r.url} target="_blank" rel="noopener noreferrer"
-                className="min-w-0 flex-1 truncate text-on-surface" title={`Open ${r.url} in a new tab`}>
+                className="min-w-0 flex-1 truncate text-on-surface" title={`Open ${r.slug} in a new tab`}>
                 {r.slug}
                 <span className="ml-1.5 truncate font-mono text-on-surface-low">{r.url}</span>
               </a>

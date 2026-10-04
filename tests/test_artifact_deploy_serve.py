@@ -4,9 +4,11 @@ the CSP fence, and teardown.
 The three clauses this file exists to hold, each asserted behaviourally (a rail that
 only greps for a guard's name cannot catch a neutered guard):
 
-* **Renders + is interactable** — a deployed html/widget artifact answers at
-  ``/artifacts/serve/<slug>/`` with its own body, and an extra file under the
-  artifact's ``webapp/`` root (the script that makes it interactive) is served too.
+* **Renders + is interactable** — a deployed html/widget artifact answers at its
+  deployment's URL (``/artifacts/serve/<slug>/<capability>/``) with its own body, and an
+  extra file under the artifact's ``webapp/`` root (the script that makes it interactive) is
+  served too. The capability and the sandbox are held in
+  ``test_a_deployed_page_runs_in_an_origin_of_its_own.py``.
 * **A traversal attempt is refused** — every escape shape (``..``, percent-encoded
   ``..``, absolute, backslash, a symlink out of the root) is refused, and the target
   file's bytes never appear in a response.
@@ -67,6 +69,13 @@ async def _client(app_provider) -> TestClient:
     client = TestClient(TestServer(app))
     await client.start_server()
     return client
+
+
+async def _deploy(client: TestClient, slug: str) -> str:
+    """Deploy *slug* over the route and return the URL it is served at."""
+    resp = await client.post(f"/api/artifacts/{slug}/deploy")
+    assert resp.status == 200, await resp.text()
+    return (await resp.json())["deployment"]["url"]
 
 
 def _parse_csp(header: str) -> dict[str, list[str]]:
@@ -159,7 +168,7 @@ class TestDeployStore:
         dep = store.deploy("my-app")
         assert dep.slug == "my-app"
         assert dep.entry == DEFAULT_ENTRY
-        assert dep.url == f"{SERVE_URL_PREFIX}/my-app/"
+        assert dep.url == f"{SERVE_URL_PREFIX}/my-app/{dep.capability}/"
         assert store.is_deployed("my-app") is True
         assert store.teardown("my-app") is True
         assert store.is_deployed("my-app") is False
@@ -214,14 +223,14 @@ async def test_deployed_widget_renders_and_serves_its_own_files(patched_native) 
     (files / "app.js").write_text("document.title='clicked'")
     client = await _client(prov)
     try:
-        assert (await client.post(f"/api/artifacts/{art.slug}/deploy")).status == 200
+        url = await _deploy(client, art.slug)
 
-        page = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")
+        page = await client.get(url)
         assert page.status == 200
         assert page.content_type == "text/html"
         assert "<h1>hi</h1>" in await page.text()
 
-        script = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/app.js")
+        script = await client.get(url + "app.js")
         assert script.status == 200
         assert "clicked" in await script.text()
         assert script.content_type in ("text/javascript", "application/javascript")
@@ -238,8 +247,8 @@ async def test_entry_file_on_disk_wins_over_the_body(patched_native) -> None:
     (files / "index.html").write_text("<h1>from-disk</h1>")
     client = await _client(prov)
     try:
-        await client.post(f"/api/artifacts/{art.slug}/deploy")
-        page = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")
+        url = await _deploy(client, art.slug)
+        page = await client.get(url)
         assert "from-disk" in await page.text()
     finally:
         await client.close()
@@ -251,10 +260,10 @@ async def test_slash_less_url_redirects_to_the_directory_form(patched_native) ->
     art = prov.create(name="My App", content="<h1>hi</h1>")
     client = await _client(prov)
     try:
-        await client.post(f"/api/artifacts/{art.slug}/deploy")
-        r = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}", allow_redirects=False)
+        url = await _deploy(client, art.slug)
+        r = await client.get(url.rstrip("/"), allow_redirects=False)
         assert r.status == 308
-        assert r.headers["Location"] == f"{SERVE_URL_PREFIX}/{art.slug}/"
+        assert r.headers["Location"] == url
     finally:
         await client.close()
 
@@ -264,10 +273,11 @@ async def test_undeployed_and_unknown_slugs_are_not_served(patched_native) -> No
     prov = patched_native
     art = prov.create(name="My App", content="<h1>hi</h1>")
     client = await _client(prov)
+    capability = "C" * 43
     try:
         # The route exists, but nothing is published for this slug yet.
-        assert (await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")).status == 404
-        assert (await client.get(f"{SERVE_URL_PREFIX}/nope/")).status == 404
+        assert (await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/{capability}/")).status == 404
+        assert (await client.get(f"{SERVE_URL_PREFIX}/nope/{capability}/")).status == 404
     finally:
         await client.close()
 
@@ -296,8 +306,8 @@ async def test_traversal_is_refused_and_leaks_nothing(patched_native, raw: str) 
     (prov.root / "secret.txt").write_text(SECRET_BODY)
     client = await _client(prov)
     try:
-        await client.post(f"/api/artifacts/{art.slug}/deploy")
-        resp = await client.get(URL(f"{SERVE_URL_PREFIX}/{art.slug}/{raw}", encoded=True))
+        url = await _deploy(client, art.slug)
+        resp = await client.get(URL(f"{url}{raw}", encoded=True))
         assert resp.status in (403, 404)
         assert SECRET_BODY not in await resp.text()
     finally:
@@ -315,8 +325,12 @@ async def test_symlink_out_of_the_root_is_refused_over_http(patched_native, tmp_
     (files / "escape.txt").symlink_to(outside)
     client = await _client(prov)
     try:
-        await client.post(f"/api/artifacts/{art.slug}/deploy")
-        resp = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/escape.txt")
+        url = await _deploy(client, art.slug)
+        # The route serves an ordinary file of its own here, so the refusal below is the
+        # symlink's and not a URL that names nothing.
+        (files / "kept.txt").write_text("kept")
+        assert (await client.get(url + "kept.txt")).status == 200
+        resp = await client.get(url + "escape.txt")
         assert resp.status in (403, 404)
         assert SECRET_BODY not in await resp.text()
     finally:
@@ -357,9 +371,9 @@ async def test_every_served_response_carries_the_fence(patched_native) -> None:
     (files / "app.js").write_text("1")
     client = await _client(prov)
     try:
-        await client.post(f"/api/artifacts/{art.slug}/deploy")
+        url = await _deploy(client, art.slug)
         for path in ("", "app.js"):
-            resp = await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/{path}")
+            resp = await client.get(url + path)
             assert resp.status == 200
             directives = _parse_csp(resp.headers["Content-Security-Policy"])
             assert directives["connect-src"] == ["'none'"]
@@ -368,14 +382,6 @@ async def test_every_served_response_carries_the_fence(patched_native) -> None:
             assert resp.headers["X-Content-Type-Options"] == "nosniff"
     finally:
         await client.close()
-
-
-def test_serve_prefix_is_not_auth_bypassed() -> None:
-    """ "Behind session auth": the serve prefix must be in no auth-bypass allowlist."""
-    from personalclaw.dashboard import token_auth
-
-    assert not any(f"{SERVE_URL_PREFIX}/x".startswith(p) for p in token_auth._BYPASS_PREFIXES)
-    assert f"{SERVE_URL_PREFIX}/x" not in token_auth._BYPASS_EXACT
 
 
 # ── teardown ─────────────────────────────────────────────────────────────────
@@ -390,16 +396,16 @@ async def test_teardown_removes_the_route(patched_native) -> None:
     (files / "app.js").write_text("1")
     client = await _client(prov)
     try:
-        await client.post(f"/api/artifacts/{art.slug}/deploy")
-        assert (await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")).status == 200
+        url = await _deploy(client, art.slug)
+        assert (await client.get(url)).status == 200
 
         torn = await client.delete(f"/api/artifacts/{art.slug}/deploy")
         assert torn.status == 200
         assert (await torn.json())["removed"] is True
 
         # The page AND its files are gone — no stale handler keeps serving either.
-        assert (await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")).status == 404
-        assert (await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/app.js")).status == 404
+        assert (await client.get(url)).status == 404
+        assert (await client.get(url + "app.js")).status == 404
         # Un-publishing is not deleting: the artifact itself survives.
         assert (await client.get(f"/api/artifacts/{art.slug}")).status == 200
     finally:
@@ -412,10 +418,10 @@ async def test_deleting_the_artifact_tears_the_deployment_down(patched_native) -
     art = prov.create(name="My App", content="<h1>hi</h1>")
     client = await _client(prov)
     try:
-        await client.post(f"/api/artifacts/{art.slug}/deploy")
-        assert (await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")).status == 200
+        url = await _deploy(client, art.slug)
+        assert (await client.get(url)).status == 200
         assert (await client.delete(f"/api/artifacts/{art.slug}")).status == 200
-        assert (await client.get(f"{SERVE_URL_PREFIX}/{art.slug}/")).status == 404
+        assert (await client.get(url)).status == 404
         assert ArtifactDeployStore(prov.root).is_deployed(art.slug) is False
     finally:
         await client.close()
@@ -430,10 +436,14 @@ async def test_deployed_listing_carries_the_url(patched_native) -> None:
     art = prov.create(name="My App", content="<h1>hi</h1>")
     client = await _client(prov)
     try:
-        await client.post(f"/api/artifacts/{art.slug}/deploy")
+        url = await _deploy(client, art.slug)
         rows = (await (await client.get("/api/artifacts/deployed")).json())["deployments"]
         assert [r["slug"] for r in rows] == [art.slug]
-        assert rows[0]["url"] == f"{SERVE_URL_PREFIX}/{art.slug}/"
+        assert rows[0]["url"] == url
+        capability = ArtifactDeployStore(prov.root).get(art.slug).capability
+        assert url == f"{SERVE_URL_PREFIX}/{art.slug}/{capability}/"
+        # The URL is how the capability is handed out; the listing carries no second copy.
+        assert "capability" not in rows[0]
     finally:
         await client.close()
 

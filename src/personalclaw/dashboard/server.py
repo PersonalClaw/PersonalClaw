@@ -931,7 +931,7 @@ async def start_dashboard(
             )
             raise RuntimeError("dashboard_url requires token auth middleware")
 
-    runner = web.AppRunner(app, shutdown_timeout=OPEN_REQUEST_GRACE_SECS)
+    runner = web.AppRunner(app, shutdown_timeout=OPEN_REQUEST_GRACE_SECS, access_log=None)
     await runner.setup()
     # Bind decision: prefer the explicit PERSONALCLAW_BIND_HOST env var
     # (corp-host / DevSpaces escape hatch); otherwise derive from the

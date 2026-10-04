@@ -780,6 +780,13 @@ jobs:
       - name: app-authored DOM is really mounted and swept (web/e2e/appSurface.spec.ts)
         working-directory: web
         run: npx playwright test e2e/appSurface.spec.ts --project=chromium
+      # A deployed artifact's page is model-authored and served from the dashboard's own host, so
+      # what keeps it from acting as the dashboard is the sandbox its response and its frame put it
+      # in. Whether the page still loads its own files from an opaque origin, and reaches nothing of
+      # the window around it, framed or in a tab, is a property only a browser can measure.
+      - name: a deployed page runs in an origin of its own (web/e2e/deployedArtifacts.spec.ts)
+        working-directory: web
+        run: npx playwright test e2e/deployedArtifacts.spec.ts --project=chromium
       # The clause: the browser gate completes a real chat turn OFFLINE, with no
       # provider credential anywhere in the environment, against the scripted fixture
       # provider. A separate step because this one proves a different property from the

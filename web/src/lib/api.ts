@@ -7156,9 +7156,11 @@ export interface DeckModelResponse {
   model: DeckModelJson; loss: DocumentLossReport
 }
 
-/** One deployed artifact. `url` is the stable in-gateway path the artifact is
- *  served at — always `/artifacts/serve/<slug>/`, never a public URL: local-only
- *  deploy, so it is reachable exactly to whoever holds a dashboard session. */
+/** One deployed artifact. `url` is the in-gateway path the artifact is served at —
+ *  `/artifacts/serve/<slug>/<capability>/`, never a public URL: local-only deploy. The
+ *  capability in it is what authorizes the page's own files (a sandboxed page's requests
+ *  carry no session cookie), so the URL is the page's whole key: each deploy mints a new
+ *  one and tear down revokes it. Use it as given; never build one. */
 export interface ArtifactDeployment {
   slug: string
   entry: string
@@ -10765,10 +10767,10 @@ export const api = {
     }).then(j<{ slug: string; version: number; mime: string }>),
 
   // ── local static artifact deploy ──
-  // Deploying publishes an html/widget artifact at a stable IN-GATEWAY url
-  // (`/artifacts/serve/<slug>/`) behind the same session auth as the dashboard and a
-  // strict CSP fence (`connect-src 'none'` — the served page cannot call /api).
-  // Teardown removes the route; the artifact itself is untouched.
+  // Deploying publishes an html/widget/react artifact at an IN-GATEWAY url of its own
+  // (`/artifacts/serve/<slug>/<capability>/`), served sandboxed into an opaque origin under
+  // a strict CSP fence (`connect-src 'none'` — the served page cannot call /api).
+  // Teardown removes the route and revokes the URL; the artifact itself is untouched.
   deployedArtifacts: () => get<{ deployments: ArtifactDeployment[] }>('/api/artifacts/deployed').then((d) => d.deployments),
   deployArtifact: (slug: string, body?: { entry?: string }) =>
     post<{ ok: boolean; deployment: ArtifactDeployment }>(`/api/artifacts/${encodeURIComponent(slug)}/deploy`, body ?? {}),

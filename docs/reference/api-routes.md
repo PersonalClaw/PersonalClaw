@@ -232,7 +232,7 @@ The 914 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PATCH` | `/api/artifacts/{slug}` | save (silent) or snapshot; or metadata-only. |
 | `POST` | `/api/artifacts/{slug}/changed` | another PersonalClaw process wrote this artifact. |
 | `DELETE` | `/api/artifacts/{slug}/deploy` | tear the deployment down. |
-| `POST` | `/api/artifacts/{slug}/deploy` | publish the artifact at its stable serve URL. |
+| `POST` | `/api/artifacts/{slug}/deploy` | publish the artifact at a serve URL of its own. |
 | `GET` | `/api/artifacts/{slug}/events` | activity timeline (drops dashboard:ui). |
 | `POST` | `/api/artifacts/{slug}/events` | record a 'referenced' impression. |
 | `GET` | `/api/artifacts/{slug}/extract` | extracted text for a binary document artifact. |

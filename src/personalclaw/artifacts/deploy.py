@@ -1,13 +1,28 @@
 """Local static artifact deploy — the webapp serve registry and path spine.
 
 Deploying an artifact makes its own bytes reachable at a stable in-gateway URL
-(``/artifacts/serve/<slug>/``) so an html/widget artifact can be opened and driven
-as a real page instead of only rendered inside a chat bubble. Local-only: public
-exposure is explicitly out of scope, so the route sits behind the same session auth
-as every other gateway path (``/artifacts/`` is in no auth-bypass prefix).
+(``/artifacts/serve/<slug>/<capability>/``) so an html/widget artifact can be opened and
+driven as a real page instead of only rendered inside a chat bubble. Local-only: public
+exposure is explicitly out of scope.
 
-Three properties are load-bearing here, because this route serves
+Four properties are load-bearing here, because this route serves
 **model- or user-authored HTML** rather than shipped assets:
+
+*An origin of its own.* Every response the route gives carries a CSP ``sandbox``
+directive that allows scripts and nothing else, so the browser runs the page in an
+opaque origin however it is opened — framed in the dashboard, in a tab, or by any other
+route. From there it cannot reach the dashboard's window (no same-origin, no popups, no
+top-level navigation), the owner's cookie, web storage, or a service worker of its own.
+It is the response header (not a ``<meta>`` the document could omit) that carries it,
+because the document is untrusted input.
+
+*The capability.* A sandboxed page is cross-site to the gateway, so the browser sends its
+own requests — its script, its stylesheet, its font — without the session cookie. What
+authorizes them is the URL itself: each deployment holds an unguessable capability (256
+bits), minted on every deploy and gone on teardown, and the route serves the deployment's
+own files to whoever presents it and nothing to anyone without it. The dashboard's session
+check lets exactly that path shape through to this route (``SERVED_PATH``), and nothing
+else under the prefix. The capability is never written to a log: the audit names the slug.
 
 *Containment.* A request path is resolved and asserted to live under the artifact's
 own files root — never string-matched against ``..``. Marker rejection
@@ -15,17 +30,19 @@ own files root — never string-matched against ``..``. Marker rejection
 resolve-and-contain assertion is the one that actually holds, and a symlink is
 refused outright so the served set can never point outside the root.
 
-*The CSP fence.* The served document is fenced like a widget iframe:
-``connect-src 'none'`` means the page cannot call the gateway ``/api`` at all,
-and ``form-action``/``base-uri``/``object-src`` are shut so it cannot exfiltrate
-by navigation either. It is the response header (not a ``<meta>`` the document
-could omit) that carries the fence, because the document is untrusted input.
-
 *Teardown removes the route.* aiohttp freezes its router at startup, so the
 "route" a user can tear down is this registry: the handler serves nothing for a
-slug that is not deployed, and deleting an artifact tears its deployment down.
-An artifact deleted but still reachable is precisely the defect the teardown
-clause exists to prevent.
+slug that is not deployed. Deleting an artifact tears its deployment down in the
+store itself (``NativeArtifactProvider.delete``), whoever deletes it, and a new
+artifact never inherits a row its slug left behind. An artifact deleted but still
+reachable — or a later artifact served at its URL — is precisely the defect the
+teardown clause exists to prevent.
+
+The CSP stays the floor inside the sandbox: ``connect-src 'none'`` (no fetch, XHR,
+WebSocket or beacon), ``form-action``/``base-uri``/``object-src 'none'``. Navigation is
+not a CSP matter: framed, the page cannot navigate the dashboard (no top navigation) and
+the dashboard's ``frame-src`` keeps the frame on this origin; in a tab of its own it can
+still navigate itself away, which reaches nothing of the dashboard's.
 
 Persistence lives at ``<home>/artifacts/deployments.json`` — inside the artifacts
 tree, so the existing ``artifacts`` durability inventory entry already covers it
@@ -35,9 +52,12 @@ and the provider's directory-only ``list`` ignores it (same bargain as
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import mimetypes
+import re
+import secrets
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -67,6 +87,18 @@ logger = logging.getLogger(__name__)
 #: fence below read as "this origin's /api is not reachable from here".
 SERVE_URL_PREFIX = "/artifacts/serve"
 
+#: Bytes of randomness in a deployment's capability: 256 bits, so the URL cannot be guessed.
+CAPABILITY_BYTES = 32
+
+#: A capability as ``secrets.token_urlsafe(CAPABILITY_BYTES)`` spells it: 43 characters of the
+#: URL-safe base64 alphabet.
+_CAPABILITY = re.compile(r"[A-Za-z0-9_-]{43}")
+
+#: The one path shape the dashboard's session check lets through to the serve route without a
+#: session: a slug, then a capability, then (optionally) a file under it. The route authorizes it
+#: itself, by the capability; every other path under the prefix stays behind the session.
+SERVED_PATH = re.compile(rf"{SERVE_URL_PREFIX}/[a-z0-9-]{{1,80}}/{_CAPABILITY.pattern}(?:/.*)?")
+
 #: Default entry document for a deployed artifact (the webapp contract: a
 #: multi-file artifact's entry is ``index.html``).
 DEFAULT_ENTRY = "index.html"
@@ -89,12 +121,19 @@ FILES_SUBDIR = "webapp"
 #: added where a multi-file webapp must load its OWN files. The directives that make
 #: it a fence rather than a formality:
 #:
+#: * ``sandbox allow-scripts`` — the page runs in an opaque origin, framed or not: its
+#:   scripts run, and it gets no same-origin access to the dashboard, no popups, no
+#:   top-level navigation, no forms, no cookie, no web storage and no service worker.
+#:   Measured in Chromium: ``'self'`` below still matches this response's origin for the
+#:   page's own files (CSP matches it against the URL the policy came from).
 #: * ``default-src 'none'`` — nothing is fetchable unless a directive below allows it.
 #: * no other origin in ``script-src``/``style-src``/``font-src`` — a served page runs its
 #:   own files and inline code only, and reaches no third party (a react artifact's bundle
 #:   carries React itself; see ``build.py``).
-#: * ``connect-src 'none'`` — no fetch/XHR/WebSocket/EventSource/sendBeacon at all,
-#:   so the page cannot call ``/api`` even though it is same-origin.
+#: * ``connect-src 'none'`` — no fetch/XHR/WebSocket/EventSource/sendBeacon at all.
+#: * ``worker-src 'none'`` — no worker of any kind; without it the directive fell back to
+#:   ``script-src 'self'``, and a service worker would keep answering the page's URL after
+#:   the deployment came down.
 #: * ``form-action 'none'`` + ``base-uri 'none'`` — no exfiltration by form POST and
 #:   no rewriting relative URLs out from under the other directives.
 #: * ``frame-ancestors 'self'`` — embeddable in the dashboard's own pane, nowhere else.
@@ -105,21 +144,68 @@ ARTIFACT_SERVE_CSP = (
     "img-src 'self' data: blob:; "
     "font-src 'self' data:; "
     "connect-src 'none'; "
+    "worker-src 'none'; "
     "form-action 'none'; "
     "base-uri 'none'; "
     "object-src 'none'; "
-    "frame-ancestors 'self'"
+    "frame-ancestors 'self'; "
+    "sandbox allow-scripts"
 )
 
-#: Response headers every served artifact byte carries.
+#: Powerful features a served page is never given, framed or in a tab of its own. Only names
+#: the browser knows: an unknown one is a console warning on every load.
+_DENIED_FEATURES = (
+    "accelerometer",
+    "bluetooth",
+    "browsing-topics",
+    "camera",
+    "clipboard-read",
+    "clipboard-write",
+    "display-capture",
+    "fullscreen",
+    "gamepad",
+    "geolocation",
+    "gyroscope",
+    "hid",
+    "identity-credentials-get",
+    "idle-detection",
+    "local-fonts",
+    "magnetometer",
+    "microphone",
+    "midi",
+    "otp-credentials",
+    "payment",
+    "publickey-credentials-create",
+    "publickey-credentials-get",
+    "screen-wake-lock",
+    "serial",
+    "storage-access",
+    "usb",
+    "window-management",
+    "xr-spatial-tracking",
+)
+
+#: Response headers every answer of the serve route carries — a refusal and a redirect as much
+#: as the page and its files, so no answer at that path runs in the dashboard's origin.
 SERVE_HEADERS: dict[str, str] = {
     "Content-Security-Policy": ARTIFACT_SERVE_CSP,
+    # A window that opened the page (or that it is opened into) shares no browsing context with
+    # it, whatever the link that opened it said.
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Permissions-Policy": ", ".join(f"{name}=()" for name in _DENIED_FEATURES),
     "X-Content-Type-Options": "nosniff",
+    # Also what keeps the capability in the page's URL out of any request the page makes.
     "Referrer-Policy": "no-referrer",
     # The body is the artifact's live content and changes on every edit; a cached
     # copy would keep serving a torn-down deployment's page from the browser.
     "Cache-Control": "no-store",
 }
+
+#: What a served file adds. The page's module scripts and fonts are fetched in CORS mode, and from
+#: its opaque origin every one of its requests is cross-origin, so without this they are blocked.
+#: Opening nothing: the capability in the URL is the whole authority to read the file, and it is
+#: already in the hand of whoever asks.
+SERVED_FILE_HEADERS: dict[str, str] = {**SERVE_HEADERS, "Access-Control-Allow-Origin": "*"}
 
 
 def _now() -> str:
@@ -128,17 +214,35 @@ def _now() -> str:
 
 @dataclass
 class ArtifactDeployment:
-    """One deployed artifact: the slug, its entry document, and when it went up."""
+    """One deployed artifact: the slug, its entry document, when it went up, and the
+    capability its URL carries."""
 
     slug: str
     entry: str = DEFAULT_ENTRY
     created_at: str = ""
+    capability: str = ""
 
     @property
     def url(self) -> str:
-        return f"{SERVE_URL_PREFIX}/{self.slug}/"
+        return f"{SERVE_URL_PREFIX}/{self.slug}/{self.capability}/"
+
+    def admits(self, capability: str) -> bool:
+        """Whether *capability* is this deployment's. Compared in constant time."""
+        return bool(self.capability) and hmac.compare_digest(
+            self.capability.encode(), capability.encode()
+        )
 
     def to_dict(self) -> dict[str, Any]:
+        """The record ``deployments.json`` keeps."""
+        return {
+            "slug": self.slug,
+            "entry": self.entry,
+            "created_at": self.created_at,
+            "capability": self.capability,
+        }
+
+    def to_public(self) -> dict[str, Any]:
+        """What the API shows the owner: the URL, which is how the capability is handed out."""
         return {
             "slug": self.slug,
             "entry": self.entry,
@@ -152,6 +256,7 @@ class ArtifactDeployment:
             slug=str(d.get("slug", "")),
             entry=str(d.get("entry", "") or DEFAULT_ENTRY),
             created_at=str(d.get("created_at", "")),
+            capability=str(d.get("capability", "")),
         )
 
 
@@ -204,9 +309,10 @@ class ArtifactDeployStore:
             if not isinstance(entry, dict):
                 continue
             dep = ArtifactDeployment.from_dict(entry)
-            # A record whose slug would not validate can never be served, so it is
-            # dropped on read rather than kept as an unreachable row.
-            if dep.slug and is_valid_slug(dep.slug):
+            # A record whose slug would not validate, or that carries no capability (one
+            # written before deployments had one), can never be served: no URL names it. So it
+            # is dropped on read rather than kept as an unreachable row.
+            if dep.slug and is_valid_slug(dep.slug) and _CAPABILITY.fullmatch(dep.capability):
                 out.append(dep)
         return out
 
@@ -235,10 +341,29 @@ class ArtifactDeployStore:
     def is_deployed(self, slug: str) -> bool:
         return self.get(slug) is not None
 
+    def authorize(self, slug: str, capability: str) -> ArtifactDeployment | None:
+        """*slug*'s deployment when *capability* is the one its URL carries, else ``None``.
+
+        The serve route's whole authorization: nothing else about the request (a session, a
+        header) stands in for it, and one ``None`` answers "not deployed", "torn down" and "not
+        this deployment's capability" alike.
+        """
+        if not _CAPABILITY.fullmatch(capability or ""):
+            return None
+        dep = self.get(slug)
+        if dep is None or not dep.admits(capability):
+            return None
+        return dep
+
     # ── writes ──
 
     def deploy(self, slug: str, *, entry: str = "") -> ArtifactDeployment:
-        """Register *slug* as deployed (idempotent — re-deploying refreshes entry)."""
+        """Register *slug* as deployed, under a newly minted capability.
+
+        Idempotent in effect — re-deploying refreshes the entry rather than erroring — but
+        every deploy mints the capability afresh, so the URL handed out before stops
+        answering: a re-deploy publishes the page again, at a URL of its own.
+        """
         if not is_valid_slug(slug):
             raise ValueError(f"invalid slug: {slug!r}")
         clean_entry = (entry or "").strip() or DEFAULT_ENTRY
@@ -246,24 +371,32 @@ class ArtifactDeployStore:
         # any request path — a deployment whose entry escapes must never be recorded.
         if rejects_path(clean_entry):
             raise ValueError(f"invalid entry: {entry!r}")
+        capability = secrets.token_urlsafe(CAPABILITY_BYTES)
         with self._lock:
             deployments = self._load()
             existing = next((d for d in deployments if d.slug == slug), None)
             if existing is not None:
                 existing.entry = clean_entry
+                existing.capability = capability
                 self._save(deployments)
                 return existing
             if len(deployments) >= MAX_DEPLOYMENTS:
                 raise ValueError(f"too many deployed artifacts (max {MAX_DEPLOYMENTS})")
-            dep = ArtifactDeployment(slug=slug, entry=clean_entry, created_at=_now())
+            dep = ArtifactDeployment(
+                slug=slug, entry=clean_entry, created_at=_now(), capability=capability
+            )
             deployments.append(dep)
             self._save(deployments)
             return dep
 
     def teardown(self, slug: str) -> bool:
-        """Remove *slug*'s deployment. Returns whether anything was removed.
+        """Remove *slug*'s deployment, and with it its capability. Returns whether anything
+        was removed.
 
-        Content is untouched: teardown un-publishes, it never destroys the artifact.
+        Content is untouched: teardown un-publishes, it never destroys the artifact. The one
+        function every un-publishing goes through — the REST undeploy, and the store's own
+        delete and create (``NativeArtifactProvider``), so no caller of the store can leave a
+        page up behind an artifact that is gone.
         """
         if not slug:
             return False

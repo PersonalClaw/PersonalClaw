@@ -29,6 +29,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.artifacts.deploy import SERVED_PATH as ARTIFACT_SERVED_PATH
 from personalclaw.auth.lifetimes import (  # noqa: F401 — duration_words is re-exported
     DEFAULT_BROWSER_SESSION_TTL_SECS,
     MAX_LIFETIME_SECS,
@@ -427,9 +428,19 @@ _BYPASS_EXACT.update(
     }
 )
 #: Self-authenticating routes with a path parameter, which no exact entry can name: matched whole,
-#: one segment where the route has one. Only `/a2a/tasks/{task_id}` (a task poll), matched the way
+#: one segment where the route has one. `/a2a/tasks/{task_id}` (a task poll), matched the way
 #: aiohttp matches ``{task_id}`` itself, so a deeper path or a sibling does not inherit it.
-_BYPASS_TEMPLATES: tuple[re.Pattern[str], ...] = (re.compile(r"/a2a/tasks/[^{}/]+"),)
+#:
+#: And a deployed artifact's page with its files (`artifacts/deploy.SERVED_PATH`): a slug, a
+#: capability, a file. The page runs sandboxed in an origin of its own, so the browser sends its
+#: own requests (its script, its stylesheet, its fonts) without the session cookie; the route
+#: serves the deployment's files to the capability its URL carries and to nothing else
+#: (`ArtifactDeployStore.authorize`). Only that shape: the prefix without a capability stays
+#: behind the session, where the route refuses it anyway.
+_BYPASS_TEMPLATES: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/a2a/tasks/[^{}/]+"),
+    ARTIFACT_SERVED_PATH,
+)
 
 # The login front door. These three MUST be reachable without a
 # session, because they are how a remote browser gets one — gating them behind the session

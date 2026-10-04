@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from personalclaw.artifacts import changes, source_files
+from personalclaw.artifacts.deploy import ArtifactDeployStore
 from personalclaw.artifacts.models import (
     ALLOWED_EVENT_TYPES,
     BINARY_KINDS,
@@ -393,6 +394,16 @@ class NativeArtifactProvider(ArtifactProvider):
             n += 1
         return f"{base}-{n}"
 
+    def _start_unpublished(self, slug: str) -> None:
+        """A new artifact never inherits a deployment.
+
+        Its slug's folder did not exist, so a row the deploy registry still holds for the
+        slug was left by an artifact that is gone — one removed around the store (by hand,
+        by another program) — and serving it would publish this artifact at that row's URL
+        without anyone deploying it. Raises when that cannot be recorded, so nothing is made.
+        """
+        ArtifactDeployStore(self._root).teardown(slug)
+
     @staticmethod
     def _live_dirty(live: str | None, latest_snapshot: str | None) -> bool:
         if live is None:
@@ -626,6 +637,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 if (slug and is_valid_slug(base) and not (self._ensure_root() / base).exists())
                 else self._unique_slug(base)
             )
+            self._start_unpublished(final_slug)
             ts = _now()
             event = ArtifactEvent(
                 ts=ts,
@@ -819,6 +831,7 @@ class NativeArtifactProvider(ArtifactProvider):
                 if (slug and is_valid_slug(base) and not (self._ensure_root() / base).exists())
                 else self._unique_slug(base)
             )
+            self._start_unpublished(final_slug)
             ts = _now()
             event = ArtifactEvent(
                 ts=ts,
@@ -1069,6 +1082,16 @@ class NativeArtifactProvider(ArtifactProvider):
             return self.get(slug)
 
     def delete(self, slug: str) -> bool:
+        """Delete *slug* and everything under it, after taking its deployed page down.
+
+        The page comes down HERE, in the store, because the store is what every delete
+        reaches: the REST route, the agent's ``artifact_delete``, and an agent CLI's
+        ``mcp-core`` process, which writes this tree directly and which no listener in the
+        gateway hears. Slugs are reused, so a deployment left behind would serve whatever is
+        saved under the slug next. Refused, nothing deleted, if the teardown cannot be
+        recorded: an artifact still there and still published is a state the owner can see
+        and retry; one that is gone and still published is not.
+        """
         with self._lock:
             try:
                 d = self._artifact_dir(slug)
@@ -1078,6 +1101,11 @@ class NativeArtifactProvider(ArtifactProvider):
                 return False
             import shutil
 
+            try:
+                ArtifactDeployStore(self._root).teardown(slug)
+            except OSError:  # an unwritable registry, or a root refused as sensitive
+                logger.warning("artifact delete refused, its page could not be taken down: %s", d)
+                return False
             try:
                 shutil.rmtree(d)
             except OSError:
