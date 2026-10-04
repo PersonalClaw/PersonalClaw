@@ -295,6 +295,15 @@ Content and requests arriving from outside the owner's trust boundary:
   sending method in the `ChannelDelivery` protocol is masked or listed as sending no text, or
   `tests/test_channels_are_handed_masked_text.py` fails. What an app sends on its own paths, text it
   builds or relays without core, is the app's to mask.
+- **A channel's own turn runs a call unasked only on core's answer** (`chat_trust.chat_grant`). A
+  channel app that runs a conversation itself (Slack's threads) asks core, at each call, who
+  approves it without asking: the decision a chat makes for a call put to its gate, with every
+  grant held to the allowed hosts and to the operator ceiling (`approval_grants.stands_for_call`).
+  Under `{"approval": {"value": "ask"}}` an operator's hook pattern, the chat's Trust and YOLO
+  approve nothing there, a command reaching a host off the allowed hosts is always asked about,
+  and no grant answers a call the hook chain refuses. A call nobody approves is asked on the
+  channel's own prompt. The app keeps no pattern, setting or approval mode of its own that
+  approves a call.
 
 *Inbound MCP and external remote access (fail-closed inbound, fencing at
 ingestion) are owned — not yet

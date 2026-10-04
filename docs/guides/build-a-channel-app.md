@@ -193,11 +193,16 @@ owner can neither see nor revoke.
   request_id=...)`. `trust` makes it the chat's Trust and writes the audit row; an answer for the
   call alone changes nothing beyond it. When it returns `False` the press decides nothing: keep
   the approval waiting.
-- **Ask at every call.** Before you prompt, ask `personalclaw.sdk.channel.chat_grant(session_key,
-  event)`. It names the grant that approves the call without asking (`yolo`, `trust`,
-  `trust_reads`) under the rules the chat's own runner applies, or `""` when the call must be
-  asked. Read it per call and remember nothing: the owner switching the chat to Normal makes your
-  next call ask.
+- **Ask at every call, and approve on nothing else.** Before you prompt, ask
+  `personalclaw.sdk.channel.chat_grant(session_key, event)`. It names who approves the call
+  without asking, by the decision the chat's own runner makes: an operator's pattern in the hook
+  settings (`hook_pattern`), what the call's tool declares (`declared_read`, `work_asks`), the
+  chat's Trust reads, Trust or YOLO (`trust_reads`, `trust`, `yolo`), each grant held to the
+  allowed hosts and the operator ceiling. `""` means the call must be asked. Approve no call on an
+  answer of your own, such as a hook pattern you match yourself, the spawn setting, or an approval
+  mode your turn carries: none of those is held to the ceiling or the allowed hosts. Read it per
+  call and remember nothing: a pattern the owner removes, or the chat switched to Normal, makes
+  your next call ask.
 - **Write your turns through `save_conversation_turn`, and name the conversation with the log's
   `set_title`.** The chat the dashboard opens for your conversation is given each turn you write
   there and each name you give it, so it shows the conversation as it is and its own saves keep

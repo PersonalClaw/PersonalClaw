@@ -42,7 +42,9 @@ GUARDED_DOWNLOAD = "guarded-download"
 #: call of that conversation offers what the chat's card offers, Allow for this chat included
 #: (``approval_brief_for(event, chat=<session key>)``), ``answer_in_chat`` makes the pressed Allow
 #: for this chat that chat's Trust in PersonalClaw (shown in the chat, and switched off there), and
-#: ``chat_grant`` says which of the chat's grants answers a later call without asking. A core
+#: ``chat_grant`` says who approves a later call without asking, by the decision the chat's runner
+#: makes (an operator's hook pattern, what the call declares, the chat's grants, each held to the
+#: allowed hosts and the operator ceiling), so the channel approves no call on its own. A core
 #: without it has neither function, so an app that imports them does not load.
 CHAT_TRUST = "chat-trust"
 

@@ -20,8 +20,11 @@ switches off there.
 * :func:`answer_in_chat` takes the answer pressed there: Allow for this chat trusts the chat,
   as the card's This chat does, and writes the audit row another channel's Allow for this chat
   writes.
-* :func:`chat_grant` says, at each call, which of the chat's grants answers it without asking
-  (YOLO, its Trust, Trust reads), held to the rules the chat's own runner holds them to.
+* :func:`chat_grant` says, at each call, who answers it without asking, by the decision the chat's
+  own runner makes for a call put to its gate: an operator's hook pattern, what the call declares,
+  the chat's Trust, Trust reads and YOLO, each grant held to the allowed hosts and the operator
+  ceiling. The channel approves no call on an answer of its own: one this does not answer is
+  asked.
 
 This is core code below the HTTP surface, so the chat is reached through the gateway's dashboard
 state (``inbox_providers.native_source``). A gateway with no dashboard has no chat to show a trust
@@ -87,20 +90,46 @@ def answer_in_chat(session_key: str, answer: str, *, channel: str, request_id: s
 
 
 def chat_grant(session_key: str, event: Any) -> str:
-    """The grant that approves *event*, a call the channel's own turn asks about in the
-    conversation *session_key*, without asking anyone: ``yolo`` while YOLO is on, ``trust`` while
-    the conversation's chat is trusted, ``trust_reads`` for a read-only shell command while it
-    trusts reads, or ``""`` when none does and the call is asked.
+    """Who approves *event*, a call the channel's own turn asks about in the conversation
+    *session_key*, without asking anyone; ``""`` when nobody does and the call is asked.
 
-    What the chat's own runner decides for one of its calls, by the same rules: a conversation an
-    app started approves nothing on its own; no grant answers a call that reaches a host off the
-    allowed hosts, and the operator ceiling bounds each one (``approval_grants.stands_for_call``,
-    which audits a refusal). Read at every call, so the owner switching the chat's Trust off in the
-    dashboard makes the next call ask.
+    The decision PersonalClaw's own chat makes for a call put to its gate, in its order:
+
+    * ``hook_pattern``: an operator's pattern in the hook settings (``hooks.auto_approve_tools``)
+      names the call. A grant at the "a hook decides" level, which a ``hook_based`` ceiling lets
+      stand and an ``ask`` one does not.
+    * ``declared_read`` or ``work_asks``: what the call's tool declares, that it only reads, or
+      that its work asks the owner itself (the call that starts a subagent, whose start is asked,
+      or started by the spawn setting under the ceiling where the start is decided). Neither is a
+      grant (``approval_grants.declared_answer``).
+    * ``trust_reads``, ``trust`` or ``yolo``: the chat's Trust reads, for a read-only shell
+      command, its Trust, and YOLO. None of them for a conversation an app started, which
+      approves nothing on its own.
+
+    Each grant is held to the chat runner's two rules (``approval_grants.stands_for_call``, which
+    audits a refusal): none answers a call that reaches a host off the allowed hosts, and the
+    operator ceiling bounds every one. Nothing answers a call the hook chain refuses, read on the
+    command that would run as well as on the call's title, which need not carry it. The settings
+    and the chat are read at every call, so a pattern the owner removes, or the chat's Trust
+    switched off in the dashboard, makes the next call ask.
     """
     from personalclaw import approval_grants, trust_mode
+    from personalclaw.hooks import TOOL_AUTO_APPROVE, TOOL_DENY
     from personalclaw.task_modes import resolve_effective_risk
 
+    verdict = _hook_verdict(event)
+    if verdict == TOOL_DENY:
+        return ""
+    if verdict == TOOL_AUTO_APPROVE and approval_grants.stands_for_call(
+        approval_grants.HOOK_PATTERN,
+        session_key=session_key,
+        event=event,
+        level=approval_grants.LEVEL_HOOK,
+    ):
+        return approval_grants.HOOK_PATTERN
+    declared = approval_grants.declared_answer(event)
+    if declared:
+        return declared
     state = _state()
     posture = state.channel_chat_posture(session_key) if state is not None and session_key else ""
     if posture is None:
@@ -125,3 +154,24 @@ def chat_grant(session_key: str, event: Any) -> str:
     if approval_grants.stands_for_call(grant, session_key=session_key, event=event):
         return grant
     return ""
+
+
+def _hook_verdict(event: Any) -> str:
+    """The hook chain's verdict on *event* (a ``hooks`` action), from the hook settings as they
+    read now, made on the command that would run as well as on its title
+    (``acp.permission_authority.screen_tool_call``, the chat runner's own reading). A chain that
+    cannot be read is a refusal here: no grant answers a call that may be one it refuses, so the
+    call is asked."""
+    from personalclaw.acp.permission_authority import screen_tool_call
+    from personalclaw.hooks import TOOL_DENY, live_hook_manager
+
+    try:
+        verdict = screen_tool_call(
+            live_hook_manager(),
+            str(getattr(event, "title", "") or ""),
+            getattr(event, "tool_input", ""),
+        )
+    except Exception:  # noqa: BLE001 - see the docstring: an unread chain approves nothing
+        logger.warning("could not read the hook chain for a channel's call; asking", exc_info=True)
+        return TOOL_DENY
+    return str(verdict.action)

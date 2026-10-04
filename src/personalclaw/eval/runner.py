@@ -440,19 +440,23 @@ class EvalRunner:
     ) -> None:
         """Answer one permission request, then write its one audit row.
 
-        The allowlist approves without asking anyone, so it is a grant: the operator ceiling
-        bounds it (`approval_grants`, rule 2), and the row names it as what decided (rule 3). The
-        row is written after the answer took effect, as every decision row is.
+        The allowlist approves without asking anyone, so it is a grant, held to the rules every
+        grant is (`approval_grants.stands_for_call`): it answers no call that reaches a host off
+        the allowed hosts, which an evaluation has nobody to ask about and so refuses, and the
+        operator ceiling bounds it (`approval_grants`, rule 2). The row names what decided (rule
+        3), and is written after the answer took effect, as every decision row is.
         """
         from personalclaw import approval_grants
+        from personalclaw.run_bounds import off_list
 
         title = str(event.title or "")
         reason = self._allowlist_refusal(event)
         decided_by = approval_grants.EVAL_SAFE_TOOLS
-        if not reason and not approval_grants.stands(
-            approval_grants.EVAL_SAFE_TOOLS, caller=session_key, subject=title[:80]
+        if not reason and not approval_grants.stands_for_call(
+            approval_grants.EVAL_SAFE_TOOLS, session_key=session_key, event=event
         ):
-            reason, decided_by = "refused_by_ceiling", approval_grants.NOBODY
+            reason = "run_bounds" if off_list(event, session_key) else "refused_by_ceiling"
+            decided_by = approval_grants.NOBODY
         if reason:
             logger.warning("Refused tool in eval (%s): %s", reason, log_title(title))
             await provider.reject_tool(event.request_id)

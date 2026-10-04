@@ -449,10 +449,14 @@ class DashboardApprovalState:
             )
 
     def answered_alone(self, approval_id: str) -> bool:
-        """Whether only a decision on *approval_id* answers it (``request_approval``'s
-        ``answered_alone``): a Trust or YOLO switch, which answers every pending approval it covers,
-        leaves it asking."""
-        return approval_id in self.__dict__.get("_answered_alone", set())
+        """Whether only a decision on *approval_id* answers it: a Trust or YOLO switch, which
+        answers every pending approval it covers (``chat_handlers.api_chat_mode``), leaves it
+        asking. One its asker marked so (``request_approval``'s ``answered_alone``), and a call
+        asked because it reaches a host off the allowed hosts, which no grant answers
+        (``run_bounds``): its entry's ``reach`` says so, as its card does."""
+        if approval_id in self.__dict__.get("_answered_alone", set()):
+            return True
+        return bool((self._pending_approvals.get(approval_id) or {}).get("reach"))
 
     async def hold_session_approval(
         self,

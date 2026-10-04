@@ -2652,7 +2652,9 @@ async def api_chat_mode(request: web.Request) -> web.Response:
     # A trust/yolo switch answers the pending approvals it covers, and no others. YOLO, and Trust
     # for every chat, cover every one. Trust for ONE chat covers that chat's own and the ones its
     # agents asked on its behalf (`approval_grants.PARENT_TRUST`), never another chat's or another
-    # run's: trusting this chat is not an answer to what anyone else is waiting on.
+    # run's: trusting this chat is not an answer to what anyone else is waiting on. Nor does it
+    # answer an ask only a decision on it answers (`DashboardState.answered_alone`): a call that
+    # reaches a host off the allowed hosts, which no grant answers, or a batch's consent.
     if mode in ("trust", "yolo"):
         only = session_name if mode == "trust" else None
         # The switch answers them as the one who flipped it, held to the rule every door is
@@ -2668,6 +2670,8 @@ async def api_chat_mode(request: web.Request) -> web.Response:
                     if state.answer_refusal(chat_approval_id(session.key, aid), by):
                         continue
                     if state.refuse_ended_owner(chat_approval_id(session.key, aid)):
+                        continue
+                    if state.answered_alone(chat_approval_id(session.key, aid)):
                         continue
                     fut.set_result("approved")
                     # Persist resolved state into the permission message
@@ -2690,8 +2694,8 @@ async def api_chat_mode(request: web.Request) -> web.Response:
                     except Exception:
                         logger.warning("SEL audit failed for bulk approval %s", aid, exc_info=True)
         # And the background ones (a subagent, a trigger's run) it covers. An ask only a decision
-        # on it answers (a batch's consent to change things, `DashboardState.answered_alone`)
-        # keeps asking: a posture switch is not that decision.
+        # on it answers (a batch's consent to change things, a call off the allowed hosts:
+        # `DashboardState.answered_alone`) keeps asking: a posture switch is not that decision.
         for aid in list(state._approval_futures):
             fut = state._approval_futures[aid]
             if state.answered_alone(aid):

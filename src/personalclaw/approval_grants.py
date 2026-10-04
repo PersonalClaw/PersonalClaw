@@ -246,8 +246,9 @@ def stands_for_call(
     No grant answers a call that reaches a host off the allowed hosts (``run_bounds``): that one is
     put to a person. A refusal by the ceiling is audited, naming the call. A refused grant falls
     through to what comes next: the call asks, or on an unattended turn is declined because nobody
-    can answer it. What a chat's runner asks of its Trust, YOLO and Trust reads, and what a channel
-    running a conversation itself asks of that chat's (``chat_trust.chat_grant``).
+    can answer it. What a chat's runner asks of an operator's hook pattern and of its Trust, YOLO
+    and Trust reads, and what a channel running a conversation itself asks of the same grants
+    (``chat_trust.chat_grant``).
     """
     from personalclaw.run_bounds import off_list
     from personalclaw.security import redact_credentials, redact_exfiltration_urls

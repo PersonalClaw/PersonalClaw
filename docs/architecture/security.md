@@ -720,7 +720,12 @@ the ceiling did not bound.
   subagents; an app's batch never starts on a grant of hers, `apps.app_work`),
   the triage digest's auto-execution, a subagent's announce turn, an app's conversation, an
   unattended ACP CLI approving its own calls, a session policy that never asks, and the eval
-  runner's allowlist of read-only tools. Under
+  runner's allowlist of read-only tools. A channel app that runs a conversation itself (Slack's
+  threads) approves a call only on core's answer (`chat_trust.chat_grant`): the decision a chat
+  makes for a call put to its gate (an operator's hook pattern, what the call's tool declares,
+  the chat's Trust, Trust reads and YOLO), with each grant held to the allowed hosts and to this
+  ceiling (`approval_grants.stands_for_call`). It keeps no pattern, setting or approval mode of
+  its own that approves a call, and one nobody approves is asked on its own prompt. Under
   `{"approval": {"value": "ask"}}` none of them stands, and each refusal is audited
   (`approval.grant_refused`, naming the grant). A switch the owner presses (the chat's mode
   pill, a card's wider scope) is refused with `409 approval_grant_refused`, whose message names
@@ -939,9 +944,13 @@ starts do not, so what they reach is read from the command they run
   and put to a person in an attended one: every grant that would answer a call unasked (Trust,
   YOLO, a hook's auto-approve, a subagent's standing grant, the relay's grant) skips it, and the
   pending approval carries the host (`reach`) to every surface that shows it, a channel's prompt
-  included (the approval brief's `reach`), none of which offers a standing answer for it. The
-  native runtime asks the call's tool first (`_preflight`): a call its tool refuses anyway, such
-  as a denied command, is refused with the tool's reason and put to nobody.
+  included (the approval brief's `reach`), none of which offers a standing answer for it. A switch
+  the owner turns on while it waits does not answer it either: a Trust or YOLO switch, which
+  answers every pending approval it covers, leaves it asking (`DashboardState.answered_alone`). A
+  channel's own turn asks it on the channel's prompt (`chat_trust.chat_grant`), and an
+  evaluation, which has nobody to ask, refuses it (`eval.runner`). The native runtime asks the
+  call's tool first (`_preflight`): a call its tool refuses anyway, such as a denied command, is
+  refused with the tool's reason and put to nobody.
 - **Writes.** An unattended run's writes are held to its own folders (`session_roots`: the folder
   it works in and the ones it was given) and its own temporary folder (`scratch_dir`, its shell's
   `TMPDIR`). A native file write or a shell command's write facet outside them is refused; a write

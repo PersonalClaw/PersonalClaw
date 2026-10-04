@@ -407,10 +407,18 @@ Incognito or Temporary one is never listed). Allow for this chat pressed there i
 into one as opening it from the history does, archived or not, or a new one while its first turn
 still runs. The chat's Permission mode then shows Trust and switches it off, and the grant writes
 the `tool_approval:trust` row another channel's Allow for this chat writes, naming the channel. At
-each call the channel asks `chat_trust.chat_grant` which of the chat's grants answers it (YOLO, its
-Trust, Trust reads), held to the runner's rules (`approval_grants.stands_for_call`: no grant answers
-a call that reaches a host off the allowed hosts, and the operator ceiling bounds each), so a Trust
-switched off in the dashboard makes the next call ask. The turns the channel writes reach the chat
+each call the channel asks `chat_trust.chat_grant` who approves it without asking, and approves no
+call on an answer of its own. The answer is the decision the chat's runner makes for a call put to
+its gate, in its order: an operator's pattern in the hook settings (`hook_pattern`, at the "a hook
+decides" level), what the call's tool declares (`declared_read`, or `work_asks` for the call that
+starts a subagent, whose start asks, or starts on the spawn setting under the ceiling where the
+start is decided), then the chat's Trust reads, Trust and YOLO, none of which reaches a conversation
+an app started. Each grant is held to the runner's rules (`approval_grants.stands_for_call`: no
+grant answers a call that reaches a host off the allowed hosts, and the operator ceiling bounds
+each, a refusal audited as `approval.grant_refused`), and nothing answers a call the hook chain
+refuses, read on the command that would run as well as on its title. So a pattern the owner removes,
+or a Trust switched off in the dashboard, makes the next call ask, and a call nobody approves is
+asked on the channel's prompt. The turns the channel writes reach the chat
 open for the conversation (`save_conversation_turn` → `DashboardState.take_channel_turn`): the chat
 rewrites the conversation's file from what it holds, and a turn it lacked was lost at the next save.
 The name the channel gives the conversation (`ConversationLog.set_title`, a thread's title) reaches

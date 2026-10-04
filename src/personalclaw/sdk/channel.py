@@ -84,7 +84,8 @@ from personalclaw.channel_trust import (
 # ── The chat's Trust, for a conversation the channel runs itself ──
 # A channel that runs a conversation itself keeps no trust of its own: Allow for this chat on its
 # own prompt is that chat's Trust in PersonalClaw (`answer_in_chat`), shown and switched off there,
-# and each later call asks which of the chat's grants answers it (`chat_grant`).
+# and each later call asks who approves it without asking (`chat_grant`): the chat runner's
+# decision, held to the allowed hosts and the operator ceiling. The channel approves no call itself.
 from personalclaw.chat_trust import answer_in_chat, chat_grant
 
 # ── A chore a channel asks a model for itself (a thread's title) ──
