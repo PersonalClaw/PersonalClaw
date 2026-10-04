@@ -94,8 +94,10 @@ WRITERS: tuple[Writer, ...] = (
         # choke point so the Test-rehearsal rule cannot drift per branch (issue 609). The single
         # assignment is pinned by a `not in` guard naming the full closed vocabulary, so the scan
         # now infers MORE values from FEWER sites — min_values is the floor doing the work here.
+        # It GREW by two: the injection screen's refusal of the text a hook was handed, and of what
+        # it printed.
         min_sites=1,
-        min_values=9,
+        min_values=11,
     ),
     Writer(
         label="gateway.py records a refused fire's ScheduleRun",

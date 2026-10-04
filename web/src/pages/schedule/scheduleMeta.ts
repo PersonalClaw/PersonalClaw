@@ -87,8 +87,8 @@ export interface StatusMeta {
 
 /** A hook's `last_status` → the `Outcome` the BACKEND maps it to.
  *
- * 🔴 WHY AN ALIAS RATHER THAN FOUR MORE BRANCHES (issue 496). A lifecycle hook records one of nine
- * statuses (`hooks.py::_record` closes that vocabulary at a single choke point) and `statusMeta`
+ * 🔴 WHY AN ALIAS RATHER THAN FOUR MORE BRANCHES (issue 496). A lifecycle hook records one of the
+ * statuses `hooks.py::_record` closes at a single choke point (nine then), and `statusMeta`
  * handled five. Censused against the source: `queued`, `blocked`, `advisory` and `held_for_rung` ALL
  * rendered "never run" in neutral grey — including `blocked`, which the DELETED `statusDot` used to
  * tone danger, so consolidating the two copies silently dropped it.
@@ -118,6 +118,9 @@ const HOOK_STATUS_ALIAS: Record<string, { outcome: string; label: string }> = {
   queued: { outcome: 'deferred', label: 'queued' },
   // → Outcome.SKIPPED_GATE — the rung ladder held it; nothing ran and nothing was spent.
   held_for_rung: { outcome: 'skipped_gate', label: 'held for rung' },
+  // → Outcome.REFUSED — it ran, and the injection screen refused what it printed, so the context
+  // it adds to a turn never reached one.
+  withheld: { outcome: 'refused', label: 'withheld' },
 }
 
 export function statusMeta(s?: string | null): StatusMeta {

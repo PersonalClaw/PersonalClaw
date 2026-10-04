@@ -35,9 +35,11 @@ opened) and not in the pollers (a payload is untrusted wherever it came from).
 
 from __future__ import annotations
 
+import re
 from string import Template
 
 from personalclaw.action_providers.base import ActionContext
+from personalclaw.security import UNTRUSTED_CLOSE, UNTRUSTED_OPEN
 
 #: Payload keys whose values are STRUCTURAL rather than content — ids and counts the
 #: substrate itself set, never text a third party controls. Left verbatim so a
@@ -91,3 +93,34 @@ def render_template(tmpl: str, ctx: ActionContext) -> str:
         # A malformed template (e.g. a lone ``$``) must not break firing — return
         # the raw string so the action still does something sensible.
         return tmpl
+
+
+def render_for_a_person(tmpl: str, ctx: ActionContext) -> str:
+    """:func:`render_template`, for text a person reads: a notification, a message on a chat
+    channel. A value from outside reaches an action fenced for the model that may read it, and a
+    person reads its words: the fence comes off here (:func:`without_fence`)."""
+    return without_fence(render_template(tmpl, ctx))
+
+
+#: A fence's own markers as a person would see them, each with the line break it sets between
+#: itself and the words, which a value rendered as a string (a list, JSON) writes ``\n``. The
+#: dashboard takes off the same two where it shows fenced text (``web/src/lib/untrustedFence.ts``).
+_SHOWN_OPEN = re.compile(
+    re.escape(UNTRUSTED_OPEN[:-1]) + r"(?:\s[^<>]*)?>(?:\\n|\r?\n)?", re.IGNORECASE
+)
+_SHOWN_CLOSE = re.compile(
+    r"(?:\\n|\r?\n)?" + re.escape(UNTRUSTED_CLOSE[:-1]) + r"\s*>", re.IGNORECASE
+)
+
+
+def without_fence(text: str) -> str:
+    """*text* as a person reads it: every fence marker taken off, and the words between kept.
+
+    For what PersonalClaw shows a person (a notification, a message on a chat channel, a lifecycle
+    trigger's Test), never for what a model is handed, which keeps its fence. Only a real marker
+    comes off: ``security.fence_untrusted`` escapes a marker found inside the text it wraps, so one
+    the words quote stays as they quoted it.
+    """
+    if not text:
+        return text
+    return _SHOWN_CLOSE.sub("", _SHOWN_OPEN.sub("", text))

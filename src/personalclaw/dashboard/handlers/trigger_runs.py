@@ -956,6 +956,7 @@ async def api_trigger_test(request: web.Request) -> web.Response:
     `/run?dry_run=1`), the same manual path every store kind takes.
     """
 
+    from personalclaw.action_providers.template import without_fence
     from personalclaw.dashboard.handlers.triggers import _LIFECYCLE, _hook_store, _redact, _split_id
     from personalclaw.hooks import run_script_hook
     from personalclaw.validation import sanitize_string
@@ -985,7 +986,8 @@ async def api_trigger_test(request: web.Request) -> web.Response:
         {
             "ok": True,
             "result": {
-                "stdout": _redact(result.stdout),
+                # What it printed, as its owner reads it: the turn is handed it fenced.
+                "stdout": _redact(without_fence(result.stdout)),
                 "stderr": _redact(result.stderr),
                 "exit_code": result.exit_code,
                 "error": _redact(result.error),

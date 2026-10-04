@@ -170,6 +170,19 @@ relative to `PersonalClaw/src/personalclaw/`.
   grants nothing. A lifecycle trigger carries the same grant and meets the same
   rule when it fires (`hooks.run_script_hook`); on the gating seam an ungranted
   one blocks the tool call it was asked about rather than letting it through.
+  What its event carried leaves the gateway as a stored trigger's payload does
+  (`hooks.hand_on`): the words (the prompt a turn answers, the agent's reply,
+  an error's message, a task's title, a tool's result) go through the injection
+  screen and reach the action fenced as data with the trigger as their source,
+  while names (a session's key, ids, the tool an approval is about) and the call
+  a tool event carries go on as they are (`hooks.NAMES_ONLY_EVENTS`). What its
+  action prints comes back into the agent's turn the same way (`hooks.take_in`),
+  and a block's reason only when the screen finds it clean, since it goes on
+  unfenced. Text the screen refuses is kept as nothing: the trigger did not run
+  (`blocked_injection`), or what it printed was dropped (`withheld`), and its
+  result says so. A notification or a chat-channel message an action sends, and
+  a trigger's Test, show the words without the fence
+  (`action_providers.template.render_for_a_person`).
   The wire carries `needs_grant` (display names) so the page can badge the row
   and offer Allow. A `webhook` trigger that is switched off or paused, or was
   written on another machine, answers `/fire` with the 404 an unknown one gets.

@@ -23,7 +23,7 @@ from personalclaw.action_providers.base import (
     ActionResult,
 )
 from personalclaw.action_providers.services import get_action_services
-from personalclaw.action_providers.template import render_template
+from personalclaw.action_providers.template import render_for_a_person
 
 _ALLOWED_KINDS = {
     notification_kinds.INFO,
@@ -48,7 +48,7 @@ class NotifyActionProvider(ActionProvider):
         ctx: ActionContext,
         timeout: int = 30,
     ) -> ActionResult:
-        title = render_template(action_config.get("title_template", ""), ctx).strip()
+        title = render_for_a_person(action_config.get("title_template", ""), ctx).strip()
         if not title:
             return ActionResult(success=False, error="notify hook is missing 'title_template'")
         # A rehearsal delivers for real (that is what Test verifies), but says so:
@@ -58,7 +58,7 @@ class NotifyActionProvider(ActionProvider):
         # the inbox — the measured confusion this exists to end.
         if bool((ctx.payload or {}).get("test")):
             title = f"[test] {title}"
-        body = render_template(action_config.get("body_template", ""), ctx)
+        body = render_for_a_person(action_config.get("body_template", ""), ctx)
         kind = (action_config.get("kind") or "info").strip().lower()
         if kind not in _ALLOWED_KINDS:
             kind = "info"

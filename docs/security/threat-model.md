@@ -267,8 +267,10 @@ Content and requests arriving from outside the owner's trust boundary:
 - **Untrusted-content fencing** (`security.py::fence_untrusted`) wraps
   third-party text in `<untrusted_content>` markers with a data-not-instructions
   system note; applied to web-search results, inbox content, and third-party
-  payloads. The note is one of the platform's safety rules (the `safety-rules`
-  snippet), which every agent is handed whatever its own prompt says
+  payloads, a lifecycle trigger's words and what its action prints included
+  (`hooks.hand_on`, `hooks.take_in`, each after the injection screen). The note
+  is one of the platform's safety rules (the `safety-rules` snippet), which
+  every agent is handed whatever its own prompt says
   (`prompt_providers/runtime.py::with_safety_rules`; a path that starts an agent
   without them fails `tests/test_agent_safety_rules_census.py`).
 - **Webhook auth** (`inbound/webhook.py`): the webhook's two doors take requests

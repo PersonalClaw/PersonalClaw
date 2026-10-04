@@ -192,6 +192,28 @@ BLOCKING_EVENTS: frozenset[str] = frozenset(
     str(e["event"]) for e in LIFECYCLE_EVENT_CATALOG if e.get("blocking")
 )
 
+#: The events whose context holds only names: a session's key, an agent's, ids, counts, the tool an
+#: approval is about. A hook hands them to its action as they are, so the action can use them as
+#: names. Every other event's context is words someone wrote (the prompt a turn answers, the
+#: agent's reply, an error's message, a task's title), and what a hook hands on of it goes through
+#: the injection screen first and arrives fenced (:func:`hand_on`), so a new event is words until
+#: it is listed here. ``PreToolUse`` and ``PostToolUse`` carry their call in the payload instead.
+NAMES_ONLY_EVENTS: frozenset[str] = frozenset(
+    {
+        HOOK_EVENT_AGENT_SPAWN,
+        HOOK_EVENT_SESSION_START,
+        HOOK_EVENT_PRE_TOOL_USE,
+        HOOK_EVENT_POST_TOOL_USE,
+        HOOK_EVENT_PRE_RESPONSE,
+        HOOK_EVENT_POST_RESPONSE,
+        HOOK_EVENT_MEMORY_WRITE,
+        HOOK_EVENT_CONTEXT_COMPACT,
+        HOOK_EVENT_SUBAGENT_SPAWN,
+        HOOK_EVENT_APPROVAL_REQUEST,
+        HOOK_EVENT_SESSION_END,
+    }
+)
+
 #: The three enforcement states of a lifecycle hook. Spelled as data because they are a wire
 #: contract two UIs render, and because "armed vs unarmed" needs a third value for the events
 #: where arming is meaningless — otherwise a `Stop` hook reads as a disarmed safety control.
@@ -750,7 +772,7 @@ class ScriptHook:
     ``execute()`` method handles the actual side-effect.
 
     Bash provider follows the ACP agent hook semantics:
-    - exit 0: success (stdout → context for AgentSpawn/UserPromptSubmit)
+    - exit 0: success (stdout → context for AgentSpawn/UserPromptSubmit, fenced, :func:`take_in`)
     - exit 2: block tool (PreToolUse only, stderr → LLM)
     - other: warning (stderr shown to user)
 
@@ -772,8 +794,10 @@ class ScriptHook:
     last_run: float = 0.0
     # "ok" | "error" | "timeout" | "launched" | "queued" | "skipped_incident" | "held_for_rung" |
     # "blocked" (the exit-2 block was HONORED, or guardrails refused the action) | "advisory" (the
-    # script asked to block and the seam could not honor it — G89). Every literal must have a key
-    # in `triggers.history.HOOK_STATUS_TO_OUTCOME`, which reports an unmapped one as a failure.
+    # script asked to block and the seam could not honor it — G89) | "blocked_injection" (the
+    # injection screen refused the text it was handed, so it did not run) | "withheld" (it ran,
+    # and the screen refused what it printed). Every literal must have a key in
+    # `triggers.history.HOOK_STATUS_TO_OUTCOME`, which reports an unmapped one as a failure.
     last_status: str = ""
     run_count: int = 0
 
@@ -897,6 +921,111 @@ class ScriptHookResult:
         return self.exit_code == 0
 
 
+#: The kind a lifecycle hook's text is fenced as, beside the trigger it is (``lifecycle:<id>``): the
+#: Triggers page's name for a hook, and the key of its event's prose in
+#: ``triggers.screen.UNTRUSTED_PAYLOAD_KEYS``.
+LIFECYCLE_KIND = "lifecycle"
+
+
+@dataclass(frozen=True)
+class HandedOn:
+    """What a hook's fire hands its action (:func:`hand_on`): its event's context and payload with
+    their words fenced, or ``refused``, the injection screen's groups, and nothing else."""
+
+    context: str = ""
+    payload: dict = field(default_factory=dict)
+    refused: tuple[str, ...] = ()
+
+
+def hand_on(hook: ScriptHook, context: str, hook_event: dict) -> HandedOn:
+    """What *hook* hands its action of what its event carried: the one door every hook kind's
+    context passes through on its way out of the gateway (``tests/test_hook_context_census.py``).
+
+    The action may be a script, a request to another service or another agent's task, so the
+    words the event carried are text from outside by the time they reach it. They are read by the
+    injection screen first and fenced as data with the hook as their source, through the calls a
+    stored trigger's fire uses on its payload (``gateway._fire_store_trigger``): the context, when
+    its event's is words (:data:`NAMES_ONLY_EVENTS`), and the event's own prose, a prompt or a
+    tool's result (``triggers.screen.payload_text_for`` under :data:`LIFECYCLE_KIND`). Text that is
+    fenced whole, as where it arrived, keeps that fence, and text that only quotes a marker is
+    fenced like any other (``triggers.screen.is_whole_fence``). A screen that refuses the words
+    hands on nothing. Names, and the call a tool event carries, go on as they are: a policy hook
+    judges a call as it was made.
+    """
+    from personalclaw.security import fence_untrusted
+    from personalclaw.triggers import screen as screen_mod
+
+    trigger_id = f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}"
+    words = "" if hook.event in NAMES_ONLY_EVENTS else context
+    prose = screen_mod.payload_text_for(hook_event, kind=LIFECYCLE_KIND)
+    untrusted = "\n".join(text for text in (words, prose) if text.strip())
+    if untrusted:
+        verdict = screen_mod.screen(untrusted)
+        if verdict.blocked:
+            # The groups name the refusal; a verdict that named none still refuses.
+            return HandedOn(refused=verdict.groups or ("injection",))
+    if words.strip() and not screen_mod.is_whole_fence(words):
+        # Labelled as `fence_payload` labels the event's prose, so the two read as one source.
+        context = fence_untrusted(
+            words,
+            source=f"trigger:{trigger_id}",
+            source_type=LIFECYCLE_KIND,
+            source_id=trigger_id,
+            transformation_path="fire:context",
+        )
+    payload = screen_mod.fence_payload(hook_event, kind=LIFECYCLE_KIND, trigger_id=trigger_id)
+    return HandedOn(context=context, payload=payload)
+
+
+@dataclass(frozen=True)
+class TakenIn:
+    """What the gateway takes back of a hook's action (:func:`take_in`): what it printed, fenced,
+    and its block's reason, with ``refused``, the injection screen's groups for what it kept as
+    nothing."""
+
+    stdout: str = ""
+    stderr: str = ""
+    refused: tuple[str, ...] = ()
+
+
+def take_in(hook: ScriptHook, stdout: str, stderr: str, *, blocked: bool) -> TakenIn:
+    """What the gateway takes back of what *hook*'s action printed: the one door a hook's output
+    comes back through, on its way into the agent's next turn.
+
+    What it printed (*stdout*) is the context a hook adds to a turn, so it is read by the
+    injection screen and fenced as data with the hook as its source, whatever it holds: a program's
+    output is text from outside, and a fence it printed is only text inside the new one. Refused,
+    it is kept as nothing. A block's reason (*stderr* when *blocked*) goes on unfenced, inside the
+    refusal's own sentence and on the refused call's card, cut at 200 characters, so it is kept
+    only when the screen finds it clean. Any other *stderr* is a warning for the log and the hook's
+    Test, which no model reads, and stays as it is.
+    """
+    from personalclaw.security import fence_untrusted
+    from personalclaw.triggers import screen as screen_mod
+
+    refused: set[str] = set()
+    if stdout.strip():
+        verdict = screen_mod.screen(stdout)
+        if verdict.blocked:
+            refused.update(verdict.groups or ("injection",))
+            stdout = ""
+        else:
+            trigger_id = f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}"
+            stdout = fence_untrusted(
+                stdout,
+                source=f"trigger:{trigger_id}",
+                source_type=LIFECYCLE_KIND,
+                source_id=trigger_id,
+                transformation_path="hook:stdout",
+            )
+    if blocked and stderr.strip():
+        verdict = screen_mod.screen(stderr)
+        if not verdict.clean:
+            refused.update(verdict.groups or ("injection",))
+            stderr = ""
+    return TakenIn(stdout=stdout, stderr=stderr, refused=tuple(sorted(refused)))
+
+
 async def run_script_hook(
     hook: ScriptHook,
     context: str = "",
@@ -964,10 +1093,26 @@ async def run_script_hook(
                 "advisory",
                 "held_for_rung",
                 "skipped_incident",
+                "blocked_injection",
+                "withheld",
             )
             else "error"
         )
         hook.run_count += 1
+
+    def _refused(why: str, status: str) -> ScriptHookResult:
+        # A fire refused before its action ran, said in *why*. On the gating seam the refusal BLOCKS
+        # the tool rather than letting it through: a policy hook that did not run cannot say the
+        # call is safe, so a refusal never quietly switches a safeguard off.
+        _record(status)
+        return ScriptHookResult(
+            hook_id=hook.id,
+            hook_name=hook.name,
+            event=hook.event,
+            stderr=why if enforced else "",
+            exit_code=2 if enforced else -1,
+            error=why,
+        )
 
     provider = get_action_provider(hook.provider)
     if provider is None:
@@ -983,22 +1128,29 @@ async def run_script_hook(
     # on the agent's own events with nobody pressing anything, so one whose action the owner has not
     # allowed — a hook made before hooks carried a grant, or a hooks.json edited by hand — does not
     # run it. Measured on `main`: an ungranted `bash` hook ran its command on the next prompt. On
-    # the gating seam the refusal BLOCKS the tool rather than letting it through: a policy hook that
-    # is not allowed to run cannot say the call is safe, and a block the owner can lift with one
-    # Allow is the direction that cannot quietly switch a safeguard off.
+    # the gating seam its refusal blocks the tool, and the owner lifts it with one Allow.
     from personalclaw.triggers import grants
 
     ungranted = grants.missing(hook)
     if ungranted:
-        refusal = grants.refusal(hook, ungranted)
-        _record("blocked")
-        return ScriptHookResult(
-            hook_id=hook.id,
-            hook_name=hook.name,
-            event=hook.event,
-            stderr=refusal if enforced else "",
-            exit_code=2 if enforced else -1,
-            error=refusal,
+        return _refused(grants.refusal(hook, ungranted), "blocked")
+
+    # 🔴 THE INJECTION SCREEN AND THE FENCE, as a stored trigger's fire runs them on its payload.
+    # What the event carried leaves the gateway here, so its words are screened and fenced on the
+    # way out (`hand_on`). A refusal is a `blocked_injection` fire, said in a sentence that names
+    # the pattern class and never the text, as the trigger fire's row does.
+    handed = hand_on(hook, context, hook_event)
+    if handed.refused:
+        groups = ", ".join(handed.refused)
+        logger.warning(
+            "hook %s not run: the injection screen refused the text it was handed (%s)",
+            hook.id,
+            groups,
+        )
+        return _refused(
+            f"“{hook.name or hook.provider}” was handed text the injection screen refused "
+            f"({groups}), so it did not run.",
+            "blocked_injection",
         )
 
     # The hook is the trigger that ran this action, as a stored trigger's dispatch says it is
@@ -1007,8 +1159,8 @@ async def run_script_hook(
     # mistaken for a stored trigger's id.
     ctx = ActionContext(
         event=hook.event,
-        context=context,
-        payload=hook_event,
+        context=handed.context,
+        payload=handed.payload,
         trigger_id=f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}",
     )
     # Incident kill switch: a script hook's ACTION is an automated
@@ -1107,6 +1259,23 @@ async def run_script_hook(
             error=agent_error.render(),
         )
 
+    # What the action printed comes back here, on its way into the agent's next turn, so it is
+    # screened and fenced as what went out was (`take_in`); what the screen refuses is kept as
+    # nothing, and the result says so in its own sentence.
+    taken = take_in(hook, result.stdout or "", result.stderr or "", blocked=bool(result.blocked))
+    withheld = ""
+    if taken.refused:
+        groups = ", ".join(taken.refused)
+        logger.warning(
+            "hook %s: the injection screen refused what it printed (%s); none of it was kept",
+            hook.id,
+            groups,
+        )
+        withheld = (
+            f"“{hook.name or hook.provider}” printed text the injection screen refused "
+            f"({groups}); none of it was kept."
+        )
+
     if result.blocked:
         # 🔴 REPORTED ≠ ENFORCED. `ActionResult.blocked` is a REQUEST ("PreToolUse exit_code 2
         # is a block signal"), not evidence that anything was stopped, and only the gating seam
@@ -1129,6 +1298,10 @@ async def run_script_hook(
         # `on_overlap: queue` nothing started at all, so folding it into "ok"
         # would report work that has not begun as work that finished.
         _status = result.outcome if result.outcome in ("launched", "queued") else "ok"
+        if _status == "ok" and withheld:
+            # It did its work, and what it printed, the context it adds to a turn, was refused:
+            # "ok" would say its output reached the agent.
+            _status = "withheld"
     elif result.error and "Timed out" in result.error:
         _status = "timeout"
     else:
@@ -1152,10 +1325,10 @@ async def run_script_hook(
         hook_id=hook.id,
         hook_name=hook.name,
         event=hook.event,
-        stdout=result.stdout,
-        stderr=result.stderr,
+        stdout=taken.stdout,
+        stderr=taken.stderr,
         exit_code=result.exit_code if result.exit_code is not None else -1,
-        error=error_text,
+        error=" ".join(text for text in (error_text, withheld) if text),
         duration_ms=result.duration_ms,
     )
 

@@ -839,6 +839,9 @@ UNTRUSTED_PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
     "event": ("value",),
     "webhook": ("body", "text", "payload"),
     "inbox": ("body", "text"),
+    # A lifecycle hook's event (`hooks.hand_on`): the prompt a turn answers and a tool's result.
+    # Its context line is the hook's own to screen; the call it names rides as it was made.
+    "lifecycle": ("prompt", "tool_response"),
 }
 
 #: Keys screened for EVERY kind — a payload shape that carries prose regardless of source.
@@ -885,6 +888,17 @@ def payload_text_for(payload: dict[str, Any] | None, *, kind: str = "") -> str:
     return "\n".join(parts)
 
 
+def is_whole_fence(text: str) -> bool:
+    """Whether every word of *text* is inside a fence, as text fenced where it arrived is: what
+    :func:`fence_payload` and ``hooks.hand_on`` keep rather than wrap again. Text that only quotes a
+    marker, which ``security.is_fenced`` finds, is not, and is fenced like any other from outside.
+    """
+    from personalclaw.security import UNTRUSTED_CLOSE, outside_fences
+
+    body = (text or "").strip()
+    return body.endswith(UNTRUSTED_CLOSE) and not outside_fences(body).strip()
+
+
 def fence_payload(
     payload: dict[str, Any] | None, *, kind: str = "", trigger_id: str = ""
 ) -> dict[str, Any]:
@@ -907,24 +921,26 @@ def fence_payload(
     set of keys and a fence protecting another is how a payload slips between them. Reuses
     that function's flattening rules for the same reason.
 
-    **Idempotent**: text already carrying a fence is left alone rather than double-wrapped,
+    **Idempotent**: a value that is one fence, whole, is left alone rather than double-wrapped,
     so a `web_watch` item fenced at origin keeps its richer provenance (`source_id` = the
     url, `transformation_path` = `poll:extract-items`) instead of being re-wrapped with this
     seam's coarser one. Double-fencing is not merely untidy — the outer call escapes the
-    inner marker, so the origin attributes would read as literal text.
+    inner marker, so the origin attributes would read as literal text. Text that only QUOTES a
+    marker is fenced like any other (:func:`is_whole_fence`): a page that documents the fence,
+    or one that plants a marker, would otherwise reach the provider outside any fence.
 
     Non-string values are left untouched: ids, counts and flags are not prose, and stringifying them
     to fence them would change the payload's shape under the provider.
     """
     if not isinstance(payload, dict):
         return {}
-    from personalclaw.security import fence_untrusted, is_fenced
+    from personalclaw.security import fence_untrusted
 
     wanted = set(UNTRUSTED_PAYLOAD_KEYS.get(kind, ())) | set(_ALWAYS_UNTRUSTED)
 
     def _fence(value: Any) -> Any:
         if isinstance(value, str):
-            if not value.strip() or is_fenced(value):
+            if not value.strip() or is_whole_fence(value):
                 return value  # nothing to fence, or already fenced at origin
             return fence_untrusted(
                 value,

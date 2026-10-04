@@ -191,6 +191,13 @@ HOOK_STATUS_TO_OUTCOME: dict[str, str] = {
     # Mapped in the SAME change that writes it — an unmapped status falls to the `RAN if
     # last_run` default and would report a held action as one that succeeded.
     "held_for_rung": Outcome.SKIPPED_GATE.value,
+    # The injection screen refused the text a hook was handed (`hooks.hand_on`), so its action
+    # never ran: the outcome a stored trigger's screened payload records, never retried.
+    "blocked_injection": Outcome.BLOCKED_INJECTION.value,
+    # It ran, and the screen refused what it printed (`hooks.take_in`), so the context it adds to
+    # a turn never reached one. A refusal of its result with its reason, not a failure: the script
+    # did what it does, and a retry would print the same.
+    "withheld": Outcome.REFUSED.value,
 }
 
 
@@ -331,6 +338,10 @@ def _hook_reason(status: str, outcome: str) -> str:
         # Names the CAUSE and the exit, not just the state: an incident pause the user cannot see
         # the end of is indistinguishable from a hook that broke.
         return "suppressed: incident mode is active; automated actions resume when it clears"
+    if status == "blocked_injection":
+        return "not run: the injection screen refused the text it was handed"
+    if status == "withheld":
+        return "ran, and the injection screen refused what it printed; none of it was kept"
     return f"hook last reported {status or 'an unknown status'}"
 
 

@@ -35,7 +35,7 @@ from personalclaw.action_providers.base import (
     ActionResult,
 )
 from personalclaw.action_providers.services import get_action_services
-from personalclaw.action_providers.template import render_template
+from personalclaw.action_providers.template import render_for_a_person
 
 
 def route_of(action_config: dict[str, Any] | None, *, transports: Any = None) -> tuple[str, str]:
@@ -87,7 +87,7 @@ class SendMessageActionProvider(ActionProvider):
         ctx: ActionContext,
         timeout: int = 30,
     ) -> ActionResult:
-        text = render_template(action_config.get("text_template", ""), ctx).strip()
+        text = render_for_a_person(action_config.get("text_template", ""), ctx).strip()
         if not text:
             return ActionResult(success=False, error="send-message hook is missing 'text_template'")
         title = (action_config.get("title") or "").strip()
