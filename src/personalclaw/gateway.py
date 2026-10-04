@@ -1585,10 +1585,10 @@ class GatewayOrchestrator:
         dispatch_key = unattended_dispatch_key(f"trigger:{getattr(trigger, 'id', '') or ''}")
         decision = enforce_action(provider_name, config, ctx, session_key=dispatch_key)
         if decision.blocked:
-            matched = decision.matched or ""
-            reason = decision.reason or "blocked by a guardrail rule"
             logger.warning(
-                "trigger %s: action blocked by the guardrails denylist (%s)", trigger.id, matched
+                "trigger %s: action blocked by the guardrails denylist (%s)",
+                trigger.id,
+                decision.matched or "",
             )
             # `skipped_gate`, the same status the rung hold below records: a denylist block is a
             # pre-dispatch POLICY refusal, which is the class `_REFUSAL_STATUSES` admits.
@@ -1596,17 +1596,12 @@ class GatewayOrchestrator:
             # status falls to `SCHEDULE_STATUS_TO_OUTCOME`'s silent FAILED default — a defended
             # fire would then appear in the user's history as a broken automation.
             # `enforce_action` has already written the SEL row and, for `needs_human`, fired the
-            # notification; this row is what puts the refusal in the Runs history too.
+            # notification; this row is what puts the refusal in the Runs history too, in the
+            # words a workflow step refused by the same rule records (`DenyDecision.refusal`).
             from personalclaw.triggers.models import Outcome as _Outcome
 
             await self._record_refused_fire(
-                trigger,
-                status=_Outcome.SKIPPED_GATE.value,
-                error=(
-                    f"blocked by the guardrails denylist: {matched} — {reason}"
-                    if matched
-                    else f"blocked by the guardrails denylist: {reason}"
-                ),
+                trigger, status=_Outcome.SKIPPED_GATE.value, error=decision.refusal()
             )
             self._push_trigger_refresh()
             return

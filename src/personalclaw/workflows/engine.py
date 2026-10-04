@@ -1265,6 +1265,18 @@ async def dispatch_action(
         payload=payload,
         answer=answer,
     )
+    # 🔴 The action denylist, as a trigger's fire asks it: among its rules, a step that would stop
+    # or replace the gateway its run lives in is refused (`guardrails.self_destruct`). A run is
+    # unattended work whoever started it, and is judged so. Asked here, in the one dispatch every
+    # action step takes, not in the provider lookup the engine is handed (`EngineServices.
+    # get_provider`), which a caller can replace. The refusal reads as the fire's does.
+    from personalclaw.guardrails.denylist import enforce_action
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+
+    key = unattended_dispatch_key(f"workflow:{run_id}")
+    if (denied := enforce_action(name, action_config, context, session_key=key)).blocked:
+        fix = "change what this step runs, then run the workflow again; until then it is refused"
+        return _fail(FailureClass.PERMISSION, denied.refusal(), fix)
     try:
         result = await provider.execute(action_config, context, timeout=timeout)
     except asyncio.CancelledError:

@@ -278,6 +278,34 @@ grants, is refused before its message is sent, and the owner is told why.
   them would break the control (see
   [provider-boundary.md](provider-boundary.md)).
 
+### What an unattended action is refused (`guardrails/denylist.py`)
+
+Every unattended dispatch asks `enforce_action` before the action's provider runs: a
+stored trigger's fire through the gateway (clock, event, file, web watch, chained), a
+lifecycle hook, a workflow run's action step (whoever started the run), a dashboard
+tile's refresh and the triage digest's auto-execution. An app's action provider is
+asked about at the same seams, so it inherits the check without knowing it exists.
+`check_action` refuses, first match wins: every action while the security config cannot
+be read; a path that names a credential file; a path outside the ceiling's `paths`; a path the operator's `security.autonomy_denylist` names
+(its `needs_human` verdict also notifies you); a command that would stop, restart,
+update or reinstall the gateway running it (`guardrails/self_destruct.py`); and a
+command the shell denylist refuses. The fourth is classified by the command's effect
+rather than its text: it reads through variables, wrappers (`sudo`, `env`, `nohup`,
+`sh -c`) and paths to the program that would run, and refuses `personalclaw stop`,
+`restart`, `update` and `service install`/`uninstall`, this gateway's service under its
+service manager, and a kill aimed at it, leaving `personalclaw status` and a restart of
+another service alone. A command it cannot classify that reaches for PersonalClaw or a
+lifecycle verb is refused closed. It holds for unattended work only: you stop or update
+PersonalClaw from your own shell or Settings → Updates.
+
+A refusal never reaches the provider. It is a `guardrails.denylist` row in the audit log
+naming the rule, its reason and the command, a warning in the gateway log, and a record
+where the work is recorded: a trigger's history row (`skipped_gate`) and a workflow step,
+which fails `permission` and is named in the run's ending, say the same words, the
+rule's code and its sentence (`DenyDecision.refusal`); a hook's run and a tile's refresh
+record the sentence. `tests/test_action_provider_chokepoints.py` fails an execution site
+that reaches a provider, under any name, without asking.
+
 ## Sandbox (`sandbox.py`)
 
 Credential-hiding child-process isolation for tool execution, including an

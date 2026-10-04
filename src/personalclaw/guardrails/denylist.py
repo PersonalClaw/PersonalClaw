@@ -1,10 +1,12 @@
 """Path/action denylist honored by ALL action providers.
 
 Action providers are pluggable — apps deliver them (``apps/webhook-action``) — so
-enforcement CANNOT rely on provider cooperation. ``check_action`` is called at the
-THREE dispatch seams every action-provider execution passes through (script hooks,
-scheduled jobs, memory-event triggers), so an app-contributed provider inherits the
-denylist without knowing it exists.
+enforcement CANNOT rely on provider cooperation. ``enforce_action`` is called at every
+unattended dispatch seam an action-provider execution passes through (a lifecycle hook,
+a stored trigger's fire, a workflow run's action step, a dashboard tile's refresh, the
+triage digest's auto-execution), so an app-contributed provider inherits the denylist
+without knowing it exists. ``tests/test_action_provider_chokepoints.py`` fails a new
+execution site that reaches a provider without it.
 
 This is defense-in-depth, not a sandbox: it composes with the always-on built-ins
 (``security.is_sensitive_path``, the shell denylist ``security.denied_command``) and the OS
@@ -52,6 +54,15 @@ class DenyDecision:
     @property
     def allowed(self) -> bool:
         return not self.blocked
+
+    def refusal(self) -> str:
+        """What a refused action's run records: the rule that refused it (``matched``, its code)
+        and why (``reason``, its sentence). One composition, so a workflow step and a trigger's fire
+        refused by the same rule say the same thing."""
+        reason = self.reason or "blocked by a guardrail rule"
+        if self.matched:
+            return f"blocked by the guardrails denylist: {self.matched} — {reason}"
+        return f"blocked by the guardrails denylist: {reason}"
 
 
 # Keys in an action_config whose VALUES are filesystem paths worth checking. Kept
@@ -283,11 +294,11 @@ def enforce_action(
 ) -> DenyDecision:
     """``check_action`` + SEL audit + (for needs_human) a needs-input notification.
 
-    The seam wrapper the three dispatch points call. On a block/needs_human it
-    logs to the SEL (same as egress/skill-install guards) and, for ``needs_human``,
-    fires a needs-input notification with the matched rule so the action isn't
-    silently dropped. Returns the decision; the caller short-circuits to a blocked
-    ActionResult when ``blocked`` is True.
+    The seam wrapper every unattended dispatch point calls (the module docstring names them).
+    On a block/needs_human it logs to the SEL (same as egress/skill-install guards) and, for
+    ``needs_human``, fires a needs-input notification with the matched rule so the action isn't
+    silently dropped. Returns the decision; the caller refuses the action when ``blocked`` is
+    True, recording :meth:`DenyDecision.refusal` where its run is recorded.
 
     ``session_key`` is threaded to ``check_action`` so the run's SafetyProfile can
     layer extra deny globs (§3 ``denylist_extra``).

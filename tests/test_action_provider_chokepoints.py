@@ -6,6 +6,7 @@ rather than to fix a defect:
 
     hooks._run_provider (lifecycle)                  incident_active   + enforce_action
     gateway._fire_store_trigger (clock/file/event)   incident_active   + enforce_action
+    workflows.engine.dispatch_action (a run's step)  enforce_action
     handlers/trigger_runs._dispatch_store_action (manual) manual_refusal
     handlers/hooks                                   -- reads metadata only, never executes
 
@@ -69,6 +70,11 @@ EXECUTION_SITES: tuple[tuple[str, str], ...] = (
     # frozen capability set (`autoexec.AUTO_CAPABLE_PROVIDERS`) and its actions bounded by a
     # per-run cap and the NEW-1 budget floor — more fences, not a substitute for these gates.
     ("personalclaw.proactive.autoexec", "the triage auto-execution path"),
+    # Every action step of a workflow run, whatever started the run and whatever lookup the
+    # engine was handed: a run is unattended work, so it is a denylist seam below. It resolves
+    # through a name it is handed (`getter = get_action_provider`), which the census finds by the
+    # name, not by a literal call (`test_the_census_sees_a_lookup_under_another_name`).
+    ("personalclaw.workflows.engine", "a workflow run's action step"),
 )
 
 
@@ -79,6 +85,7 @@ REVERSAL_SITE = "personalclaw.guardrails.ladder"
 #: fire by `manual_refusal`, and a store-backed fire additionally walks the whole `firepath`.
 POLICY_CHECKS: tuple[str, ...] = (
     "incident_active",
+    "enforce_action",
     "manual_refusal",
     "capability_allows",
     "unfenced_actions",
@@ -105,6 +112,7 @@ DENYLIST_SEAMS: tuple[tuple[str, str], ...] = (
     ("personalclaw.gateway", "clock / file / webhook / chained / data-event triggers"),
     ("personalclaw.dashboard.tile_refresh", "TTL dashboard tiles"),
     ("personalclaw.proactive.autoexec", "trivial-tier triage auto-execution"),
+    ("personalclaw.workflows.engine", "workflow action steps"),
 )
 
 #: The one execution site NOT required to carry the denylist, and why: it runs a trigger because a
@@ -132,6 +140,14 @@ USER_CLICKED_SEAMS: tuple[str, ...] = (
     # per-member assertion below holds it to carrying `manual_refusal`.
     "personalclaw.dashboard.handlers.research_reports",
 )
+
+
+#: The workflow modules that look a step's provider up only to read it, each with the one thing it
+#: reads: whether the provider is registered at all, and whether its action is a model turn.
+WORKFLOW_LOOKUPS: dict[str, str] = {
+    "personalclaw.workflows.preflight": "is None",
+    "personalclaw.workflows.node_bindings": "hands_config_to_a_model",
+}
 
 
 def _source(module_name: str) -> str:
@@ -294,24 +310,63 @@ def test_the_would_execute_preview_site_only_reads_the_declaration():
     assert "runner=None" in src, "the dry fire must be dispatched with no runner"
 
 
+def _reaches_the_registry(source: str) -> bool:
+    """Whether *source* reaches the provider registry's lookup at all: calls it, imports it under
+    any name, or hands the name on (`getter = get_action_provider`). Read from the syntax tree, so
+    an alias is a site and a mention in a comment or a docstring is not.
+
+    A literal-call search misses a module that looks its provider up through a name it is handed,
+    as the workflow engine does (`getter = get_action_provider`): `get_action_provider(` never
+    appears in it, so such a site would run providers with nothing here asking it for a check.
+    """
+    import ast
+
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Name) and node.id == "get_action_provider":
+            return True
+        if isinstance(node, ast.Attribute) and node.attr == "get_action_provider":
+            return True
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name == "get_action_provider" for alias in node.names
+        ):
+            return True
+    return False
+
+
+def test_the_census_sees_a_lookup_under_another_name():
+    """The census's own falsification: each way of reaching the lookup is a site, and words about
+    it are not."""
+    reaches = [
+        "provider = get_action_provider(name)\n",
+        "provider = registry.get_action_provider(name)\n",
+        "getter = get_provider or get_action_provider\nprovider = getter(name)\n",
+        "from personalclaw.action_providers import get_action_provider as find\n",
+    ]
+    for source in reaches:
+        assert _reaches_the_registry(source), source
+    words = '"""Looks a provider up as get_action_provider(name) does."""\n# get_action_provider\n'
+    assert not _reaches_the_registry(words)
+
+
 def test_the_site_list_is_not_STALE():
     """🔴 The test that makes the list above trustworthy.
 
     A hardcoded list of call sites rots the moment someone adds one — and a rotted list reads as
     "all sites are checked" while silently covering fewer. So the list is verified against the tree:
-    every module that calls `get_action_provider(` must be either an execution site or the
-    documented catalog exemption.
+    every module that reaches `get_action_provider`, by any name (`_reaches_the_registry`), must be
+    either an execution site or a documented exemption.
     """
     import pathlib
-    import re
 
     root = pathlib.Path(inspect.getfile(__import__("personalclaw"))).parent
     callers: set[str] = set()
     for path in root.rglob("*.py"):
         text = path.read_text(encoding="utf-8", errors="replace")
-        if re.search(r"[^f]get_action_provider\(", text):
+        if _reaches_the_registry(text):
             rel = path.relative_to(root).with_suffix("")
-            callers.add("personalclaw." + str(rel).replace("/", "."))
+            # A package's `__init__` is the package (`personalclaw.action_providers`).
+            parts = rel.parts[:-1] if rel.name == "__init__" else rel.parts
+            callers.add(".".join(("personalclaw", *parts)))
 
     known = {m for m, _ in EXECUTION_SITES} | {
         REVERSAL_SITE,
@@ -346,6 +401,11 @@ def test_the_site_list_is_not_STALE():
         # nothing and undoes nothing; the properties that earn the exemption are asserted in
         # `test_the_rung_router_only_reads_the_undo_declaration` below.
         "personalclaw.guardrails.rungs",
+        # A workflow step's two read-only lookups: preflight asks whether a step's provider is
+        # registered, and the binding pass whether its action is a model turn
+        # (`hands_config_to_a_model`). Neither runs anything; the properties that earn the
+        # exemption are asserted in `test_the_workflow_lookups_only_read_a_declaration` below.
+        *WORKFLOW_LOOKUPS,
         "personalclaw.action_providers.registry",  # defines it
         "personalclaw.action_providers",  # re-exports it
     }
@@ -354,6 +414,19 @@ def test_the_site_list_is_not_STALE():
         "these modules reach an action provider but are not in EXECUTION_SITES: "
         f"{sorted(unaccounted)}. Add them (with a policy check) or document the exemption."
     )
+
+
+@pytest.mark.parametrize("module_name", sorted(WORKFLOW_LOOKUPS))
+def test_the_workflow_lookups_only_read_a_declaration(module_name):
+    """The properties that earn the two workflow lookups their exemption: each resolves a step's
+    provider to read one thing about it, and never runs or undoes it. If one ever does, it must
+    argue its way into `EXECUTION_SITES` with the denylist instead; the engine's dispatch is the
+    one place a workflow step's provider runs."""
+    src = _source(module_name)
+    assert _reaches_the_registry(src), "the exemption is stale if this site no longer resolves"
+    assert ".execute(" not in src, "a workflow lookup must never execute a provider"
+    assert ".reverse(" not in src, "a workflow lookup must never undo through a provider"
+    assert WORKFLOW_LOOKUPS[module_name] in src, "the only reason to resolve here is that read"
 
 
 def test_the_grant_copy_only_reads_the_display_name():

@@ -248,6 +248,28 @@ substitution. A program the command starts (`env`, `nohup`, `xargs`, another
 Nothing the package ships runs PersonalClaw through an interpreter found on `PATH`
 (`tests/test_bare_interpreter_census.py`).
 
+**An `action` step asks the action denylist before its provider runs, as a trigger's
+fire does** (`guardrails.denylist.enforce_action`, from `engine.dispatch_action`). A run
+is unattended work whoever started it: each step is dispatched with nobody approving
+it, and the run lives in the gateway it would stop. So a step is judged as unattended
+(`unattended_dispatch_key("workflow:<run id>")`), and one that would stop, restart,
+update or reinstall the gateway running it (`personalclaw stop`, `personalclaw update`,
+`personalclaw service uninstall`, its service manager or a kill aimed at it,
+`guardrails/self_destruct.py`) is refused, with what the denylist refuses at every
+other unattended dispatch: a credential path, a path the operator's
+`security.autonomy_denylist` names or the ceiling's `paths` leave out, and a command the
+shell denylist refuses. The check is in the one dispatch every action step takes (a
+sequence's, a fan-out's or a loop's body, a sub-run's steps), not in the provider lookup
+the gateway hands the engine (`EngineServices.get_provider`), which a caller can replace.
+A refused step never reaches its provider and fails `permission` with the words a
+trigger's fire records for the same rule, its code and its sentence
+(`DenyDecision.refusal`: "blocked by the guardrails denylist: self_destruct:stop —
+unattended action refused: it would stop the PersonalClaw gateway that is executing it
+…"); the run's ending names it, the audit log has its `guardrails.denylist` row and the
+gateway log a warning. You can still stop or update PersonalClaw yourself, from your own
+shell or Settings → Updates. `tests/test_action_provider_chokepoints.py` fails an
+execution site that reaches a provider, under any name, without asking.
+
 **Every `WF_*` code has a registry row: `workflows/error_codes.py`
 (`WF_ERROR_CODES`).** That is where to look one up. `WF_*` is the third of this repo's
 three code vocabularies — `lowercase_snake` is the HTTP wire envelope
