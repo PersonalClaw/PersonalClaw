@@ -16,7 +16,7 @@ is a trap, not a second document.
 python3.13 -m venv .venv && source .venv/bin/activate   # 3.12 or 3.13: requires-python refuses 3.14
 pip install -e ".[dev]"
 make web-build          # build the SPA once (npm workspace, from root — never `cd web`)
-make serve              # dev gateway on :10000, state under ./.dev-home (NEVER ~/.personalclaw)
+make serve              # dev gateway on 127.0.0.1:10000, state under ./.dev-home (NEVER ~/.personalclaw); make serve-lan opens it to the local network
 
 make lint               # black --check + isort --check + flake8 + mypy — must pass
 make test               # full pytest suite

@@ -34,7 +34,7 @@ PYI_BUNDLE_DIR  := dist/personalclaw-backend
 .PHONY: help format lock lint test test-e2e test-visual build clean harness-validate gates \
         asset-licenses asset-licenses-built \
         mutation-check bundled-model sdk-snapshot apps-contract \
-        serve serve-fresh serve-web \
+        serve serve-lan serve-fresh serve-web \
         web-build spa-check backend-build pyinstaller \
         desktop desktop-dist desktop-dist-linux \
         docker-build docker-up docker-down docker-logs docker-deploy \
@@ -199,12 +199,23 @@ DEV_PORT      ?= 10000
 
 ## serve: run ONE gateway process that serves both the API and the built SPA on
 ## DEV_PORT (default 10000). Requires a built web/dist (run `make web-build` once,
-## or `make serve-fresh`). Binds to the local network (0.0.0.0) and SKIPS token
-## auth for local-network clients (loopback + RFC1918/link-local/ULA) via
-## PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1 — so any device on the dev LAN reaches the
-## dashboard with no token. (This is the IP-gated bypass, NOT AUTH_MODE=none,
-## which would force loopback-only; public/non-private origins still need a token.)
+## or `make serve-fresh`). Binds to this machine only (127.0.0.1) and skips token
+## auth for its own clients via PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1, so nothing
+## else on the network can reach a dev gateway that asks for no token. To reach it
+## from a phone or another computer on the local network, use `make serve-lan`.
 serve:
+	@echo "Dev gateway for home $(DEV_HOME) at http://127.0.0.1:$(DEV_PORT)/ (this machine only; make serve-lan opens it to the local network without a token)"
+	PERSONALCLAW_HOME=$(DEV_HOME) PERSONALCLAW_WORKSPACE=$(DEV_HOME)/workspace \
+		PERSONALCLAW_BIND_HOST=127.0.0.1 \
+		PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1 \
+		$(VENV)/personalclaw gateway --no-open --port $(DEV_PORT) --json-ready
+
+## serve-lan: `serve`, opened to the local network on purpose. Binds 0.0.0.0 and SKIPS
+## token auth for local-network clients (loopback + RFC1918/link-local/ULA), so any
+## device on the network reaches the dashboard with no token. (The IP-gated bypass, NOT
+## AUTH_MODE=none, which would force loopback-only; public origins still need a token.)
+serve-lan:
+	@echo "Dev gateway for home $(DEV_HOME) on port $(DEV_PORT), OPEN to every device on the local network with no token"
 	PERSONALCLAW_HOME=$(DEV_HOME) PERSONALCLAW_WORKSPACE=$(DEV_HOME)/workspace \
 		PERSONALCLAW_BIND_HOST=0.0.0.0 \
 		PERSONALCLAW_BYPASS_LOCAL_NETWORKS=1 \
