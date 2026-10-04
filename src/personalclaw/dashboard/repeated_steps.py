@@ -1,11 +1,21 @@
-"""What running a turn again may repeat: the steps it finished that may have changed something.
+"""What running a turn again may repeat, and the one place every door that does it asks first.
 
-Retry runs a turn that ended without its answer (in an error, cut short, or by a restart) again from
-the message that started it, and deletes the attempt it replaces (``chat_regenerate``). The calls
-that attempt finished go with it, so the turn asked again does not see them and may make them
-again. A read costs nothing to repeat. A file written, a command run, a message sent or a record
-created may happen twice. So a Retry over such a turn asks first, and runs only once the owner has
-confirmed; a turn whose finished calls only read, or that finished none, is run again as before.
+More than one door runs a turn again. Retry runs a turn that ended without its answer (in an error,
+cut short, or by a restart); Regenerate runs a completed one for a fresh answer; Rewind to an
+earlier message, and a resend of a message she did not change, run the turn it started
+(``chat_regenerate``); and a move to another agent while the turn answered asks the new one her
+message again (``running_turn.say_moved``). Each replaces the attempt the turn made, and none hands
+the turn asked again the calls that attempt finished: Retry, Regenerate and Rewind delete them, and
+a runtime built for the turn (after a restart, a rewind or a move) is given the chat's messages,
+never its calls. So the turn may make them again. A read costs nothing to repeat. A file written, a
+command run, a message sent or a record created may happen twice.
+
+So every such door asks through :func:`ask_first` before it deletes or runs anything. When the
+attempt finished a call that may have changed something, a door she uses runs the turn again only
+once she has confirmed exactly those steps, and a door nobody answers through (a move) does not run
+it again on its own: it says so, with Retry, which asks. A turn whose finished calls only read, or
+that finished none, is run again unasked. The gateway's own re-sends after a lost connection or an
+empty reply send only a turn that made no call at all (``chat_runner.run_chat``).
 
 Which calls may have changed something is read from what each call's tool DECLARES, the
 declaration its approval gate reads (``task_modes.reads_only``): a tool that declares it only
@@ -42,6 +52,7 @@ from personalclaw.dashboard.chat_utils import _history_key_for, strip_status_sen
 from personalclaw.dashboard.step_notes import ABOUT_CALL, NOT_RUN, NOTE
 from personalclaw.declined_calls import declined_step, said
 from personalclaw.http_errors import CONSENT_QUESTION, json_error
+from personalclaw.sel import sel
 from personalclaw.task_modes import reads_only
 
 if TYPE_CHECKING:
@@ -183,7 +194,7 @@ async def _surface_declarations() -> dict[str, object]:
             timeout=_SURFACE_WAIT_SECS,
         )
     except Exception:  # noqa: BLE001 - nothing known of a tool: each call counts as a change
-        logger.warning("retry: the tool surface could not be read", exc_info=True)
+        logger.warning("run again: the tool surface could not be read", exc_info=True)
         return {}
     declared: dict[str, object] = {name: RiskLevel.SAFE for name in NativeAgentRuntime.META_TOOLS}
     for _provider, tools in served:
@@ -211,11 +222,11 @@ async def _declarations(state: DashboardState, session: _ChatSession) -> Declare
     return lambda title, _kind, _input: declared.get(title, "")
 
 
-async def finished_changes(
+async def _finished_changes(
     state: DashboardState, session: _ChatSession, rows: list[dict[str, Any]]
 ) -> list[FinishedStep]:
-    """The calls in *rows*, the attempt a Retry replaces, that finished and may have changed
-    something, in the order they were made."""
+    """The calls in *rows*, the attempt running the turn again replaces, that finished and may
+    have changed something, in the order they were made."""
     calls, refused, read_by_card = _calls(rows)
     finished = {
         call_id: call
@@ -242,7 +253,7 @@ async def finished_changes(
     ]
 
 
-def digest(
+def _digest(
     session_key: str, start: dict[str, Any], end: dict[str, Any], steps: list[FinishedStep]
 ) -> str:
     """The question's digest: the chat, the turn (the row that started it and the row it ended on)
@@ -264,9 +275,9 @@ def _lead(steps: list[FinishedStep], *, naming: bool) -> str:
     )
 
 
-def question(steps: list[FinishedStep], confirm: str) -> web.Response:
-    """The question a Retry over *steps* asks the owner before anything runs: what may repeat, and
-    the digest her yes carries. Answered as a question to a page that asks
+def _question(steps: list[FinishedStep], confirm: str) -> web.Response:
+    """The question a door asks the owner before it runs a turn again over *steps*: what may
+    repeat, and the digest her yes carries. Answered as a question to a page that asks
     (``dashboard.consent_ask``), so it is not logged as a failed request there."""
     distinct = list({(s.tool, s.target, s.failed): s for s in steps}.values())
     response = json_error(
@@ -291,7 +302,7 @@ def question(steps: list[FinishedStep], confirm: str) -> web.Response:
     return response
 
 
-def refusal(steps: list[FinishedStep]) -> web.Response:
+def _refusal(steps: list[FinishedStep]) -> web.Response:
     """The answer to a door that cannot show the owner the question (an app): nothing ran, and she
     can retry the turn from the dashboard, where she is asked."""
     return json_error(
@@ -302,17 +313,74 @@ def refusal(steps: list[FinishedStep]) -> web.Response:
     )
 
 
-def audited(steps: list[FinishedStep]) -> list[str]:
+def _audited(steps: list[FinishedStep]) -> list[str]:
     """The steps as the turn's audit row names them."""
     return [said([s.step]) for s in steps]
 
 
-__all__ = [
-    "REPEATS_STEPS",
-    "FinishedStep",
-    "audited",
-    "digest",
-    "finished_changes",
-    "question",
-    "refusal",
-]
+@dataclass(frozen=True)
+class RunAgain:
+    """What a door may do with the turn it would run again (:func:`ask_first`)."""
+
+    #: The finished steps that may have changed something, which running the turn again may
+    #: repeat. Empty when it would repeat nothing.
+    steps: list[FinishedStep]
+    #: The request carries her yes to exactly these steps.
+    confirmed: bool = False
+    #: What the door answers instead of running: the question, or an app's refusal. ``None`` for a
+    #: door that may run the turn, and for one nobody answers through, which says why itself.
+    answer: web.Response | None = None
+
+    @property
+    def runs(self) -> bool:
+        """Whether the door runs the turn again now: nothing may repeat, or she said yes to it."""
+        return not self.steps or self.confirmed
+
+    @property
+    def audit(self) -> dict[str, Any] | None:
+        """What the door's ``allowed`` row records of her yes: that she gave it, and to what."""
+        return {"confirmed": True, "repeats": _audited(self.steps)} if self.confirmed else None
+
+
+async def ask_first(
+    state: DashboardState,
+    session: _ChatSession,
+    started_by: dict[str, Any],
+    attempt: list[dict[str, Any]],
+    *,
+    request: web.Request | None,
+    operation: str = "",
+    confirm: str = "",
+) -> RunAgain:
+    """Ask before a turn runs again: the one function every door that runs a turn again goes
+    through, before it deletes or runs anything.
+
+    *started_by* is the row that started the turn, and *attempt* the rows of the attempt it would
+    replace. When none of the attempt's finished calls may have changed something the door runs
+    the turn (:attr:`RunAgain.runs`). Otherwise a door with a *request* runs it only on her yes to
+    exactly these steps, the *confirm* the question carries; until then it answers with the
+    question (:func:`_question`), and an app with the refusal that sends her to the dashboard
+    (:func:`_refusal`), each recorded in the audit log as *operation*. A door with no *request* (a
+    turn the gateway would send again itself) has nobody to ask, so it does not run the turn.
+    """
+    steps = await _finished_changes(state, session, attempt)
+    if not steps:
+        return RunAgain([])
+    if request is None:
+        return RunAgain(steps)
+    asked = _digest(session.key, started_by, attempt[-1], steps)
+    app_name = request.get("app", "")
+    if not app_name and confirm == asked:
+        return RunAgain(steps, confirmed=True)
+    sel().log_api_access(
+        caller=f"app:{app_name}" if app_name else "dashboard",
+        operation=operation,
+        outcome="refused" if app_name else "needs_confirm",
+        source="dashboard",
+        resources=session.key,
+        metadata={"repeats": _audited(steps)},
+    )
+    return RunAgain(steps, answer=_refusal(steps) if app_name else _question(steps, asked))
+
+
+__all__ = ["REPEATS_STEPS", "FinishedStep", "RunAgain", "ask_first"]

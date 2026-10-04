@@ -14,6 +14,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A chat the dashboard saves keeps where each turn came from: a channel's message keeps its thread and sender, a program's message through the OpenAI-compatible door keeps that program, and only what you type in the dashboard reads as typed there (the inbound door hands a chat a message with its `source`, and the conformance kit's `CapturedSession.queue_append` takes it: channel contract change, used by `*-channel`).**
 - **The agent shell refuses commands that print live sign-in credentials, and agent apps can protect their documented sign-in stores (`kiro-cli-agent` uses it).**
 - **Retry on a turn that ended without its answer asks first when the turn finished steps that may have changed something, and names them: running it again may repeat them, so it runs only once you confirm.**
+- **Regenerate, Rewind to here and Edit & resend with your message unchanged ask first, as Retry does, when the turn they run again finished steps that may have changed something; and a chat moved to another agent while it answered is not sent to the new one on its own after such a step, but says so, with Retry.**
 
 ### Added
 

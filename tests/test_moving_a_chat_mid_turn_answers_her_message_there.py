@@ -395,11 +395,16 @@ def _moved_session() -> Any:
     return session
 
 
+def _not_read() -> tuple[dict, list[dict]]:
+    """What the turn did, which a move that sends nothing again has no reason to read."""
+    raise AssertionError("the attempt was read for a turn that is not sent again")
+
+
 @pytest.mark.asyncio
 async def test_a_move_that_lands_after_the_answer_keeps_it_and_applies_from_her_next_message():
     told, session, asked_again = _Told(), _moved_session(), []
-    moved = running_turn.say_moved(
-        told, session, "dashboard:chat-moved-1", True, lambda: asked_again.append(1)
+    moved = await running_turn.say_moved(
+        told, session, "dashboard:chat-moved-1", True, lambda: asked_again.append(1), _not_read
     )
     await asyncio.sleep(0)
     assert moved is True
@@ -413,8 +418,8 @@ async def test_a_move_that_lands_after_the_answer_keeps_it_and_applies_from_her_
 async def test_a_moved_turn_that_queued_its_own_retry_asks_her_message_once():
     told, session, asked_again = _Told(), _moved_session(), []
     session.queue_retry(HER_MESSAGE)
-    running_turn.say_moved(
-        told, session, "dashboard:chat-moved-1", False, lambda: asked_again.append(1)
+    await running_turn.say_moved(
+        told, session, "dashboard:chat-moved-1", False, lambda: asked_again.append(1), _not_read
     )
     assert asked_again == []
     assert [q["content"] for q in session._queue] == [HER_MESSAGE]
@@ -423,7 +428,11 @@ async def test_a_moved_turn_that_queued_its_own_retry_asks_her_message_once():
     ]
 
 
-def test_a_turn_nobody_moved_ends_as_it_did():
+@pytest.mark.asyncio
+async def test_a_turn_nobody_moved_ends_as_it_did():
     session = _make_session("chat-moved-2")
-    assert running_turn.say_moved(_Told(), session, "dashboard:chat-moved-2", False, None) is False
+    moved = await running_turn.say_moved(
+        _Told(), session, "dashboard:chat-moved-2", False, None, _not_read
+    )
+    assert moved is False
     assert session.messages == []

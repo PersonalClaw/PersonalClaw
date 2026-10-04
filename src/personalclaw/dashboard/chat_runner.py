@@ -2209,6 +2209,17 @@ async def run_chat(
     # That row itself: what its sender typed is read off it once the turn is done (`own_words`).
     _turn_row = session.messages[_started_at] if _started_at is not None else None
     _asked_by_person = _turn_row is None or _turn_row.get("role") == "user"
+    # Where the rows this attempt writes begin: after its own row, or, for a turn with no row of
+    # its own, where the transcript ended when it began.
+    _attempt_from = len(session.messages) if _started_at is None else _started_at + 1
+
+    def _this_attempt() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """The row that started this turn and the rows its attempt wrote, as the transcript holds
+        them now, for a door that would send the turn again (`running_turn.say_moved`)."""
+        msgs = session.messages
+        at = next((i for i, m in enumerate(msgs) if m is _turn_row), None)
+        return (_turn_row or {}), (msgs[at + 1 :] if at is not None else msgs[_attempt_from:])
+
     # Who asked for the turn, when the owner did not (`turn_source.asked_by`), or for the work it
     # carries on (`asked_for_by`): what the turn, its tools and the work it starts would change of
     # her memory waits for her own word.
@@ -5453,7 +5464,12 @@ async def run_chat(
         needs_session_reset = True  # checked in finally block
         if assistant_text:
             _flush_segment(state, session, assistant_text, broadcast=False)
-        if _prompt_depth == 0:
+        if _prompt_depth == 0 and _steps_made():
+            # It made calls before its runtime was killed: sent again, it could make them again.
+            turn_endings.say_the_turn_has_no_answer(
+                state, session, turn_endings.lost_after_steps_notice(_turn_agent, _steps_made())
+            )
+        elif _prompt_depth == 0:
             session._prompt_busy_retries += 1
             if session._prompt_busy_retries <= 3:
                 _send_again()
@@ -5624,7 +5640,9 @@ async def run_chat(
             except Exception:
                 logger.debug("Stream cleanup failed", exc_info=True)
         # Below the channel's progress lines, which the stream just finalized.
-        if not running_turn.say_moved(state, session, session_key, _answered, _send_again):
+        if not await running_turn.say_moved(
+            state, session, session_key, _answered, _send_again, _this_attempt
+        ):
             say_how_an_unanswered_turn_ended(
                 state, session, session_key, _turn_outcome, after_deny=_deny_note
             )

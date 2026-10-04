@@ -9061,8 +9061,8 @@ export const api = {
     post<{ ok: boolean; title?: string }>(`/api/chat/sessions/${encodeURIComponent(session)}/generate-title`),
 
   // message actions (stage 4) — all stream the new reply over the dashboard WS.
-  // A Retry over steps that may have changed something is answered with the gateway's question
-  // (`retry_repeats_steps`, `pages/chat/repeatedSteps.tsx`); `confirm` is her yes to it.
+  // Retry or Regenerate over steps that may have changed something is answered with the gateway's
+  // question (`retry_repeats_steps`, `pages/chat/repeatedSteps.tsx`); `confirm` is her yes to it.
   regenerate: (session: string, confirm?: string) =>
     post<{ ok: boolean }>(`/api/chat/sessions/${session}/regenerate`, confirm ? { confirm } : undefined),
   // Switch which regenerated answer variant is active on the latest assistant turn.
@@ -9070,14 +9070,17 @@ export const api = {
   // every tab); returns the now-active index. 409 if the session is mid-turn.
   switchVariant: (session: string, index: number) =>
     post<{ ok: boolean; index: number }>(`/api/chat/sessions/${session}/switch-variant`, { index }),
-  editResend: (session: string, content: string, ts?: string, index?: number, client_ts?: string, rewind?: boolean) =>
+  editResend: (session: string, content: string, ts?: string, index?: number, client_ts?: string, rewind?: boolean, ask?: { again?: boolean; confirm?: string }) =>
     post<{ ok: boolean; rewound: number }>(`/api/chat/sessions/${session}/edit-resend`,
       // Prefer the original turn's ts to LOCATE the message; always send the index
       // as a fallback (un-hydrated optimistic turns have no ts) + a fresh client_ts
       // the backend stores on the re-appended message so a repeat edit still matches.
       // rewind=true → fork-and-swap (edit ANY past turn): retain the discarded tail
       // on the edited message + reset the provider so context rebuilds truncated.
-      { content, ...(ts ? { ts } : {}), ...(index !== undefined ? { index } : {}), ...(client_ts ? { client_ts } : {}), ...(rewind ? { rewind: true } : {}) }),
+      // again=true → her message sent as it is (Rewind to here, a resend she did not change): its
+      // turn runs again, and the gateway asks first when that turn finished steps that may have
+      // changed something (`retry_repeats_steps`); `confirm` is her yes to that question.
+      { content, ...(ts ? { ts } : {}), ...(index !== undefined ? { index } : {}), ...(client_ts ? { client_ts } : {}), ...(rewind ? { rewind: true } : {}), ...(ask?.again ? { again: true } : {}), ...(ask?.confirm ? { confirm: ask.confirm } : {}) }),
   // Interrupt the running turn but KEEP the queue (unlike /stop). Optional queueId
   // promotes that queued message to the front so it runs next (queue_promoted WS echo).
   interruptChat: (session: string, queueId?: string) =>

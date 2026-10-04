@@ -48,13 +48,20 @@ Five rewinds' worth of history are kept per message; a sixth pushes out the olde
 
 A turn that ends in an error, is cut short, or is cut off by a restart says so where its answer
 should be, with **Retry**. Retry runs the turn again from its message and replaces the attempt
-on screen. When that attempt finished steps that may have changed something (a file written, a
-command run, a message sent, a record created), Retry asks first: it lists those steps as their
-cards name them, and runs the turn again only when you choose **Run it again**, because the new
-attempt may make them again. A turn whose finished steps only read, or that finished none, is
-retried without asking. A step counts as a read only when its tool declares that it only reads,
-or its shell command is one PersonalClaw reads as read-only; any other step, one whose tool
-declares nothing included, is asked about.
+on screen.
+
+### Running a turn again asks first when it may repeat a step
+
+**Retry**, **Regenerate** on an answer, **Rewind to here**, and **Edit & resend** with your
+message unchanged each run a turn again, and the new attempt is not shown what the old one did.
+When that attempt finished steps that may have changed something (a file written, a command run,
+a message sent, a record created), each asks first: it lists those steps as their cards name
+them, and runs the turn again only when you choose **Run it again**, because the new attempt may
+make them again. A turn whose finished steps only read, or that finished none, runs again without
+asking. Rewind asks only about the turn it runs again: the later turns it replaces answered other
+messages. A message you edit is a new message, so it is sent without this question. A step counts
+as a read only when its tool declares that it only reads, or its shell command is one PersonalClaw
+reads as read-only; any other step, one whose tool declares nothing included, is asked about.
 
 ## 2. Branch — take the same conversation two ways
 
@@ -155,7 +162,10 @@ composer, with **Route** on the routing chip, or through the API — applies to 
 being answered. The running turn stops, a permission card it was waiting on ends as not run,
 and your message is answered again by what you picked. The chat says so where the
 conversation is: "Moved to oncall-triage — it is answering your message." If the answer had
-already arrived, it stands, and the change applies from your next message.
+already arrived, it stands, and the change applies from your next message. If the turn had
+already finished a step that may have changed something, your message is not sent to what you
+picked on its own, since that could repeat the step: the chat says so, with **Retry**, which asks
+first.
 
 ### Subagents the agent starts
 
@@ -362,9 +372,10 @@ actions, it has two rows:
 Generating follow-up suggestions is recorded too (`chat_followups`), because it spends a model
 call you did not explicitly ask for.
 
-A Retry is recorded as `chat.retry_failed_turn`. When it asks first, the question is recorded
-(`needs_confirm`, naming the steps it may repeat), and so is your **Run it again** (`allowed`,
-with the steps you confirmed).
+A Retry is recorded as `chat.retry_failed_turn`, a Regenerate as `chat.regenerate`, and a
+message you resend as `chat.edit_resend` (a rewind is `chat.rewind`, above). When one of them asks
+first, the question is recorded (`needs_confirm`, naming the steps it may repeat), and so is your
+**Run it again** (`allowed`, with the steps you confirmed).
 
 A branch that is *refused* — a temporary chat, a chat an app does not own, or the ceiling on
 how many chats may exist — is recorded as well, with the reason. A refusal is a decision, not

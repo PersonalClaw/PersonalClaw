@@ -17,8 +17,11 @@ that names a saved agent says what changes with :func:`to_agent`. The change is 
 about the message the chat is answering. The running turn ends as stopped: a pending approval is
 answered cancelled, as a Stop answers it, and its runtime is asked to stop. Her message is then
 answered again on the new runtime, as the same turn, and the chat says so where the conversation
-is. A turn that had given its answer when the change landed keeps it, and the change applies
-from her next message.
+is. Not when the turn had finished a call that may have changed something: the new runtime is
+handed her messages and never that call, so it could make it again, and nobody is there to say
+yes to that (``repeated_steps.ask_first``). That turn ends saying so, with Retry, which asks. A
+turn that had given its answer when the change landed keeps it, and the change applies from her
+next message.
 
 The change itself is made when the old turn has ended, never under it, so what the old turn
 records about itself (its audit rows, its hooks, its usage) names the runtime it ran on.
@@ -38,7 +41,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.config.loader import AppConfig, resolve_session_workspace
-from personalclaw.dashboard import turn_endings
+from personalclaw.dashboard import repeated_steps, turn_endings
 from personalclaw.dashboard.chat_utils import (
     _history_key_for,
     _redact_for_display,
@@ -222,36 +225,52 @@ async def rebind(state: DashboardState, session: _ChatSession, change: Rebinding
     return True
 
 
-def say_moved(
+async def say_moved(
     state: DashboardState,
     session: _ChatSession,
     session_key: str,
     answered: bool,
     send_again: Callable[[], None],
+    attempt: Callable[[], tuple[dict[str, Any], list[dict[str, Any]]]],
 ) -> bool:
     """End a turn she moved, where the conversation is. False when the turn was not moved.
 
     An answer the turn gave (*answered*: its runtime ended it with an answer, not a cancel) stands,
     and the change applies from her next message. Otherwise her message is asked again on the new
     runtime as the same turn (*send_again*), once: a retry the turn already queued for itself is
-    that one. The chat says which, and its linked channel hears the same line.
+    that one. Not when the attempt it made (*attempt*: the row that started the turn and the rows
+    it wrote) finished a call that may have changed something (``repeated_steps.ask_first``): the
+    turn ends in the error that says so, which carries Retry. The chat says which, and its linked
+    channel hears the same line.
     """
     change = session._rebinding
     if change is None:
         return False
     owed = not answered or session._last_turn_errored
-    if owed and not (session._queue and session._queue[0].get("retry")):
-        send_again()
     to = answering_label(session, change)
+    if owed and not (session._queue and session._queue[0].get("retry")):
+        started_by, rows = attempt()
+        asked = await repeated_steps.ask_first(state, session, started_by, rows, request=None)
+        if not asked.runs:
+            note = turn_endings.moved_without_answering_notice(to, len(asked.steps))
+            turn_endings.say_the_turn_has_no_answer(state, session, note)
+            _tell_channel(state, session_key, note)
+            return True
+        send_again()
     note = (
         turn_endings.moved_turn_notice(to) if owed else turn_endings.moved_after_answer_notice(to)
     )
     session.append("notice", note, "msg msg-notice")
     state.broadcast_ws("chat_message", {"session": session.key, "role": "notice", "content": note})
+    _tell_channel(state, session_key, note)
+    return True
+
+
+def _tell_channel(state: DashboardState, session_key: str, note: str) -> None:
+    """Say *note* on the channel the chat is linked to, in the background."""
     told = asyncio.ensure_future(state.tell_linked_channel(session_key, note))
     state._background_tasks.add(told)
     told.add_done_callback(state._background_tasks.discard)
-    return True
 
 
 async def apply_pending_move(

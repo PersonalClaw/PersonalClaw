@@ -50,11 +50,11 @@ async def _persist_history_off_thread(
 async def api_chat_session_regenerate(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/regenerate — regenerate the last assistant reply.
 
-    On a turn that ended without its answer this is its Retry, and when the attempt it replaces
-    finished steps that may have changed something (``repeated_steps``) it runs nothing until the
-    owner says yes: it answers ``409 retry_repeats_steps`` with what may repeat, and runs once the
-    request comes back with that question's ``confirm``. An app is told to retry from the
-    dashboard: it cannot ask her.
+    On a turn that ended without its answer this is its Retry. Either way, when the attempt it
+    replaces finished steps that may have changed something it runs nothing until the owner says
+    yes (``repeated_steps.ask_first``): it answers ``409 retry_repeats_steps`` with what may
+    repeat, and runs once the request comes back with that question's ``confirm``. An app is told
+    to run it again from the dashboard: it cannot ask her.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
@@ -104,27 +104,20 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
                 {"error": "the message that started this turn is empty"}, status=400
             )
 
-        # A Retry deletes the attempt it replaces, the calls it finished included, and the turn
-        # asked again may make them again: one that may have changed something is run again only
-        # on her yes to exactly these steps.
-        repeats: list[repeated_steps.FinishedStep] = []
-        if retrying_failed_turn:
-            repeats = await repeated_steps.finished_changes(state, session, msgs[u_idx + 1 :])
-        if repeats:
-            app_name = request.get("app", "")
-            asked = repeated_steps.digest(session.key, msgs[u_idx], msgs[anchor_idx], repeats)
-            if app_name or confirmed != asked:
-                sel().log_api_access(
-                    caller=f"app:{app_name}" if app_name else "dashboard",
-                    operation="chat.retry_failed_turn",
-                    outcome="refused" if app_name else "needs_confirm",
-                    source="dashboard",
-                    resources=session.key,
-                    metadata={"repeats": repeated_steps.audited(repeats)},
-                )
-                if app_name:
-                    return repeated_steps.refusal(repeats)
-                return repeated_steps.question(repeats, asked)
+        # Retry and Regenerate both delete the attempt they replace, the calls it finished
+        # included, and the turn asked again may make them again: one that may have changed
+        # something runs again only on her yes to exactly these steps.
+        asked = await repeated_steps.ask_first(
+            state,
+            session,
+            msgs[u_idx],
+            msgs[u_idx + 1 :],
+            request=request,
+            operation="chat.retry_failed_turn" if retrying_failed_turn else "chat.regenerate",
+            confirm=confirmed,
+        )
+        if asked.answer is not None:
+            return asked.answer
 
         variants: list[dict] = []
         if not retrying_failed_turn:
@@ -158,9 +151,7 @@ async def api_chat_session_regenerate(request: web.Request) -> web.Response:
             source="dashboard",
             resources=session.key,
             # Her yes, and to what: the steps she was told this run may repeat.
-            metadata=(
-                {"confirmed": True, "repeats": repeated_steps.audited(repeats)} if repeats else None
-            ),
+            metadata=asked.audit,
         )
 
         if retrying_failed_turn:
@@ -257,8 +248,26 @@ async def api_chat_session_switch_variant(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "index": idx})
 
 
+def _turn_rows(msgs: list[dict], start: int) -> list[dict]:
+    """The rows of the turn ``msgs[start]`` started: every row after it, up to the next row that
+    starts a turn."""
+    end = next(
+        (i for i in range(start + 1, len(msgs)) if msgs[i].get("role") in _TURN_DISPATCH_ROLES),
+        len(msgs),
+    )
+    return msgs[start + 1 : end]
+
+
 async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
-    """POST /api/chat/sessions/{session}/edit-resend — edit a user message and resend."""
+    """POST /api/chat/sessions/{session}/edit-resend — edit a user message and resend.
+
+    Sent again as it is (Rewind to here, or a resend she did not change), her message runs its
+    turn again, and when the attempt that turn made finished steps that may have changed something
+    nothing runs until the owner says yes (``repeated_steps.ask_first``), as Retry asks. The page
+    says it is sending the message again (``again``), since what it shows of a message is not
+    always the row's own words; a body that carries the row's own words is that too. An edited
+    message is a new one, and is sent as it is asked.
+    """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
     session = state._sessions.get(name)
@@ -274,6 +283,8 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
     ts = body.get("ts")
     client_ts = body.get("client_ts")
     rewind = bool_field(body, "rewind", default=False)
+    again = bool_field(body, "again", default=False)
+    confirmed = string_field(body, "confirm")
     content = (body.get("content") or "").strip()
     if not content:
         return web.json_response({"error": "content is required"}, status=400)
@@ -318,6 +329,28 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         # user turn exists is decided here, where the transcript is.
         rewind = rewind or any(m.get("role") == "user" for m in msgs[index + 1 :])
 
+        _bc, _ = redact_exfiltration_urls(content)
+        _bc, _ = redact_credentials(_bc)
+        # Her message sent again as it is runs the turn it started again, and the attempt that turn
+        # made goes with the rows below: what it did that may have changed something runs again
+        # only on her yes to exactly those steps. An edited message is a new one.
+        same = again or str(msgs[index].get("content") or "").strip() in (content, _bc)
+        asked = (
+            await repeated_steps.ask_first(
+                state,
+                session,
+                msgs[index],
+                _turn_rows(msgs, index),
+                request=request,
+                operation="chat.rewind" if rewind else "chat.edit_resend",
+                confirm=confirmed,
+            )
+            if same
+            else repeated_steps.RunAgain([])
+        )
+        if asked.answer is not None:
+            return asked.answer
+
         # True rewind (fork-and-swap under the same slot): snapshot the discarded
         # tail — the edited turn's old content + every message AFTER it — as a
         # `rewound` chain (the variants pattern at message level, capped like
@@ -347,8 +380,6 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         del session.messages[index:]
         session._dirty = True
 
-        _bc, _ = redact_exfiltration_urls(content)
-        _bc, _ = redact_credentials(_bc)
         # Store the FE's fresh client ts (if valid ISO-8601) on the re-appended
         # message so a subsequent edit-resend still matches by ts; else server-stamp.
         _resend_ts = ""
@@ -371,6 +402,8 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
             outcome="allowed",
             source="dashboard",
             resources=session.key,
+            # Her yes, and to what: the steps she was told this run may repeat.
+            metadata=asked.audit,
         )
 
         # Fork-and-swap: reset the provider so the next run_chat's `is_new` path

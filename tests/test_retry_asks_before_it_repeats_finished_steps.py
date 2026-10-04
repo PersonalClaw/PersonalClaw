@@ -99,8 +99,13 @@ def runs():
 
 @pytest.fixture
 def audit():
+    """The route's own rows and the question's, which the one function every door that runs a
+    turn again asks through writes (``repeated_steps.ask_first``)."""
     log = MagicMock()
-    with patch("personalclaw.dashboard.chat_regenerate.sel", return_value=log):
+    with (
+        patch("personalclaw.dashboard.chat_regenerate.sel", return_value=log),
+        patch("personalclaw.dashboard.repeated_steps.sel", return_value=log),
+    ):
         yield log
 
 

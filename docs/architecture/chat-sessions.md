@@ -768,28 +768,48 @@ or the row an automation, a subagent's report or an auto-nudge dispatched it
 with. On a failed turn's error row it is a plain retry, and nothing is kept as
 a variant.
 
-**A Retry that may repeat what the attempt did.** A Retry deletes the attempt it
-replaces, the calls it finished included, so the turn asked again does not see
-them and may make them again. When the attempt finished a call that may have
-changed something, the route runs nothing and answers `409 retry_repeats_steps`
-with the question (`dashboard/repeated_steps.py`): its title, its sentence, each
-such call by its tool and target (a failed one says so), and the `confirm` the
-owner's yes sends back. The chat page shows it, each step in the words of its
-card, and sends the Retry again only on that yes; a No leaves the chat as it
-was. A call may have changed something unless its tool declares it only reads
-or its shell command screens read-only (`task_modes.reads_only`, the approval
-gate's reading). The declaration is the chat's runtime's while it is up,
-PersonalClaw's own tools' on an agent CLI (whose own tools declare nothing), and
-the agent's tool surface once the runtime is gone, as after a restart; an
+**Running a turn again may repeat what the attempt did.** Five doors run a turn
+again: Retry on a failed turn and Regenerate on an answer (`regenerate`), Rewind
+to an earlier message and a resend of a message she did not change
+(`edit-resend`), and a move to another agent while the turn answered
+(`running_turn.say_moved`). Each replaces the attempt the turn made, and none
+hands the turn asked again the calls that attempt finished: the first four
+delete them, and a runtime built for a turn (after a restart, a rewind or a
+move) is given the chat's messages, never its calls. So every door asks through
+one function, `repeated_steps.ask_first`, before it deletes or runs anything.
+When the attempt finished a call that may have changed something, a door she
+uses runs nothing and answers `409 retry_repeats_steps` with the question: its
+title, its sentence, each such call by its tool and target (a failed one says
+so), and the `confirm` the owner's yes sends back. The chat page shows it, each
+step in the words of its card, and sends the request again only on that yes; a
+No leaves the chat as it was. A move, which nobody is there to answer, does not
+send her message to the new agent on its own: the turn ends in the error that
+says so ("Moved to … This turn had finished 1 step that may have changed
+something, so your message was not sent again …"), and Retry on it asks. The
+edit door counts a message as sent again when the page says so (`again`, which
+Rewind and an unchanged resend send, since what the page shows of a message is
+not always the row's own words) or the body carries the row's own words; an
+edited message is a new one and is not asked about. Rewind asks only about the
+turn it runs again, not the later turns it rewinds past, which answered other
+messages. A call may have changed something unless its tool declares it only
+reads or its shell command screens read-only (`task_modes.reads_only`, the
+approval gate's reading). The declaration is the chat's runtime's while it is
+up, PersonalClaw's own tools' on an agent CLI (whose own tools declare nothing),
+and the agent's tool surface once the runtime is gone, as after a restart; an
 external MCP server's call counts as a change there, since listing its tools
 would start the server. A call its approval refused, or a gate refused before it
 ran, is not asked about; a failed call is, since the transcript does not keep
 whether it ran before it failed. A turn whose finished calls only read, or that
-finished none, retries unasked as before. The yes is bound to the steps it was
-shown, so a turn that changed since is asked about again, and an app is refused
-and told to retry from the dashboard. The rows the Retry deletes are the ones it
-always deleted. The turn's audit records the question (`needs_confirm`, naming
-the steps) and the yes (`allowed`, with `confirmed` and the steps).
+finished none, runs again unasked as before. The yes is bound to the steps it
+was shown, so a turn that changed since is asked about again, and an app is
+refused and told to run it again from the dashboard. The rows each door deletes
+are the ones it always deleted. The turn's audit records the question
+(`needs_confirm`, naming the steps) and the yes (`allowed`, with `confirmed` and
+the steps), under the door's own operation: `chat.retry_failed_turn`,
+`chat.regenerate`, `chat.rewind` or `chat.edit_resend`. The gateway's own
+re-sends after a lost connection, an empty reply or a busy agent send only a
+turn that made no call; `tests/test_running_a_turn_again_census.py` keeps every
+door on the one function and every such re-send behind that check.
 
 **A turn with no answer.** A native turn that ran tools and then wrote nothing
 is asked once for its reply (`ANSWER_OWED_NOTE` in `agents/native/owed_reply.py`,

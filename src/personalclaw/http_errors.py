@@ -320,10 +320,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "invalid_turn": "The addressed turn does not exist or is not rewindable.",
     "turn_running": "The turn is still executing; it cannot be rewound yet.",
     # ── running a chat turn again (dashboard/chat_regenerate.py, dashboard/repeated_steps.py) ──
-    # 409: the turn a Retry would run again finished steps that may have changed something, so
-    # nothing was run. To the owner it is the question (`error.detail`: its `title`, what it
-    # `said`, the `steps`, and the `confirm` her yes sends back); an app, which cannot ask her, is
-    # told to retry it from the dashboard.
+    # 409: the turn a door would run again (Retry, Regenerate, Rewind to here, a resend she did not
+    # change) finished steps that may have changed something, so nothing was run. To the owner it
+    # is the question (`error.detail`: its `title`, what it `said`, the `steps`, and the `confirm`
+    # her yes sends back); an app, which cannot ask her, is told to run it again from the
+    # dashboard.
     "retry_repeats_steps": (
         "Running this turn again may repeat steps it finished that changed something, so nothing "
         "was run."

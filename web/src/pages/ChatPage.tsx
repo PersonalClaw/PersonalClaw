@@ -2733,9 +2733,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
 
   async function regenerate() { await replay() }
 
-  // A Retry over a turn whose finished steps may have changed something is answered with the
-  // gateway's question instead (`chat/repeatedSteps`): the turn runs again only on her yes, sent
-  // back as `confirmed`, and a No leaves the page as it was.
+  // Retry or Regenerate over a turn whose finished steps may have changed something is answered
+  // with the gateway's question instead (`chat/repeatedSteps`): the turn runs again only on her
+  // yes, sent back as `confirmed`, and a No leaves the page as it was.
   async function replay(confirmed?: string) {
     await replaceTurns(
       (s) => (confirmed ? api.regenerate(s, confirmed) : api.regenerate(s)),
@@ -2790,7 +2790,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
       })
   }
 
-  async function editResend(turnIndex: number, content: string, rewind = false) {
+  async function editResend(turnIndex: number, content: string, rewind = false, confirmed?: string) {
     const t = content.trim()
     if (!t) return
     const turn = turns[turnIndex]
@@ -2813,10 +2813,19 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
     // to here has no editor open, so it is said the way every other failed action is.
     const fromEditor = editingTurn === turnIndex
     setEditFailure(null)
+    // Her message sent as it is (Rewind to here, or a resend she did not change) runs its turn
+    // again, so the gateway asks first when that turn finished steps that may have changed
+    // something (`chat/repeatedSteps`), as it does for Retry. What the page shows of a message is
+    // not always the row's own words, so the page says it is sending the message again; the turn
+    // runs only on her yes, sent back as `confirmed`, and a No leaves the page as it was.
+    const again = !!turn && t === turnText(turn)
     const landed = await replaceTurns(
-      (s) => api.editResend(s, t, turn?.ts, turnIndex, newTs, asRewind),
+      (s) => api.editResend(s, t, turn?.ts, turnIndex, newTs, asRewind, { again, confirm: confirmed }),
       (prev) => [...prev.slice(0, turnIndex), userTurn(t, newTs)],
-      (e) => { if (fromEditor) setEditFailure(failureSentence(what, e)); else reportActionFailure(what)(e) },
+      (e) => {
+        if (askToRepeat(e, (yes) => editResend(turnIndex, content, rewind, yes))) return
+        if (fromEditor) setEditFailure(failureSentence(what, e)); else reportActionFailure(what)(e)
+      },
     )
     if (landed) setEditingTurn(null)
   }
