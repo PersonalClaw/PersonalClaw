@@ -585,6 +585,51 @@ def test_seed_empty_existing_dir_succeeds_without_replace(
     assert (target / "fixture.yaml").is_file()
 
 
+def test_seed_counts_a_home_holding_only_its_gateway_lock_as_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gateway's start claims its home before it seeds, so a new home holds the claim's lock
+    by the time the seed looks: that home is empty, and the lock stays."""
+    target = tmp_path / "home"
+    target.mkdir()
+    (target / "gateway.lock").touch()
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(target))
+
+    seed_mod.seed("empty")
+
+    assert sorted(p.name for p in target.iterdir()) == ["fixture.yaml", "gateway.lock"]
+
+
+def test_seed_replace_empties_the_home_and_keeps_its_gateway_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replace empties the home instead of removing it: the lock its gateway holds stays the same
+    file, since a new one of that name would be a second lock, and a link inside the home is
+    removed as a link, never followed into what it points at."""
+    from personalclaw import tmux_substrate
+
+    target = tmp_path / "home"
+    target.mkdir()
+    lock = target / "gateway.lock"
+    lock.touch()
+    inode = lock.stat().st_ino
+    (target / "stale.txt").write_text("old content")
+    (target / "subdir").mkdir()
+    (target / "subdir" / "deep.txt").write_text("also stale")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("not the home's")
+    (target / "linked").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(target))
+    monkeypatch.setattr(tmux_substrate, "kill_server", lambda home=None: None, raising=False)
+
+    seed_mod.seed("empty", replace=True)
+
+    assert sorted(p.name for p in target.iterdir()) == ["fixture.yaml", "gateway.lock"]
+    assert lock.stat().st_ino == inode, "the lock was replaced by a new file of its name"
+    assert (outside / "keep.txt").read_text() == "not the home's"
+
+
 @patch("personalclaw.seed.sel")
 def test_seed_cmd_replace_flag_threaded(
     mock_sel: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

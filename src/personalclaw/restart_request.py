@@ -64,7 +64,9 @@ def relaunch_argv() -> tuple[str, ...]:
     """The command a restart starts this gateway with again, for every install kind.
 
     This install's own CLI (``self_update.cli_argv``) followed by the arguments this gateway was
-    started with. In the desktop app that is the frozen bundle's executable and the shell's own
+    started with, less the options that seeded its home: ``cli.main`` takes those out once they
+    have run, since a restart serves the home as it is now. In the desktop app that is the frozen
+    bundle's executable and the shell's own
     ``gateway --port auto --json-ready --no-open``, the command line the bundle accepted once
     already; anywhere else it is this interpreter's ``-m personalclaw`` with the same arguments.
     Never ``sys.argv[0]``: a console script's path can be relative, and a build clean may have

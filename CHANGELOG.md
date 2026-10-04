@@ -153,6 +153,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Changed
 
+- **A second gateway on a home that one already serves refuses to start and names the one serving it, before it seeds, binds or writes anything in the home; `--seed-replace` never empties a served home.**
 - **`personalclaw chat` chats through your running gateway: a call that asks for approval waits for your answer in PersonalClaw or on your paired chat channel, each turn has your assistant's name and memory, Ctrl+C stops the turn, and with no gateway running it says how to start one.**
 - **`personalclaw.sdk.channel.MemoryService` embeds a recall's question once for all its arms: `embed_query()` answers a `QueryVector` (exported beside it), each recall arm takes it as `query_vector` (`None` ranks by words alone), and `search_episodic`'s `query_embedding` is now `query_vector`, so a caller still passing the old name fails at once (`slack-channel` imports `MemoryService` and calls none of them).**
 - **An automation whose agent runs on an agent CLI can't be given files to change: PersonalClaw can't limit a CLI's own file edits to them, so saving them is refused, its Allow says it only reads, and a run that reaches a CLI anyway changes none of them and says why.**

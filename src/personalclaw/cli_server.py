@@ -407,9 +407,10 @@ def _restart(port: int | None) -> None:
     nothing. Otherwise stop this home's gateway, if one runs, and start a fresh detached one on
     the port it had (with none running, on the ``--port`` typed or the configured one).
 
-    The fresh gateway starts only once this home has none. A stop that could not stop the
-    running gateway ends the restart there, with its reason: the restart used to start one
-    anyway, which put a second gateway beside the first on the same home.
+    A home has one gateway (``gateway_base.claim_home``): the fresh one can claim the home only
+    once the old one has exited, so it starts only once this home has none. A stop that could not
+    stop the running gateway ends the restart there, with its reason: the restart used to start
+    one anyway, which put a second gateway beside the first on the same home.
     """
     service = service_controller.this_homes_service()
     if service is not None:

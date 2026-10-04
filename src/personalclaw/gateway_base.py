@@ -51,13 +51,24 @@ A command run for a home (``personalclaw token`` and the rest) is no child: noth
 names its gateway, so it asks :mod:`personalclaw.home_gateway`, which reads the same record (or
 the port the command was given) and, before any credential is sent, asks the gateway answering
 there which home it serves.
+
+One gateway serves a home (:func:`claim_home`). Before a gateway does anything else it takes its
+home's claim, a lock on ``gateway.lock`` in the home, and it holds it until it exits. A start on a
+home whose claim another process holds ends there, before it seeds, binds, publishes or writes the
+local secret, and names the gateway that serves the home. The record says where a gateway listens;
+the claim says whether one serves the home at all, so a record whose process is gone, or whose
+lock nobody holds, stops no start.
 """
 
 from __future__ import annotations
 
+import fcntl
+import io
 import json
 import logging
 import os
+import shlex
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import urlparse
@@ -72,6 +83,16 @@ PORT_ENV = "PERSONALCLAW_PORT"
 #: Per-home record of the socket the gateway actually bound. Lives under the home, so it
 #: cannot name a different instance's gateway however stale it gets.
 RUNTIME_FILE = "gateway.runtime.json"
+
+#: The lock a gateway holds on its home for as long as it runs (:func:`claim_home`). An empty
+#: file, never deleted: removing it would let a second gateway lock a new file of that name while
+#: the first still holds the old one.
+LOCK_FILE = "gateway.lock"
+
+#: The exit status of a start refused because another gateway already serves its home. A status of
+#: its own, so what started it (the desktop, a service manager, ``personalclaw run``, a script) can
+#: tell it from a start that failed (1) and from a command line that could not be read (2).
+HOME_SERVED_EXIT = 3
 
 
 class GatewayBaseUnresolved(RuntimeError):
@@ -199,6 +220,131 @@ def live_port() -> int | None:
     :func:`live_gateway`)."""
     gateway = live_gateway()
     return gateway.port if gateway else None
+
+
+class HomeAlreadyServed(RuntimeError):
+    """Another process holds this home's claim, so no second gateway may start on it.
+
+    ``str()`` is what the refused start prints: the gateway that serves the home, by its pid and
+    address once it has shown it serves this home, else that it is still starting, and how to use
+    or stop it instead. *pid* and *port* are ``0`` when they are not known.
+    """
+
+    def __init__(self, home: Path, pid: int = 0, port: int = 0) -> None:
+        self.home = home
+        self.pid = pid
+        self.port = port
+        which = (
+            f"pid {pid}, http://127.0.0.1:{port}"
+            if pid > 0 and port > 0
+            else "it is still starting"
+        )
+        super().__init__(
+            f"PersonalClaw did not start: another gateway already serves {home} ({which}). "
+            f"Use that one, or stop it first: PERSONALCLAW_HOME={shlex.quote(str(home))} "
+            "personalclaw stop"
+        )
+
+
+class HomeNotClaimed(RuntimeError):
+    """This home's claim could not be taken for a reason other than another process holding it.
+
+    Fails closed: the lock is the only thing that keeps a second gateway off the home, so a home
+    whose lock cannot be taken is not served. ``str()`` names the lock and why.
+    """
+
+
+@dataclass(frozen=True)
+class HomeClaim:
+    """This process's claim on *home*, the lock at *lock*, held from :func:`claim_home` until the
+    process ends."""
+
+    home: Path
+    lock: Path
+
+
+#: The claims this process holds, by home, each with the open lock file that IS the claim. Never
+#: closed: the operating system lets go of a lock when its process ends, however it ends.
+_held: dict[Path, tuple[HomeClaim, io.FileIO]] = {}
+
+
+def claim_home() -> HomeClaim:
+    """Claim this home for the gateway this process runs, or raise.
+
+    The claim is an exclusive, non-blocking ``flock`` on ``<home>/gateway.lock``, opened through
+    ``durability.home_paths.open_lock`` (the one way a lock in the home is opened: made ``0600``
+    and empty, never through a link). Its descriptor stays open in this module until the process
+    ends and is never handed to a child (``O_CLOEXEC``). So the operating system lets go of the
+    claim on any exit, a crash included, no child the gateway started keeps it, and a restart's new
+    image (``restart_request.start``, an ``os.execve``) loses it at the exec and claims again as it
+    starts. Asked again for a home this process holds, it returns that claim.
+
+    Raises :class:`HomeAlreadyServed` when another process holds the claim, naming the gateway that
+    serves the home (:func:`_serving`), and :class:`HomeNotClaimed` when the home cannot be made or
+    its lock cannot be opened or taken for any other reason.
+    """
+    from personalclaw.config.loader import config_dir
+    from personalclaw.durability.home_paths import LinkInTheWay, open_lock
+
+    try:
+        home = config_dir()
+    except OSError as exc:
+        raise HomeNotClaimed(
+            f"PersonalClaw did not start: its home cannot be made ({exc})."
+        ) from exc
+    held = _held.get(home)
+    if held is not None:
+        return held[0]
+    lock = home / LOCK_FILE
+    try:
+        handle = open_lock(lock)
+    except (LinkInTheWay, OSError) as exc:
+        raise HomeNotClaimed(_not_claimed(home, lock, exc)) from exc
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        pid, port = _serving()
+        raise HomeAlreadyServed(home, pid, port) from None
+    except OSError as exc:
+        handle.close()
+        raise HomeNotClaimed(_not_claimed(home, lock, exc)) from exc
+    claim = HomeClaim(home=home, lock=lock)
+    _held[home] = (claim, handle)
+    return claim
+
+
+def _not_claimed(home: Path, lock: Path, exc: BaseException) -> str:
+    """What a start says when *lock* cannot be opened or taken, *exc* being why."""
+    from personalclaw.durability.home_paths import LinkInTheWay
+
+    if isinstance(exc, LinkInTheWay):
+        why = exc.why
+    elif isinstance(exc, OSError) and exc.strerror:
+        why = exc.strerror
+    else:
+        why = str(exc)
+    return (
+        f"PersonalClaw did not start: {lock} could not be locked ({why}). That lock is what keeps "
+        f"a second gateway off {home}, so the home is not served without it."
+    )
+
+
+def _serving() -> tuple[int, int]:
+    """The pid and port of the gateway that holds this home's claim, once it has shown it serves
+    this home: the port its runtime record names, where the gateway answering is asked whose it is
+    (``home_gateway.reach``), which carries no credential. ``(0, 0)`` while the gateway has not
+    recorded where it listens, or when what answers there is not this home's gateway."""
+    recorded = live_gateway()
+    if recorded is None:
+        return 0, 0
+    from personalclaw import home_gateway  # here, not above: home_gateway imports this module
+
+    try:
+        gateway = home_gateway.reach(recorded.port)
+    except home_gateway.GatewayError:
+        return 0, 0
+    return gateway.pid or recorded.pid, gateway.port
 
 
 def _configured_port() -> int | None:

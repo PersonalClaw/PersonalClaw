@@ -230,6 +230,8 @@ A gateway that cannot start when the app opens is the same news, said as soon as
 **PersonalClaw's gateway did not start**, with how it exited and the last thing it said, and the
 same two choices. **Start Again** starts a new gateway; the window loads the dashboard once it
 answers. A gateway that started and never answered, within two minutes, is said the same way.
+When another gateway already serves the app's home (one started in a terminal, or a service), the
+last thing it said names that gateway, and a start is refused the same way until that one stops.
 
 ## What the desktop app runs, and what needs the installed version
 

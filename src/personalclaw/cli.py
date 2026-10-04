@@ -255,6 +255,86 @@ def _require_subcommands(parser: argparse.ArgumentParser) -> None:
                         action.metavar = "{%s}" % ",".join(action.choices)
 
 
+def _add_seed_options(parser: argparse.ArgumentParser) -> None:
+    """The ``gateway`` options that seed the home before the gateway starts: ``--seed`` and
+    ``--seed-replace`` (``seed.seed_cmd``) and ``--seed-local-model`` with the three that
+    configure it (``seed_local_model``). One list, for the gateway's parser and for
+    :func:`_without_the_seed`, which takes them out of the command line once they have run."""
+    parser.add_argument(
+        "--seed",
+        metavar="FIXTURE",
+        help=(
+            "Seed $PERSONALCLAW_HOME from the named fixture BEFORE starting the "
+            "gateway (dev tool). Fixture must exist under "
+            "personalclaw/tests_fixtures/. The gateway then runs normally "
+            "against the populated $PERSONALCLAW_HOME. Refuses when "
+            "$PERSONALCLAW_HOME is the main gateway home (~/.personalclaw) or "
+            "when the target is non-empty (use --seed-replace to wipe + re-seed)."
+        ),
+    )
+    parser.add_argument(
+        "--seed-replace",
+        action="store_true",
+        help=(
+            "When used with --seed, empty $PERSONALCLAW_HOME before copying the "
+            "fixture (the lock its gateway holds stays). Ignored without --seed. "
+            "Does NOT override the main-gateway-home rail — ~/.personalclaw is "
+            "refused regardless — and a home another gateway serves is refused "
+            "before anything in it is touched."
+        ),
+    )
+    parser.add_argument(
+        "--seed-local-model",
+        action="store_true",
+        help=(
+            "Bind a local Ollama provider into $PERSONALCLAW_HOME so the home can "
+            "actually run a chat turn — which is what makes approvals and artifacts "
+            "reachable. Conditional and non-fatal: when no local Ollama answers, "
+            "nothing is written and the gateway starts against the plain fixture. "
+            "Endpoint and model default to http://localhost:11434 and the endpoint's "
+            "most recently modified chat model; override with "
+            "--local-model-endpoint / --local-model or the matching "
+            "$PERSONALCLAW_LOCAL_MODEL_ENDPOINT / $PERSONALCLAW_LOCAL_MODEL env vars."
+        ),
+    )
+    parser.add_argument(
+        "--local-model-endpoint",
+        metavar="URL",
+        help="Ollama endpoint for --seed-local-model (default http://localhost:11434)",
+    )
+    parser.add_argument(
+        "--local-model",
+        metavar="MODEL_ID",
+        help=(
+            "Model id to bind for --seed-local-model (default: the endpoint's most "
+            "recently modified chat-capable model)"
+        ),
+    )
+    parser.add_argument(
+        "--local-model-apps-dir",
+        metavar="DIR",
+        help=(
+            "Local checkout of the apps repo to install the ollama-models provider app "
+            "from, when --seed-local-model finds it not already installed in the home"
+        ),
+    )
+
+
+def _without_the_seed(argv: list[str]) -> list[str]:
+    """*argv*, a ``gateway`` command line, without the options that seed the home
+    (:func:`_add_seed_options`), read the way the gateway's own parser reads them: a value given
+    after ``=`` or as the next word, and an option shortened to a prefix. Every other word stays,
+    in its order."""
+    try:
+        at = argv.index("gateway", 1)
+    except ValueError:
+        return list(argv)
+    seeding = argparse.ArgumentParser(add_help=False)
+    _add_seed_options(seeding)
+    _seeded, rest = seeding.parse_known_args(argv[at + 1 :])
+    return [*argv[: at + 1], *rest]
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the whole ``personalclaw`` argument parser.
 
@@ -409,63 +489,7 @@ The posture is announced on stderr, so stdout stays pipeable.
         action="store_true",
         help="Skip cron scheduler — use when another instance handles cron execution",
     )
-    gw_parser.add_argument(
-        "--seed",
-        metavar="FIXTURE",
-        help=(
-            "Seed $PERSONALCLAW_HOME from the named fixture BEFORE starting the "
-            "gateway (dev tool). Fixture must exist under "
-            "personalclaw/tests_fixtures/. The gateway then runs normally "
-            "against the populated $PERSONALCLAW_HOME. Refuses when "
-            "$PERSONALCLAW_HOME is the main gateway home (~/.personalclaw) or "
-            "when the target is non-empty (use --seed-replace to wipe + re-seed)."
-        ),
-    )
-    gw_parser.add_argument(
-        "--seed-replace",
-        action="store_true",
-        help=(
-            "When used with --seed, wipe $PERSONALCLAW_HOME (rmtree) before "
-            "copying the fixture. Ignored without --seed. Does NOT "
-            "override the main-gateway-home rail — ~/.personalclaw is refused "
-            "regardless."
-        ),
-    )
-    gw_parser.add_argument(
-        "--seed-local-model",
-        action="store_true",
-        help=(
-            "Bind a local Ollama provider into $PERSONALCLAW_HOME so the home can "
-            "actually run a chat turn — which is what makes approvals and artifacts "
-            "reachable. Conditional and non-fatal: when no local Ollama answers, "
-            "nothing is written and the gateway starts against the plain fixture. "
-            "Endpoint and model default to http://localhost:11434 and the endpoint's "
-            "most recently modified chat model; override with "
-            "--local-model-endpoint / --local-model or the matching "
-            "$PERSONALCLAW_LOCAL_MODEL_ENDPOINT / $PERSONALCLAW_LOCAL_MODEL env vars."
-        ),
-    )
-    gw_parser.add_argument(
-        "--local-model-endpoint",
-        metavar="URL",
-        help="Ollama endpoint for --seed-local-model (default http://localhost:11434)",
-    )
-    gw_parser.add_argument(
-        "--local-model",
-        metavar="MODEL_ID",
-        help=(
-            "Model id to bind for --seed-local-model (default: the endpoint's most "
-            "recently modified chat-capable model)"
-        ),
-    )
-    gw_parser.add_argument(
-        "--local-model-apps-dir",
-        metavar="DIR",
-        help=(
-            "Local checkout of the apps repo to install the ollama-models provider app "
-            "from, when --seed-local-model finds it not already installed in the home"
-        ),
-    )
+    _add_seed_options(gw_parser)
     gw_parser.add_argument(
         "--no-open",
         action="store_true",
@@ -1614,6 +1638,25 @@ def _gateway_log_handler(log_file: Path) -> RotatingFileHandler:
     return handler
 
 
+def _claim_the_home() -> None:
+    """Claim this home for the gateway this command starts (``gateway_base.claim_home``), or end
+    the start here with the reason on stderr and nothing written into the home: another gateway
+    serves it (exit ``gateway_base.HOME_SERVED_EXIT``, the sentence naming that gateway), or its
+    lock cannot be taken (exit 1). Neither writes into the home: no audit row, which belongs in
+    the log of the gateway serving the home, and no record of a refused start, which would say
+    that a home being served is not."""
+    from personalclaw import gateway_base
+
+    try:
+        gateway_base.claim_home()
+    except gateway_base.HomeAlreadyServed as served:
+        print(served, file=sys.stderr)
+        sys.exit(gateway_base.HOME_SERVED_EXIT)
+    except gateway_base.HomeNotClaimed as refused:
+        print(refused, file=sys.stderr)
+        sys.exit(1)
+
+
 def main() -> None:
     """Entry point — parse args and dispatch to the appropriate subcommand."""
     # stdout a line at a time, so that a line on stderr lands after what was printed before it
@@ -1716,13 +1759,21 @@ def main() -> None:
 
         sys.exit(_optimize_step([args.step]))
 
+    # A gateway's start reads its command line first, so a start refused for it has touched
+    # nothing, and then claims its home. One gateway serves a home: a start on a home that another
+    # gateway already serves ends here, before it seeds, binds, publishes or writes the local
+    # secret (`gateway_base.claim_home`). Every start comes this way: a person's, the desktop's
+    # bundled backend, a service's, the one `run` or `restart` starts, a restart's new image.
+    gateway_kwargs: dict = {}
+    if args.command == "gateway":
+        gateway_kwargs = _resolve_gateway_args(args)
+        _claim_the_home()
+
     # ``gateway --seed <fixture>`` populates $PERSONALCLAW_HOME from a hand-authored
     # fixture BEFORE the gateway starts — lets a dev spin up a pre-populated
-    # server in one command. We run the seed here (post parse_args, but BEFORE
-    # ``AppConfig.load()`` and the file-log handler attach at line ~603):
-    # both of those call ``config_dir()`` which ``mkdir``s $PERSONALCLAW_HOME, which
-    # would pre-populate the target and break ``shutil.copytree``'s
-    # empty-target-only contract.  If seed fails, exit with the
+    # server in one command. It runs once the home is claimed, and before
+    # ``AppConfig.load()`` and the file-log handler below, which would write into
+    # the home before the fixture is in it. If seed fails, exit with the
     # seed's own exit code instead of continuing into the gateway — running
     # the gateway against a half-seeded or wrong-state $PERSONALCLAW_HOME would be
     # worse than a clean failure.
@@ -1746,6 +1797,13 @@ def main() -> None:
         from personalclaw.seed_local_model import seed_local_model_cmd
 
         seed_local_model_cmd(args)
+
+    # Seeding is a step of this start, never of the gateway it starts: a restart starts its new
+    # image with this process's command line (`restart_request.relaunch_argv`), and replaying
+    # `--seed-replace` there would empty the home that gateway serves, while a plain `--seed`
+    # would find the home in use and refuse it, and the gateway would not come back.
+    if args.command == "gateway":
+        sys.argv = _without_the_seed(sys.argv)
 
     # The console and gateway.log are two of the log's sinks (`log_sinks`, which also holds the
     # rule for what every sink shows), attached before the config is read so its warnings reach
@@ -1788,8 +1846,7 @@ def main() -> None:
 
         _run(args)
     elif args.command == "gateway":
-        gw_kwargs = _resolve_gateway_args(args)
-        asyncio.run(_gateway(**gw_kwargs))
+        asyncio.run(_gateway(**gateway_kwargs))
     elif args.command == "setup":
         _setup(
             agent_only=getattr(args, "agent_only", False),

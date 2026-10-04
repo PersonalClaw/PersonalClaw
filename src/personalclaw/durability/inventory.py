@@ -2204,6 +2204,11 @@ IGNORED: tuple[str, ...] = (
     # persistent terminals and durable workers run in. MACHINE-LOCAL and process-scoped: a
     # snapshot cannot carry a socket, and a restored home starts its own server on first use.
     "tmux.sock",
+    # The home's claim (`gateway_base.LOCK_FILE`): the lock its gateway holds for as long as it
+    # runs, so no second gateway starts on the home. MACHINE-LOCAL and process-scoped: what a
+    # lock means is the process holding it, which no copy carries, so a restored copy means
+    # nothing. An empty file, never moved or deleted while a gateway may hold it.
+    "gateway.lock",
     # The cache an earlier release's update check kept of GitHub's "Latest" release. Nothing
     # writes or reads it now (the check resolves over the releases list below), but a home that
     # ran such a release still holds one, and it carries nothing a restore needs.

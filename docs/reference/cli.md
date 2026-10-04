@@ -35,7 +35,7 @@ the same record, and their `--port` only checks it.
 
 `--help` prints on stdout and exits `0`. `auth`, `incident` and `push` alone show their status
 and `skills` alone lists the installed skills; every other group needs one of its commands.
-A command whose section below lists its own codes (`chat`, `run`) follows that list.
+A command whose section below lists its own codes (`gateway`, `chat`, `run`) follows that list.
 
 stdout carries only what a command produces: the link `token` prints, the jobs `cron list`
 prints, a report. A refusal, a failure or a usage message goes to stderr, so
@@ -56,6 +56,29 @@ dashboard's address without a sign-in link and says to run `personalclaw token` 
 a link it opens in the browser goes to the browser only. Each start ends the startup link
 of the start before it, when no browser opened that link.
 
+**One gateway serves a home.** Before it does anything else, a gateway takes its home's claim, a
+lock on `gateway.lock` in the home, and it holds it until it exits; the system lets go of it
+however the gateway ends, a crash included. A start on a home that another gateway already serves,
+whether from a terminal, the desktop app, a service, `personalclaw run` or a script, ends there:
+before it seeds, binds a port, records where it listens or writes the home's local secret. It
+writes nothing into the home, and its last line on stderr says which gateway serves it:
+
+```
+PersonalClaw did not start: another gateway already serves /home/user/.personalclaw-dev (pid 4711, http://127.0.0.1:20417). Use that one, or stop it first: PERSONALCLAW_HOME=/home/user/.personalclaw-dev personalclaw stop
+```
+
+Until the gateway serving the home has recorded where it listens, and shown at that address that it
+is the home's, the parenthesis reads `(it is still starting)`. The record a stopped or crashed
+gateway left stops no start. A home whose lock cannot be taken (a link at `gateway.lock`, something
+there that is not a file, a disk that cannot lock files) is not served: the start says why.
+
+| Exit | Meaning |
+|---|---|
+| `0` | It stopped because it was asked to. |
+| `1` | It could not start, or stopped on an error: its port was taken, its home's lock could not be taken, governance could not be established, a restart could not start its new image. |
+| `2` | The command line is wrong or names what it may not use: `--port abc`, `--approval yolo` on the default home, a `--seed` fixture that does not exist or a target that is not empty. |
+| `3` | Another gateway already serves this home. Nothing in the home was changed. |
+
 | Flag | Effect |
 |---|---|
 | `--headless` | Run without the dashboard: none of its pages are served (the dashboard itself, its sign-in and device-pairing pages), and no dashboard address, sign-in link or SSH tunnel instructions are printed. Everything else runs as it does with it: the installed apps, channels, automations, and the API that the CLI and the agent's tools use, behind the same sign-in. |
@@ -65,8 +88,8 @@ of the start before it, when no browser opened that link.
 | `--json-ready` | Print one `PERSONALCLAW_READY:{...}` line (port, token, token_expires_in, token_expires_at, pid, home) once bound — for test harnesses. The token is an owner sign-in: send it as `Authorization: Bearer`, or open `/?token=` with it in a browser. It lasts as long as a browser sign-in (`auth.session_ttl`, 30 days by default); treat captured stdout as sensitive. |
 | `--approval {reads,yolo,interactive}` | How the agents PersonalClaw runs in the background (a subagent, and the agent an automation or a workflow step starts) have their tool calls approved. `reads` approves a tool that declares it only reads and a read-only shell command, and asks for the rest; `yolo` approves every call (refused unless `PERSONALCLAW_HOME` is explicitly non-default); `interactive` asks, as omitting the flag does. A chat keeps its own approval mode. |
 | `--test-mode` | Convenience bundle: `--port auto --no-open --json-ready --approval reads` (explicit `--port`/`--approval` win). |
-| `--seed FIXTURE` | Dev tool: populate `$PERSONALCLAW_HOME` from a named fixture (under `tests_fixtures/`) before starting. Refuses the main gateway home (`~/.personalclaw`) and non-empty targets. |
-| `--seed-replace` | With `--seed`, stop the home's tmux server and wipe `$PERSONALCLAW_HOME` before copying. Never overrides the main-home rail. |
+| `--seed FIXTURE` | Dev tool: populate `$PERSONALCLAW_HOME` from a named fixture (under `tests_fixtures/`) before starting. Refuses the main gateway home (`~/.personalclaw`) and non-empty targets. It seeds once: a restart of that gateway (the dashboard's Restart, an update) serves the home as it is, and seeds nothing again. |
+| `--seed-replace` | With `--seed`, stop the home's tmux server and empty `$PERSONALCLAW_HOME` before copying; the lock this start holds on the home stays. Never overrides the main-home rail, and never touches a home another gateway serves: that start is refused before anything in the home is touched. |
 | `--seed-local-model` | Bind a local Ollama provider into `$PERSONALCLAW_HOME` after seeding, so the home can run a real chat turn. Conditional and never fatal — see below. |
 | `--local-model-endpoint URL` | Endpoint for `--seed-local-model` (default `http://localhost:11434`, or `$PERSONALCLAW_LOCAL_MODEL_ENDPOINT`). |
 | `--local-model MODEL_ID` | Model to bind (default: the endpoint's most recently modified chat-capable model, or `$PERSONALCLAW_LOCAL_MODEL`). |
@@ -282,7 +305,7 @@ reads as registered and not tested.
 |---|---|
 | `personalclaw status [--port]` | Show runtime stats from this home's running gateway, or say that none is running and how to start it, and the service installed for this home, if there is one, with whether it is running. |
 | `personalclaw stop [--port]` | Stop this home's gateway, and return once it has exited. It finds the gateway from the record the gateway keeps in its home (its port and pid), so it needs no other program. `--port` stops it only if it listens on that port. With a service installed for this home and running, it stops the service and leaves it installed: it starts again at your next login (macOS) or the next boot (Linux), or with `personalclaw restart`. In a container it changes nothing and prints the host command that stops the container. |
-| `personalclaw restart [--port]` | Restart the gateway: the service installed for this home, whether or not it is running (a gateway started outside it is stopped first), else stop this home's gateway and start a fresh one on the port it had. A fresh one starts only once the old one has exited. A service installed for another home is left alone. In a container it changes nothing and prints the host command that restarts the container. |
+| `personalclaw restart [--port]` | Restart the gateway: the service installed for this home, whether or not it is running (a gateway started outside it is stopped first), else stop this home's gateway and start a fresh one on the port it had. A home has one gateway, so a fresh one starts only once the old one has exited. A service installed for another home is left alone. In a container it changes nothing and prints the host command that restarts the container. |
 | `personalclaw logs [-f] [-n LINES]` | Show gateway logs (`-f` live tail; `-n` line count, default 100). Reads the systemd journal (Linux service), the launchd service's log, `~/Library/Logs/PersonalClaw/gateway.err` (macOS), or `gateway.log` in the home (a gateway that is not a service). Each holds the same lines as Settings → Diagnostics → Live logs: the gateway's own, every loaded app's from the moment it loads, what each app's backend, background worker and engine print (masked, tagged with the app), and any library's warnings. |
 | `personalclaw token [--port] [--ttl 20h]` | Print a sign-in link for the dashboard, from this home's gateway. Open it in a browser to sign that browser in, or send the token after `?token=` as an `Authorization: Bearer` header from a script. It lasts 20 hours unless `--ttl` says otherwise (`30m`, `20h`, `7d`; at most `90d`, the limit for a long-lived credential — longer is refused, with a sentence saying why), and it says so on stderr, with the time it stops working. Every sign-in is listed under Settings → Devices, where it can be signed out. |
 | `personalclaw logout [--port]` | Sign every device and token out, everywhere. Each one's next request is told when and from where, and how to sign back in. |

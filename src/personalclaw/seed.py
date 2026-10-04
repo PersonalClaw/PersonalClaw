@@ -193,11 +193,19 @@ def seed(fixture_name: str, *, replace: bool = False) -> None:
        which is never used as a home. This rail is ABSOLUTE: ``replace=True``
        does NOT override it. Clobbering the main gateway is the one outcome we
        never want to enable.
-    2. **Non-empty rail** — refuses when the target exists and contains
-       anything, unless ``replace=True``. With ``replace=True``, the
-       shutil.rmtree the target first, then copytree. The sequence is not
+    2. **Non-empty rail** — refuses when the target holds anything, unless
+       ``replace=True``. With ``replace=True`` the target is emptied first,
+       then the fixture's contents are copied into it. The sequence is not
        atomic — documented in this docstring — but that's acceptable for a
        dev tool. The caller can re-run with ``--seed-replace`` to clean up.
+
+    The home's claim (``gateway_base.LOCK_FILE``) is never part of what it
+    holds. A gateway's start takes the claim before it seeds (``cli.main``),
+    so a home another gateway serves is refused before anything here runs,
+    and the home this seeds holds the starting gateway's lock: a home holding
+    only the lock is empty, and a replace leaves the lock where it is, since
+    a new file of its name would be a second lock while the gateway still
+    holds the old one.
 
     ``symlinks`` is left at the ``shutil.copytree`` default (``False``) so
     symlinks inside fixtures are followed. No shipped fixtures contain
@@ -225,16 +233,17 @@ def seed(fixture_name: str, *, replace: bool = False) -> None:
             rail=SeedError.RAIL_MAIN_HOME,
         )
 
-    if dst.exists() and any(dst.iterdir()):
+    held = _held(dst)
+    if held:
         if not replace:
             raise SeedError(
                 f"$PERSONALCLAW_HOME is not empty: {dst}. "
                 "Pass --seed-replace to wipe it and re-seed.",
                 rail=SeedError.RAIL_NON_EMPTY,
             )
-        # ``rmtree`` on a symlink would follow the link and delete its target.
-        # Guard against that — if the user passed a symlinked target, refuse
-        # --seed-replace and ask for a real directory.
+        # Emptying a home through a symlink empties the link's target, a folder the user may
+        # never have meant to wipe. Guard against that — if the user passed a symlinked target,
+        # refuse --seed-replace and ask for a real directory.
         if dst.is_symlink():
             raise SeedError(
                 f"refusing to --seed-replace a symlinked $PERSONALCLAW_HOME: {dst}. "
@@ -247,16 +256,25 @@ def seed(fixture_name: str, *, replace: bool = False) -> None:
         from personalclaw import tmux_substrate
 
         tmux_substrate.kill_server(dst)
-        shutil.rmtree(dst)
-    elif dst.exists() and not dst.is_symlink():
-        # Empty-but-existing dst is accepted (only non-empty needs
-        # --seed-replace). ``shutil.copytree`` refuses ANY pre-existing dst, so
-        # we rmdir first. Symlinked-but-empty-target case falls through to
-        # the copytree below which will follow the link for the check and
-        # then copytree will raise FileExistsError — caught as EXIT_IO_ERROR.
-        dst.rmdir()
+        for entry in held:
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
 
-    shutil.copytree(src, dst)
+    # Into the folder as it is: an empty home, the home just emptied, or none yet. Either of the
+    # first two may hold the claim's lock, which stays.
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+
+
+def _held(dst: Path) -> list[Path]:
+    """What *dst* holds that a seed would copy over: everything in it but the home's claim
+    (``gateway_base.LOCK_FILE``). Nothing when *dst* is not there."""
+    from personalclaw.gateway_base import LOCK_FILE
+
+    if not dst.is_dir():
+        return []
+    return sorted(entry for entry in dst.iterdir() if entry.name != LOCK_FILE)
 
 
 def seed_cmd(args) -> int:  # noqa: ANN001 — argparse.Namespace at call site
