@@ -568,6 +568,27 @@ Data leaving the running system:
   cycle. The watchdog and the judge read a deliverable only when it resolves inside the loop's
   workspace or its own folder (`loop.files.file_inside`: symlinks and `..` resolved), so a
   `primary_deliverable` named out of either reads nothing.
+- **A CSV PersonalClaw writes holds no cell a spreadsheet would evaluate**
+  (`documents/writers/csv_writer.py`, `artifacts/native.py`). A spreadsheet program opening a CSV
+  reads a cell whose text begins with `=`, `+`, `-` or `@` as a formula (some drop a leading tab or
+  carriage return first, and a byte-order mark that opens the file is dropped before the first cell
+  is read), and a CSV's cells come from wherever the agent, an app or a workflow found them. So the
+  csv writer, which `sheet_create` and an app's `get_writer("csv")` render through, writes a cell
+  whose text begins with any of those six characters with a single quote in front of it, and the
+  spreadsheet shows it as text. The artifact store keeps the text of every CSV artifact by the same
+  rule (`render_csv_text`), whoever saves it: the agent's `artifact_save` and `artifact_update`, a
+  workflow's `publish:` and its `artifact-update` step, an app's request, your own edit in the
+  Artifacts editor, and a revert to an earlier version. The rule sits in the store rather than at
+  those doors because the agent's tools and a workflow's steps reach the store directly. Text that
+  is a number holds nothing to compute and is written as it is: an optional sign, an optional
+  currency sign, then only digits, commas and periods, an optional exponent, and an optional percent
+  or currency sign at the end (`-20`, `-1,234.56`, `-$45.20`, `-12.5%`, `+1.5e3`), so a negative
+  number stays a number; a date, and a cell of dashes alone (a table's "none"), are written as they
+  are too. A formula cell is written as its text by the same rule, since a CSV cannot say that a
+  cell is one: a formula belongs in an xlsx. CSV text the `csv` module cannot read (a field longer
+  than 131,072 characters) is refused with its reason, and nothing is written. A CSV artifact saved
+  before this rule keeps its text until it is next written. A file the agent writes with its file
+  tools is a file in your folders, not a CSV PersonalClaw makes, and is kept as written.
 - **Memory privacy** (`session_restrictions.py`, `memory_writes.py`):
   temporary/incognito sessions gate memory reads/writes; the memory, knowledge
   and vocabulary stores refuse every write made for one, by any path; the

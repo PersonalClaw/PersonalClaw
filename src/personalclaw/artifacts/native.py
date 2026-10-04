@@ -106,6 +106,30 @@ def _refuse_if_readonly(art: Artifact) -> None:
         )
 
 
+def _kept_text(kind: str, content: str) -> str:
+    """The text the store keeps as the body of an artifact of *kind*: a ``csv`` artifact's with
+    each cell written by the CSV rule (``documents.writers.csv_writer.render_csv_text``), so no
+    cell opens as a formula in a spreadsheet; any other kind's as it was given.
+
+    A CSV artifact is a file a spreadsheet opens, and its text comes from whoever saved it (the
+    agent, an app, a workflow or the owner), often copied from a page or a message. Kept in the
+    STORE for the reason :func:`_refuse_if_readonly` is: the route is not the only caller, and the
+    agent's tools and a workflow's steps reach the provider directly. Text the ``csv`` module
+    cannot read is refused with ``ValueError``, which every caller answers with its message,
+    before anything is written.
+    """
+    if kind != "csv":
+        return content
+    import csv
+
+    from personalclaw.documents.writers.csv_writer import render_csv_text
+
+    try:
+        return render_csv_text(content)
+    except csv.Error as exc:
+        raise ValueError(f"could not read the csv text: {exc}") from exc
+
+
 class NativeArtifactProvider(ArtifactProvider):
     """Filesystem-backed artifact provider (the bundled default)."""
 
@@ -768,6 +792,8 @@ class NativeArtifactProvider(ArtifactProvider):
                 content = self._version_content(slug, from_version)
                 if content is None:
                     return None
+                # A version saved before CSV text was kept by the rule is restored by it now.
+                content = _kept_text(art.kind, content)
                 art.version += 1
                 d = self._artifact_dir(slug)
                 self._write_text(d / "current.html", content)
@@ -819,6 +845,8 @@ class NativeArtifactProvider(ArtifactProvider):
         # not text. Refuse here so a text body can't masquerade as an image.
         if is_binary_kind(kind):
             raise ValueError(f"kind {kind!r} is binary — use create_binary()")
+        if content is not None:
+            content = _kept_text(normalize_kind(kind), content)
         # Refused here, before anything is written, rather than trusted from the route: the loop
         # watchdog creates file-backed artifacts through this method too. Stored resolved.
         pointer = (source_path or "").strip()
@@ -944,7 +972,7 @@ class NativeArtifactProvider(ArtifactProvider):
             # marker for each hidden value. Each marker is put back from what is stored before
             # anything is written, so no save writes one over the value it hides.
             if content is not None:
-                content = keep_masked_spans(content, live or "")
+                content = _kept_text(art.kind, keep_masked_spans(content, live or ""))
             if name is not None:
                 name = keep_masked_spans(name, art.name)
             if description is not None:

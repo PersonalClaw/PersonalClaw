@@ -73,6 +73,24 @@ def file_text(path: str) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def delimited_rows(text: str, delimiter: str = ",") -> list[list[str]]:
+    """The rows of CSV (or, with a tab *delimiter*, TSV) text, read with the ``csv`` module.
+
+    The one reading of delimited text: Knowledge's ``.csv``/``.tsv`` files and ``sheet_create``'s
+    ``csv`` text both go through it, so a spreadsheet made from CSV text has the cells Knowledge
+    sees in the same text. A field in quotes is one cell, whatever delimiters, line breaks and
+    doubled quotes it holds. Spaces right after a delimiter are skipped, because that is how
+    people and models write CSV by hand, and a quoted field after one is still one cell. A row
+    with no text in any cell is left out. Raises ``csv.Error`` on text the module cannot read
+    (a field longer than its field limit, 131,072 characters).
+    """
+    import csv as _csv
+    import io as _io
+
+    reader = _csv.reader(_io.StringIO(text, newline=""), delimiter=delimiter, skipinitialspace=True)
+    return [row for row in reader if any(cell.strip() for cell in row)]
+
+
 def _render_docx_table(table) -> list[str]:
     """One .docx table → markdown rows. Empty list when the table holds nothing.
 
@@ -358,24 +376,16 @@ class FileReader:
     def _read_csv(self, path: str) -> tuple[str, dict]:
         """Render a CSV/TSV as a markdown table (consistent with _read_xlsx), so a tabular
         upload — a 'sheet'-type item — ingests as structured content + row_count metadata
-        rather than raw delimited text. Uses the csv module so quoted fields/embedded
-        delimiters parse correctly. Large files render a capped table; row_count is true."""
-        import csv as _csv
-        import io as _io
-
+        rather than raw delimited text. Read by :func:`delimited_rows`, so quoted fields and
+        embedded delimiters parse correctly. Large files render a capped table; row_count is
+        true."""
         # .tsv is tab-delimited; everything else (.csv) is comma-delimited.
         delimiter = "\t" if Path(path).suffix.lower() == ".tsv" else ","
         fmt = "tsv" if delimiter == "\t" else "csv"
         try:
-            rows = [
-                [("" if c is None else str(c)) for c in row]
-                for row in _csv.reader(
-                    _io.StringIO(file_text(path), newline=""), delimiter=delimiter
-                )
-            ]
+            rows = delimited_rows(file_text(path), delimiter)
         except Exception as e:
             return f"Error reading {fmt.upper()}: {e}", {"format": "error", "error": str(e)}
-        rows = [r for r in rows if any(cell.strip() for cell in r)]
         if not rows:
             return "", {"format": fmt, "content_type": "markdown", "row_count": 0}
         width = max(len(r) for r in rows)

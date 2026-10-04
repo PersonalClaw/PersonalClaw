@@ -291,8 +291,10 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
     catch (e) { notify(`Could not delete artifact: ${(e as Error).message}`, 'error') }
   }
   // Download the currently-shown content (current or a historical version) with
-  // an extension that matches the artifact kind.
-  const ext = ({ markdown: 'md', html: 'html', react: 'jsx', svg: 'svg', json: 'json', text: 'txt', widget: 'html', document: 'html', infographic: 'txt' } as Record<string, string>)
+  // an extension that matches the artifact kind. A CSV downloads as one, so a spreadsheet
+  // program opens it; the store wrote its cells for one (no cell opens as a formula).
+  const ext = ({ markdown: 'md', html: 'html', react: 'jsx', svg: 'svg', json: 'json', text: 'txt', widget: 'html', document: 'html', infographic: 'txt', csv: 'csv' } as Record<string, string>)
+  const mime = ({ csv: 'text/csv;charset=utf-8' } as Record<string, string>)
   const download = () => {
     if (!art) return
     const suffix = selVersion === null ? '' : `-v${selVersion}`
@@ -308,7 +310,7 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
       document.body.appendChild(a); a.click(); a.remove()
       return
     }
-    downloadText(`${safeFilename(art.name, art.slug)}${suffix}.${ext[art.kind] || 'txt'}`, viewContent)
+    downloadText(`${safeFilename(art.name, art.slug)}${suffix}.${ext[art.kind] || 'txt'}`, viewContent, mime[art.kind])
   }
 
   // Load failed (deleted in another session / stale deep-link) — a clean placeholder

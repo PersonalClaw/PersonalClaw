@@ -393,7 +393,7 @@ def _list_tools() -> list[dict[str, Any]]:
                 "Re-running with the same `name` (or the same `slug`) updates that "
                 "spreadsheet and bumps its version instead of creating a near-duplicate — "
                 "to make a SEPARATE spreadsheet, give it a different name. Returns "
-                "the slug and a download URL."
+                "the slug and where to download the file."
             ),
             "inputSchema": {
                 "type": "object",
@@ -410,7 +410,10 @@ def _list_tools() -> list[dict[str, Any]]:
                         "description": "A single tab's rows, as JSON text: an array of row arrays (row 0 = header)",  # noqa: E501
                     },
                     "csv": {"type": "string", "description": "Single-sheet CSV text"},
-                    "format": {"type": "string", "description": "Output format (default 'xlsx')"},
+                    "format": {
+                        "type": "string",
+                        "description": "Output format: 'xlsx' (default) or 'csv' (one tab and no formulas: a cell whose text begins with =, +, -, @, a tab or a carriage return is saved behind a single quote and opens as text, while numbers stay numbers)",  # noqa: E501
+                    },
                     "slug": {
                         "type": "string",
                         "description": "Existing artifact slug to update in place (bumps a version)",  # noqa: E501
@@ -1693,7 +1696,8 @@ def _document_create(
     the rendering. It never emits OOXML, and no vendor format string appears outside
     ``documents/writers/``.
 
-    The reply carries slug + version + the raw URL — NEVER the bytes and never base64.
+    The reply carries slug + version + the raw URL (for a csv, a text kind the raw route does not
+    serve, where it opens in Artifacts) — NEVER the bytes and never base64.
     Generated document bytes must not enter a prompt (CONTEXT-ECONOMY); when the agent
     needs the content back it goes through the existing read path.
     """
@@ -1760,13 +1764,17 @@ def _document_create(
         elif isinstance(rows, list) and rows:
             model = SheetModel.from_rows({"Sheet1": [list(r) for r in rows]})
         elif csv_text.strip():
-            # Annotated as list[object] rows: SheetCell preserves cell TYPES, so its
-            # row type is invariant-unfriendly to a narrower list[str].
-            parsed: list[list[object]] = [
-                [c.strip() for c in line.split(",")]
-                for line in csv_text.replace("\r\n", "\n").split("\n")
-                if line.strip()
-            ]
+            import csv
+
+            from personalclaw.knowledge.readers import delimited_rows
+
+            # Read the way Knowledge reads a .csv file, so a quoted field holding a comma, a line
+            # break or a quote stays one cell.
+            try:
+                parsed = delimited_rows(csv_text)
+            except csv.Error as exc:
+                _audit("denied", error=f"unreadable csv: {exc}")
+                return tool_failure(f"could not read the csv text: {exc}.")
             model = SheetModel.from_rows({"Sheet1": parsed})
         else:
             _audit("denied", error="no sheet input")
@@ -1926,9 +1934,14 @@ def _document_create(
     # repeat call, and an agent told it "Created" a v2 has been told the one thing that is
     # not true about what just happened — it would go looking for a second file.
     verb = "Updated" if target else "Created"
-    return (
-        f"{verb} {fmt}: {art.slug} (v{art.version}, {len(data) / 1024:.0f}KB). "
-        f"Download at /api/artifacts/{art.slug}/raw"
+    made = f"{verb} {fmt}: {art.slug} (v{art.version}, {len(data) / 1024:.0f}KB). "
+    if binary:
+        return made + f"Download at /api/artifacts/{art.slug}/raw"
+    # A csv is a text kind: its file is the text the store keeps, which the raw route (the bytes
+    # of a binary kind) does not serve. So the reply names where it opens and downloads instead.
+    return made + (
+        f"It opens in Artifacts at /#/artifacts/{art.slug}, where Download saves it as a "
+        f".{fmt} file."
     )
 
 

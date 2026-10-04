@@ -258,7 +258,7 @@ Generate an image from a text prompt, using the model bound to the 'image_gen' u
 
 ### `sheet_create`
 
-Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` (JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. Re-running with the same `name` (or the same `slug`) updates that spreadsheet and bumps its version instead of creating a near-duplicate — to make a SEPARATE spreadsheet, give it a different name. Returns the slug and a download URL.
+Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply `sheets` (JSON text: {sheet name: rows}) for multiple tabs, or `rows` (JSON text: an array of row arrays) for a single tab, or `csv` text. Row 0 is treated as the header. KEEP NUMBERS AS NUMBERS (not strings) so the result can be summed and charted — that is the main reason to produce a spreadsheet rather than a table. Re-running with the same `name` (or the same `slug`) updates that spreadsheet and bumps its version instead of creating a near-duplicate — to make a SEPARATE spreadsheet, give it a different name. Returns the slug and where to download the file.
 
 **Response type:** `artifact.detail`
 
@@ -267,7 +267,7 @@ Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply 
 **Parameters:**
 - `csv` (string, optional) — Single-sheet CSV text
 - `description` (string, optional) — Optional short description
-- `format` (string, optional) — Output format (default 'xlsx')
+- `format` (string, optional) — Output format: 'xlsx' (default) or 'csv' (one tab and no formulas: a cell whose text begins with =, +, -, @, a tab or a carriage return is saved behind a single quote and opens as text, while numbers stay numbers)
 - `name` (string, required) — Display name for the spreadsheet
 - `rows` (string, optional) — A single tab's rows, as JSON text: an array of row arrays (row 0 = header)
 - `sheets` (string, optional) — Several tabs, as JSON text: an object mapping each sheet name to its rows (an array of row arrays; row 0 = header)
