@@ -2577,10 +2577,10 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
 
         The ``artifacts.changes`` listener the dashboard server subscribes at start. It fires
         AFTER the write, whoever wrote: the agent's ``artifact_update`` or ``image_generate`` in
-        a chat (the Iterate panel's among them), a workflow step, another tab, a revert. The
-        artifact page used to learn of a new version from the chat's ``tool_call`` frame,
-        which is sent when the model asks for the call, before its approval and before the
-        write, so the page re-read the old version and never read again.
+        a chat (the Iterate panel's, an agent CLI's from its tool server), a workflow step,
+        another tab, a revert. The page used to learn of a new version from the chat's
+        ``tool_call`` frame, sent when the model asks for the call, before its approval and
+        before the write, so the page re-read the old version and never read again.
 
         The hint names the kind only, never the artifact: a page that shows artifacts re-reads
         what it shows. Safe from any thread, like every broadcast (the agent's tools write from

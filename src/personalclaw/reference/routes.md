@@ -77,6 +77,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/artifacts/{slug}` — _(no summary)_
 - `GET /api/artifacts/{slug}` — full content (live-pointer read for file-backed).
 - `PATCH /api/artifacts/{slug}` — save (silent) or snapshot; or metadata-only.
+- `POST /api/artifacts/{slug}/changed` — another PersonalClaw process wrote this artifact.
 - `DELETE /api/artifacts/{slug}/deploy` — tear the deployment down.
 - `POST /api/artifacts/{slug}/deploy` — publish the artifact at its stable serve URL.
 - `GET /api/artifacts/{slug}/events` — activity timeline (drops dashboard:ui).

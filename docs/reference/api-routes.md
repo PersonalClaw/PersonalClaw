@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **920 registrations** over **746 distinct paths** — 913 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **921 registrations** over **747 distinct paths** — 914 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -30,7 +30,7 @@ The 128 families the surface divides into, largest first.
 | `/api/workflows` | 50 | 45 |
 | `/api/models` | 38 | 30 |
 | `/api/loops` | 28 | 22 |
-| `/api/artifacts` | 25 | 16 |
+| `/api/artifacts` | 26 | 17 |
 | `/api/inbox` | 24 | 23 |
 | `/api/apps` | 23 | 15 |
 | `/api/triggers` | 20 | 17 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 913 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 914 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -230,6 +230,7 @@ The 913 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/artifacts/{slug}` | _(no summary)_ |
 | `GET` | `/api/artifacts/{slug}` | full content (live-pointer read for file-backed). |
 | `PATCH` | `/api/artifacts/{slug}` | save (silent) or snapshot; or metadata-only. |
+| `POST` | `/api/artifacts/{slug}/changed` | another PersonalClaw process wrote this artifact. |
 | `DELETE` | `/api/artifacts/{slug}/deploy` | tear the deployment down. |
 | `POST` | `/api/artifacts/{slug}/deploy` | publish the artifact at its stable serve URL. |
 | `GET` | `/api/artifacts/{slug}/events` | activity timeline (drops dashboard:ui). |

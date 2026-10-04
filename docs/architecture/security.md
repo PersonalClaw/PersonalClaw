@@ -167,9 +167,11 @@ and the address is never logged, since a sign-in page's carries its single-use `
 ### The internal credential
 
 PersonalClaw's own processes call their gateway over loopback: an agent's tools (in the gateway
-itself, and in the `mcp-core` server an agent CLI runs), a tool the gateway runs for a request
-(`POST /api/tools/invoke`), a scheduled script's `ctx.notify` and `ctx.call_tool`,
-`personalclaw cron trigger` and `personalclaw auth rotate-key`. They carry the gateway's internal credential,
+itself, and in the `mcp-core` server an agent CLI runs), the artifact store written in any process
+but the gateway, naming the artifact it wrote (`POST /api/artifacts/{slug}/changed`), a tool the
+gateway runs for a request (`POST /api/tools/invoke`), a scheduled script's `ctx.notify` and
+`ctx.call_tool`, `personalclaw cron trigger` and `personalclaw auth rotate-key`. They carry the
+gateway's internal credential,
 `X-Internal-Secret`, which the gateway writes to `<home>/.local_secret` (0600) each time it starts.
 Every caller reads it from the same home, resolved at the call (the gateway declares
 `PERSONALCLAW_HOME` to each `mcp-core` server it starts), and none makes a home to look in one.

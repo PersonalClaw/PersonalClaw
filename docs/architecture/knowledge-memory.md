@@ -164,6 +164,28 @@ could not check is withheld in the same way. Each refusal is a row in the securi
 `tests/test_stored_upload_scan_census.py` reads the package for every route that takes a file's
 bytes from a request, and fails on one that neither scans them nor says why not.
 
+### The artifact mirror follows every write, whichever process made it
+
+Knowledge keeps a copy of each artifact of a kind it reads (`knowledge/artifact_ingest.py`), found
+by a search and never listed. It follows the artifact store's writes rather than polling the
+store: each write method of the store calls `artifacts.changes.emit` once its write has landed, and
+the gateway subscribes two observers there when it starts, the mirror and the hint that tells every
+open page to read the artifacts it shows again (`DashboardState.announce_artifact_change`).
+
+The store has writers outside the gateway: an agent CLI's artifact tools run in the tool server the
+CLI starts (`personalclaw mcp-core`), a process of its own. A process that is not the gateway of its
+home (the gateway's runtime record names its pid, `gateway_base.live_gateway`) tells the gateway the
+slug of each artifact it writes: `POST /api/artifacts/{slug}/changed`, with the internal credential
+and the chat the work is for. The gateway reads the artifact from its own store and tells both
+observers what the store holds now: written when it holds the artifact, removed when it does not.
+The gateway never tells itself, so each write is heard once, wherever it was made. The call carries
+no text, so the content scan reads an artifact's text once, at the door that writes it, in the
+process that writes it. The gateway tells its observers as the work of the chat the call names
+(`dashboard/memory_write_gate`), so an Incognito or Temporary chat's artifact is shown on the open
+pages and kept out of Knowledge, as when the gateway's own agent writes it. A process with no live
+gateway of its home tells no one, and a gateway that cannot be told leaves the write as it is and
+is named, with the artifact, in `gateway.log`.
+
 ### Ingestion pipeline (node graphs)
 
 `knowledge/pipeline/` is a node-graph executor:

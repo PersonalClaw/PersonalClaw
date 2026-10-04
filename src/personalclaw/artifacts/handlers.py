@@ -15,7 +15,7 @@ from typing import Any, cast
 
 from aiohttp import web
 
-from personalclaw.artifacts import registry, source_files
+from personalclaw.artifacts import changes, registry, source_files
 from personalclaw.artifacts.build import (
     ArtifactBuildError,
     BuildResult,
@@ -41,6 +41,7 @@ from personalclaw.artifacts.models import (
     ArtifactVersionConflict,
     ext_for_mime,
     is_binary_kind,
+    is_valid_slug,
     kind_for_mime,
     redacted,
 )
@@ -798,6 +799,41 @@ async def api_artifact_delete(request: web.Request) -> web.Response:
     _deploy_store(prov).teardown(slug)
     _audit(request, "artifact.delete", "ok", f"slug={slug}")
     return web.json_response({"ok": True})
+
+
+async def api_artifact_changed(request: web.Request) -> web.Response:
+    """POST /api/artifacts/{slug}/changed — another PersonalClaw process wrote this artifact.
+
+    Called with the internal credential by the process that wrote the store
+    (``artifacts.changes``): an agent CLI's tool server, or any other process of this home that is
+    not the gateway. The call carries no text and no claim of what changed, so it is no door for
+    content: the gateway reads the artifact from the store it owns and tells the store's observers
+    what it holds now. An artifact the store holds was written (Knowledge keeps its copy of it, the
+    open pages read it again); one it does not hold was removed (Knowledge forgets it). So no call
+    makes Knowledge keep text the store does not hold, or drop an artifact the store does.
+
+    It runs as the work of the chat the call names, as every request does
+    (``dashboard/memory_write_gate``): an Incognito or Temporary chat's artifact is shown on the
+    open pages and kept out of Knowledge, as when the gateway's own agent writes it.
+    """
+    slug = request.match_info["slug"]
+    if not is_valid_slug(slug):
+        return json_error(
+            "artifact_slug_invalid", message=f"{slug!r} is not an artifact's slug", status=400
+        )
+    store = registry.get_provider("native")
+    if store is None:
+        return json_error(
+            "service_unavailable", message="the artifact store is unavailable", status=503
+        )
+    change = changes.UPSERT if store.get(slug) is not None else changes.DELETE
+    changes.emit(change, slug)
+    logger.info(
+        "Artifact %s was %s by another PersonalClaw process",
+        slug,
+        "written" if change == changes.UPSERT else "removed",
+    )
+    return web.json_response({"slug": slug, "change": change})
 
 
 async def api_artifact_raw(request: web.Request) -> web.Response:
@@ -1899,6 +1935,7 @@ def register_artifact_routes(app: web.Application) -> None:
     app.router.add_get("/api/artifacts/{slug}", api_artifact_detail)
     app.router.add_patch("/api/artifacts/{slug}", api_artifact_update)
     app.router.add_delete("/api/artifacts/{slug}", api_artifact_delete)
+    app.router.add_post("/api/artifacts/{slug}/changed", api_artifact_changed)
     app.router.add_get("/api/artifacts/{slug}/raw", api_artifact_raw)
     # The write half of the same path (DFE §C3) — registered beside its GET so the two
     # halves of one resource cannot drift apart in the table.

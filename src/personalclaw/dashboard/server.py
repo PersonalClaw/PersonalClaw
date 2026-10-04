@@ -472,9 +472,8 @@ async def _ownership_denial(request: web.Request, app_name: str, route: str) -> 
 # CLI. The credential opens exactly the operations below, each one method on one route written in
 # the router's own syntax (`token_auth.InternalRoute`), and no other: an operation missing here is
 # a tool that fails on every gateway that asks for a sign-in, and an entry nothing calls is a door
-# the credential holds open for nobody. The rail
-# `tests/test_every_internal_call_names_an_operation_that_takes_it.py` holds the list to the calls
-# in the source, both ways.
+# the credential holds open for nobody. A rail holds the list to the calls in the source, both
+# ways: `tests/test_every_internal_call_names_an_operation_that_takes_it.py`.
 
 #: Called only by PersonalClaw's processes, so from off this computer they are refused outright.
 INTERNAL_ROUTES: frozenset[str] = frozenset(
@@ -490,6 +489,7 @@ INTERNAL_ROUTES: frozenset[str] = frozenset(
         "POST /api/outbox/notify",  # `notify_attachment`
         "POST /api/channel/upload-file",  # `notify_attachment`
         "POST /api/tools/invoke",  # a scheduled script's ctx.call_tool
+        "POST /api/artifacts/{slug}/changed",  # an artifact another of its processes wrote
         # The computer-use shim in the `mcp-core` process. Deliberately not mixed: no browser
         # surface drives the desktop, and admitting cookie auth on this one route would put the
         # operator's keyboard behind the weakest browser path.
