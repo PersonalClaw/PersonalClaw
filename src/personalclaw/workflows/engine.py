@@ -1255,7 +1255,7 @@ async def dispatch_action(
             terminal_reason=REFUSED_TO_START,
         )
 
-    from personalclaw.action_providers.base import ActionContext
+    from personalclaw.action_providers.base import WORKFLOW_STEP_EVENT, ActionContext
 
     picked = "with" if cfg.get("with") else "config"
     action_config = dict(cfg.get(picked) or {})
@@ -1275,7 +1275,7 @@ async def dispatch_action(
     }
     payload.update((key, value) for key, value in stamped.items() if value or key == "node_id")
     context = ActionContext(
-        event="workflow_node",
+        event=WORKFLOW_STEP_EVENT,
         context=str(cfg.get("context", "") or ""),
         payload=payload,
         answer=answer,

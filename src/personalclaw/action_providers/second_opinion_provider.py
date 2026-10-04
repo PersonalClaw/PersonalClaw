@@ -21,9 +21,11 @@ mismatch that makes a trigger validate, save, and then fail at fire time.
         "stuck_at": "the same assertion fails …",     # required
         "origin_runner": "gemini-cli",                # required — the exclusion key
         "ask": "…",                  # optional; defaults to "smallest change that unblocks"
-        "workspace": "/abs/path",    # optional; defaults to the payload's workspace
+        "workspace": "/abs/path",    # the stalled work's folder; else the payload's
         "session_key": "...",        # optional; the stalled session, named in the audit rows
-        "sandbox": "none",           # the stalled run's sandbox class — the proposer inherits it
+        "sandbox": "docker",         # optional; the stalled run's sandbox tier, which the proposer
+                                     # inherits (unnamed: the tier its agent's runtime is set up
+                                     # with, as every other start of that agent)
         "attempts": ["verbatim error output …"],
         "files_touched": ["src/app.py"],
         "brief_dir": "/abs/path",    # where the brief file lands (default: the workspace)
@@ -32,6 +34,15 @@ mismatch that makes a trigger validate, save, and then fail at fire time.
         "timeout_secs": 300,
         "require_health": true       # false only for a user-chosen target
     }
+
+**A workflow step's handoff is its own run's.** An automation names the stalled session and the
+folders of its handoff as the owner set it up. A workflow step's arguments may not, since a template
+can be written or edited by a model: its handoff works and writes its brief in the step's own run's
+folder, and is recorded under the run's identity, and a step that names a session, a workspace or a
+brief folder is refused before anything is written, in the words its template is refused with when
+it is saved (``workflows.step_arguments``). With no folder to work in, the handoff does not start:
+it never works in PersonalClaw's own folder in its place. Nor does a payload choose its sandbox
+tier.
 """
 
 from __future__ import annotations
@@ -39,7 +50,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.action_providers.base import (
+    ActionContext,
+    ActionProvider,
+    ActionResult,
+    is_workflow_step,
+)
 from personalclaw.action_providers.template import render_template
 
 #: Hard ceiling on one handoff. A second opinion is a single headless turn, not a session.
@@ -100,12 +116,39 @@ class SecondOpinionActionProvider(ActionProvider):
             )
 
         payload = ctx.payload if isinstance(ctx.payload, dict) else {}
-        workspace = str(
-            action_config.get("workspace") or payload.get("workspace") or payload.get("cwd") or ""
-        ).strip()
-        # The stalled session is its caller's to name, in the config. Never the payload's: a
-        # payload is event data or a template's own, and the audit rows name this session.
-        session_key = str(action_config.get("session_key") or "").strip()
+        if is_workflow_step(ctx):
+            # The step's run's folder and identity, as the engine stamps them on the step, and
+            # never its arguments' (refused here, as they are when its template is saved).
+            from personalclaw.guardrails.policy import unattended_dispatch_key
+            from personalclaw.workflows.step_arguments import dispatch_refusal
+
+            if refused := dispatch_refusal(self.name, action_config):
+                return ActionResult(success=False, error=refused, failure_class="user")
+            workspace, brief_dir = str(payload.get("workspace") or "").strip(), ""
+            run_id = str(payload.get("run_id") or "")
+            session_key = unattended_dispatch_key(f"workflow:{run_id}") if run_id else ""
+            no_folder = (
+                "a workflow step's handoff works only in its own run's folder, and this run "
+                "has none"
+            )
+        else:
+            workspace = str(
+                action_config.get("workspace")
+                or payload.get("workspace")
+                or payload.get("cwd")
+                or ""
+            ).strip()
+            brief_dir = str(action_config.get("brief_dir") or "").strip()
+            # The stalled session is its caller's to name, in the config. Never the payload's: a
+            # payload is event data, and the audit rows name this session.
+            session_key = str(action_config.get("session_key") or "").strip()
+            no_folder = "it needs a 'workspace', the folder the stalled work is in"
+        if not workspace:
+            return ActionResult(
+                success=False,
+                error=f"second-opinion did not start: {no_folder}",
+                failure_class="user",
+            )
         try:
             timeout_secs = float(action_config.get("timeout_secs") or _DEFAULT_TIMEOUT_SECS)
         except (TypeError, ValueError):
@@ -118,12 +161,14 @@ class SecondOpinionActionProvider(ActionProvider):
             ask=render_template(str(action_config.get("ask", "") or ""), ctx).strip(),
             workspace=workspace,
             origin_runner=origin_runner,
-            sandbox=str(action_config.get("sandbox") or payload.get("sandbox") or "none"),
+            # The tier its caller names, never a payload's. Unnamed, the agent it asks runs in the
+            # tier that agent's own runtime is set up with, as every other start of it does.
+            sandbox=str(action_config.get("sandbox") or "").strip(),
             session_key=session_key,
             consumer=str(action_config.get("consumer") or ctx.event or ""),
             attempts=_str_tuple(action_config.get("attempts")),
             files_touched=_str_tuple(action_config.get("files_touched")),
-            brief_dir=str(action_config.get("brief_dir") or "").strip(),
+            brief_dir=brief_dir,
             required_capabilities=_str_tuple(action_config.get("required_capabilities")),
             binding_order=_str_tuple(action_config.get("binding_order")),
             require_health=bool(action_config.get("require_health", True)),

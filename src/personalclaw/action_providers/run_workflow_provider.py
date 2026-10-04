@@ -11,9 +11,16 @@ that lets a trigger validate, save, and then fail at fire time with nothing acti
         "workflow": "triage-inbox",     # required: a saved def name
         "inputs": {"since": "1h"},      # optional: run inputs
         "mode": "background",           # background (default) | blocking
-        "project_id": "...",            # optional project binding
+        "project_id": "...",            # optional project binding (an automation's own)
         "idempotency_key": "..."        # optional caller dedupe key
     }
+
+**A workflow step's run is in the step's own project.** An automation's action names the project
+its run belongs to, as the owner set it up and allowed it. A workflow step's arguments may not: a
+template can be written or edited by a model, and a run in another project reads that project's
+secrets. So a step starts its run in its own run's project (``ActionContext.project_id``, which
+its dispatch states), and a step that names one is refused before anything is created, in the
+words its template is refused with when it is saved (``workflows.step_arguments``).
 
 **`outcome: "launched"`, not success.** A background run has only STARTED when this
 returns; its real outcome lands in the run's own ledger. Reporting it as plain success
@@ -52,6 +59,7 @@ from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
     ActionResult,
+    is_workflow_step,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,6 +104,20 @@ class RunWorkflowActionProvider(ActionProvider):
                 error="run-workflow requires a `workflow` name",
                 stderr="no workflow named in the action config",
             )
+        # The project the run is in: a workflow step's own, as its dispatch says, else the one an
+        # automation's action names. Asked before anything is looked up or created.
+        project = str((action_config or {}).get("project_id", "") or "")
+        if is_workflow_step(ctx):
+            from personalclaw.workflows.step_arguments import dispatch_refusal
+
+            if refused := dispatch_refusal(self.name, action_config or {}):
+                return ActionResult(
+                    success=False,
+                    error=refused,
+                    stderr="a workflow step names the project of the run it starts",
+                    failure_class="user",
+                )
+            project = str(getattr(ctx, "project_id", "") or "")
 
         try:
             from personalclaw.workflows import defs as defs_mod
@@ -174,7 +196,6 @@ class RunWorkflowActionProvider(ActionProvider):
         from personalclaw.triggers.secrets import UnresolvedSecret, check
         from personalclaw.workflows import input_secrets
 
-        project = str((action_config or {}).get("project_id", "") or "")
         kept = set(getattr(ctx, "secret_references", ()) or ())
         handed = sorted(set(input_secrets.references_in(coerced)) & kept)
         try:
@@ -286,7 +307,7 @@ class RunWorkflowActionProvider(ActionProvider):
                 spec_version=int(spec.get("version", 1) or 1),
                 inputs=run_inputs,
                 mode=str((action_config or {}).get("mode", "background") or "background"),
-                project_id=str((action_config or {}).get("project_id", "") or ""),
+                project_id=project,
                 # The trigger whose fire this is, so the run says how it went on the trigger's
                 # route when it ends (`run_finish.report_to_its_trigger`). This read the event's
                 # CONTEXT text, which is a file path or a message and never the trigger's id.

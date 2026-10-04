@@ -320,6 +320,25 @@ session from it (a chat named there would lend the agent that chat's Trust), a
 digest is the work of the trigger its dispatch names (`ActionContext.trigger_id`), which a
 workflow step has none of.
 
+**Nor do a step's arguments name whose work it is.** A few arguments an automation's action
+may give, as the owner set it up and allowed it, a workflow step's may not, since a template
+can be written or edited by a model (`step_arguments.RUN_SCOPED_ARGUMENTS`): `run-workflow`'s
+`project_id` (the run a step starts is in the step's own project, `ActionContext.project_id`,
+so it reads no other project's secrets), `run-prompt`'s `session` (the agent a step starts
+answers to no chat, as one `invoke-agent` starts does), and `second-opinion`'s `session_key`,
+`workspace` and `brief_dir` (a step's handoff works and writes its brief in its run's folder,
+and its audit rows name the run). A template whose step names one is refused, naming the key,
+with `WF_ARGUMENT_RUN_IDENTITY` where it is validated and at its run's first start, both in the
+words of `step_arguments.authored_refusal`; arguments bound whole from another step's output
+are refused by the provider at the step, which then starts nothing
+(`step_arguments.dispatch_refusal`). A provider tells a step from an automation by its
+dispatch (`action_providers.base.is_workflow_step`: the engine's `WORKFLOW_STEP_EVENT`), never
+by its payload, and the planner that writes templates is not offered those arguments
+(`grounding`). A second opinion's sandbox tier is its caller's to name, never a payload's: with
+none named, it runs the agent it asks in the tier and OS sandbox level that agent's runtime is
+set up with (`llm.acp_agent.options_sandbox`), as every other start of that agent does, and with
+no folder to work in it does not start.
+
 **An `action` step asks the action denylist before its provider runs, as a trigger's
 fire does** (`guardrails.denylist.enforce_action`, from `engine.dispatch_action`). A run
 is unattended work whoever started it: each step is dispatched with nobody approving

@@ -55,8 +55,10 @@ class HandoffBrief:
     #: The runner/agent that stalled. This is the EXCLUSION key for target selection — a
     #: second opinion from the brain that just failed is not a second opinion.
     origin_runner: str = ""
-    #: The sandbox-provider name the stalled consumer ran under. The proposer gets the same one.
-    sandbox: str = "none"
+    #: The sandbox tier the stalled consumer ran under, when its caller names one: the proposer gets
+    #: the same one. Empty: the tier the agent it asks runs in, as its own runtime is set up
+    #: (``backends``), the tier every other start of that agent gets.
+    sandbox: str = ""
     session_key: str = ""
     consumer: str = ""
     attempts: tuple[str, ...] = ()
@@ -152,7 +154,7 @@ def build_brief(
     ask: str = "",
     workspace: str = "",
     origin_runner: str = "",
-    sandbox: str = "none",
+    sandbox: str = "",
     session_key: str = "",
     consumer: str = "",
     attempts: tuple[str, ...] = (),
@@ -164,16 +166,20 @@ def build_brief(
     The baseline is both the brief's ``git status``/``git diff`` prose *and* the pre-fire digest
     table the acceptance test re-reads. One snapshot serves both, so the diff a proposer reads
     and the diff we verify against are the same moment in time — they cannot drift apart.
+
+    *workspace* is the stalled work's folder, and the caller must name it: a proposer edits what
+    it is pointed at, so a missing one is a ``ValueError`` and never PersonalClaw's own folder.
     """
-    ws = workspace or os.getcwd()
-    baseline = snapshot_workspace(ws, paths=files_touched)
+    if not workspace:
+        raise ValueError("a handoff needs the folder the stalled work is in")
+    baseline = snapshot_workspace(workspace, paths=files_touched)
     return HandoffBrief(
         goal=redact(goal or ""),
         stuck_at=redact(stuck_at or ""),
         ask=redact(ask or ""),
-        workspace=ws,
+        workspace=workspace,
         origin_runner=origin_runner or "",
-        sandbox=sandbox or "none",
+        sandbox=sandbox or "",
         session_key=session_key or "",
         consumer=consumer or "",
         attempts=tuple(redact(a) for a in attempts if a),

@@ -471,7 +471,7 @@ async def test_a_handoff_a_step_asks_for_is_not_audited_as_a_session_its_payload
     monkeypatch,
 ) -> None:
     """🔴 Red before: `second-opinion` fell back to the payload's `session_key`, so its audit rows
-    named whatever session the step's payload said."""
+    named whatever session the step's payload said. They name the step's run."""
     import personalclaw.proposer.service as proposer
     from personalclaw.action_providers.second_opinion_provider import (
         SecondOpinionActionProvider,
@@ -495,10 +495,11 @@ async def test_a_handoff_a_step_asks_for_is_not_audited_as_a_session_its_payload
         get_provider=lambda name: SecondOpinionActionProvider(),
         run_id="run-own",
         instance_path="root.children[0]",
+        cwd="/srv/own",
     )
 
     assert asked["goal"] == "green suite"
-    assert asked["session_key"] == ""
+    assert asked["session_key"] == "unattended:workflow:run-own"
 
 
 async def test_a_triage_digest_step_is_no_automation_its_payload_names(monkeypatch) -> None:

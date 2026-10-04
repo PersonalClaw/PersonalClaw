@@ -586,7 +586,7 @@ class RunController:
                     await self._honor_cancel()
                 return
             if not await self._prepare():
-                # The run was refused before any node ran (a step that writes its own identity, a
+                # The run was refused before any node ran (a step that names whose work it is, a
                 # fatal `workspace:` declaration or a contended named workspace). `_prepare` already
                 # wrote the terminal status through `_finish`, so scheduling anything now would run
                 # nodes for a failed run.
@@ -652,8 +652,8 @@ class RunController:
     async def _prepare(self) -> bool:
         """Pre-flight: pre-charge the budget from the ledger, stamp start, journal it.
 
-        Returns False when the run was REFUSED before any node ran — a step that writes its own
-        identity (`run_start.admit_step_identities`) or a fatal `workspace:` declaration
+        Returns False when the run was REFUSED before any node ran — a step that names whose work
+        it is (`run_start.admit_step_identities`) or a fatal `workspace:` declaration
         (`run_start.provision_workspace`), each of which has already written the terminal status.
         The tick loop stops rather than scheduling steps the run could not honor.
         """

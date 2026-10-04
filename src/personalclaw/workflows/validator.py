@@ -42,6 +42,7 @@ from personalclaw.workflows.models import (
     valid_name,
     walk,
 )
+from personalclaw.workflows.step_arguments import authored_refusal
 
 SEVERITY_ERROR = "error"
 SEVERITY_WARNING = "warning"
@@ -506,6 +507,8 @@ def _validate_shape(
             _add(
                 res, "WF_PAYLOAD_RUN_IDENTITY", f"This step {run_identity_sentence(written)}", path
             )
+        if refused := authored_refusal(cfg):
+            _add(res, "WF_ARGUMENT_RUN_IDENTITY", f"This step {refused}", path)
 
     elif kind == NodeKind.WAIT:
         seal = cfg.get("seal")

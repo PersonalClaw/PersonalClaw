@@ -151,6 +151,12 @@ WF_ERROR_CODES: dict[str, str] = {
         "and folder, the attempt's idempotency key), which only the engine sets, from the run "
         "that executes the step; the message names the keys to remove."
     ),
+    "WF_ARGUMENT_RUN_IDENTITY": (
+        "An action node's arguments (`config.with`) name an argument only an automation may give "
+        "its provider (`step_arguments.RUN_SCOPED_ARGUMENTS`): the project a run it starts belongs "
+        "to, the session an agent it starts answers to, or the session and folders of a handoff, "
+        "each of which a workflow step takes from its own run; the message names the keys."
+    ),
     "WF_BAD_SEAL": (
         "A wait node's `seal` is not an object, or a buffer seal has neither a positive "
         "`threshold` (items) nor `tokens`."

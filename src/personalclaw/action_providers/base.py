@@ -9,12 +9,20 @@ from personalclaw.errors import AgentError
 if TYPE_CHECKING:
     from personalclaw.tool_providers.base import RiskLevel
 
+#: The `ActionContext.event` a step of a workflow run is dispatched with (`engine.dispatch_action`),
+#: and no other dispatch: a trigger's fire names its source (`file.changed`, `webhook.fire`), a
+#: lifecycle hook its moment, a tile its refresh. A provider tells a step of a run, whose template a
+#: model can write, from an automation the owner set up by this (`is_workflow_step`), never by its
+#: payload, which a template or an event writes.
+WORKFLOW_STEP_EVENT = "workflow_node"
+
 
 @dataclass
 class ActionContext:
     """Per-fire data passed to providers.
 
-    `event` is one of the names defined in `personalclaw.hooks.HOOK_EVENTS`.
+    `event` names what dispatched it: a lifecycle event (`personalclaw.hooks.HOOK_EVENTS`), a
+    trigger's source (`file.changed`, `webhook.fire`), or `WORKFLOW_STEP_EVENT` for a workflow step.
     `context` is free-form text passed via `$PERSONALCLAW_HOOK_CONTEXT` —
     most providers should prefer `payload` for structured access.
     `payload` is the structured event dict (written to bash STDIN as JSON;
@@ -66,6 +74,12 @@ class ActionContext:
     fire_files: tuple[str, ...] = ()
     project_id: str = ""
     secret_references: tuple[str, ...] = ()
+
+
+def is_workflow_step(ctx: Any) -> bool:
+    """Whether *ctx* dispatches a step of a workflow run (`WORKFLOW_STEP_EVENT`), whose arguments a
+    template gives, rather than an automation's action the owner set up."""
+    return getattr(ctx, "event", "") == WORKFLOW_STEP_EVENT
 
 
 @dataclass

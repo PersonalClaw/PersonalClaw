@@ -75,6 +75,16 @@ def options_sandbox_mode(options: dict) -> str:
     return str(options.get("sandbox_mode") or "auto")
 
 
+def options_sandbox(options: dict) -> str:
+    """The sandbox tier an ``acp:<cli>`` entry declares its CLI runs in (default ``none``).
+
+    The tier a session of the CLI gets when its start names none (the factory below), and the
+    tier a second opinion asking the CLI runs it in (``proposer.backends``): read in one place, so
+    no start of an agent the owner set up to run sandboxed runs it on the host instead.
+    """
+    return str(options.get("sandbox") or "").strip() or "none"
+
+
 def options_env(options: dict) -> dict[str, str]:
     """What an ``acp:<cli>`` entry adds to its CLI's environment.
 
@@ -1051,11 +1061,7 @@ def _factory(
     # level; the provider is the isolation backend (``none`` builtin, or an installed container
     # tier). The bridge threads a per-session choice as the ``sandbox`` kwarg; falls back to the
     # entry option, else ``none``.
-    sandbox = (
-        str(kwargs.get("sandbox") or "").strip()
-        or str(options.get("sandbox") or "").strip()
-        or "none"
-    )
+    sandbox = str(kwargs.get("sandbox") or "").strip() or options_sandbox(options)
 
     session_files_dir_value = options.get("session_files_dir")
     session_files_dir: Path | None = (

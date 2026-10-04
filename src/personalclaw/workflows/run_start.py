@@ -4,7 +4,8 @@ Called from `RunController._prepare`: the declared `workspace:`, the
 project's context dir as the memory cwd, a restricted origin's memory posture, and the document a
 run that continues another starts from. Each is idempotent, because `_prepare` runs again on every
 resume — when a resumed run's steps that a gone controller left running go back in the queue too.
-A first start also refuses a run whose step writes its own identity (`admit_step_identities`).
+A first start also refuses a run whose step writes its own identity, or names an argument only an
+automation may give its action (`admit_step_identities`).
 Its tick loop runs in `run_context`, wherever it is started from.
 """
 
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from personalclaw.workflows import ownership
 from personalclaw.workflows.models import InstanceState, NodeKind, RunStatus, walk
+from personalclaw.workflows.step_arguments import authored_refusal
 from personalclaw.workflows.validator import run_identity_in_payload, run_identity_sentence
 
 if TYPE_CHECKING:
@@ -64,21 +66,27 @@ def requeue_lost_steps(ctl: RunController) -> list[str]:
 
 
 async def admit_step_identities(ctl: RunController) -> bool:
-    """Refuse, before its first step, a run one of whose action steps writes its own identity.
+    """Refuse, before its first step, a run one of whose action steps writes its own identity, or
+    names an argument only an automation may give its action.
 
     Returns False when the run was refused. Whose work a step is belongs to the engine
-    (`engine.RUN_IDENTITY_KEYS`), and saving a template that writes it is already refused
-    (`validator.run_identity_in_payload`). A definition can reach a run without that door (one an
-    app contributes, one saved before the rule, one edited on disk), so its start asks too, in the
-    same words, rather than leaving the engine to set the run's value over it at every step
-    unannounced. Asked on a first start only: a resumed run's steps have run, and each still gets
-    the run's identity from the engine.
+    (`engine.RUN_IDENTITY_KEYS`), and so do the arguments that would name it for the step's action
+    (`step_arguments.RUN_SCOPED_ARGUMENTS`: the project a run it starts is in, the chat its agent
+    answers to, its handoff's session and folders). Saving a template that writes either is already
+    refused (`validator`). A definition can reach a run without that door (one an app contributes,
+    one saved before the rule, one edited on disk), so its start asks too, in the same words, rather
+    than leaving the engine and the provider to hold the step to its run at every dispatch
+    unannounced. Asked on a first start only: a resumed run's steps have run, and each is still held
+    to the run at its dispatch.
     """
     for path, node in walk(ctl.root):
-        written = run_identity_in_payload(node.config or {}) if node.kind == NodeKind.ACTION else []
-        if written:
+        if node.kind != NodeKind.ACTION:
+            continue
+        written = run_identity_in_payload(node.config or {})
+        said = run_identity_sentence(written) if written else authored_refusal(node.config or {})
+        if said:
             step = node.label or node.id or path
-            sentence = f"The run did not start: its step “{step}” {run_identity_sentence(written)}."
+            sentence = f"The run did not start: its step “{step}” {said}."
             logger.warning("run %s (%s): %s", ctl.run.id, ctl.run.workflow_name, sentence)
             async with ctl._lock:
                 await ctl._finish(RunStatus.FAILED, error=sentence)

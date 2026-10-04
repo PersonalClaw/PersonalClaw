@@ -23,7 +23,8 @@ resolving + rendering the saved prompt.
         "model": "...",                  # optional model override
         "max_turns": 20,                 # optional
         "session": "cron:standup",       # optional: pinned session for continuity
-                                          # (default: a fresh ephemeral session)
+                                          # (default: a fresh ephemeral session);
+                                          # an automation's own, never a workflow step's
         "writes": ["~/Notes/standup.md"] # optional: the files its job changes (`write_scope`);
                                           # the run changes these and nothing else
     }
@@ -32,6 +33,13 @@ When ``prompt_id`` is empty the action runs its ``message`` — the prompt an au
 chat makes carries — and with neither, the **default-recurring-prompt** file ``loop.md``
 (project ``<cwd>/loop.md`` > user ``config_dir()/loop.md``), read fresh each fire — PClaw's
 analogue of Claude Code's ``loop.md``.
+
+**A workflow step's agent answers to no chat.** ``session`` names the session the agent works in:
+an automation the owner set up may pin one, and a chat named there lends the agent that chat's
+Trust and posts its results into it. A workflow step's arguments may not name one, since a
+template can be written or edited by a model: its agent works for the step's own run, as an agent
+``invoke-agent`` starts does, and a step that names a session is refused before any agent starts,
+in the words its template is refused with when it is saved (``workflows.step_arguments``).
 """
 
 from __future__ import annotations
@@ -44,6 +52,7 @@ from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
     ActionResult,
+    is_workflow_step,
 )
 from personalclaw.action_providers.services import (
     get_action_services,
@@ -154,6 +163,13 @@ class RunPromptActionProvider(ActionProvider):
         ctx: ActionContext,
         timeout: int = 30,
     ) -> ActionResult:
+        if is_workflow_step(ctx):
+            # Its agent works for the step's run: a session its arguments name is refused, before
+            # anything is rendered or started.
+            from personalclaw.workflows.step_arguments import dispatch_refusal
+
+            if refused := dispatch_refusal(self.name, action_config):
+                return ActionResult(success=False, error=refused, failure_class="user")
         prompt_id = str(action_config.get("prompt_id") or "").strip()
         cwd = (action_config.get("cwd") or "").strip()
 
@@ -246,9 +262,10 @@ class RunPromptActionProvider(ActionProvider):
             max_turns = int(action_config.get("max_turns", 0) or 0)
         except (ValueError, TypeError):
             max_turns = 0
-        # Continuity: a session the config pins accrues state across fires; the default is a fresh
-        # ephemeral subagent session per fire. Never one a payload names: a payload is event data
-        # or a template's own, and a chat named there would lend the agent that chat's Trust.
+        # Continuity: a session an automation's config pins accrues state across fires; the default
+        # is a fresh ephemeral subagent session per fire. Never one a payload names (event data or a
+        # template's own), nor a workflow step's (refused above): a chat named there would lend the
+        # agent that chat's Trust.
         parent_key = str(action_config.get("session") or "").strip()
 
         dry_run = bool(action_config.get("dry_run", False))

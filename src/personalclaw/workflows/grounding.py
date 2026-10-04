@@ -305,12 +305,12 @@ def _signature_for(name: str, provider: Any) -> ProviderSignature:
 
     typed = _typed_fields(name)
     if typed:
-        sig.fields, sig.source = typed, "schema"
+        sig.fields, sig.source = _step_fields(name, typed), "schema"
         return sig
 
     parsed = _docstring_fields(doc)
     if parsed:
-        sig.fields, sig.source = parsed, "docstring"
+        sig.fields, sig.source = _step_fields(name, parsed), "docstring"
         return sig
 
     # Third tier: read what the provider's own code actually pulls out of its config. Measured,
@@ -324,8 +324,18 @@ def _signature_for(name: str, provider: Any) -> ProviderSignature:
     # source is labelled so a reader knows the difference.
     scraped = _source_fields(provider)
     if scraped:
-        sig.fields, sig.source = scraped, "source-scan"
+        sig.fields, sig.source = _step_fields(name, scraped), "source-scan"
     return sig
+
+
+def _step_fields(name: str, fields: list[tuple[str, str, bool]]) -> list[tuple[str, str, bool]]:
+    """*fields* without the arguments a workflow step may not give *name*: only an automation may
+    (`step_arguments.RUN_SCOPED_ARGUMENTS`). The planner writes steps, so naming one here would
+    teach it a key its spec is then refused for."""
+    from personalclaw.workflows.step_arguments import RUN_SCOPED_ARGUMENTS
+
+    held, _why = RUN_SCOPED_ARGUMENTS.get(name, ((), ""))
+    return [entry for entry in fields if entry[0] not in held]
 
 
 def _typed_fields(name: str) -> list[tuple[str, str, bool]]:

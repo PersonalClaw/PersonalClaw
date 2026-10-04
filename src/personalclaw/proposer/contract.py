@@ -23,7 +23,7 @@ for "second-opinion runner returns confident garbage".
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -41,20 +41,23 @@ class PreparedInvocation:
     """Everything needed to fire one proposer, and nothing that needs the network.
 
     ``argv`` is empty for backends that do not spawn a process (the ``subagent`` fallback
-    hands ``prompt`` to :meth:`SubagentManager.spawn`). ``sandbox`` is the sandbox-provider
-    name — the SAME class the stalled consumer ran in, because a second opinion that escapes
-    the isolation of the run it is helping would be a downgrade nobody asked for.
+    hands ``prompt`` to :meth:`SubagentManager.spawn`). ``sandbox`` is the sandbox tier — the
+    SAME class the stalled consumer ran in, because a second opinion that escapes the isolation
+    of the run it is helping would be a downgrade nobody asked for; with none named, the one the
+    agent it asks is set up to run in, so it is never less isolated than every other start of
+    that agent. ``sandbox_mode`` is the OS sandbox level a runner's launch is wrapped at, its
+    runtime's own (``llm.acp_agent.options_sandbox_mode``).
     """
 
     backend: str
     runner_id: str
     prompt: str
     cwd: str
-    sandbox: str = "none"
+    sandbox: str = ""
+    sandbox_mode: str = "auto"
     argv: tuple[str, ...] = ()
     timeout_secs: float = 300.0
     baseline: "DiskBaseline | None" = None
-    env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

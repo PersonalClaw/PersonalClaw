@@ -1,8 +1,10 @@
 """The two :class:`ProposerBackend` implementations.
 
 * :class:`RunnerProposerBackend` — one per cataloged runner, fired one-shot through the
-  **sandbox provider** so it inherits the isolation class of the run it is helping. This is the
-  "different cataloged runner" the success criterion names.
+  **sandbox provider** so it inherits the isolation class of the run it is helping, or, when the
+  handoff names none, the one the runner's own runtime is set up with (``_runtime_sandbox``), so a
+  second opinion never runs an agent on the host that every other start of it runs sandboxed.
+  This is the "different cataloged runner" the success criterion names.
 * :class:`SubagentProposerBackend` — a fresh PClaw subagent as the second brain. Zero external
   dependencies; the degradation path when only one runner is installed (or when the eligible
   runner's dialect has no declared non-interactive form).
@@ -92,6 +94,21 @@ def normalise(
     )
 
 
+def _runtime_sandbox(defn: RunnerDefinition) -> tuple[str, str]:
+    """The sandbox tier and OS sandbox level *defn*'s CLI is set up to run in: its runtime entry's
+    own (``llm.acp_agent.options_sandbox`` and ``options_sandbox_mode``), the reading a session of
+    it is started with. A runtime nothing registered here declares nothing, so the host tier at
+    the default level, as a session of it would get."""
+    from personalclaw.llm.acp_agent import options_sandbox, options_sandbox_mode
+    from personalclaw.llm.registry import ProviderResolutionError, get_default_registry
+
+    try:
+        options = dict(get_default_registry().get_entry(defn.runtime_id).options or {})
+    except ProviderResolutionError:
+        options = {}
+    return options_sandbox(options), options_sandbox_mode(options)
+
+
 class RunnerProposerBackend:
     """Fire a cataloged runner one-shot, inside the stalled consumer's sandbox class."""
 
@@ -123,12 +140,14 @@ class RunnerProposerBackend:
             )
         prompt = dialect.render(brief.render())
         baseline = brief.baseline or snapshot_workspace(brief.workspace, paths=brief.files_touched)
+        tier, mode = _runtime_sandbox(self._defn)
         return PreparedInvocation(
             backend=self.name,
             runner_id=self._defn.id,
             prompt=prompt,
             cwd=brief.workspace,
-            sandbox=brief.sandbox or "none",
+            sandbox=brief.sandbox or tier,
+            sandbox_mode=mode,
             argv=dialect.argv(tuple(command), prompt),
             timeout_secs=self._timeout,
             baseline=baseline,
@@ -146,7 +165,9 @@ class RunnerProposerBackend:
 
         try:
             provider = resolve_provider(prepared.sandbox)
-            handle = provider.wrap(SandboxSpec(profile="build"), list(prepared.argv))
+            handle = provider.wrap(
+                SandboxSpec(mode=prepared.sandbox_mode, profile="build"), list(prepared.argv)
+            )
         except SandboxUnavailableError as exc:
             return InvocationRef(
                 backend=self.name,
@@ -288,7 +309,9 @@ class SubagentProposerBackend:
             runner_id=self.name,
             prompt=prompt,
             cwd=brief.workspace,
-            sandbox=brief.sandbox or "none",
+            # Unnamed stays unnamed: the agent it starts runs in the tier its own runtime is set
+            # up with, as an agent any other action starts does (`subagent_session`).
+            sandbox=brief.sandbox,
             timeout_secs=self._timeout,
             baseline=baseline,
         )
@@ -306,11 +329,10 @@ class SubagentProposerBackend:
             )
         info = manager.spawn(  # type: ignore[attr-defined]
             task=prepared.prompt,
-            parent_session_key=prepared.env.get("session_key", ""),
             cwd=prepared.cwd,
             approval_mode="auto",
             silent=True,
-            sandbox=prepared.sandbox or "none",
+            sandbox=prepared.sandbox,
         )
         if info is None:
             return InvocationRef(

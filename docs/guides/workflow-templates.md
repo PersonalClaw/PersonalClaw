@@ -87,6 +87,17 @@ only its own run's artifacts), so a template cannot set them: saving one that
 writes any of them is refused with `WF_PAYLOAD_RUN_IDENTITY`, naming the key, and
 so is starting a run of one that reached you another way.
 
+**A step's arguments don't name whose work it is either.** An automation's action can
+name the project its run belongs to, the session its agent works in, or the folders
+and session of a second opinion; a workflow step's `with` can't, because for a step
+each is its own run's. A `run-workflow` step starts its run in the step's own
+project, a `run-prompt` step's agent answers to no chat, and a `second-opinion`
+step works and writes its brief in its run's folder. So `run-workflow`'s
+`project_id`, `run-prompt`'s `session` and `second-opinion`'s `session_key`,
+`workspace` and `brief_dir` are refused in a step with `WF_ARGUMENT_RUN_IDENTITY`,
+naming the key, when you save, check or start the template, and at the step when
+another step's output hands them in.
+
 A step that runs PersonalClaw itself says `personalclaw <command>`, never
 `python3 -m personalclaw…`. In a `bash` step that name is this install's own
 program, wherever it is installed, while the `python3` on `PATH` has no PersonalClaw

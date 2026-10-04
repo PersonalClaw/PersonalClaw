@@ -7,7 +7,8 @@ One entry point, :func:`run_second_opinion`, doing exactly what §4.1 specifies 
 2. **select** — a DIFFERENT cataloged runner than the one that stalled (§3 catalog, health
    evidence, capabilities, the user's binding order for ties), degrading to the ``subagent``
    backend when the exclusion leaves nothing eligible;
-3. **fire** — one shot, headless, hard timeout, in the SAME sandbox class as the stalled run;
+3. **fire** — one shot, headless, hard timeout, in the SAME sandbox class as the stalled run, or,
+   when its caller names none, in the one the agent it asks is set up to run in;
 4. **verify** — re-diff disk; and
 5. **decide** — accept only when the re-diff confirms the claimed edits.
 
@@ -101,7 +102,7 @@ async def run_second_opinion(
     ask: str = "",
     workspace: str = "",
     origin_runner: str = "",
-    sandbox: str = "none",
+    sandbox: str = "",
     session_key: str = "",
     consumer: str = "",
     attempts: tuple[str, ...] = (),
@@ -136,7 +137,9 @@ async def run_second_opinion(
         timeout_secs=timeout_secs,
     )
 
-    def _audit(operation: str, outcome: str, error: str = "", **extra: Any) -> None:
+    def _audit(
+        operation: str, outcome: str, error: str = "", *, tier: str = "", **extra: Any
+    ) -> None:
         sel().log_tool_invocation(
             session_key=session_key or "second-opinion",
             tool_name=operation,
@@ -149,7 +152,9 @@ async def run_second_opinion(
             metadata={
                 "origin_runner": origin_runner,
                 "target_runner": getattr(backend, "runner_id", backend.name),
-                "sandbox": brief.sandbox,
+                # The tier the proposer ran in, once its backend prepared it; until then the one
+                # the handoff named, if any.
+                "sandbox": tier or brief.sandbox,
                 "consumer": consumer,
                 **{k: str(v) for k, v in extra.items()},
             },
@@ -164,7 +169,7 @@ async def run_second_opinion(
         backend = SubagentProposerBackend(timeout_secs=timeout_secs)
         prepared = await backend.prepare(brief)
 
-    _audit(SEL_OP_FIRE, "allowed", claimed="pending")
+    _audit(SEL_OP_FIRE, "allowed", tier=prepared.sandbox, claimed="pending")
     ref = await backend.invoke(prepared)
     result = await backend.collect(ref)
 
@@ -182,6 +187,7 @@ async def run_second_opinion(
         SEL_OP_VERDICT,
         "allowed" if accepted else "denied",
         error=rejection,
+        tier=prepared.sandbox,
         diff_verified=result.diff_verified,
         claimed=",".join(result.claimed_paths),
         verified=",".join(result.verified_paths),
