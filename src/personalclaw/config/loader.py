@@ -326,14 +326,16 @@ def resolve_config_dir(env: Mapping[str, str] | None = None) -> Path:
     return default_config_dir(env)
 
 
-def uses_default_home() -> bool:
+def uses_default_home(env: Mapping[str, str] | None = None) -> bool:
     """Whether the home in use is the default one — ``PERSONALCLAW_HOME`` unset, refused, or
     pointed at ``~/.personalclaw`` (a symlink to it included).
 
     The one question every "not against the real home" rail asks (``--approval yolo``, ``--seed``,
-    an eval cell, the scripted test model). Raises ``OSError`` when a path cannot be resolved; a
-    rail refuses on that too."""
-    return resolve_config_dir().resolve() == default_config_dir().resolve()
+    an eval cell, the scripted test model, a dev tool's named home). Raises ``OSError`` when a path
+    cannot be resolved; a rail refuses on that too. *env* as in :func:`default_config_dir`: the
+    same question about a home this process has not taken yet, so a dev tool can refuse a name
+    before it exports it (``harness/named_home.py``)."""
+    return resolve_config_dir(env).resolve() == default_config_dir(env).resolve()
 
 
 def config_dir() -> Path:

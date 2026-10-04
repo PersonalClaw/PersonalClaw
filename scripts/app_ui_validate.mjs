@@ -29,8 +29,8 @@
 // PASS. A leg the driver never reached is SKIPPED with an explicit not-reached
 // reason, so an aborted run cannot read as a clean one.
 //
-// Isolation: a fresh PERSONALCLAW_HOME under the OS temp dir per run (never
-// ~/.personalclaw), its own gateway on an ephemeral high port, and both torn down on
+// Isolation: a fresh PERSONALCLAW_HOME under the OS temp dir per run (never the
+// default home), its own gateway on an ephemeral high port, and both torn down on
 // exit. The first-party apps dir is neutralised so the Store contains ONLY the
 // bundles under validation. Nothing is left behind except the screenshots and the
 // report, which are the output.

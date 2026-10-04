@@ -2,7 +2,7 @@
 # Slice 2 smoke — run the exemplar through the real engine with a fake model, assert the
 # required_artifacts gate fails the run. No network, no real LLM. Target: well under 30s.
 #
-# Isolates PERSONALCLAW_HOME to a throwaway dir so nothing touches the real ~/.personalclaw.
+# Isolates PERSONALCLAW_HOME to a throwaway dir so nothing touches the default home.
 # Run from anywhere; it resolves the repo root from its own path.
 set -euo pipefail
 

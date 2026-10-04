@@ -14,6 +14,8 @@ machine-checked institutional knowledge:
 - ``harness.replay`` + ``harness.baselines`` — event-trace replay regression. The
   recorder half lives in core (``personalclaw.trace_recorder``); core can't import here.
 - ``harness.cli`` — ``python -m harness  validate | explain | run | scan | replay``.
+- ``harness.named_home`` — the one way a committed dev tool names the home it acts on and
+  finds that home's gateway; no home named, or the default one, is refused.
 
 The CLI runs on the repo venv (``.venv/bin/python`` at the repo root) when there is one,
 and otherwise on whatever interpreter invoked it — a git worktree has no ``.venv`` of its

@@ -18,8 +18,10 @@
 //
 // Run it against the freshly built web/dist (`npm run build` first):
 //     npm run smoke:render
-// Or point it at a live gateway instead of the static server:
-//     PC_SMOKE_URL=http://127.0.0.1:10000 npm run smoke:render
+// Or point it at the gateway of a scratch home instead of the static server. The gateway is
+// the one that home's runtime record names (scripts/lib/named_home.mjs), and no home, or
+// the default one (the install's own data), is refused:
+//     npm run smoke:render -- --home /tmp/pc-smoke
 //
 // Wired into the pre-push gate (scripts/run_prepush.sh) and the ci.yml `web`
 // job. Requires the Playwright Chromium binary (npx playwright install chromium
@@ -31,7 +33,7 @@ import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright'
+import { homeArg, scratchGatewayOrExit, signIn } from './lib/named_home.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DIST = path.join(REPO_ROOT, 'web', 'dist')
@@ -95,10 +97,13 @@ function serveDist() {
 }
 
 async function main() {
-  let base = process.env.PC_SMOKE_URL
+  const home = homeArg()
+  const gateway = home ? scratchGatewayOrExit(home) : null
+  let base
   let server = null
-  if (base) {
-    log(`probing live server at ${base}`)
+  if (gateway) {
+    base = gateway.url
+    log(`probing the gateway of ${gateway.home} at ${base}`)
   } else {
     if (!existsSync(path.join(DIST, 'index.html'))) {
       fail('web/dist/index.html missing — run `npm run build` first')
@@ -109,11 +114,14 @@ async function main() {
     log(`serving web/dist at ${base}`)
   }
 
+  const { chromium } = await import('playwright')
   const browser = await chromium.launch()
   const failures = []
   try {
     for (const route of ROUTES) {
-      const page = await browser.newPage()
+      const context = await browser.newContext()
+      if (gateway) await signIn(context, gateway)
+      const page = await context.newPage()
       const pageErrors = []
       const consoleErrors = []
       page.on('pageerror', (err) => pageErrors.push(err))
@@ -158,9 +166,10 @@ async function main() {
         failures.push({ route, problems })
         log(`✗ ${route}`)
       } else {
-        log(`✓ ${route} mounted clean${consoleErrors.length ? ` (${consoleErrors.length} console error(s) tolerated — no gateway behind the smoke)` : ''}`)
+        const why = gateway ? '' : ' — no gateway behind the smoke'
+        log(`✓ ${route} mounted clean${consoleErrors.length ? ` (${consoleErrors.length} console error(s) tolerated${why})` : ''}`)
       }
-      await page.close()
+      await context.close()
     }
   } finally {
     await browser.close()

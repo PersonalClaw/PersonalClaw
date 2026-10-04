@@ -39,13 +39,15 @@
 // animation did not provoke any motion, and the runner marks it `provokedMotion: false`
 // rather than publishing a clean-looking number for a still page.
 //
-// USAGE — needs a running gateway serving the CURRENT web/dist (see docs/design/motion.md
-// §8 for the recipe; `--seed demo-home` is what gives the cockpit a loop to open):
+// USAGE — needs a running gateway on a scratch home, serving the CURRENT web/dist (see
+// docs/design/motion.md §8 for the recipe; `--seed demo-home` is what gives the cockpit a loop
+// to open). The gateway is the one that home's runtime record names
+// (scripts/lib/named_home.mjs); no home, or the default one, is refused:
 //
-//     node scripts/motion_frame_budget.mjs --url http://127.0.0.1:10473
-//     node scripts/motion_frame_budget.mjs --url ... --inject-stall 200   # falsify the harness
-//     node scripts/motion_frame_budget.mjs --url ... --cpu-throttle 4     # slower machine
-//     node scripts/motion_frame_budget.mjs --url ... --bounciness 1       # one dial only
+//     node scripts/motion_frame_budget.mjs --home /tmp/pc-motion
+//     node scripts/motion_frame_budget.mjs --home ... --inject-stall 200   # falsify the harness
+//     node scripts/motion_frame_budget.mjs --home ... --cpu-throttle 4     # slower machine
+//     node scripts/motion_frame_budget.mjs --home ... --bounciness 1       # one dial only
 //
 // Deliberately NOT a Playwright spec under `web/e2e/`: that directory is the zero-diff
 // GATE tier (visual baselines + axe), and CI runs exactly one file out of it by explicit
@@ -53,15 +55,15 @@
 // no committed baseline and no machine-independent threshold, so a green/red there would be
 // a lie about hardware. This prints a measurement; a human reads it.
 
-import { chromium } from 'playwright'
 import { existsSync, readdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { scratchGatewayOrExit, signIn } from './lib/named_home.mjs'
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const out = {
-    url: process.env.PC_MOTION_URL || 'http://127.0.0.1:10473',
+    home: undefined,
     bounciness: [1, 0],
     surfaces: null,
     cpuThrottle: Number(process.env.PC_MOTION_CPU_THROTTLE || 1),
@@ -74,7 +76,7 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i]
     const next = () => argv[++i]
-    if (a === '--url') out.url = next()
+    if (a === '--home') out.home = next()
     else if (a === '--bounciness') out.bounciness = next().split(',').map(Number)
     else if (a === '--surfaces') out.surfaces = next().split(',')
     else if (a === '--cpu-throttle') out.cpuThrottle = Number(next())
@@ -95,7 +97,8 @@ function parseArgs(argv) {
 function usage() {
   console.error(`motion_frame_budget — frame-time distributions per surface per bounciness
 
-  --url <base>          gateway serving the built SPA (default $PC_MOTION_URL or :10473)
+  --home <dir>          the scratch home whose gateway serves the built SPA
+                        (default $PERSONALCLAW_HOME; no home, or the default one, is refused)
   --bounciness <list>   comma list of --bounciness values to measure (default "1,0")
   --surfaces <list>     comma list of surface ids (default all: ${SURFACES.map((s) => s.id).join(',')})
   --cpu-throttle <n>    CDP CPU throttling rate, 1 = none (default 1)
@@ -448,6 +451,7 @@ async function assertSurface(page, surface) {
 // ── Runner ──────────────────────────────────────────────────────────────────
 async function measureSurface(browser, opts, surface, bounciness) {
   const context = await browser.newContext({ viewport: opts.viewport, deviceScaleFactor: 2 })
+  await signIn(context, opts.gateway)
   // Set the dial the way the SLIDER does: `app/appearance.tsx` persists every scalar
   // override under localStorage['appearance'].scalars, keyed by CSS var name, and applies
   // them to `runtime` on mount. Editing motion.ts instead would measure a different app.
@@ -473,7 +477,7 @@ async function measureSurface(browser, opts, surface, bounciness) {
   const results = []
   try {
     // Land on the `from` route first so the measured navigation is a real route CHANGE.
-    await page.goto(`${opts.url}/${surface.from}`, { waitUntil: 'domcontentloaded' })
+    await page.goto(`${opts.gateway.url}/${surface.from}`, { waitUntil: 'domcontentloaded' })
     await page.waitForSelector(SHELL, { timeout: 20000 })
     await page.evaluate(() => document.fonts?.ready)
     await sleep(1200)   // let the arrival settle so the idle control is genuinely idle
@@ -529,6 +533,8 @@ async function main() {
   const wanted = opts.surfaces ? SURFACES.filter((s) => opts.surfaces.includes(s.id)) : SURFACES
   if (!wanted.length) { console.error(`no surfaces matched ${opts.surfaces}`); process.exit(2) }
 
+  opts.gateway = scratchGatewayOrExit(opts.home)
+  const { chromium } = await import('playwright')
   const { executablePath, label } = resolveBrowser(opts)
   const browser = await chromium.launch({ headless: !opts.headed, executablePath })
   const report = {
@@ -543,7 +549,7 @@ async function main() {
       platform: `${os.platform()} ${os.arch()} ${os.release()}`,
       cpus: `${os.cpus().length}x ${os.cpus()[0]?.model ?? 'unknown'}`,
       node: process.version,
-      url: opts.url,
+      url: opts.gateway.url,
       when: new Date().toISOString(),
       // Say it here so no reader has to infer it: an unthrottled headless run on a dev
       // machine is the most generous environment this app will ever see.

@@ -4,7 +4,7 @@ type: ai-coding-rule
 statement: >
   Any test that writes to config dirs, the local-models dir, or the credential store must
   isolate itself with a `tmp_path`/`monkeypatch` fixture that redirects `config_dir()` —
-  never touching the developer's real `~/.personalclaw` home.
+  never touching the developer's real home, the default one.
 appliesTo:
   - tests/**/*.py
 scanner: destructive-test-isolation

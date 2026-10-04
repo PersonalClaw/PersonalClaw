@@ -1,55 +1,36 @@
-"""Live cross-surface validator for the memory-architecture re-cut (M0-M5e).
+"""Live cross-surface validator for the memory subsystem.
 
-Drives the LIVE gateway (:10000) and asserts the memory subsystem's invariants
-hold end-to-end across surfaces — API, DB, FAISS, WAL. Run repeatedly; each run
-is one cycle. Idempotent + self-cleaning (it writes probe rows then deletes them).
+Drives the gateway of a scratch home you name and asserts the memory subsystem's invariants
+hold end to end across surfaces: API, DB, WAL. Run repeatedly; each run is one cycle.
+Idempotent + self-cleaning (it writes probe rows then deletes them).
 
 Validates:
-  - the service-layer API endpoints (semantic/episodic/events/stats/lint/recall)
+  - the service-layer API endpoints (semantic/episodic/events/stats/lint)
   - a write→read→delete round-trip propagates UI(API)→DB→WAL consistently
-  - the v6 tier×scope axis columns exist + new semantic rows are self-consistent
-  - the new memory tools are present + invoke through the service
-  - the M5 service mechanics (heat/TTL/scope/procedural) via an in-process probe
+  - the tier×scope axis columns exist + new semantic rows are self-consistent
+  - the memory tools are present on the tool surface
+
+It writes, and it reads the home's ``memory.db`` straight from disk (read-only), so it runs
+only against a scratch home: the gateway is found from the record it keeps in the home you
+name, and the default home (the install's own memory) or no home at all is refused:
+
+    PERSONALCLAW_HOME=/tmp/pc-memval personalclaw gateway --port auto --no-open   # one shell
+    .venv/bin/python scripts/memory_validate.py --home /tmp/pc-memval              # another
 """
 
 from __future__ import annotations
 
-import json
-import os
+import argparse
 import sqlite3
 import sys
 import time
-import urllib.error
-import urllib.request
+from pathlib import Path
 
-BASE = "http://127.0.0.1:10000"
-DB = os.path.expanduser("~/.personalclaw/memory.db")
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-
-def _get(path):
-    last = None
-    for attempt in range(6):
-        try:
-            return json.load(urllib.request.urlopen(BASE + path, timeout=15))
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            last = exc
-            time.sleep(2 * (attempt + 1))
-    raise SystemExit(f"gateway unreachable at {path}: {last}")
-
-
-def _req(method, path, body=None):
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(
-        BASE + path, data=data, method=method, headers={"Content-Type": "application/json"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            return r.status, json.load(r)
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.load(e)
-        except Exception:
-            return e.code, {}
+from harness import named_home  # noqa: E402
 
 
 def check(cond, msg, fails):
@@ -57,7 +38,23 @@ def check(cond, msg, fails):
         fails.append(msg)
 
 
-def main() -> int:
+def _memory_db(home: Path) -> Path:
+    """The home's memory database, where the home's own state manifest declares it."""
+    from personalclaw.durability import inventory
+
+    entry = inventory.by_id("memory_db")
+    if entry is None:
+        raise SystemExit("the state manifest declares no memory_db entry")
+    return home / entry.path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Validate a scratch home's memory surfaces.")
+    named_home.add_home_argument(parser)
+    args = parser.parse_args(argv)
+    gateway = named_home.scratch_gateway(args.home)
+    _get, _req = gateway.get, gateway.call
+
     fails: list[str] = []
     probe_key = f"pref.memval_{int(time.time() * 1000)}"
 
@@ -80,8 +77,8 @@ def main() -> int:
     after = _get("/api/memory/semantic")["entries"]
     check(any(e["key"] == probe_key for e in after), "written entry visible via API", fails)
 
-    # DB: row exists with self-consistent axes (the live-validation fix)
-    conn = sqlite3.connect(DB)
+    # DB: row exists with self-consistent axes. Read-only: the gateway owns this database.
+    conn = sqlite3.connect(f"{_memory_db(gateway.home).as_uri()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute(

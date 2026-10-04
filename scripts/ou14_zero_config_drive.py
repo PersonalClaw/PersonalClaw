@@ -41,7 +41,8 @@ Usage:
     python scripts/ou14_zero_config_drive.py [--home DIR] [--json]
 
     --home DIR  drive against DIR instead of a fresh temporary directory. The directory is
-                created if absent. Refuses the user's real home outright.
+                created if absent. Refuses the default home outright: a probe that wrote to
+                the install's own home would invalidate the observation and touch its state.
     --json      emit the observation as JSON instead of the human block.
 """
 
@@ -58,20 +59,13 @@ import time
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from harness import named_home  # noqa: E402
 
 #: The use case the dashboard's chat surface resolves. One call, one answer.
 _USE_CASE = "chat"
-
-
-def _refuse_real_home(home: Path) -> None:
-    """A drive that writes to ``~/.personalclaw`` is not a drive, it is an accident."""
-    real = Path.home() / ".personalclaw"
-    if home.resolve() == real.resolve():
-        raise SystemExit(
-            f"refusing to drive against the real home {real}. This probe exists to observe a "
-            "FRESH unbound home; pointing it at a real one would both invalidate the "
-            "observation and touch a user's state."
-        )
 
 
 #: The prompt the drive sends. Short, factual and answerable by a very small model: the clause
@@ -314,19 +308,19 @@ def verdict(observation: dict[str, object]) -> tuple[bool, str, str]:
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Drive OU-14's zero-config first chat turn.")
     ap.add_argument("--home", help="drive against this dir instead of a fresh temp dir")
     ap.add_argument("--json", action="store_true", help="emit JSON instead of the human block")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     scratch: Path | None = None
     if args.home:
-        home = Path(args.home).expanduser()
+        named = Path(args.home).expanduser()
     else:
         scratch = Path(tempfile.mkdtemp(prefix="ou14_zero_config_"))
-        home = scratch / "home"
-    _refuse_real_home(home)
+        named = scratch / "home"
+    home = named_home.scratch_home(named)
     try:
         observation = observe(home)
     finally:

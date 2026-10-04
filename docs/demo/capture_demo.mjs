@@ -25,22 +25,24 @@
 //      see `make web-build`, which also links src/personalclaw/static/dist).
 //   2. A local Ollama with a chat model pulled (nothing else is bindable without a
 //      credential, which is why it is the provider a committed path can use).
-//   3. A gateway on an ISOLATED home seeded from the demo fixture WITH that model
-//      bound — never your real ~/.personalclaw, and never a port another process owns.
-//      Use PERSONALCLAW_PORT, not `--port`: `--port` moves the gateway but not its MCP
-//      tool subprocesses, which resolve from `cfg.dashboard.url` and default to
-//      127.0.0.1:10000 (issue #2539), so a tool call would hang on someone else's
-//      gateway.
+//   3. A gateway on a SCRATCH home seeded from the demo fixture WITH that model bound —
+//      never the default home, which is the install's own data. `--port auto` keeps it off
+//      any port another process owns; its tool subprocesses reach it on the port it bound.
 //
 //        PERSONALCLAW_HOME=/private/tmp/personalclaw-demo \
 //        PERSONALCLAW_WORKSPACE=/private/tmp/personalclaw-demo/workspace \
 //        PERSONALCLAW_AUTH_MODE=none \
-//        PERSONALCLAW_PORT=18420 \
 //          personalclaw gateway --seed demo-home --seed-replace --seed-local-model \
-//            --approval interactive --no-open
+//            --approval interactive --port auto --no-open
 //
 // Usage:
-//   PCLAW_URL=http://127.0.0.1:18420 node docs/demo/capture_demo.mjs
+//   node docs/demo/capture_demo.mjs --home /private/tmp/personalclaw-demo
+//   (or PERSONALCLAW_HOME=/private/tmp/personalclaw-demo node docs/demo/capture_demo.mjs)
+//
+//   There is no URL to give it: the gateway is the one that home's runtime record names, and
+//   both browser contexts are signed in through the home's local secret
+//   (scripts/lib/named_home.mjs). No home, or the default one, is refused before a
+//   browser starts.
 //
 //   DEMO_SESSION=<chat-key>  skip the pre-roll and re-record against a session that is
 //                            ALREADY parked on an artifact_save gate (a re-record after
@@ -53,12 +55,14 @@
 // OUT_DIR defaults to /tmp/personalclaw-demo-media because the capture is far too large to
 // commit to this repo; see CLICKPATH.md § "Where the file lives".
 
-import { chromium } from 'playwright';
 import { mkdir, rename, stat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { homeArg, scratchGatewayOrExit, signIn } from '../../scripts/lib/named_home.mjs';
 
-const BASE = process.env.PCLAW_URL || 'http://127.0.0.1:18420';
+const gateway = scratchGatewayOrExit(homeArg());
+const { chromium } = await import('playwright');
+const BASE = gateway.url;
 const OUT_DIR = process.env.OUT_DIR || '/tmp/personalclaw-demo-media';
 const VIEWPORT = { width: 1440, height: 810 }; // 16:9 — the aspect a site hero wants
 const NAME = 'personalclaw-tour';
@@ -218,6 +222,7 @@ const dwell = (ms) => page.waitForTimeout(ms);
  */
 async function preroll(browser) {
   const ctx = await browser.newContext({ viewport: VIEWPORT });
+  await signIn(ctx, gateway);
   await ctx.addInitScript(() => localStorage.setItem('mode', 'dark'));
   const p = await ctx.newPage();
   await p.goto(`${BASE}/#/chat`, { waitUntil: 'domcontentloaded', timeout: 40000 });
@@ -395,6 +400,7 @@ const ctx = await browser.newContext({
   reducedMotion: 'no-preference', // the motion design is part of what is being shown
   recordVideo: { dir: OUT_DIR, size: VIEWPORT },
 });
+await signIn(ctx, gateway);
 // Dark is the design's home ground (web/DESIGN.md: Night Canvas #0f0f0f is the app
 // background) and it is what the site hero is built on.
 await ctx.addInitScript(() => {

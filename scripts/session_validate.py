@@ -1,7 +1,7 @@
 """Cross-surface live validator for this session's changes.
 
-Hits the LIVE gateway and asserts the behavioral invariants the session's work
-must hold, across DISTINCT surfaces (not just the unified-tool-universe ones in
+Hits the gateway of a scratch home you name and asserts the behavioral invariants the
+session's work must hold, across DISTINCT surfaces (not just the unified-tool-universe ones in
 ut7_validate.py):
 
   - projects-category tool redefinition (project_run_* present, loop tools gone)
@@ -13,46 +13,25 @@ ut7_validate.py):
 Run repeatedly (each run = one cycle); exits non-zero on any violation. Idempotent
 + side-effect-safe (toggles are restored). Retries transient slow-startup GETs so
 it tests invariants, not latency.
+
+It toggles providers, so it runs only against a scratch home: the gateway is found from the
+record it keeps in the home you name, and the default home or no home is refused:
+
+    .venv/bin/python scripts/session_validate.py --home /tmp/pc-session
 """
 
 from __future__ import annotations
 
-import json
+import argparse
 import sys
 import time
-import urllib.error
-import urllib.request
+from pathlib import Path
 
-BASE = "http://127.0.0.1:10000"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-
-def _get(path):
-    last = None
-    for attempt in range(6):
-        try:
-            return json.load(urllib.request.urlopen(BASE + path, timeout=15))
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            last = exc
-            time.sleep(2 * (attempt + 1))
-    raise SystemExit(f"gateway unreachable at {path} after retries: {last}")
-
-
-def _req(method, path, body=None):
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(
-        BASE + path,
-        data=data,
-        method=method,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=25) as r:
-            return r.status, json.load(r)
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.load(e)
-        except Exception:
-            return e.code, {}
+from harness import named_home  # noqa: E402
 
 
 def check(cond, msg, fails):
@@ -60,7 +39,13 @@ def check(cond, msg, fails):
         fails.append(msg)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Validate a scratch home's tool surfaces.")
+    named_home.add_home_argument(parser)
+    args = parser.parse_args(argv)
+    gateway = named_home.scratch_gateway(args.home)
+    _get, _req = gateway.get, gateway.call
+
     fails: list[str] = []
 
     tools = _get("/api/tools")["tools"]

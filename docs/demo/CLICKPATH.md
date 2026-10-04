@@ -21,22 +21,19 @@ before assuming a beat is missing by accident.
 # 1. the gateway serves the built SPA
 npm ci && npm run build --workspace web   # or: make web-build
 
-# 2. an ISOLATED, seeded home on a free high port, with a local model bound — never
-#    ~/.personalclaw, and never a port another process already owns.
-#
-#    PERSONALCLAW_PORT, not `--port`: `--port` moves the gateway but NOT its MCP tool
-#    subprocesses, which resolve their API base from `cfg.dashboard.url` and fall back to
-#    127.0.0.1:10000 (issue #2539). With `--port` the artifact_save call in beat 3 is
-#    dispatched at whatever gateway owns 10000 and hangs. PERSONALCLAW_PORT overrides both.
+# 2. a SCRATCH, seeded home with a local model bound — never the default home, which is
+#    the install's own data. `--port auto` keeps it off any port another process owns; the
+#    gateway's tool subprocesses (the artifact_save call in beat 3) reach it on the port it
+#    bound, which it hands them.
 PERSONALCLAW_HOME=/private/tmp/personalclaw-demo \
 PERSONALCLAW_WORKSPACE=/private/tmp/personalclaw-demo/workspace \
 PERSONALCLAW_AUTH_MODE=none \
-PERSONALCLAW_PORT=18420 \
   personalclaw gateway --seed demo-home --seed-replace --seed-local-model \
-    --approval interactive --no-open
+    --approval interactive --port auto --no-open
 
-# 3. play the path and record it
-PCLAW_URL=http://127.0.0.1:18420 node docs/demo/capture_demo.mjs
+# 3. play the path and record it. The script finds that home's gateway from the record the
+#    gateway keeps in its home, and refuses to start with no home named, or the default one.
+node docs/demo/capture_demo.mjs --home /private/tmp/personalclaw-demo
 ```
 
 `--approval interactive` is load-bearing, not a precaution: it is what makes the agent ask

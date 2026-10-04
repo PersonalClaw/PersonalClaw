@@ -774,20 +774,29 @@ def test_the_drive_verdict_cannot_be_talked_into_met(
     assert want_phrase.lower() in why.lower(), why
 
 
-def test_the_drive_refuses_the_real_home() -> None:
-    """A probe that writes to ``~/.personalclaw`` is an accident, not an observation.
+@pytest.mark.parametrize("named", ["the default home", "/usr/pclaw-ou14-probe-home"])
+def test_the_drive_refuses_the_default_home(named, tmp_path: Path, monkeypatch, unset_env) -> None:
+    """A probe that writes to the default home is an accident, not an observation. So is one
+    handed a system directory: the resolver refuses it as a home and uses the default home in its
+    place, which a guard comparing the NAME with the default home let through.
 
-    Asserted IN-PROCESS on the guard itself rather than by launching the script with
-    ``--home ~/.personalclaw``: if the guard were broken, that launch would be the very write
-    this test exists to forbid. Driving the guard directly cannot touch the real home whether it
-    works or not.
+    Driven IN-PROCESS through the script's own ``main`` with the user's home pointed at a scratch
+    folder, so the default home it reaches is a scratch folder too: had the guard been broken,
+    the drive would have written there and nowhere real. Nothing is made where it was refused.
     """
+    monkeypatch.setenv("HOME", str(tmp_path / "user"))
+    unset_env("PERSONALCLAW_HOME")
+    default = tmp_path / "user" / ".personalclaw"
+    home = str(default) if named == "the default home" else named
+    monkeypatch.setattr(sys, "argv", ["ou14_zero_config_drive.py", "--home", home])
     module = _drive_module()
-    with pytest.raises(SystemExit, match="refusing to drive against the real home"):
-        module._refuse_real_home(Path.home() / ".personalclaw")
-    # The control arm: an ordinary throwaway path passes the guard, so the refusal above is
-    # caused by the path and not by a guard that refuses everything.
-    module._refuse_real_home(Path("/tmp/ou14-not-a-real-home"))
+    with pytest.raises(SystemExit, match="resolves to the default home"):
+        module.main()
+    assert not default.exists()
+    # The control arm: an ordinary throwaway path passes the guard the drive asks, so the refusal
+    # above is caused by the path and not by a guard that refuses everything.
+    throwaway = tmp_path / "throwaway"
+    assert module.named_home.scratch_home(throwaway) == throwaway.resolve()
 
 
 # ── the release gate asks the INSTALLED artifact, never this repository ───────────────────────

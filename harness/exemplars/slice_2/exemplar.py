@@ -7,8 +7,9 @@ rather than COMPLETE, and the third node never runs. This is the mechanism Slice
 completion is the engine's decision, checked against the filesystem, not the node's
 self-report. "A node said it wrote the file" is a weaker claim than a passing node looks.
 
-Runnable standalone: `python -m harness.exemplars.slice_2.exemplar` (or `smoke.sh`, which
-isolates PERSONALCLAW_HOME first). `main()` self-asserts and returns 0 on the expected
+Runnable standalone on a scratch home (it writes a run, so it refuses the default home):
+`PERSONALCLAW_HOME=<scratch dir> python -m harness.exemplars.slice_2.exemplar`, or `smoke.sh`,
+which makes one. `main()` self-asserts and returns 0 on the expected
 outcome, non-zero on a surprise — that return code is what the smoke script and the proving
 test (`tests/test_harness_exemplars.py`) read.
 """
@@ -18,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from harness import named_home
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -75,6 +77,7 @@ async def _run() -> tuple[str, RunStatus, dict[str, Any]]:
 
 
 def main() -> int:
+    named_home.scratch_home()  # it writes a run: a scratch home only
     run_id, status, instances = asyncio.run(_run())
 
     # The whole point: the run did NOT complete, because the gate failed the writing node.

@@ -15,7 +15,9 @@ Two mechanisms, one pure and one end-to-end:
    cache served the untouched prefix at zero model calls). This is the acceptance bar
    Slice 4 set: answerable from the ledger, not from logs.
 
-Runnable standalone: `python -m harness.exemplars.slice_4.exemplar` (or `smoke.sh`).
+Runnable standalone on a scratch home (it writes a run, so it refuses the default home):
+`PERSONALCLAW_HOME=<scratch dir> python -m harness.exemplars.slice_4.exemplar`, or `smoke.sh`,
+which makes one.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from harness import named_home
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import mutations as M
 from personalclaw.workflows import store
@@ -116,6 +119,7 @@ async def _drive() -> str | None:
 
 
 def main() -> int:
+    named_home.scratch_home()  # it writes a run: a scratch home only
     pure_err = _check_pure_closure()
     if pure_err:
         print(f"FAIL: {pure_err}")

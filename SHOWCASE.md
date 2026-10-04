@@ -229,8 +229,9 @@ provider, seed a little scenario data, then run the capture pipeline:
 
 ```bash
 # see docs/screenshots/CAPTURE.md for the full walkthrough
-PERSONALCLAW_AUTH_MODE=none personalclaw gateway --port 10000 --no-open
-PCLAW_URL=http://localhost:10000 node docs/screenshots/capture.mjs   # light/ + dark/, every route
+PERSONALCLAW_HOME=/tmp/pc-showcase personalclaw gateway --seed demo-home --seed-replace \
+  --seed-local-model --port auto --no-open
+node docs/screenshots/capture.mjs --home /tmp/pc-showcase   # in another shell: light/ + dark/
 ```
 
 The pipeline follows the same seed-data → headless-capture pattern used across the

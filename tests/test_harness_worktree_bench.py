@@ -15,7 +15,6 @@ import logging
 import os
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -282,11 +281,26 @@ class TestEndToEnd:
         assert _tree(a) == _tree(b), "a benchmark whose input drifts cannot be re-run"
         assert wt.repo_file_count(str(a)) == 30
 
-    def test_it_refuses_the_real_personalclaw_home(self, tmp_path):
+    def test_it_refuses_the_default_personalclaw_home(self, tmp_path, monkeypatch):
         """Worktrees land under `config_dir()`, so an ambient home would litter the user's real
-        directory — and the benchmark's own cleanup would then delete inside it."""
+        directory — and the benchmark's own cleanup would then delete inside it. The user's home
+        is a scratch folder here, so even a broken guard could only litter that."""
+        monkeypatch.setenv("HOME", str(tmp_path / "user"))
+        default = tmp_path / "user" / ".personalclaw"
         with pytest.raises(wb.BenchmarkError, match="refusing to run"):
-            wb.measure_fanout(tmp_path, Path.home() / ".personalclaw", width=1)
+            wb.measure_fanout(tmp_path, default, width=1)
+        assert not default.exists()
+
+    def test_it_refuses_a_folder_the_resolver_replaces_with_the_default_home(
+        self, tmp_path, monkeypatch
+    ):
+        """A system directory is never a home: the resolver warns and uses the default home in
+        its place. A guard that compared the NAME with the default home let the benchmark run its
+        worktrees, and its cleanup, in the default home."""
+        monkeypatch.setenv("HOME", str(tmp_path / "user"))
+        with pytest.raises(wb.BenchmarkError, match="refusing to run"):
+            wb.measure_fanout(tmp_path, "/usr/pclaw-bench-probe-home", width=1)
+        assert not (tmp_path / "user" / ".personalclaw").exists()
 
     def test_a_non_repo_target_is_an_honest_error(self, tmp_path):
         plain = tmp_path / "plain"

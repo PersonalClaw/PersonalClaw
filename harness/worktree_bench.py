@@ -63,6 +63,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
+from harness import named_home
 from personalclaw.loop import worktree
 
 #: The threshold, verbatim: "<2s per worktree on the benchmark = skip and re-scope".
@@ -429,22 +430,21 @@ def synthesize_repo(root: str | Path, files: int = BENCHMARK_MIN_FILES) -> Path:
 
 @contextmanager
 def _temp_home(home: str | Path) -> Iterator[Path]:
-    """Point ``PERSONALCLAW_HOME`` at ``home`` for the block, refusing the real home.
+    """Point ``PERSONALCLAW_HOME`` at ``home`` for the block, refusing the default home.
 
     Worktrees are created under ``config_dir()``, so a benchmark that ran with the ambient home
     would litter the user's real PersonalClaw directory with synthetic worktrees and branches —
-    and its teardown would then be deleting things inside it.
+    and its teardown would then be deleting things inside it. The refusal is the dev tools' one
+    (``harness.named_home``), so a name the home resolver replaces with the default home, a
+    system directory, is refused as well as the default home itself.
     """
-    target = Path(home).expanduser().resolve()
-    default = (Path.home() / ".personalclaw").resolve()
-    if target == default:
-        raise BenchmarkError(
-            f"refusing to run the benchmark against the real home {default}; pass a temp dir"
-        )
-    target.mkdir(parents=True, exist_ok=True)
     prior = os.environ.get("PERSONALCLAW_HOME")
-    os.environ["PERSONALCLAW_HOME"] = str(target)
     try:
+        target = named_home.scratch_home(Path(home).expanduser())
+    except named_home.Refused as exc:
+        raise BenchmarkError(f"refusing to run the benchmark against {home}: {exc}") from exc
+    try:
+        target.mkdir(parents=True, exist_ok=True)
         yield target
     finally:
         if prior is None:

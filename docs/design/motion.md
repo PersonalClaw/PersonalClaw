@@ -506,11 +506,12 @@ PERSONALCLAW_HOME="$PWD/.dev-home" PERSONALCLAW_AUTH_MODE=none \
   .venv/bin/personalclaw gateway --seed demo-home --seed-replace --no-open --port 10473
 # 3. confirm it is serving YOUR bundle, not a stale one — these two must match
 curl -s http://127.0.0.1:10473/ | grep -o 'assets/index-[^"]*\.js'; ls web/dist/assets/index-*.js
-# 4. measure
-node scripts/motion_frame_budget.mjs --url http://127.0.0.1:10473
-node scripts/motion_frame_budget.mjs --url http://127.0.0.1:10473 --inject-stall 200
-node scripts/motion_frame_budget.mjs --url http://127.0.0.1:10473 --cpu-throttle 4
-node scripts/motion_frame_budget.mjs --url http://127.0.0.1:10473 --headed
+# 4. measure. The driver finds the gateway from the record the gateway keeps in the home
+#    named here, and refuses no home or the default one.
+node scripts/motion_frame_budget.mjs --home "$PWD/.dev-home"
+node scripts/motion_frame_budget.mjs --home "$PWD/.dev-home" --inject-stall 200
+node scripts/motion_frame_budget.mjs --home "$PWD/.dev-home" --cpu-throttle 4
+node scripts/motion_frame_budget.mjs --home "$PWD/.dev-home" --headed
 ```
 
 **`--inject-stall` is the reason to believe any of the above.** It blocks the page's main

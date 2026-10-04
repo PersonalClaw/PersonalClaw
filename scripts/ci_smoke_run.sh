@@ -19,7 +19,7 @@ PROMPT="${PROMPT:-Reply with exactly the word: OK}"
 EXPECT="${EXPECT:-OK}"
 
 # Never run against the operator's real home by default. A smoke test that writes into
-# ~/.personalclaw would leave sessions, ledger rows and a rewritten .local_secret behind.
+# the default home would leave sessions, ledger rows and a rewritten .local_secret behind.
 if [[ -z "${PERSONALCLAW_HOME:-}" ]]; then
   PERSONALCLAW_HOME="$(mktemp -d)/pclaw-home"
   export PERSONALCLAW_HOME

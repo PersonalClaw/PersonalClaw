@@ -285,8 +285,10 @@ repository-owned pre-push hook (`npm run hooks:install`, one-time) runs the
 whole chain — clean `npm ci` (this is what catches declared-vs-resolved
 lockfile skew), typecheck, vitest, build, render smoke — automatically whenever
 outgoing commits touch `web/`, `package.json`, or `package-lock.json`, and CI's
-`web` job repeats it on every PR. To smoke a live dev gateway instead of the
-static server: `PC_SMOKE_URL=http://127.0.0.1:10000 npm run smoke:render`.
+`web` job repeats it on every PR. To smoke a dev gateway instead of the static
+server, name its scratch home: `npm run smoke:render -- --home ./.dev-home` (the smoke
+finds the gateway from the record the gateway keeps in that home, and refuses the default
+home).
 
 "Outgoing commits" means **what your branch adds on top of `main`**, measured
 from the merge-base with `origin/main` — not the range between your branch and

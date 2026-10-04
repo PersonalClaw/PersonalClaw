@@ -12,7 +12,9 @@ journal, which the flywheel reads, bug reports ship, and the UI renders). Two me
    returns a secret-shaped token, then greps the entire run directory to prove the token
    is nowhere on disk.
 
-Runnable standalone: `python -m harness.exemplars.slice_3.exemplar` (or `smoke.sh`).
+Runnable standalone on a scratch home (it writes a run, so it refuses the default home):
+`PERSONALCLAW_HOME=<scratch dir> python -m harness.exemplars.slice_3.exemplar`, or `smoke.sh`,
+which makes one.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from harness import named_home
 from personalclaw.workflows import store
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -75,6 +78,7 @@ async def _run_and_scan_disk() -> str | None:
 
 
 def main() -> int:
+    named_home.scratch_home()  # it writes a run: a scratch home only
     binding_err = _check_secret_binding()
     if binding_err:
         print(f"FAIL: {binding_err}")

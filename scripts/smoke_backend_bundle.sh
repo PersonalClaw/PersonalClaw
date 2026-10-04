@@ -34,7 +34,7 @@ test -x "$BACKEND" || { echo "smoke: $BACKEND is not executable"; exit 1; }
 "$BACKEND" --version
 
 # An isolated home. NEVER the real one: this boots a gateway and seeds bundled apps, and a
-# release smoke must not write to whatever ~/.personalclaw happens to be on the runner.
+# release smoke must not write to whatever default home happens to be on the runner.
 SMOKE_HOME="$(mktemp -d)/fresh"
 mkdir -p "$SMOKE_HOME"
 BOOT_OUT="$(mktemp)"

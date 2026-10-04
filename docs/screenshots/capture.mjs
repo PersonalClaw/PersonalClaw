@@ -2,25 +2,30 @@
 // PersonalClaw screenshot capture — light + dark, every route, reproducibly.
 //
 // Prereqs:
-//   1. A gateway running with a configured model provider and (ideally) seeded
-//      scenario data:  personalclaw gateway --seed demo-home --json-ready
-//      (copy the printed port + token, or run with PERSONALCLAW_AUTH_MODE=none
-//      on loopback for a token-free local capture).
+//   1. A gateway on a SCRATCH home with a configured model provider and (ideally) seeded
+//      scenario data:
+//        PERSONALCLAW_HOME=/tmp/pc-showcase personalclaw gateway --seed demo-home \
+//          --seed-replace --seed-local-model --port auto --no-open
 //   2. Playwright:  npm i -D playwright && npx playwright install chromium
 //
 // Usage:
-//   PCLAW_URL=http://localhost:10000 PCLAW_TOKEN=... node docs/screenshots/capture.mjs
+//   node docs/screenshots/capture.mjs --home /tmp/pc-showcase
+//   (or PERSONALCLAW_HOME=/tmp/pc-showcase node docs/screenshots/capture.mjs)
+//
+// There is no URL to give it: the gateway is the one that home's runtime record names, and the
+// browser is signed in through that home's local secret (scripts/lib/named_home.mjs). No
+// home, or the default one (the install's own data), is refused before a browser starts.
 //
 // Output: docs/screenshots/{light,dark}/NN-<route>.png
 //
 // Theme is toggled via localStorage `mode` (light|dark) + the data-mode attribute,
 // matching how the SPA persists it. Extend ROUTES as new pages land.
 
-import { chromium } from 'playwright';
 import { mkdir } from 'node:fs/promises';
+import { homeArg, scratchGatewayOrExit, signIn } from '../../scripts/lib/named_home.mjs';
 
-const BASE = process.env.PCLAW_URL || 'http://localhost:10000';
-const TOKEN = process.env.PCLAW_TOKEN || '';
+const gateway = scratchGatewayOrExit(homeArg());
+const { chromium } = await import('playwright');
 const VIEWPORT = { width: 1440, height: 900 };
 
 // NN-name → hash route. Keep numbering stable so the showcase references don't drift.
@@ -46,8 +51,9 @@ for (const mode of ['light', 'dark']) await mkdir(new URL(`./${mode}/`, import.m
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
-if (TOKEN) await ctx.addInitScript(t => localStorage.setItem('token', t), TOKEN);
+await signIn(ctx, gateway);
 const page = await ctx.newPage();
+console.log(`capturing ${gateway.home} at ${gateway.url}`);
 
 for (const mode of ['light', 'dark']) {
   await page.addInitScript(m => {
@@ -56,7 +62,7 @@ for (const mode of ['light', 'dark']) {
   }, mode);
   for (const [name, route] of ROUTES) {
     try {
-      await page.goto(`${BASE}/${route}`, { waitUntil: 'networkidle', timeout: 20000 });
+      await page.goto(`${gateway.url}/${route}`, { waitUntil: 'networkidle', timeout: 20000 });
       await page.waitForTimeout(700); // let motion settle
       await page.screenshot({ path: `docs/screenshots/${mode}/${name}.png` });
       console.log(`✓ ${mode}/${name}.png`);

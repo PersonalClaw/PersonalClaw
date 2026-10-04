@@ -9,7 +9,9 @@ drives the two ends of a gate's life against the real controller:
    NOT a pass. A timed-out gate reading as approval is how an unattended run would "approve"
    something no human ever saw.
 
-Runnable standalone: `python -m harness.exemplars.slice_5.exemplar` (or `smoke.sh`). The
+Runnable standalone on a scratch home (it writes a run, so it refuses the default home):
+`PERSONALCLAW_HOME=<scratch dir> python -m harness.exemplars.slice_5.exemplar`, or `smoke.sh`,
+which makes one. The
 timeout leg uses a 1s `timeout_secs`, so the whole exemplar stays well under 30s.
 """
 
@@ -18,6 +20,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from harness import named_home
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import RunStatus, WorkflowRun
@@ -63,6 +66,7 @@ async def _drive() -> str | None:
 
 
 def main() -> int:
+    named_home.scratch_home()  # it writes a run: a scratch home only
     err = asyncio.run(_drive())
     if err:
         print(f"FAIL: {err}")

@@ -16,44 +16,38 @@ detail panel, filters, sort, search, reset) can be evaluated against real data:
 - Assignees, labels/tags, agent-instruction templates, comments
 - A Repeatable-project list whose tasks are all done (so reset is exercisable)
 
-Run against the live gateway (default http://127.0.0.1:10000, no-auth dev mode):
-    .venv/bin/python scripts/seed_tasks.py [BASE_URL]
+It wipes, so it runs only against the gateway of a scratch home you name, found from the
+record that gateway keeps in its home, and refuses the default home (the install's own
+tasks) or no home at all:
+
+    PERSONALCLAW_HOME=/tmp/pc-seed personalclaw gateway --port auto --no-open   # one shell
+    .venv/bin/python scripts/seed_tasks.py --home /tmp/pc-seed                   # another
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
-import urllib.error
-import urllib.request
+from pathlib import Path
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:10000"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from harness import named_home  # noqa: E402
+
+#: The gateway this run seeds, named by :func:`main` before anything is sent.
+_gateway: named_home.ScratchGateway | None = None
 
 
 def _req(method: str, path: str, body: dict | None = None) -> dict:
-    data = None
-    headers = {"X-Session-Key": "seed-script"}
-    if body is not None:
-        import json as _json
-
-        data = _json.dumps(body).encode()
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(BASE + path, data=data, method=method, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            import json as _json
-
-            txt = r.read().decode()
-            return _json.loads(txt) if txt else {}
-    except urllib.error.HTTPError as e:
-        import json as _json
-
-        detail = e.read().decode()
-        try:
-            detail = _json.loads(detail).get("error", detail)
-        except Exception:
-            pass
-        raise SystemExit(f"{method} {path} → {e.code}: {detail}")
+    if _gateway is None:
+        raise RuntimeError("main() names the gateway before anything is sent")
+    status, data = _gateway.call(method, path, body)
+    if status >= 400:
+        raise SystemExit(f"{method} {path} → {status}: {named_home.error_text(data)}")
+    return data if isinstance(data, dict) else {}
 
 
 def get(p):
@@ -85,7 +79,7 @@ def wipe() -> None:
     for tl in get("/api/task-lists").get("task_lists", []):
         delete(f"/api/task-lists/{tl['id']}")
     for p in get("/api/projects").get("projects", []):
-        if not p.get("is_default"):
+        if not p.get("is_builtin"):  # the built-in projects cannot be deleted
             delete(f"/api/projects/{p['id']}")
     print("wiped existing tasks + custom projects/lists")
 
@@ -107,12 +101,18 @@ def task(**fields) -> str:
     return post("/api/tasks", fields)["id"]
 
 
-def comment(task_id: str, body: str, author: str = "you") -> None:
-    post(f"/api/tasks/{task_id}/comments", {"body": body, "author": author})
+def comment(task_id: str, body: str) -> None:
+    """A comment as the owner: the API names a comment's author itself."""
+    post(f"/api/tasks/{task_id}/comments", {"body": body})
 
 
-def main() -> None:
-    print(f"Seeding rich task dataset against {BASE}")
+def main(argv: list[str] | None = None) -> int:
+    global _gateway
+    parser = argparse.ArgumentParser(description="Wipe and reseed a scratch home's tasks.")
+    named_home.add_home_argument(parser)
+    args = parser.parse_args(argv)
+    _gateway = named_home.scratch_gateway(args.home)
+    print(f"Seeding rich task dataset into {_gateway.home} through {_gateway.url}")
     wipe()
 
     # ── Project: Beacon Launch — a feature build with a full dependency DAG ──
@@ -254,8 +254,8 @@ def main() -> None:
             "Cut the release only when all blockers are done and the changelog is updated."
         ),
     )
-    comment(backend, "Auth middleware is the last piece — pairing with security tomorrow.", "mei")
-    comment(backend, "Sounds good, I'll have the token format ready.", "ravi")
+    comment(backend, "Auth middleware is the last piece — pairing with security tomorrow.")
+    comment(backend, "Mei has the token format ready; wiring it in next.")
     comment(ship, "Holding the release train for the e2e suite.")
 
     # ── Project: Security — a mix incl. a MANUAL block + a cancelled task ──
@@ -308,13 +308,15 @@ def main() -> None:
             exit_criteria=[{"description": "completed this week", "met": True}],
         )
 
-    # ── Chore (default) — loose ad-hoc tasks, varied due dates for the sort view ──
-    chore = get("/api/projects")["projects"]
-    chore_id = next(p["id"] for p in chore if p["name"] == "Chore")
-    chore_list = task_list("Inbox", project_id=chore_id)
+    # ── Personal (built-in) — loose ad-hoc tasks, varied due dates for the sort view ──
+    from personalclaw.tasks.models import PERSONAL_PROJECT
+
+    personal = get("/api/projects")["projects"]
+    personal_id = next(p["id"] for p in personal if p["name"] == PERSONAL_PROJECT)
+    personal_list = task_list("Inbox", project_id=personal_id)
     task(
         title="Reply to the design review thread",
-        task_list_id=chore_list,
+        task_list_id=personal_list,
         status="open",
         priority="medium",
         due=_iso_days(-3),
@@ -322,7 +324,7 @@ def main() -> None:
     )  # overdue
     task(
         title="Book the team offsite",
-        task_list_id=chore_list,
+        task_list_id=personal_list,
         status="open",
         priority="low",
         due=_iso_days(1),
@@ -330,7 +332,7 @@ def main() -> None:
     )  # due tomorrow
     task(
         title="Renew the TLS certificate",
-        task_list_id=chore_list,
+        task_list_id=personal_list,
         status="open",
         priority="high",
         due=_iso_days(2),
@@ -338,7 +340,7 @@ def main() -> None:
     )  # due soon
     task(
         title="Draft the Q4 roadmap",
-        task_list_id=chore_list,
+        task_list_id=personal_list,
         status="in_progress",
         priority="medium",
         due=_iso_days(30),
@@ -350,12 +352,14 @@ def main() -> None:
     )
     task(
         title="Archive last quarter's projects",
-        task_list_id=chore_list,
+        task_list_id=personal_list,
         status="done",
         priority="trivial",
         labels=["cleanup"],
     )  # trivial priority rung
-    task(title="Tidy the shared drive", task_list_id=chore_list, status="open", priority="trivial")
+    task(
+        title="Tidy the shared drive", task_list_id=personal_list, status="open", priority="trivial"
+    )
 
     tasks = get("/api/tasks?limit=10000")
     projects = get("/api/projects")["projects"]
@@ -369,7 +373,8 @@ def main() -> None:
     print("critical path + auto-blocked dependents, a manual block, due dates")
     print("(overdue→far), assignees, labels, agent instructions, comments, and a")
     print("done Repeatable list ready to reset.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

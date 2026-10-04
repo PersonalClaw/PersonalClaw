@@ -195,6 +195,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Dev scripts, docs captures and harness tools act only on a scratch home you name: the task seeder, the memory and tool validators, the classify smoke, the screenshot and demo captures, the motion driver and the render smoke's gateway mode take `--home` (or `PERSONALCLAW_HOME`), find that home's gateway from the record it keeps there, and refuse no home or the default one, where they aimed at port 10000 and the default home, the install's own.**
 - **An Incognito or Temporary chat sets up no work that outlasts it: its agent creates, starts or steers no loop or project, creates or changes no automation or scheduled task, and registers no callback, and says why, since each would keep the chat's words and run on a model of its own; set them up from an ordinary chat.**
 - **A CSV artifact downloads from Artifacts as a `.csv` file a spreadsheet program opens, where it downloaded as `.txt`.**
 - **A spreadsheet `sheet_create` makes from CSV text has the cells the text has: a quoted field holding a comma, a line break or a quote is one cell, read the way Knowledge reads a `.csv` file, and in both a quoted field after a comma and a space is one cell too.**

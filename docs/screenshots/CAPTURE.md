@@ -46,14 +46,18 @@ pages are added — append new routes, don't renumber existing ones.
 ## Run
 
 ```bash
-# Option A — token auth (production-like):
-personalclaw gateway --json-ready          # copy the printed port + token
-PCLAW_URL=http://localhost:<port> PCLAW_TOKEN=<token> node docs/screenshots/capture.mjs
+# 1. a gateway on a scratch home, seeded, with a local model bound (see Prerequisites)
+PERSONALCLAW_HOME=/tmp/pc-showcase personalclaw gateway --seed demo-home --seed-replace \
+  --seed-local-model --port auto --no-open
 
-# Option B — loopback, token-free (quick local capture):
-PERSONALCLAW_AUTH_MODE=none personalclaw gateway --port 10000 --no-open
-PCLAW_URL=http://localhost:10000 node docs/screenshots/capture.mjs
+# 2. in another shell, capture it
+node docs/screenshots/capture.mjs --home /tmp/pc-showcase
 ```
+
+There is no URL or token to copy: the script finds the gateway from the record that gateway
+keeps in its home, and signs its browser in through the home's local secret, the way
+`personalclaw token` does. It refuses to start with no home named, or with the default home,
+which is the install's own data.
 
 The script visits every route in `ROUTES` (edit the array as pages are added), toggles the
 theme via `localStorage.mode` + `data-mode` (how the SPA persists it), and writes
@@ -63,6 +67,6 @@ theme via `localStorage.mode` + `data-mode` (how the SPA persists it), and write
 
 - **Both themes, always.** The design system styles light and dark with equal care; the
   showcase reflects that.
-- **No real personal data.** Capture against a throwaway `PERSONALCLAW_HOME`, never your
-  real `~/.personalclaw`. Seed illustrative data only.
+- **No real personal data.** Capture against a throwaway `PERSONALCLAW_HOME` (the script
+  refuses the default home). Seed illustrative data only.
 - **Refresh per release** so the showcase never drifts from the shipped UI.

@@ -24,7 +24,7 @@ Why `--run` is explicit and there is no default: every trial is a real model cal
 provider. §3 pairs `k = 5` trials per arm over ten tasks — 100 cells — so the default must be the
 one that costs nothing. `--preflight` and `--dry-run` both call zero models.
 
-Isolation: nothing here touches `~/.personalclaw`'s skills. Each cell runs in a spawned child
+Isolation: nothing here touches the invoking home's skills. Each cell runs in a spawned child
 whose `PERSONALCLAW_HOME` is a per-cell temp dir seeded from the scenario's declared
 `fixture_home`, and the `skills_off` arm's suppression is an overlay applied only inside that
 child. The REPORT, however, is written under the invoking home's `evals/learning_bench/`, so run

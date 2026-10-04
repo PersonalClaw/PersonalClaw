@@ -28,7 +28,7 @@ Usage::
 or does not match the record. Exit 0 means the home holds the signed-off bytes.
 
 🔴 It writes into ``$PERSONALCLAW_HOME``, so it refuses to run without that set: silently
-warming ``~/.personalclaw`` because an env var was missing is not a thing a script should do to
+warming the default home because an env var was missing is not a thing a script should do to
 somebody's real home.
 """
 

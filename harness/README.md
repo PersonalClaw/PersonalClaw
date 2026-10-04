@@ -27,6 +27,8 @@ harness/
   baselines.py   # baseline gating (hard thresholds + drift; missing-scenario-fails)
   fanout_measure.py # token-matched fan-out vs single-agent verdict (sub-5pt == inconclusive)
   worktree_bench.py # worktree fan-out hydration baseline + HARNESS-CRAFT §1.1 measure-first gate
+  named_home.py     # the one way a dev tool names its home and finds that home's gateway:
+                    #   no home named, or the default one, is refused
   cli.py         # python -m harness  validate | explain | run [--diff] | scan [--diff] | replay
   traces/        # recorded NDJSON event traces + baselines.json
   exemplars/     # (Session 4) per-slice runnable exemplars

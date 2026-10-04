@@ -462,8 +462,9 @@ def check_destructive_test_isolation(files: list[Path], root: Path) -> list[Find
                     line=1,
                     what="test touches config-dir/local-models/credential paths with no "
                     "tmp_path/monkeypatch isolation in the module",
-                    why="an unisolated destructive test can corrupt the real ~/.personalclaw "
-                    "home (a bound model was once deleted this way) and flakes under xdist",
+                    why="an unisolated destructive test can corrupt the developer's real home, "
+                    "the default one (a bound model was once deleted this way), and flakes "
+                    "under xdist",
                     fix="take tmp_path/monkeypatch and redirect config_dir()/PERSONALCLAW_HOME "
                     "to a per-test temp dir",
                 )

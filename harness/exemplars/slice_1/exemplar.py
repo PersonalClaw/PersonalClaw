@@ -6,7 +6,9 @@ It exercises the load-bearing Slice-1 machinery at once: the pure `frontier()` s
 one node at a time in dependency order, the dispatchers, binding resolution threading a
 value from node to node, terminal-status ownership, and the Run Ledger emission.
 
-Runnable standalone: `python -m harness.exemplars.slice_1.exemplar` (or `smoke.sh`).
+Runnable standalone on a scratch home (it writes a run, so it refuses the default home):
+`PERSONALCLAW_HOME=<scratch dir> python -m harness.exemplars.slice_1.exemplar`, or `smoke.sh`,
+which makes one.
 `main()` self-asserts and returns 0 on the expected COMPLETE outcome, non-zero otherwise.
 """
 
@@ -15,6 +17,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from harness import named_home
 from personalclaw.workflows import journal as J
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -63,6 +66,7 @@ async def _run() -> tuple[str, RunStatus, dict[str, Any], list[str]]:
 
 
 def main() -> int:
+    named_home.scratch_home()  # it writes a run: a scratch home only
     run_id, status, instances, calls = asyncio.run(_run())
 
     if status is not RunStatus.COMPLETE:
