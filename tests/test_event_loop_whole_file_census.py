@@ -389,7 +389,9 @@ def test_the_census_sees_the_large_file_paths_hand_their_work_off():
     on_loop, handing = _package_census().sites()
 
     assert HANDED_OFF <= handing, f"not seen handing off: {sorted(HANDED_OFF - handing)}"
-    assert len(on_loop) >= 30, f"the census found only {len(on_loop)} sites on the loop"
+    # The floor is the count the tree has: rewind's folder record moved off the loop, so 29 remain.
+    # Moving another site off the loop lowers it again, on purpose, in the change that moves it.
+    assert len(on_loop) >= 29, f"the census found only {len(on_loop)} sites on the loop"
 
 
 _SHAPES = textwrap.dedent("""
