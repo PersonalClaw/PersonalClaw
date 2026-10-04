@@ -213,7 +213,10 @@ def _list_tools() -> list[dict[str, Any]]:
             "annotations": {"readOnlyHint": False},
             "description": "Patch an automation. Only settable fields apply (name, spec, gates, "
             "workflow, enabled, delivery, failure_delivery, catch_up, …); health/run fields are "
-            "rejected and reported. `delivery` is where its results go and `failure_delivery` "
+            "rejected and reported. A `workflow` patch edits its action: each setting you send "
+            "in its `config` replaces that one, a setting sent as null is removed, and the ones "
+            "you leave out stay as saved; naming another provider replaces the action. "
+            "`delivery` is where its results go and `failure_delivery` "
             "where its failures go: 'inbox' (a notification in PersonalClaw), 'none' (nothing is "
             "sent), or 'channel:<name>' for the owner's direct messages on a chat channel set up "
             "here ('channel:<name>:<chat id>' for a chat on it); a channel's own name "

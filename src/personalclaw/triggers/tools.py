@@ -1322,6 +1322,11 @@ def update(
     A rejected key is REPORTED, not dropped silently: an agent that thinks it changed
     `health_status` and got no error would keep believing a stale model of the automation.
 
+    A `workflow` patch is an edit of the action, not a replacement of it (`action_edit`): each
+    setting it sends replaces the saved one, a `null` removes one, and the settings it leaves out
+    stay as saved, so a door that edits only some of them (the Triggers page's schedule form, the
+    CLI's `--message`) cannot drop the rest. Naming another provider replaces the action.
+
     The next fire follows the edit here, for every caller (`arm.next_fire_after_edit`): a changed
     schedule re-arms, and a trigger left on with no next fire is armed. `next_fire_at` is engine
     state, not in `PATCHABLE`, so no caller can set it, and none re-arms for itself: the chat's
@@ -1372,6 +1377,15 @@ def update(
         }
     except MaskConflict:
         return AutomationToolResult(False, f"Error: {MASK_CONFLICT}")
+    # An edit of the action changes only the settings it sends (`action_edit`): the rest of the
+    # action stays as saved, and every check below judges the action as it will be saved.
+    if "workflow" in applied:
+        from personalclaw.triggers.action_edit import edited_workflow
+
+        try:
+            applied["workflow"] = edited_workflow(row.trigger.workflow, applied["workflow"])
+        except ValueError as exc:
+            return AutomationToolResult(False, f"Error: nothing was changed: {exc}.")
     # A switch is stored as the yes or no it spells. Stored as sent, the text `"false"` was truthy
     # wherever the row was read, so a patch that switched an automation off left it running. One
     # that spells neither is refused: there is no reading of it to store.

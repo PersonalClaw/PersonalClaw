@@ -3175,6 +3175,15 @@ export interface Trigger {
   // (`lib/staleWrite.ts`) — a digest of what the edit form replaces, run state left out.
   revision?: string
 }
+/** An action setting as an edit sends it (`triggers/action_edit.py`): a value replaces the saved
+ *  one, and `null` says the form cleared the field it shows, so the gateway removes the setting.
+ *  A setting the form does not show is `undefined` here and so never sent, and the saved one stays:
+ *  the gateway puts what an edit sends over the action it stores, never the action in its place. */
+function _actionSetting(v: unknown): unknown {
+  if (v === undefined) return undefined
+  return v === null || v === '' || (Array.isArray(v) && v.length === 0) ? null : v
+}
+
 /** Project the shared ScheduleForm's flat draft body onto the unified Trigger
  *  wire shape: a single canonical `action` + the schedule mechanism fields. The
  *  schedule executor dispatches every provider from this action, so the form's
@@ -3190,11 +3199,14 @@ function _scheduleBodyToWire(body: Record<string, unknown>): Record<string, unkn
   // `invoke-agent`-only (`schedule.py`'s property returns '' for every other provider), so it can
   // only ride the invoke-agent branch below. `tests/test_trigger_wire_field_census.py` holds the
   // two field sets against each other so a future field cannot go missing the same way.
-  const { message, agent, model, approval_mode, cwd, script, command, zt_timeout, action, ...rest } = body
+  const { message, agent, model, approval_mode, cwd, writes, capability, max_turns, script, command, action, ...rest } = body
   if (action) return { ...rest, action }  // already action-shaped (create page)
+  // Each branch sends the settings its fields show and no others: the gateway keeps every setting
+  // an edit leaves out (a script's or a command's timeout, which this form does not show, used to be
+  // sent as 0 and replaced the saved one).
   let act: TriggerAction
-  if (script) act = { provider: 'run-script', config: { script, timeout: Number(zt_timeout) || 0 } }
-  else if (command) act = { provider: 'bash', config: { command, timeout: Number(zt_timeout) || 0 } }
+  if (script) act = { provider: 'run-script', config: { script } }
+  else if (command) act = { provider: 'bash', config: { command } }
   // 🔴 No `message` key means the form was in 'other' mode: the automation's action is a
   // provider this form cannot edit, so there is nothing here that describes an action and we
   // must send none. The server only replaces an action it is actually sent, so omitting it
@@ -3207,7 +3219,19 @@ function _scheduleBodyToWire(body: Record<string, unknown>): Record<string, unkn
   // truthiness: an agent trigger legitimately has an empty prompt, and `'' ?? ''` must still
   // produce an agent action rather than silently skipping the update.
   else if (!('message' in body)) return rest
-  else act = { provider: 'invoke-agent', config: { task_template: message ?? '', agent: agent ?? '', model: model ?? '', approval_mode: approval_mode ?? '', cwd: cwd ?? '' } }
+  // The prompt is the action's one required setting, so it is sent as typed; every other field the
+  // form shows is sent as its value, or as cleared.
+  else {
+    act = {
+      provider: 'invoke-agent',
+      config: {
+        task_template: message ?? '',
+        agent: _actionSetting(agent), model: _actionSetting(model),
+        approval_mode: _actionSetting(approval_mode), cwd: _actionSetting(cwd),
+        writes: _actionSetting(writes), capability: _actionSetting(capability), max_turns: _actionSetting(max_turns),
+      },
+    }
+  }
   return { ...rest, action: act }
 }
 
@@ -9105,9 +9129,10 @@ export const api = {
   createSchedule: (body: Record<string, unknown>) =>
     withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>('/api/triggers',
       { trigger_type: 'schedule', ..._scheduleBodyToWire(body), ...(c ? { confirm: true } : {}) })),
-  // The edit form saves the WHOLE automation (skip dates and the action replaced wholesale) from the
-  // copy it read, so the save names that copy's revision — on the consented resend too, which is the
-  // same write. A copy that went stale is refused with `409 stale_write` (`lib/staleWrite.ts`).
+  // The edit form saves the WHOLE automation (its skip dates as one list, and every action setting
+  // it shows) from the copy it read, so the save names that copy's revision — on the consented resend
+  // too, which is the same write. A copy that went stale is refused with `409 stale_write`
+  // (`lib/staleWrite.ts`).
   updateSchedule: (id: string, body: Record<string, unknown>, base: string) =>
     withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(
       `/api/triggers/schedule:${encodeURIComponent(id)}`,
@@ -9564,8 +9589,9 @@ export const api = {
       action: { provider: body.provider, config: body.provider_config ?? {} },
       ...(c ? { confirm: true } : {}),
     })).then((r) => ({ ok: r.ok, hook: _triggerToHook(r.trigger) })),
-  // The edit form saves the whole trigger (`provider_config` replaced as one object) from the copy it
-  // read, so the save — and its consented resend — names that copy's revision (`HookItem.revision`).
+  // The edit form saves the whole trigger (every action setting it shows, an emptied one as cleared)
+  // from the copy it read, so the save — and its consented resend — names that copy's revision
+  // (`HookItem.revision`).
   updateHook: (id: string, body: Record<string, unknown>, base: string) =>
     withSecurityConsent((c) => put<{ ok: boolean; trigger: Trigger }>(`/api/triggers/lifecycle:${encodeURIComponent(id)}`, {
       ...('provider' in body || 'provider_config' in body

@@ -838,6 +838,19 @@ warns only when the action can call a model: providers listed in
 are exempt, and anything unlisted — app-contributed actions included — keeps
 the warning.
 
+**An edit changes only what it sends.** An edit of a trigger's action carries the settings it
+changes (`triggers/action_edit.py`): a setting it sends replaces the saved one, a setting sent as
+`null` is removed, and a setting it leaves out stays as saved; naming another provider replaces the
+action, its settings with it. A setting is replaced whole, so a list (the files it may change) or an
+object (a workflow's inputs) is one setting. Every door saves by the one rule: the Triggers page's
+editors (a schedule's, a lifecycle trigger's), the chat's `automation_update` and `personalclaw cron
+update`, and each check a save makes (the grant, a loosened posture, the working folder, the files it
+may change) judges the action as it will be saved. The schedule editor shows the Invoke Agent
+settings an automation runs with, the files it may change, its capability and its turn cap among
+them, and sends each field it shows, an emptied one as `null`. Before, every door replaced the
+stored action with what it was sent, so moving an Invoke Agent automation's time dropped the three
+settings that editor did not draw, and it ran read-only afterwards.
+
 **An edit moves the next fire, wherever it is made.** The clock fires a trigger
 at its stored `next_fire_at`, so one rule (`arm.next_fire_after_edit`) decides
 it after every edit and switch: a change to when it runs (its cadence, zone, skip

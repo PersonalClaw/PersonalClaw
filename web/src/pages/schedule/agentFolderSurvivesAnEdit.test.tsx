@@ -41,9 +41,13 @@ describe('the schedule editor and the working folder', () => {
     }))
     await api.updateSchedule('morning-brief', draftToPayload({ ...toDraft(JOB), name: 'Weekday brief' }), 's1')
     expect(sent).toHaveLength(1)
+    // Every field the editor shows: the ones left empty sent as cleared (`triggers/action_edit.py`).
     expect(sent[0].action).toEqual({
       provider: 'invoke-agent',
-      config: { task_template: 'Summarise Calendar/family.ics.', agent: '', model: '', approval_mode: '', cwd: '~/Documents' },
+      config: {
+        task_template: 'Summarise Calendar/family.ics.', agent: null, model: null, approval_mode: null,
+        cwd: '~/Documents', writes: null, capability: null, max_turns: null,
+      },
     })
     // Folded into the action, never sent beside it: the gateway reads the action.
     expect('cwd' in sent[0]).toBe(false)

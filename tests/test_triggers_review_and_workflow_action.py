@@ -231,7 +231,8 @@ async def test_a_run_workflow_trigger_with_its_inputs_saves(home, workflows):
 
 @pytest.mark.asyncio
 async def test_an_edit_that_leaves_the_workflow_without_its_input_is_refused(home, workflows):
-    """🔴 Red on main. The edit is checked against the provider the trigger already runs."""
+    """🔴 Red on main. The edit is checked against the provider the trigger already runs, as the
+    action it saves: the inputs it sends replace the saved ones whole (`triggers.action_edit`)."""
     async with _client() as client:
         made = await client.post(
             "/api/triggers",
@@ -239,7 +240,8 @@ async def test_an_edit_that_leaves_the_workflow_without_its_input_is_refused(hom
         )
         tid = (await made.json())["trigger"]["id"]
         resp = await client.put(
-            f"/api/triggers/{tid}", json={"action": {"config": {"workflow": "brief"}}}
+            f"/api/triggers/{tid}",
+            json={"action": {"config": {"workflow": "brief", "inputs": {}}}},
         )
         body = await resp.json()
     assert resp.status == 400, body

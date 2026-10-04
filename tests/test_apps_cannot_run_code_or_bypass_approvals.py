@@ -385,8 +385,10 @@ class TestTheOwnerConsentsToAnAutomationThatApprovesItself:
         assert granted.status == 200, granted.body
         assert _stored_trigger_config()["approval_mode"] == "auto"
 
-        # Handing it back never asks.
+        # Handing it back never asks. An edit clears a setting by sending it as null; one it does
+        # not send stays as saved (`triggers.action_edit`).
         tighten = {"action": _schedule()["action"]}
+        tighten["action"]["config"]["approval_mode"] = None
         back = await api_trigger_detail(
             _trigger_request(
                 tighten, match={"id": "schedule:clock:t"}, method="PUT", base=_listed_revision()

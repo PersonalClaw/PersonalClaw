@@ -258,13 +258,13 @@ def test_a_save_keeps_a_hidden_value_another_save_changed_while_it_was_checked(h
     rotated = SECRET.replace("A", "D")
     checked = T._action_problem
 
-    async def _rotated_meanwhile(action, *, stored=None):
+    async def _rotated_meanwhile(action):
         store = TriggerStore(base_dir=home_dir)
         current = store.get("digest").trigger
         prompt = f"Summarize the day. The key is {rotated}."
         current.workflow["inline"]["config"]["task_template"] = prompt
         store.upsert(current)
-        return await checked(action, stored=stored)
+        return await checked(action)
 
     monkeypatch.setattr(T, "_action_problem", _rotated_meanwhile)
     resp = _run(

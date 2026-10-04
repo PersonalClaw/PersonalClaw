@@ -216,4 +216,25 @@ export function coerceActionConfig(
   return error ? { config, error } : { config: args }
 }
 
+/** The config an EDIT of an action sends: `coerceActionConfig`'s, with every field the form shows
+ *  and left empty sent as `null`.
+ *
+ *  The gateway puts what an edit sends over the saved config (`triggers/action_edit.py`), so a field
+ *  cleared by leaving it out would keep its saved value; `null` is how an edit says it cleared one.
+ *  A saved setting the form does not show (one the provider's schema does not declare) is not sent,
+ *  and stays as saved. */
+export function editedActionConfig(
+  providers: ActionProvider[],
+  provider: string,
+  config: Record<string, unknown>,
+): { config: Record<string, unknown>; error?: string } {
+  const coerced = coerceActionConfig(providers, provider, config)
+  const selected = providers.find((p) => p.name === provider)
+  if (coerced.error || !selected) return coerced
+  const cleared = schemaProps(selected.settingsSchema).props
+    .filter(([key]) => !(key in coerced.config))
+    .map(([key]) => [key, null] as const)
+  return { config: { ...Object.fromEntries(cleared), ...coerced.config } }
+}
+
 export { actionIcon }

@@ -22,7 +22,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { coerceActionConfig } from './ActionConfig'
+import { coerceActionConfig, editedActionConfig } from './ActionConfig'
 import type { ActionProvider } from '../../lib/api'
 
 const createTask = {
@@ -80,6 +80,26 @@ describe('coerceActionConfig', () => {
   })
 })
 
+describe('editedActionConfig', () => {
+  // The edit surfaces coerce through this: `coerceActionConfig`, plus each field the form shows and
+  // left empty sent as cleared, because the gateway keeps a setting an edit leaves out
+  // (`triggers/action_edit.py`). So it must coerce and refuse exactly as `coerceActionConfig` does.
+  it('coerces a JSON array field and sends an emptied field as cleared', () => {
+    const { config, error } = editedActionConfig([createTask], 'create-task', {
+      title_template: 'Market prep', labels: '["market","prep"]', priority: '',
+    })
+    expect(error).toBeUndefined()
+    expect(config).toEqual({ title_template: 'Market prep', labels: ['market', 'prep'], priority: null })
+  })
+
+  it('refuses what coerceActionConfig refuses', () => {
+    const { error } = editedActionConfig([createTask], 'create-task', {
+      title_template: 'Market prep', labels: 'market, prep',
+    })
+    expect(error).toBe('labels: invalid JSON')
+  })
+})
+
 describe('every surface that edits an action config coerces before saving', () => {
   const DIR = join(process.cwd(), 'src', 'pages', 'triggers')
 
@@ -96,7 +116,8 @@ describe('every surface that edits an action config coerces before saving', () =
 
   it.each(consumers)('%s calls coerceActionConfig', (file) => {
     const source = readFileSync(join(DIR, file), 'utf8')
-    expect(source).toMatch(/coerceActionConfig\s*\(/)
+    // An edit coerces through `editedActionConfig`, held to the same refusals above.
+    expect(source).toMatch(/(?:coerceActionConfig|editedActionConfig)\s*\(/)
     // And it must SHOW the refusal. Coercing and then ignoring the error would put the raw string
     // back on the wire while looking fixed.
     expect(source).toMatch(/coerced\.error/)

@@ -58,6 +58,12 @@ export type ScheduleDraft = {
   model: string
   /** The folder an agent run works in (the Invoke Agent action's `cwd`); '' is the workspace. */
   cwd: string
+  /** What the Invoke Agent action lets its agent do: the files it may change (`writes`), its
+   *  `capability` ('' is not set) and its turn cap (`max_turns`, '' for the default). Read back from
+   *  the action and sent with the agent fields, so an edit of anything else keeps them. */
+  writes: string[]
+  capability: string
+  max_turns: string
   script: string
   command: string
   // delivery / context
@@ -112,10 +118,35 @@ export const MISSED_RUN_CHOICES: Array<{ value: 'review' | 'catch_up'; label: st
   },
 ]
 
+/** What the Invoke Agent action's `capability` can be, labelled in the words its consent dialog
+ *  says them (`automation_posture.POSTURE_SPECS`). Each hint is what that choice lets its agent do
+ *  (`subagent.resolve_capability_class`), shown under the select for the choice it holds. */
+export const CAPABILITY_CHOICES: Array<{ value: string; label: string; hint: string }> = [
+  { value: '', label: 'Not set', hint: 'Read only when it approves its own tool calls (Auto-approve tools); otherwise it may change things, each change waiting for an approval.' },
+  { value: 'research', label: 'Read only', hint: 'Its agent reads, and changes only the files it may change. It runs no commands.' },
+  { value: 'mutating', label: 'Write access', hint: 'Its agent may also change files and run commands. In a working folder, only once you trust that folder.' },
+]
+
+/** The choices for a capability select holding *value*: a stored value none of them names stays
+ *  shown as it is, so the form shows what the automation holds and saves it back unchanged. */
+export function capabilityChoices(value: string): Array<{ value: string; label: string; hint: string }> {
+  return CAPABILITY_CHOICES.some((c) => c.value === value)
+    ? CAPABILITY_CHOICES
+    : [...CAPABILITY_CHOICES, { value, label: value, hint: 'A capability this form has no name for. It is kept as saved.' }]
+}
+
+/** A capability as the panel and the editor name it: its choice's label, else the stored value. */
+export function capabilityLabel(value: string): string {
+  return CAPABILITY_CHOICES.find((c) => c.value === value)?.label ?? value
+}
+
+/** At most this many files an Invoke Agent action may change (its `writes`, `maxItems`). */
+const MAX_FILES_IT_MAY_CHANGE = 10
+
 export function emptyDraft(): ScheduleDraft {
   return {
     name: '', message: '', kind: 'every', intervalValue: 1, intervalUnit: 'h', cron: '0 9 * * *', at: '',
-    mode: 'agent', agent: '', model: '', cwd: '', script: '', command: '',
+    mode: 'agent', agent: '', model: '', cwd: '', writes: [], capability: '', max_turns: '', script: '', command: '',
     channel: '', silent: false, strict_schedule: false, timezone: '', approval_mode: '', skip_dates: [],
     // Both match the entity's own defaults: `failure_delivery = "inbox"` and an empty
     // `failure_policy` (so dedup is opt-in). A form that defaulted dedup ON would silently coalesce
@@ -128,6 +159,7 @@ export function emptyDraft(): ScheduleDraft {
 
 export function toDraft(j: ScheduleJob): ScheduleDraft {
   const iv = secsToInterval(j.every_secs)
+  const cfg = j.action?.config ?? {}
   return {
     id: j.id, name: j.name ?? '', message: j.message ?? '',
     kind: deriveKind(j), intervalValue: iv.value, intervalUnit: iv.unit,
@@ -136,6 +168,9 @@ export function toDraft(j: ScheduleJob): ScheduleDraft {
     // The one-shot's own time, as the picker shows it (it opened blank: the row carried none).
     cron: j.cron_expr ?? '0 9 * * *', at: localDateTimeInput(j.at_ts), atSecsOriginal: j.at_ts ?? undefined,
     mode: deriveMode(j), agent: j.agent ?? '', model: j.model ?? '', cwd: j.cwd ?? '',
+    writes: Array.isArray(cfg.writes) ? cfg.writes.map(String) : [],
+    capability: typeof cfg.capability === 'string' ? cfg.capability : '',
+    max_turns: cfg.max_turns == null || cfg.max_turns === '' ? '' : String(cfg.max_turns),
     script: j.script ?? '', command: j.command ?? '',
     channel: j.channel ?? '', silent: !!j.silent, strict_schedule: !!j.strict_schedule,
     timezone: j.timezone ?? '', approval_mode: j.approval_mode ?? '', skip_dates: j.skip_dates ?? [],
@@ -240,9 +275,14 @@ export function draftToPayload(d: ScheduleDraft): Record<string, unknown> {
   // `_scheduleBodyToWire` folds it into the action it builds ONLY on the invoke-agent branch. Sent
   // unconditionally it was silently discarded for every other mode — the destructure dropped it
   // and the top level never carried it (issue 268).
-  // The working folder rides with them for the same reason: the invoke-agent action is rebuilt
-  // from these fields, and one it did not carry was dropped by every save.
-  if (d.mode === 'agent') { body.agent = d.agent; body.model = d.model; body.approval_mode = d.approval_mode || ''; body.cwd = d.cwd.trim() }
+  // The working folder and what the action lets its agent do ride with them for the same reason:
+  // they are action settings, sent as this form shows them. A field left empty is sent as cleared,
+  // and the gateway keeps every setting this form does not show (`triggers/action_edit.py`).
+  if (d.mode === 'agent') {
+    body.agent = d.agent; body.model = d.model; body.approval_mode = d.approval_mode || ''; body.cwd = d.cwd.trim()
+    body.writes = d.writes; body.capability = d.capability
+    body.max_turns = d.max_turns.trim() === '' ? '' : Number(d.max_turns)
+  }
   else if (d.mode === 'script') body.script = d.script.trim()       // backend-soon
   else if (d.mode === 'command') body.command = d.command.trim()    // backend-soon
   return body
@@ -338,6 +378,25 @@ export function ScheduleForm({ draft, onChange, compact, triggerOnly, invokesMod
               <Field label="Working folder" hint="The folder the agent works in, so its file tools reach the files there. The workspace, or a folder listed in Settings → Agent defaults → Allowed working directories. Empty uses the workspace.">
                 <TextInput value={draft.cwd} onChange={(v) => set('cwd', v)} placeholder="~/Documents" name="working-folder" mono />
               </Field>
+              {/* What its agent may do, as saved: the save sends every field shown here, and the
+                  automation runs with what it stores. The same settings, in the same words, as the
+                  Invoke Agent action's form on the create page. */}
+              <Field label="Files it may change" hint="The files or folders this automation's job changes, each a full path (from / or ~/): its agent may write to these and to nothing else, and every other change and every command stay refused. Allowing the automation says so. Leave it empty for an automation that only reads. Not for an agent that runs on an agent CLI: PersonalClaw can't limit a CLI's own file edits to them.">
+                <ChipInput values={draft.writes} onChange={(v) => set('writes', v)} max={MAX_FILES_IT_MAY_CHANGE}
+                  placeholder="A full path, e.g. ~/Notes/kitchen.md" ariaLabel="Add a file it may change" />
+              </Field>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-l">
+                {/* The hint follows the choice, as "If a time is missed" does: it says what the
+                    selected capability lets its agent do. */}
+                <Field label="Capability" hint={capabilityChoices(draft.capability).find((c) => c.value === draft.capability)?.hint}>
+                  <NativeSelect value={draft.capability} onChange={(v) => set('capability', v)}
+                    options={capabilityChoices(draft.capability)} label="Capability" name="capability" wide />
+                </Field>
+                <Field label="Max turns" hint="The most turns its agent takes on a run. Empty uses the default.">
+                  <TextInput type="number" min={1} step={1} value={draft.max_turns} onChange={(v) => set('max_turns', v.replace(/[^0-9]/g, ''))}
+                    placeholder="Default" name="max-turns" />
+                </Field>
+              </div>
             </>
           )}
           {draft.mode === 'script' && (
@@ -530,14 +589,15 @@ function IntervalField({ draft, set, invokesModel }: { draft: ScheduleDraft; set
   )
 }
 
-function NativeSelect({ value, onChange, options, label, name }: { value: string; onChange: (v: string) => void; options: Array<{ value: string; label: string }>; label?: string; name?: string }) {
+function NativeSelect({ value, onChange, options, label, name, wide }: { value: string; onChange: (v: string) => void; options: Array<{ value: string; label: string }>; label?: string; name?: string; wide?: boolean }) {
   // Inside a `Field`, the select is described by that field's hint, so the sentence under it is read
-  // with it — for "If a time is missed" that sentence is what the chosen setting does.
+  // with it — for "If a time is missed" that sentence is what the chosen setting does. `wide` fills
+  // its column, beside a full-width field in the same row.
   const hintId = useFieldHintId()
   return (
-    <div className="relative">
+    <div className={wide ? 'relative w-full' : 'relative'}>
       <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} aria-describedby={hintId} name={name}
-        className="h-10 appearance-none rounded-md bg-surface-container pl-m pr-9 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
+        className={`h-10 appearance-none rounded-md bg-surface-container pl-m pr-9 text-on-surface text-[0.9375rem] outline-none focus:ring-2 focus:ring-inset focus:ring-primary${wide ? ' w-full' : ''}`}>
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
       <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-low pointer-events-none" />

@@ -387,7 +387,8 @@ class TestCronCli:
             )
         )
         config = ((self._only(tmp_path).trigger.workflow or {})["inline"]).get("config") or {}
-        assert config.get("approval_mode") == ""
+        # A cleared setting is removed, not stored empty (`triggers.action_edit`).
+        assert "approval_mode" not in config
 
     def test_cron_update_cadence_re_arms(self, tmp_path, monkeypatch):
         """🔴 The cadence changed and the list showed the new time, but

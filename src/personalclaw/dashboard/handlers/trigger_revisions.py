@@ -84,11 +84,12 @@ LIFECYCLE_RUN_STATE: frozenset[str] = frozenset(
     }
 )
 
-#: The fields that make a schedule PUT a whole-form save: the two it replaces WHOLESALE, the skip
-#: dates and the action (→ `workflow.inline`, config and all). The edit form sends both on every
-#: save (`ScheduleForm.draftToPayload`), so every form save names its base; a PUT of one scalar — a
-#: rename, a new cron — changes only what it names and needs none. A lifecycle save is whole when
-#: it carries the action: ``provider_config`` is replaced as one object.
+#: The fields that make a schedule PUT a whole-form save: the skip dates, replaced as one list, and
+#: the action, every setting the form shows sent as it was read and put over the stored ones
+#: (`triggers.action_edit`). The edit form sends both on every save (`ScheduleForm.draftToPayload`),
+#: so every form save names its base; a PUT of one scalar — a rename, a new cron — changes only what
+#: it names and needs none. A lifecycle save is whole when it carries the action, for the same
+#: reason: its form sends every setting it shows.
 SCHEDULE_WHOLE_FIELDS: tuple[str, ...] = ("skip_dates", "action")
 
 

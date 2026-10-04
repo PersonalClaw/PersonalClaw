@@ -747,15 +747,18 @@ async def api_triggers(request: web.Request) -> web.Response:
 
 
 def _stored_action(state: DashboardState, kind: str, raw: str) -> dict[str, Any]:
-    """The action trigger *raw* runs now as ``{provider, config}``, or empty values."""
+    """The action trigger *raw* runs now as ``{provider, config}``, or empty values. A store row's
+    is read in either stored shape (`action_edit.action_in`): the flat one the chat's tools write
+    read as no action here, so its masked values were not restored and its checks saw nothing."""
+    from personalclaw.triggers.action_edit import action_in
+
     if kind == _LIFECYCLE:
         hook = _hook_store(state).get(raw)
         if hook is None:
             return {"provider": "", "config": {}}
         return {"provider": hook.provider, "config": dict(hook.provider_config or {})}
     row = _trigger_store().get(raw)
-    inline = (row.trigger.workflow or {}).get("inline") if row is not None else None
-    inline = inline if isinstance(inline, dict) else {}
+    inline = action_in(row.trigger.workflow if row is not None else None)
     config = inline.get("config")
     return {
         "provider": str(inline.get("provider") or ""),
@@ -763,22 +766,34 @@ def _stored_action(state: DashboardState, kind: str, raw: str) -> dict[str, Any]
     }
 
 
-async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) -> str:
+def _saving_action(state: DashboardState, kind: str, raw: str, body: dict) -> dict[str, Any] | None:
+    """The action an edit's save stores: the settings *body*'s action sends put over the trigger's
+    action as stored (`triggers.action_edit`), or ``None`` when it sends no action. Raises
+    ``ValueError`` for a config that is not an object."""
+    from personalclaw.triggers.action_edit import edited_action
+
+    action = body.get("action")
+    if not isinstance(action, dict):
+        return None
+    return edited_action(_stored_action(state, kind, raw), action)
+
+
+async def _action_problem(action: Any) -> str:
     """Why a trigger's action could not run as written, asked when it is SAVED; "" when it could.
 
     One question for every trigger kind's create and edit, because the form that writes the
-    action is one form. A `run-workflow` action saved with no workflow, or with one its inputs
-    cannot start, failed at every fire instead (`run_workflow_provider.config_problem`), and so did
-    a `send-message` naming a chat channel not set up here, or an id no channel, or more than one,
-    takes (`send_message_provider.config_problem`). An edit that sends only the config is checked
-    against the provider the trigger already runs. So is the working folder an agent it starts
-    works in (`invoke-agent`, `run-prompt`): one the owner did not allow failed every fire.
+    action is one form. An edit's is asked of the action as it will be saved (`_saving_action`),
+    the settings it did not send included. A `run-workflow` action saved with no workflow, or with
+    one its inputs cannot start, failed at every fire instead
+    (`run_workflow_provider.config_problem`), and so did a `send-message` naming a chat channel not
+    set up here, or an id no channel, or more than one, takes
+    (`send_message_provider.config_problem`). So did the working folder an agent it starts works in
+    (`invoke-agent`, `run-prompt`), when the owner did not allow it.
     """
     if not isinstance(action, dict):
         return ""
-    stored = stored or {}
-    provider = str(action.get("provider") or stored.get("provider") or "")
-    config = action.get("config") if "config" in action else stored.get("config")
+    provider = str(action.get("provider") or "")
+    config = action.get("config")
     if provider in ("invoke-agent", "run-prompt") and isinstance(config, dict):
         from personalclaw.action_providers.services import validate_spawn_cwd
         from personalclaw.automation_posture import step_problem
@@ -806,13 +821,13 @@ async def _action_problem(action: Any, *, stored: dict[str, Any] | None = None) 
 
 
 def _unconsented_loosening(
-    request: web.Request, body: dict, *, where: str, stored: dict[str, Any]
+    request: web.Request, body: dict, *, where: str, stored: dict[str, Any], saving: Any
 ) -> tuple[str, LooseningAsk] | None:
-    """``(field, what the owner is asked)`` when *body*'s action loosens whether the trigger's
-    agent asks you — an ``approval_mode: "auto"``, a ``capability: "mutating"`` write grant — over
-    the *stored* action (``{provider, config}``, ``{}`` for a new trigger) without ``confirm:
-    true``; ``None`` otherwise. The refusal is written to the security audit; the caller answers
-    ``consent_required``.
+    """``(field, what the owner is asked)`` when the action *saving* — the write's action as it
+    will be saved — loosens whether the trigger's agent asks you (an ``approval_mode: "auto"``, a
+    ``capability: "mutating"`` write grant) over the *stored* action (``{provider, config}``,
+    ``{}`` for a new trigger) and *body* carries no ``confirm: true``; ``None`` otherwise. The
+    refusal is written to the security audit; the caller answers ``consent_required``.
 
     The owner's half of the rule; an app cannot define a trigger at all
     (``apps/permissions.ROUTE_AUTHZ``). The Schedule form's "Auto-approve tools" switch is the
@@ -820,18 +835,17 @@ def _unconsented_loosening(
     """
     from personalclaw.automation_posture import unconsented_step_loosening
 
-    action = body.get("action")
-    if not isinstance(action, dict):
+    if not isinstance(saving, dict):
         return None
     raw = stored.get("config")
     stored_config: dict[str, Any] = raw if isinstance(raw, dict) else {}
-    new = action.get("config") if "config" in action else stored_config
+    new = saving.get("config")
     loosened = unconsented_step_loosening(
         where,
         current=stored_config,
         new=new if isinstance(new, dict) else {},
         body=body,
-        provider=str(action.get("provider") or stored.get("provider") or ""),
+        provider=str(saving.get("provider") or stored.get("provider") or ""),
     )
     if loosened is None:
         return None
@@ -846,9 +860,10 @@ def _unconsented_loosening(
     return loosened
 
 
-def _grant_for_save(state: DashboardState, body: dict, *, kind: str, raw: str) -> Any:
-    """The question (`triggers.grants.Question`) saving *body*'s action needs the owner to answer,
-    else ``None`` (`triggers.grants.question`).
+def _grant_for_save(state: DashboardState, body: dict, *, kind: str, raw: str, saving: Any) -> Any:
+    """The question (`triggers.grants.Question`) saving *body* needs the owner to answer, else
+    ``None`` (`triggers.grants.question`). *saving* is its action as the save stores it
+    (`_saving_action`), ``None`` when it sends none.
 
     The editor is where the owner re-points an action or rewrites what it runs, so it is where they
     are asked: an edit that saved `bash` into a trigger allowed only `notify`, or a new command into
@@ -859,7 +874,6 @@ def _grant_for_save(state: DashboardState, body: dict, *, kind: str, raw: str) -
 
     from personalclaw.triggers import grants
 
-    action = body.get("action")
     if kind == _LIFECYCLE:
         # A lifecycle save may also send `enabled: true`, which is the toggle's switch-on — or its
         # Allow, when the trigger is on already — and is asked the toggle's question. Not asking it
@@ -869,21 +883,22 @@ def _grant_for_save(state: DashboardState, body: dict, *, kind: str, raw: str) -
         if hook is None:
             return None
         candidate = copy.copy(hook)
-        if isinstance(action, dict):
-            _apply_hook_action(candidate, action)
+        if isinstance(saving, dict):
+            _apply_hook_action(candidate, saving)
             return grants.question(candidate, before=hook)
         need = grants.missing(candidate) if bool_field(body, "enabled", default=False) else []
         if not need:
             return None
         return grants.Question(need, grants.consent(candidate, need), grants.title(candidate, need))
-    if not isinstance(action, dict):
+    if not isinstance(saving, dict):
         return None
     row = _trigger_store().get(raw)
     if row is None:
         return None
-    # The shape `_update_schedule` writes, so the question is about the row the save would store.
+    # The action the save stores (`tools.update` puts the edit over the stored one by the same
+    # rule), so the question is about the row the save would store.
     candidate = copy.copy(row.trigger)
-    candidate.workflow = {"inline": action}
+    candidate.workflow = {"inline": saving}
     return grants.question(candidate, before=row.trigger)
 
 
@@ -1044,7 +1059,9 @@ def _creation_consent(
         caller = request.get("user", "dashboard")
         _audit_grant(caller, "denied", f"{field}: creating without confirm")
         asks.append((field, grant.sentence, grant.title))
-    loosened = _unconsented_loosening(request, body, where=f"triggers.{label}.action", stored={})
+    loosened = _unconsented_loosening(
+        request, body, where=f"triggers.{label}.action", stored={}, saving=body.get("action")
+    )
     if loosened is not None:
         asks.append((loosened[0], loosened[1].consent, LOOSEN_TITLE))
     return _asked(asks, loosened[1] if loosened else None)
@@ -1480,18 +1497,23 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         )
 
     submitted = body
+    # An edit's action is the settings it sends over the action as stored (`_saving_action`), and
+    # every check below judges that: the action the save stores, not the part of it the form drew.
     try:
         body = _keep_masked_trigger(state, kind, raw, submitted)
+        saving = _saving_action(state, kind, raw, body)
     except MaskConflict as exc:
         return web.json_response({"error": str(exc)}, status=409)
+    except ValueError as exc:
+        return json_error("invalid_request", message=str(exc), status=400)
     # 🔴 Anything that awaits runs BEFORE the revision check (`trigger_revisions`), never after.
-    problem = await _action_problem(body.get("action"), stored=_stored_action(state, kind, raw))
+    problem = await _action_problem(saving)
     if not problem:
         # Before any consent question: an app's scheduled job runs at the app's agent tier, so no
         # posture is asked about for it, and none is saved (`app_crons.posture_refusal`).
         from personalclaw.apps.app_crons import posture_refusal as app_job_posture
 
-        problem = app_job_posture(raw, body.get("action"))
+        problem = app_job_posture(raw, saving)
     if problem:
         return json_error("invalid_request", message=problem, status=400)
     stale = trigger_revisions.refusal(
@@ -1504,15 +1526,18 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
     # the copy restored before the await would put the old value back.
     try:
         body = _keep_masked_trigger(state, kind, raw, submitted)
+        saving = _saving_action(state, kind, raw, body)
     except MaskConflict as exc:
         return web.json_response({"error": str(exc)}, status=409)
+    except ValueError as exc:
+        return json_error("invalid_request", message=str(exc), status=400)
     # One question for everything this save needs the owner's yes for, so a single "Allow" is never
     # consent to a sentence the dialog did not show: a grant for the action as it is saved — a new
     # provider, or what a granted one runs changed — and a loosened approval posture for its agent.
     from personalclaw.safety_flags import confirm_granted
 
     caller = request.get("user", "dashboard")
-    grant = _grant_for_save(state, body, kind=kind, raw=raw)
+    grant = _grant_for_save(state, body, kind=kind, raw=raw, saving=saving)
     grant_field = f"triggers.{request.match_info['id']}.capabilities"
     asks: list[tuple[str, str, str]] = []
     if grant is not None and not confirm_granted(body):
@@ -1523,6 +1548,7 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         body,
         where=f"triggers.{request.match_info['id']}.action",
         stored=_stored_action(state, kind, raw),
+        saving=saving,
     )
     if loosened is not None:
         asks.append((loosened[0], loosened[1].consent, LOOSEN_TITLE))
@@ -1531,7 +1557,7 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         return asked
 
     if kind == _LIFECYCLE:
-        saved = _update_lifecycle(state, raw, body)
+        saved = _update_lifecycle(state, raw, body, saving)
     else:
         saved = _update_schedule(state, raw, body)
     if grant is not None and saved.status == 200:
@@ -1581,11 +1607,16 @@ def _keep_masked_trigger(state: DashboardState, kind: str, raw: str, body: dict)
     return out
 
 
-def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Response:
+def _update_lifecycle(
+    state: DashboardState, raw: str, body: dict, saving: dict[str, Any] | None
+) -> web.Response:
     """Save a lifecycle trigger's edit, and settle its grant the way `tools.update` settles a store
     trigger's: what the edit changed keeps no grant (`grants.narrow`), and `api_trigger_detail`
     asked the owner about it first, so `confirm: true` gives it. A save that would leave the trigger
-    on without the grant it needs is switched off rather than left running unallowed."""
+    on without the grant it needs is switched off rather than left running unallowed.
+
+    *saving* is the edit's action as it is saved (`_saving_action`): the settings it sent over the
+    hook's own, so a setting the form did not send stays as it was."""
     import copy
 
     from personalclaw.safety_flags import confirm_granted
@@ -1596,11 +1627,10 @@ def _update_lifecycle(state: DashboardState, raw: str, body: dict) -> web.Respon
     for k in ("name", "event", "matcher", "timeout", "enabled"):
         if k in body:
             patch[k] = body[k]
-    if "action" in body and isinstance(body["action"], dict):
-        if body["action"].get("provider"):
-            patch["provider"] = body["action"]["provider"]
-        if "config" in body["action"]:
-            patch["provider_config"] = body["action"]["config"] or {}
+    if saving is not None:
+        if str(body["action"].get("provider") or "").strip():
+            patch["provider"] = saving["provider"]
+        patch["provider_config"] = saving["config"]
     try:
         validated = validate_tool_args(patch, HOOK_UPDATE_SCHEMA)
     except ValidationError as exc:
@@ -1655,7 +1685,8 @@ def _update_schedule(state: DashboardState, raw: str, body: dict) -> web.Respons
         if problem:
             return json_error("invalid_request", message=problem, status=400)
     if "action" in body and isinstance(body["action"], dict):
-        kwargs["action"] = body["action"]  # validated + canonicalized in update_job
+        # The settings it sends, put over the action as stored in `tools.update` (`action_edit`).
+        kwargs["action"] = body["action"]
     if "channel" in kwargs:
         ch = (kwargs["channel"] or "").strip() or None
         kwargs["channel"] = ch

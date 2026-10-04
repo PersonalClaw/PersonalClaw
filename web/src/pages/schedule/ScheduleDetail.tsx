@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { toneChipSkin } from '../../design/accent'
 import { FieldError } from '../../ui/forms'
-import { Pencil, Trash2, Check, X, PlayCircle, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical, Folder } from 'lucide-react'
+import { Pencil, Trash2, Check, X, PlayCircle, MessagesSquare, ChevronRight, AlertTriangle, FlaskConical, Folder, FilePen, ShieldCheck } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { FormFooter } from '../../ui/FormFooter'
 import { TextLink } from '../../ui/TextLink'
@@ -18,7 +18,7 @@ import { HeldBackNote } from '../triggers/HeldBackNote'
 import { RestoreHoldNote } from '../triggers/RestoreHold'
 import { HeartbeatQueue } from '../triggers/HeartbeatQueue'
 import {
-  ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, type ScheduleDraft,
+  ScheduleForm, toDraft, draftToPayload, scheduleDraftInvalidReason, draftProvider, capabilityLabel, type ScheduleDraft,
 } from './ScheduleForm'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { InlineLoadError } from '../../ui/ListScaffold'
@@ -292,6 +292,11 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
   const workflowInputs = provider === 'run-workflow' && cfg.inputs && typeof cfg.inputs === 'object' && !Array.isArray(cfg.inputs)
     ? actionFields(cfg.inputs as Record<string, unknown>)
     : []
+  // What an agent schedule's agent may do, as saved: the files it may change, its capability and
+  // its turn cap. The editor shows and sends the same three, so what is said here is what it runs.
+  const mayChange = Array.isArray(cfg.writes) ? cfg.writes.map(String) : []
+  const capability = typeof cfg.capability === 'string' ? cfg.capability : ''
+  const maxTurns = cfg.max_turns ? String(cfg.max_turns) : ''
   return (
     <div className="flex flex-col gap-l">
       {/* action row */}
@@ -420,7 +425,7 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           <div className="rounded-md bg-surface-container px-m py-2 text-on-surface-var text-[0.8125rem] leading-relaxed whitespace-pre-wrap break-words font-mono">
             {mm.key === 'agent' ? (job.message || '—') : mm.key === 'script' ? job.script : job.command}
           </div>
-          {mm.key === 'agent' && (job.agent || job.model || job.cwd) && (
+          {mm.key === 'agent' && (job.agent || job.model || job.cwd || capability || maxTurns || mayChange.length > 0) && (
             <div className="mt-1.5 flex flex-wrap gap-1.5 text-[0.75rem]">
               {job.agent && <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var font-mono">{job.agent}</span>}
               {job.model && <span className="rounded-pill bg-surface-high px-2 h-6 inline-flex items-center text-on-surface-var font-mono">{job.model}</span>}
@@ -430,6 +435,21 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
                   <Folder size={12} aria-hidden="true" /> {job.cwd}
                 </span>
               )}
+              {capability && (
+                <span title="What its agent may do" className="rounded-pill bg-surface-high px-s h-6 inline-flex items-center gap-xs text-on-surface-var">
+                  <ShieldCheck size={12} aria-hidden="true" /> {capabilityLabel(capability)}
+                </span>
+              )}
+              {maxTurns && (
+                <span title="The most turns its agent takes on a run" className="rounded-pill bg-surface-high px-s h-6 inline-flex items-center text-on-surface-var">
+                  at most {maxTurns} {maxTurns === '1' ? 'turn' : 'turns'}
+                </span>
+              )}
+              {mayChange.map((path) => (
+                <span key={path} title="A file it may change" className="rounded-pill bg-surface-high px-s h-6 inline-flex items-center gap-xs text-on-surface-var font-mono">
+                  <FilePen size={12} aria-hidden="true" /> {path}
+                </span>
+              ))}
             </div>
           )}
         </Section>

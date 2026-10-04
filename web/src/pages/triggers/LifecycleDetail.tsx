@@ -7,7 +7,7 @@ import { api, type HookItem, type ActionProvider } from '../../lib/api'
 import { Field, TextInput, FieldError } from '../../ui/forms'
 import { Combobox } from '../../ui/Combobox'
 import { Toggle } from '../../ui/Toggle'
-import { ActionConfig, coerceActionConfig, seedActionConfig } from './ActionConfig'
+import { ActionConfig, editedActionConfig, seedActionConfig } from './ActionConfig'
 import { GrantNote } from './ReviewNote'
 import { HeldBackNote } from './HeldBackNote'
 import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason } from './triggerMeta'
@@ -16,7 +16,8 @@ import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { HELD_CHANGE_REASON, rebaseRecord, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 
-/** What the edit form saves: the whole trigger, its action config replaced as one object. */
+/** What the edit form saves: the whole trigger, its action config as every field it shows (an empty
+ *  one sent as cleared), put over the saved config by the gateway (`triggers/action_edit.py`). */
 type HookEdit = { name: string; event: string; matcher: string; provider: string; provider_config: Record<string, unknown> }
 
 /** A trigger as the editor starts from it, with the revision the same read reported — the base the
@@ -46,7 +47,7 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
   const [matcher, setMatcher] = useState(hook.matcher)
   const [provider, setProvider] = useState(hook.provider)
   const [config, setConfig] = useState<Record<string, unknown>>(hook.provider_config ?? {})
-  // 🔴 THE SAVE REPLACES THE WHOLE TRIGGER — its action config as one object — over the copy the
+  // 🔴 THE SAVE SENDS THE WHOLE TRIGGER — every action setting its form shows — from the copy the
   // draft was seeded from. A change made since (another tab, the agent's automation tools) was put
   // back by the next save here without a word. `base` is that copy with the revision the same read
   // reported; a stale save is refused and offered back (`ui/StaleWriteNotice`).
@@ -105,8 +106,9 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
     if (!name.trim()) { setErr('Name is required'); return }
     // Same coercion the create page runs: `object`/`array` fields are edited as JSON text, so
     // saving `config` verbatim would persist a string where the provider expects a list and it
-    // would be dropped without a word (issue 269).
-    const coerced = coerceActionConfig(providers, provider, config)
+    // would be dropped without a word (issue 269). As an edit, a field it shows and left empty is
+    // sent as cleared: the gateway keeps every setting an edit leaves out.
+    const coerced = editedActionConfig(providers, provider, config)
     if (coerced.error) { setErr(coerced.error); return }
     setSaving(true); setErr('')
     const mine: HookEdit = { name: name.trim(), event, matcher: matcher.trim(), provider, provider_config: coerced.config }

@@ -371,12 +371,13 @@ def _cron_questions(candidate: Any, *, before: Any, stored: dict) -> list[str]:
     (`automation_posture`) over the *stored* action config."""
     from personalclaw.automation_posture import unconsented_step_loosening
     from personalclaw.triggers import grants
+    from personalclaw.triggers.action_edit import action_in
 
     sentences: list[str] = []
     grant = grants.question(candidate, before=before)
     if grant is not None:
         sentences.append(grant.sentence)
-    inline = (candidate.workflow or {}).get("inline") or {}
+    inline = action_in(candidate.workflow)
     raw = inline.get("config")
     config: dict = raw if isinstance(raw, dict) else {}
     loosened = unconsented_step_loosening(
@@ -604,33 +605,36 @@ def _cron(args: argparse.Namespace) -> None:
             patch["spec"] = {**carried, **spec_update}
 
         # `message` and `approval_mode` live inside the action, not on the trigger, so they are
-        # folded into a `workflow` patch. Read-modify-write of the EXISTING action, because
-        # replacing it would drop the agent/model the user set when they created the job.
+        # sent as an edit of it: only these settings, put over the saved action by the rule every
+        # editor saves by (`triggers.action_edit`), so its agent, model and the files it may change
+        # stay as they are. `default` clears the approval mode, which the edit says with a null. A
+        # job whose action names no provider is a legacy agent job, and the edit names the agent's.
         if "message" in patch or approval is not None:
-            action_wf: dict = dict(existing.trigger.workflow or {})
-            inline: dict = dict(action_wf.get("inline") or {})
-            action_cfg: dict = dict(inline.get("config") or {})
+            from personalclaw.triggers.action_edit import action_in
+
+            action_cfg: dict = {}
             if "message" in patch:
                 action_cfg["task_template"] = patch.pop("message")
             if approval is not None:
-                action_cfg["approval_mode"] = "" if approval == "default" else approval
-            inline["config"] = action_cfg
-            inline.setdefault("provider", "invoke-agent")
-            action_wf["inline"] = inline
-            patch["workflow"] = action_wf
+                action_cfg["approval_mode"] = None if approval == "default" else approval
+            edit: dict = {"config": action_cfg}
+            if not str(action_in(existing.trigger.workflow).get("provider") or "").strip():
+                edit["provider"] = "invoke-agent"
+            patch["workflow"] = {"inline": edit}
 
         # The questions the Triggers page's editor asks about the same change: what the action
         # runs (a new message is a new instruction for an agent that runs unattended) and whether
         # its agent stops asking. Asked only of a change that carries the action, as the editor
-        # asks only of a save that does.
+        # asks only of a save that does, and of the action as the save stores it.
         yes = bool(getattr(args, "yes", False))
         if "workflow" in patch:
             import copy
 
+            from personalclaw.triggers.action_edit import action_in, edited_workflow
+
             candidate = copy.deepcopy(existing.trigger)
-            candidate.workflow = patch["workflow"]
-            stored_inline = (existing.trigger.workflow or {}).get("inline") or {}
-            stored_cfg = stored_inline.get("config")
+            candidate.workflow = edited_workflow(existing.trigger.workflow, patch["workflow"])
+            stored_cfg = action_in(existing.trigger.workflow).get("config")
             questions = _cron_questions(
                 candidate,
                 before=existing.trigger,
