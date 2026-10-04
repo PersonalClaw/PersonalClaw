@@ -108,7 +108,7 @@ def _create(body: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> tuple[int,
     request.json = _json  # type: ignore[assignment]
     preexisting = get_provider(PROVIDER_NAME) is not None
     register_bundled_provider()
-    monkeypatch.setattr(preflight_mod, "preflight", lambda _spec: _OkPreflight())
+    monkeypatch.setattr(preflight_mod, "preflight", lambda _spec, **_kw: _OkPreflight())
     try:
         response = asyncio.run(H.api_loop_create(request))
     finally:
