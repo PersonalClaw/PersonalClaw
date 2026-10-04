@@ -56,6 +56,14 @@ from personalclaw.attachments import Attachment
 from personalclaw.auth.modes import AuthConfig, AuthMode
 from personalclaw.channel_delivery import ChannelDelivery
 
+# ── One turn per message ──
+# The door takes each message once, by the channel's own id for it in its chat. A channel that
+# acts on a message itself before the door, or instead of it (a conversation it runs, a pairing
+# code it finds inside a mail, mail only its automations get), claims it first: True the first
+# time its channel delivers it, False for a delivery of it made again. A message it then hands to
+# the door is taken from the claim, once.
+from personalclaw.channel_inbound import claim_message
+
 # ── Transport ABC + data types ──
 from personalclaw.channel_transports.base import (
     ChannelCapabilities,
@@ -392,6 +400,7 @@ __all__ = [
     "build_cancelled_turn_preamble",
     "chat_grant",
     "chore_usage",
+    "claim_message",
     "compress_thread_history",
     "compute_next_run_ts",
     "config_dir",

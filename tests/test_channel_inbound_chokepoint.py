@@ -28,13 +28,8 @@ PROVIDER = "telegram"
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
-    """Point the entity-settings store + SEL at tmp_path (the real home is never touched).
-
-    Also clears the module-global admission cache. Without that, one test's verdict for a
-    message would be returned to the next test whose fixture built the same message — the
-    cache is keyed on message identity, not on the store, so tmp_path isolation alone does
-    not isolate it.
-    """
+    """Point the entity-settings store, SEL and the door's record of deliveries at tmp_path
+    (the real home is never touched)."""
     import personalclaw.config.loader as cfg
     import personalclaw.providers.entity_routes as er
 
@@ -43,9 +38,7 @@ def isolated(tmp_path, monkeypatch):
         er, "_entity_settings_path", lambda entity: tmp_path / "entity_settings" / f"{entity}.json"
     )
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    ci.reset_admissions()
     yield tmp_path
-    ci.reset_admissions()
 
 
 @pytest.fixture
@@ -225,7 +218,6 @@ def test_a_transport_that_never_calls_trust_is_still_checked(turns):
     # And the same transport, unchanged, works once the sender is trusted — so the denial
     # above is the trust decision, not the transport failing to wire anything up.
     ct.allow_sender(PROVIDER, "nobody")
-    ci.reset_admissions()
 
     async def go2():
         v = await BareTransport().on_message(_msg(text="do the thing", sender="nobody", mid="m2"))
@@ -270,9 +262,9 @@ def test_per_message_idempotency_holds_with_the_renotify_window_at_zero(turns):
 
     With :data:`channel_trust.UNKNOWN_SENDER_RENOTIFY_SECS` at zero the store's own
     flood-control dedup cannot fire, so anything that keeps this at one notification is
-    the admission cache and nothing else. Without this leg, "one notification per message"
-    would only be a corollary of a 24h per-SENDER window — true today, and silently false
-    the moment someone shortens the window.
+    the door's record of deliveries and nothing else. Without this leg, "one notification
+    per message" would only be a corollary of a 24h per-SENDER window — true today, and
+    silently false the moment someone shortens the window.
     """
     monkey = pytest.MonkeyPatch()
     monkey.setattr(ct, "UNKNOWN_SENDER_RENOTIFY_SECS", 0)
@@ -295,10 +287,10 @@ def test_per_message_idempotency_holds_with_the_renotify_window_at_zero(turns):
 
 
 def test_two_different_messages_renotify_when_the_window_is_zero(turns):
-    """Vacuity partner for the leg above: the cache is keyed on the MESSAGE, not global.
+    """Vacuity partner for the leg above: the record is keyed on the MESSAGE, not global.
 
     Same sender, same zero window, two DIFFERENT messages → two notifications. If the
-    admission cache were keyed too coarsely (per sender, or per provider) this would read
+    door's record were keyed too coarsely (per sender, or per provider) this would read
     one, and the previous test would have been passing for the wrong reason — it would be
     proving "notifications are suppressed", not "one message is admitted once".
     """

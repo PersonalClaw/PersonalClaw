@@ -198,10 +198,9 @@ def _connect_capable(provider: str, display: str, *, owner: str, dm_is_thread: b
 async def _reply(state, provider: str, *, channel: str, thread: str, sender: str) -> Any:
     """The owner's reply, through the REAL guarded door; returns the chat it reached."""
     from personalclaw import channel_trust
-    from personalclaw.channel_inbound import deliver_inbound, reset_admissions
+    from personalclaw.channel_inbound import deliver_inbound
     from personalclaw.channel_transports.base import ChannelMessage
 
-    reset_admissions()
     channel_trust.allow_sender(provider, sender)
     reached: dict = {}
 

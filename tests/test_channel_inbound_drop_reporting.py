@@ -41,12 +41,12 @@ SECRET_BODY = "@Bot my api key is fake-key-1 please remember it"
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch, caplog):
-    """Temp entity-settings + SEL home, cleared module caches, and capture at level 1.
+    """Temp entity-settings + SEL home, a cleared reporter window, and capture at level 1.
 
-    Both module-global caches must be cleared around every test: the admission cache is
-    keyed on message identity (not on the store, so ``tmp_path`` alone does not isolate it)
-    and the visible-line window is keyed on provider + subject + reason (so one test's
-    WARNING would demote the next test's identical drop to DEBUG).
+    The door's record of deliveries lives in that home, so ``tmp_path`` isolates it. The
+    visible-line window is module-global and keyed on provider + subject + reason, so it is
+    cleared around every test (one test's WARNING would demote the next test's identical
+    drop to DEBUG).
 
     Capture is set at level 1 rather than DEBUG so that a record emitted BELOW debug — a
     plausible way to make a drop technically "logged" while remaining invisible — would
@@ -60,11 +60,9 @@ def isolated(tmp_path, monkeypatch, caplog):
         er, "_entity_settings_path", lambda entity: tmp_path / "entity_settings" / f"{entity}.json"
     )
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    ci.reset_admissions()
     ct.reset_inbound_reports()
     caplog.set_level(1)
     yield tmp_path
-    ci.reset_admissions()
     ct.reset_inbound_reports()
 
 
@@ -130,13 +128,14 @@ class _Services:
 
 
 def test_every_core_path_that_drops_a_message_reports_it(caplog):
-    """The headline property. Six ways a message dies before a session; all six speak.
+    """The headline property. Eight ways a message dies before a session; all eight speak.
 
     A fix that lights up one branch while three stay dark is not a fix, so this walks every
-    one of them in a single test and asserts a record per path. Five of the six were
+    one of them in a single test and asserts a record per path. Five of the first six were
     completely silent before this change (the sixth, a missing dashboard state, already
     warned) — so the test fails on unfixed code with a five-entry list of silent paths,
-    which is a more useful failure than six separate red tests.
+    which is a more useful failure than six separate red tests. The last two are the door's
+    own: a message with no id, and a delivery of a message the door already took.
     """
     silent: list[str] = []
 
@@ -183,6 +182,14 @@ def test_every_core_path_that_drops_a_message_reports_it(caplog):
     _set_policy("group", "tracked_only")
     check(
         "no_dashboard_state",
+        lambda: asyncio.run(_Services(None).deliver(_msg(channel="chan-tracked", mid="m-nostate"))),
+    )
+    # 7. A message its channel sent with no id of its own: refused.
+    unnamed = _msg(channel="chan-tracked", mid="")
+    check("no_message_id", lambda: asyncio.run(_Services(CapturingState()).deliver(unnamed)))
+    # 8. A delivery, made again, of a message the door already took (6 took it).
+    check(
+        "already_received",
         lambda: asyncio.run(_Services(None).deliver(_msg(channel="chan-tracked", mid="m-nostate"))),
     )
 
@@ -364,13 +371,13 @@ def test_the_visible_window_is_per_subject_so_a_second_channel_still_announces(c
 # ── the two paths the gate cannot see, owned by channel_inbound ──────────────
 
 
-def test_an_admission_cache_hit_reports_at_debug_without_re_entering_the_gate(caplog):
-    """A provider redelivering a message must not repeat an operator-visible line.
+def test_a_delivery_made_again_is_said_once_without_re_entering_the_gate(caplog):
+    """A provider delivering a message again repeats none of its first lines, and says it came.
 
-    This is the genuinely routine dedup in the inbound path, and it is the one the old
-    ``deliver_inbound`` DEBUG got wrong in the other direction: it re-fired on every
-    presentation. The gate is asserted to be entered exactly once, so the second line can
-    only be the cache reporting for itself.
+    The gate is entered exactly once, so a delivery made again cannot repeat the first
+    delivery's WARNING (nor its owner notification). The door says, at INFO and naming the
+    channel, that the message came again and nothing ran for it: rare, worth reading when an
+    answer seems missing, and how a channel that gives two messages one id shows itself.
     """
     entries: list[str] = []
     real_guard = ct.guard_inbound
@@ -393,19 +400,21 @@ def test_an_admission_cache_hit_reports_at_debug_without_re_entering_the_gate(ca
         asyncio.run(services.deliver(msg))
         first = levels(caplog)
         caplog.clear()
-        asyncio.run(services.deliver(msg))
+        again = asyncio.run(services.deliver(msg))
         second = lines(caplog)
     finally:
         ci_mod.guard_inbound = real_guard  # type: ignore[assignment]
 
-    assert len(entries) == 1, "the cache must not re-enter the gate"
-    # FLOOR: the first presentation IS operator-visible. Without it, "the second one is
-    # only DEBUG" would also be satisfied by the original silence.
+    assert len(entries) == 1, "the delivery made again re-entered the gate"
+    assert again.reason == ci.ALREADY_RECEIVED
+    # FLOOR: the first presentation IS operator-visible. Without it, "the second one says
+    # only that it came again" would also be satisfied by the original silence.
     assert first == ["WARNING"]
-    assert [level for _, level, _ in second] == ["DEBUG"]
+    assert [level for _, level, _ in second] == ["INFO"]
     logger_name, _, message = second[0]
     assert logger_name == "personalclaw.channel_inbound"
-    assert "already decided" in message
+    assert "already received" in message and "channel=chan-general" in message
+    assert SECRET_BODY not in message
 
 
 def test_the_pairing_short_circuit_reports_through_the_same_owner(caplog):

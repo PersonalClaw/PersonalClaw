@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import itertools
 import time
 from pathlib import Path
 from typing import Any
@@ -46,16 +47,16 @@ PROVIDER = "telegram"
 DM = "5550123"
 OTHER_DM = "5550456"
 
+#: The channel's own ids for the messages, which a restart of the gateway does not start over.
+_MESSAGE_IDS = itertools.count(1)
+
 
 @pytest.fixture(autouse=True)
 def _a_trusted_sender():
-    """The owner's DM is let in, and no verdict outlives its test (the door caches one per
-    message, keyed by the message, not by the home)."""
-    ci.reset_admissions()
+    """The owner's DM is let in."""
     ct.allow_sender(PROVIDER, DM, name="Ada")
     ct.allow_sender(PROVIDER, OTHER_DM, name="Ben")
     yield
-    ci.reset_admissions()
 
 
 class _Gateway:
@@ -69,7 +70,6 @@ class _Gateway:
             start_time=0.0,
             conversation_log=ConversationLog(base_dir=home / "sessions"),
         )
-        self._count = 0
 
     @property
     def state(self) -> DashboardState:
@@ -78,7 +78,6 @@ class _Gateway:
     async def message(self, text: str, *, thread: str = DM, turn_runner: Any = None) -> str:
         """The owner sends *text* on *thread*; returns the chat the door ran its turn in. The turn
         notes the message as its answer, unless *turn_runner* runs it."""
-        self._count += 1
         reached: list[str] = []
 
         async def _notes_it(state: Any, session: Any, message: str) -> None:
@@ -93,7 +92,7 @@ class _Gateway:
             text=text,
             sender=thread,
             thread_id=thread,
-            message_id=f"{thread}-{self._count}",
+            message_id=str(next(_MESSAGE_IDS)),
         )
         before = set(self.state._background_tasks)
         verdict = await ci.deliver_inbound(self, PROVIDER, msg, is_dm=True, turn_runner=_runs)

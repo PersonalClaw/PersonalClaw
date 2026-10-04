@@ -365,11 +365,19 @@ switched off or not there, `429` when a sender posts faster than its rate, and `
 incident. Every request the address answers is in the inbound audit (Settings → External Access
 counts each sender token's), and every refusal and accepted fire is in the Security log.
 
+A program that may send a post again (it retries one whose answer it never got) names each post
+with an `Idempotency-Key` header, 1 to 255 printable characters: a delivery id, a UUID. A post
+whose name this automation already took from that sender, within a week, answers `202` with
+`already_received` and fires nothing, while the run its first post started runs on. A post its
+rules held took nothing, so the same name sent once they allow it fires. A header that names
+nothing is refused with `400`, and a post without one is a new fire every time.
+
 An agent can also register a **callback** with `hook_register`, for an outside system to call back
 later at `http://127.0.0.1:<port>/api/hooks/agent` with your **webhook token**, which you set with
 `personalclaw config set hooks.webhook_token <token>` (at least 32 characters). The tool's answer
 says exactly what the outside system sends, and the callback waits on the Triggers page until you
-allow it.
+allow it. A callback the outside system names with an `Idempotency-Key` header runs one turn: the
+same name again for the same `sessionKey`, within a week, answers `already_received`.
 
 | | |
 |---|---|

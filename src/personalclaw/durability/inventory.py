@@ -2006,6 +2006,22 @@ INVENTORY: tuple[StateEntry, ...] = (
         machine_local=True,
         merged_in=False,
     ),
+    # The deliveries this machine's doors already took (`personalclaw.received`): each channel
+    # message and named webhook delivery, as a digest of its identity and when it arrived, so a
+    # delivery made again, after a restart too, runs nothing. One machine's account of what its
+    # own receivers took in: another machine's, merged in, would refuse messages this machine never
+    # saw, so it is never synced or merged in, and a replace restore brings it back whole. Lost, a
+    # delivery made again in the next week runs again.
+    StateEntry(
+        id="received",
+        kind=KIND_JSONL_APPEND,
+        path="received.jsonl",
+        domain=DOMAIN_PLATFORM,
+        merge=MERGE_REPLACE_ONLY,
+        help="the channel messages and webhook deliveries already received, kept a week",
+        machine_local=True,
+        merged_in=False,
+    ),
     # Kanban columns over tags (`DashboardState.save_tag_boards`): a bare list of `id` rows,
     # the same shape as its `tags.json` neighbour, so the same merge, one record at a time.
     StateEntry(

@@ -56,12 +56,10 @@ FENCE = f"<untrusted_content source=channel:{PROVIDER}:{COLLEAGUE}>"
 def _a_shared_channel(unset_env):
     unset_env(CRED_OWNER_ID, owner_id_credential(PROVIDER))
     save_credential(owner_id_credential(PROVIDER), OWNER)
-    ci.reset_admissions()
     ct.allow_sender(PROVIDER, OWNER, name="Mira")
     ct.allow_sender(PROVIDER, COLLEAGUE, name="Jonas")
     ct.track(PROVIDER, CHANNEL, "Team")
     yield
-    ci.reset_admissions()
 
 
 class _Door:

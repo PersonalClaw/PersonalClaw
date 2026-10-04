@@ -78,10 +78,8 @@ def _share_the_channel() -> None:
 @pytest.fixture(autouse=True)
 def _a_shared_channel(unset_env):
     unset_env(CRED_OWNER_ID, owner_id_credential(PROVIDER))
-    ci.reset_admissions()
     _share_the_channel()
     yield
-    ci.reset_admissions()
 
 
 class _Agent:

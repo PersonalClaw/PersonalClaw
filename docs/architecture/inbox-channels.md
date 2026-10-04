@@ -792,6 +792,18 @@ Channels page reads `starting` while it runs and the reason when it failed. Two
 implementations ship in-tree: `webui.py` (the dashboard itself as a transport, with
 no receiver) and `reference_echo.py` (a minimal example).
 
+A receiver hands each message to the guarded door (`services.deliver_channel_inbound`,
+`channel_inbound.py`), which runs one turn per message. It takes a message once, by the
+channel's own id for it in the chat it came in (`message_id` with `channel_id`), recorded
+in the home before the trust gate is asked (`received.py`, `received.jsonl`: machine-local,
+a week, the newest 10 000). A delivery of it made again (a lost acknowledgement, an update
+served again, a folder read again after a crash), while its turn runs, after it finished or
+failed, or after a restart, is answered `already_received` and changes nothing; a message
+with no id is refused (`no_message_id`). A channel that acts on a message before the door
+claims it at intake (`claim_message`, the `messages-run-once` core feature), and the door
+takes that message from the claim once. The webhook's two doors keep the same record for a
+delivery its sender names (`Idempotency-Key`).
+
 ### Outbound — `channel_delivery.py`
 
 The `ChannelDelivery` protocol: `open_dm`, `deliver_text`, `deliver_rich`,

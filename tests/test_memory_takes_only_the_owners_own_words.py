@@ -96,13 +96,11 @@ def _a_group_with_a_friend_in_it(unset_env):
     unset_env(CRED_OWNER_ID, owner_id_credential(PROVIDER), owner_id_credential(SELF_RUN))
     save_credential(owner_id_credential(PROVIDER), OWNER)
     save_credential(owner_id_credential(SELF_RUN), OWNER_THERE)
-    ci.reset_admissions()
     ct.allow_sender(PROVIDER, OWNER, name="Rin")
     ct.allow_sender(PROVIDER, FRIEND, name="Ola")
     ct.allow_sender(PROVIDER, OTHER_FRIEND, name="Kai")
     ct.track(PROVIDER, GROUP, "Lake trip")
     yield
-    ci.reset_admissions()
 
 
 class _Gateway:

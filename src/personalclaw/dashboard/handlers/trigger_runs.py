@@ -143,7 +143,8 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
        (`scope.trigger == <id>`); `check_bindings` refuses a disagreeing pin and the equality below
        an absent one, so a client with no pin fires nothing (fail-closed).
     5. **rate** (→ 429), per sender, so one noisy program cannot starve another.
-    6. **body** (→ 413): capped, declared and read.
+    6. **body** (→ 413, 400): capped, declared and read, and the delivery's name, when its sender
+       gives one (``Idempotency-Key``, ``inbound.webhook.delivery_name``), one it can be told by.
     7. **resolve** (→ 404): only a webhook automation that is switched on fires; an unknown id,
        another kind and a paused one get one answer, so the caller learns only that nothing fired.
        Asked after the token and the pin, so a caller learns nothing of other automations, and
@@ -153,7 +154,10 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
        (`triggers.firepath`): its spacing and hourly cap, its quiet hours, its budget, a run of it
        still going. A fire it holds runs nothing, and its history keeps the typed row. Steps 7 and
        8 are taken one request at a time (`service.request_admission`), so two requests arriving
-       together see each other's claim and count.
+       together see each other's claim and count. A delivery its sender named, and made again
+       after this automation took it from this sender (`personalclaw.received`, a week), is
+       answered 202 ``already_received`` before either and fires nothing; its name is taken only
+       with a fire the rules let go ahead, so a retry of one they held fires when they allow it.
     9. **fence + fire** (→ 202): the body, capped, is fenced (`framing.fence_payload`) so it reaches
        the agent as data and never as instructions, and the action runs fire-and-forget: a sender
        must not wait on an agent's turn. The dispatch screens it, as it screens every fire's.
@@ -284,11 +288,21 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
             client_id=client_id,
             bytes_in=len(body_bytes),
         )
+    delivery, unnamed = door.delivery_name(request)
+    if unnamed:
+        return door.answer(
+            json_error("invalid_request", message=unnamed, status=400, headers=_NO_STORE),
+            route=route,
+            refused="a delivery name that names none",
+            client_id=client_id,
+            bytes_in=len(body_bytes),
+        )
 
     # 7) and 8) are asked under one lock per process (`service.request_admission`): two requests
     #    arriving together are resolved and admitted one after the other, as two events are, so the
     #    second sees the claim and the count the first left. The body is in before it is taken, so
     #    a slow sender holds nothing.
+    from personalclaw import received
     from personalclaw.triggers import grants
     from personalclaw.triggers.ownership import is_owner_authored
     from personalclaw.triggers.service import (
@@ -307,6 +321,19 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
         #    the body is in, so the admission below writes the automation as it is stored now, not
         #    as it was before a slow sender finished.
         kind, raw = _split_id(trigger_id)
+        named = (door.FIRE_DELIVERIES, trigger_id, client_id, delivery)
+        if delivery and received.seen(*named):
+            return door.received_again(
+                web.json_response(
+                    {"ok": True, "accepted": True, "trigger": raw, "already_received": True},
+                    status=202,
+                    headers=_NO_STORE,
+                ),
+                route=route,
+                resources=raw,
+                client_id=client_id,
+                bytes_in=len(body_bytes),
+            )
         store = _trigger_store()
         row = store.get(raw) if kind == _STORE else None
         if row is None or row.trigger.kind != "webhook":
@@ -365,6 +392,8 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
                 bytes_in=len(body_bytes),
             )
         retire_if_spent(store, row.trigger)
+        if delivery:
+            received.note(*named)
 
     # 9) Fence the untrusted body, then fire the action fire-and-forget: a webhook sender must not
     #    block on an agent's turn. Tracked on `state._background_tasks` so the task is not

@@ -24,6 +24,7 @@ from personalclaw.sdk.features import (
     DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
+    MESSAGES_RUN_ONCE,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
@@ -39,6 +40,7 @@ OFFERED_ONCE = {
     "digest-replies",
     "guarded-download",
     "links-name-their-channel",
+    "messages-run-once",
     "tool-call-screen",
     "turns-name-their-channel",
     "turns-name-who-asked",
@@ -54,6 +56,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "DIGEST_REPLIES",
         "GUARDED_DOWNLOAD",
         "LINKS_NAME_THEIR_CHANNEL",
+        "MESSAGES_RUN_ONCE",
         "TOOL_CALL_SCREEN",
         "TURNS_NAME_THEIR_CHANNEL",
         "TURNS_NAME_WHO_ASKED",
@@ -65,6 +68,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert DIGEST_REPLIES == "digest-replies"
     assert GUARDED_DOWNLOAD == "guarded-download"
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
+    assert MESSAGES_RUN_ONCE == "messages-run-once"
     assert TOOL_CALL_SCREEN == "tool-call-screen"
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
     assert TURNS_NAME_WHO_ASKED == "turns-name-who-asked"
@@ -75,6 +79,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
+        MESSAGES_RUN_ONCE,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,
@@ -477,6 +482,45 @@ def _turns_name_who_asked_holds() -> None:
         delete_credential(key)
 
 
+def _messages_run_once_hold() -> None:
+    """A message its channel claimed runs at the door once, a delivery of it made again is
+    answered ``already_received``, and one with no id is refused, through the SDK's names."""
+    import asyncio
+
+    from personalclaw.channel_inbound import deliver_inbound
+    from personalclaw.channel_trust import allow_sender
+    from personalclaw.sdk.channel import ChannelMessage, claim_message
+    from personalclaw.testing.channel_conformance import CapturingState
+
+    allow_sender("oncechat", "U0OWNER")
+    ran: list[str] = []
+
+    async def turn(state, session, text):
+        ran.append(text)
+
+    services = SimpleNamespace(dashboard_state=CapturingState())
+
+    def message(mid: str) -> ChannelMessage:
+        return ChannelMessage(
+            channel_id="D1", thread_id="D1", sender="U0OWNER", text="hello", message_id=mid
+        )
+
+    async def check() -> list[str]:
+        assert claim_message("oncechat", message("m-1")) is True
+        assert claim_message("oncechat", message("m-1")) is False
+        said = []
+        for mid in ("m-1", "m-1", ""):
+            verdict = await deliver_inbound(
+                services, "oncechat", message(mid), is_dm=True, turn_runner=turn
+            )
+            said.append(verdict.reason)
+        await asyncio.sleep(0)
+        return said
+
+    assert asyncio.run(check()) == ["allowed", "already_received", "no_message_id"]
+    assert ran == ["hello"]
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     APPROVAL_ANSWERS: _approval_answers_hold,
@@ -485,6 +529,7 @@ WITNESSES = {
     DIGEST_REPLIES: _digest_replies_hold,
     GUARDED_DOWNLOAD: _guarded_download_holds,
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
+    MESSAGES_RUN_ONCE: _messages_run_once_hold,
     TOOL_CALL_SCREEN: _tool_call_screen_holds,
     TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,
     TURNS_NAME_WHO_ASKED: _turns_name_who_asked_holds,

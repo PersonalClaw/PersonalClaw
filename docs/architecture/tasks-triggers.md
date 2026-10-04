@@ -608,7 +608,9 @@ budget caps count (`spend.json`), its tool counters (`tool_usage.json`), its
 context-savings ledger (`tokenjuice_savings.json`), when its own backups and
 syncs last ran (`durability_state.json`), which due-date notices it sent
 (`task_due_notices.json`), which Morning triage digest each chat channel's DM
-last received (`digest_channels.json`), and the legacy files each home imports once
+last received (`digest_channels.json`), the channel messages and webhook deliveries
+its doors already took, kept a week so one delivered again runs nothing
+(`received.jsonl`), and the legacy files each home imports once
 (`crons.json`, `event_triggers.json`, `autonudge.json`) are `machine_local`: a
 snapshot and a backup carry them, a sync never does, a pull leaves this
 machine's as they are even from a peer that still sends one, and the review

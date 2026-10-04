@@ -48,10 +48,8 @@ def isolated(tmp_path, monkeypatch):
         er, "_entity_settings_path", lambda entity: tmp_path / "entity_settings" / f"{entity}.json"
     )
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    ci.reset_admissions()
     ct.reset_inbound_reports()
     yield tmp_path
-    ci.reset_admissions()
 
 
 class _Clock:

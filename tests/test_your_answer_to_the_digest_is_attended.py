@@ -197,9 +197,7 @@ def home(tmp_path: Path, monkeypatch: Any):
     ct.allow_sender(PROVIDER, FRIEND, name="Sam")
     telegram = _Telegram()
     channel_delivery.register(telegram, provider=PROVIDER)
-    ci.reset_admissions()
     yield SimpleNamespace(store=store, dash=dash, telegram=telegram)
-    ci.reset_admissions()
     channel_delivery.register(None, provider=PROVIDER)
 
 

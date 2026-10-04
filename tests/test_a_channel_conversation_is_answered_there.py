@@ -24,7 +24,6 @@ from chat_test_helpers import links_kept_in_a_session_map
 from personalclaw import channel_delivery, channel_trust
 from personalclaw.agents.native.runtime import NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
-from personalclaw.channel_inbound import reset_admissions
 from personalclaw.channel_transports.base import ChannelMessage
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard.chat_runner import run_chat
@@ -103,11 +102,9 @@ class _Channel:
 def channel():
     handle = _Channel()
     channel_delivery.register(handle, provider=PROVIDER)
-    reset_admissions()
     channel_trust.allow_sender(PROVIDER, OWNER)
     yield handle
     channel_delivery.register(None, provider=PROVIDER)
-    reset_admissions()
 
 
 async def _gateway(tmp_path: Path, model: _Model) -> GatewayOrchestrator:

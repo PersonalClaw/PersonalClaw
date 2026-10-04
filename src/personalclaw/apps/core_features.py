@@ -97,6 +97,16 @@ CLOSING_STREAMS = "closing-streams"
 #: core without it has no ``turn_asked_by``, so an app that imports it does not load.
 TURNS_NAME_WHO_ASKED = "turns-name-who-asked"
 
+#: A channel message runs once: the door takes each message once, by the channel's own id for it
+#: in the chat it came in (``ChannelMessage.message_id`` with its ``channel_id``), and a delivery of
+#: it made again (while its turn runs, after it finished or failed, after a restart) is answered
+#: ``already_received`` and changes nothing; a message with no id is refused. A channel that acts on
+#: a message itself before the door or instead of it claims it first
+#: (``personalclaw.sdk.channel.claim_message(provider, msg)``: True the first time, False for a
+#: delivery made again), and the door takes a message its channel claimed, once. A core without it
+#: has no ``claim_message``, so an app that imports it does not load.
+MESSAGES_RUN_ONCE = "messages-run-once"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
@@ -106,6 +116,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
+        MESSAGES_RUN_ONCE,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,

@@ -81,6 +81,11 @@ class GatewayServices(Protocol):
         reached an agent with no check. Routing through this method is what turns that
         convention into a property; the returned verdict reports what happened so the
         transport can render the channel-specific outbound half (``canned_reply``) itself.
+
+        A message runs once: the platform takes it by the channel's own id for it in its chat
+        (``message_id`` with ``channel_id``), and a delivery of it made again comes back not
+        allowed, ``reason="already_received"``, with nothing done; one with no ``message_id``
+        comes back refused, ``reason="no_message_id"``.
         """
         ...
 

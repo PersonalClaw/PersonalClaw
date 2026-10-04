@@ -69,6 +69,9 @@ describe("a webhook automation's page", () => {
     expect(screen.getByText(/up to 64 KB, reaches what it runs as data/)).toBeInTheDocument()
     // A program's post is the automation firing, so its own rules hold it as they hold any fire.
     expect(screen.getByText(/held to the rules its other fires keep: past its hourly cap/)).toBeInTheDocument()
+    // A post a program sends again names itself, and fires once (`inbound.webhook.delivery_name`).
+    expect(screen.getByText('Idempotency-Key')).toBeInTheDocument()
+    expect(screen.getByText(/the same name sent again\s+within a week fires nothing/)).toBeInTheDocument()
     expect(screen.getByText('No sender tokens yet, so nothing outside PersonalClaw can fire it.')).toBeInTheDocument()
   })
 

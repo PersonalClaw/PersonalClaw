@@ -279,12 +279,10 @@ def test_the_canned_reply_comes_back_once_the_window_has_passed(monkeypatch):
 
 def test_the_door_throttles_the_canned_reply_for_every_channel():
     """Two different messages from one stranger through the inbound door every transport uses:
-    the first carries the reply, the second carries none. The door caches per MESSAGE, so this
-    is the store's window at work, not the admission cache."""
+    the first carries the reply, the second carries none. The door takes each MESSAGE once, so
+    this is the store's per-sender window at work, not the door's record of deliveries."""
     from personalclaw import channel_inbound as ci
     from personalclaw.channel_transports.base import ChannelMessage
-
-    ci.reset_admissions()
 
     async def turn_runner(state, session, text):  # pragma: no cover - a denied message never runs
         raise AssertionError("a stranger's message must not reach a session")
@@ -403,7 +401,6 @@ def test_v1_echo_walkthrough_unknown_then_pair_then_converse(monkeypatch):
         return None
 
     monkeypatch.setattr("personalclaw.dashboard.chat.run_chat", _fake_run_chat)
-    ci.reset_admissions()
 
     async def go():
         t = ReferenceEchoTransport()
@@ -465,4 +462,3 @@ def test_v1_echo_walkthrough_unknown_then_pair_then_converse(monkeypatch):
         await t.disconnect()
 
     _run(go())
-    ci.reset_admissions()

@@ -1,7 +1,7 @@
 """The inbound door must not decide trust ahead of the gate it delegates to.
 
-``channel_inbound._decide`` used to redeem a pairing code *before* calling
-``channel_trust.guard_inbound``, and without reading the provider's ``dm_policy`` at all::
+The door's trust decision (``channel_inbound.admit``) used to redeem a pairing code *before*
+calling ``channel_trust.guard_inbound``, and without reading the provider's ``dm_policy`` at all::
 
     if is_dm and not is_allowed_sender(provider, msg.sender):
         candidate = (msg.text or "").strip()
@@ -56,12 +56,8 @@ CODE_OPENS_THE_DOOR: dict[str, bool] = {"pairing": True, "owner_only": False, "o
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
-    """Point the trust store + SEL at ``tmp_path``; the real home is never touched.
-
-    Also clears the door's module-global admission cache, which is keyed on message
-    identity and not on the store — so ``tmp_path`` isolation alone would let one test's
-    verdict be replayed to the next test that builds the same message id.
-    """
+    """Point the trust store, SEL and the door's record of deliveries at ``tmp_path``; the
+    real home is never touched."""
     import personalclaw.config.loader as cfg
     import personalclaw.providers.entity_routes as er
 
@@ -70,9 +66,7 @@ def isolated(tmp_path, monkeypatch):
         er, "_entity_settings_path", lambda entity: tmp_path / "entity_settings" / f"{entity}.json"
     )
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    ci.reset_admissions()
     yield tmp_path
-    ci.reset_admissions()
 
 
 @pytest.fixture
@@ -259,7 +253,6 @@ def test_a_wrong_code_is_refused_without_burning_the_live_code(policy, turns):
         assert ct.is_allowed_sender(PROVIDER, "stranger") is False
 
     # The real code still works afterwards — the guess cost the owner nothing.
-    ci.reset_admissions()
     if policy == "pairing":
         assert _through_the_door(state, _msg(code, mid="m2")).reason == "paired"
         assert ct.is_allowed_sender(PROVIDER, "stranger") is True
@@ -271,7 +264,7 @@ def test_a_wrong_code_is_refused_without_burning_the_live_code(policy, turns):
 def test_the_door_is_not_simply_refusing_everything(turns):
     """The floor. Every assertion above is a refusal or a policy-conditional refusal.
 
-    Blanket ``return TrustVerdict(allowed=False)`` in ``_decide`` would satisfy the
+    Blanket ``return TrustVerdict(allowed=False)`` in ``admit`` would satisfy the
     owner_only tests, so this pins the admissions the door must still make: an
     owner-approved sender gets in *even under the strictest policy*, and ``open`` admits an
     unknown one. If this fails, a green run of the tests above means nothing.
@@ -285,7 +278,6 @@ def test_the_door_is_not_simply_refusing_everything(turns):
     assert [t[1] for t in turns] == ["what's the weather?"]
 
     _set_dm_policy("open")
-    ci.reset_admissions()
     stranger = _through_the_door(state, _msg("hi there", sender="stranger", mid="m2"))
     assert stranger.allowed is True, "policy open must admit an unknown sender"
     assert [t[1] for t in turns] == ["what's the weather?", "hi there"]
@@ -294,27 +286,27 @@ def test_the_door_is_not_simply_refusing_everything(turns):
 # ── structural: the door reaches no verdict the gate would not have reached ──
 
 
-def test_decide_returns_only_what_the_gate_returned():
-    """``_decide`` must hold no verdict of its own — the pin on the fix's shape.
+def test_admit_returns_only_what_the_gate_returned():
+    """``admit`` must hold no verdict of its own — the pin on the fix's shape.
 
     The defect was not a wrong policy check, it was a *second* decision site above the one
     decision function. A behavioural test can only catch the cases it enumerates; this
     catches any re-added early return, whatever policy it does or does not consult.
     """
-    tree = ast.parse(inspect.getsource(ci._decide))
+    tree = ast.parse(inspect.getsource(ci.admit))
     returns = [n for n in ast.walk(tree) if isinstance(n, ast.Return)]
 
     assert (
         len(returns) == 1
-    ), f"_decide has {len(returns)} return statements; the gate is the only one"
+    ), f"admit has {len(returns)} return statements; the gate is the only one"
     value = returns[0].value
     assert isinstance(value, ast.Call) and getattr(value.func, "id", "") == "guard_inbound", (
-        "_decide returns something other than guard_inbound's verdict — a second trust "
+        "admit returns something other than guard_inbound's verdict — a second trust "
         "decision site above the gate is exactly the defect this file pins"
     )
     assert not [
         n for n in ast.walk(tree) if isinstance(n, ast.Call) and "redeem" in ast.dump(n.func)
-    ], "_decide redeems a pairing code again; redemption belongs inside guard_inbound"
+    ], "admit redeems a pairing code again; redemption belongs inside guard_inbound"
 
 
 def test_channel_inbound_imports_no_trust_primitive_but_the_gate():
@@ -322,7 +314,9 @@ def test_channel_inbound_imports_no_trust_primitive_but_the_gate():
 
     ``redeem_pairing_code`` / ``is_allowed_sender`` are the two the pre-gate block used.
     The door needs neither — it needs one gate — and not importing them is what keeps the
-    next contributor from assembling a policy here by hand.
+    next contributor from assembling a policy here by hand. Beside the gate and its verdict
+    type it reaches only the gate's one reporter, which decides nothing: the door refuses a
+    message with no id through it, so that refusal is said in the gate's words.
     """
     src = ast.parse(inspect.getsource(ci))
     imported = {
@@ -333,7 +327,7 @@ def test_channel_inbound_imports_no_trust_primitive_but_the_gate():
     }
 
     assert "guard_inbound" in imported, "floor: the door must still import the gate"
-    assert imported <= {"TrustVerdict", "guard_inbound"}, (
+    assert imported <= {"TrustVerdict", "guard_inbound", "report_inbound_verdict"}, (
         "channel_inbound imports trust primitives beyond the gate and its verdict type "
         f"({sorted(imported)}) — those are the ingredients of a second policy"
     )

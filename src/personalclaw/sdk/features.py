@@ -37,6 +37,11 @@ the chat answers (``link_channel(chat, thread, channel_id, provider=…)``,
 ``SessionManager.get_channel_provider``). A channel app that links a chat to one of its threads
 declares it.
 
+``MESSAGES_RUN_ONCE``: the door takes each channel message once, by the channel's own id for it in
+its chat, and a delivery of it made again changes nothing; a channel that acts on a message itself
+before the door or instead of it claims it first (``personalclaw.sdk.channel.claim_message``). A
+channel app that claims its messages declares it.
+
 ``TOOL_CALL_SCREEN``: a channel that runs a conversation itself asks the deny-list about each call
 before it approves or asks about it (``personalclaw.sdk.channel.screen_tool_call``), and refuses a
 call it refuses. A channel app that asks it declares it.
@@ -61,6 +66,7 @@ from personalclaw.apps.core_features import (
     DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
+    MESSAGES_RUN_ONCE,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
@@ -75,6 +81,7 @@ __all__ = [
     "DIGEST_REPLIES",
     "GUARDED_DOWNLOAD",
     "LINKS_NAME_THEIR_CHANNEL",
+    "MESSAGES_RUN_ONCE",
     "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",
     "TURNS_NAME_WHO_ASKED",

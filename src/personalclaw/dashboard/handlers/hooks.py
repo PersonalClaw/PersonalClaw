@@ -298,6 +298,11 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
     Runs in an isolated session keyed by ``sessionKey``. Reuses live sessions,
     resumes expired ones via session/load, or creates fresh sessions as fallback.
 
+    A caller that names each delivery with an ``Idempotency-Key`` header (``inbound.webhook``'s
+    ``delivery_name``) has one it makes again for the same ``sessionKey``, inside a week, answered
+    ``already_received``, with no second turn; its name is taken only with a turn that starts, so
+    a retry of one refused for capacity runs. A header that names no delivery is refused (400).
+
     Payload:
         message (str, required): prompt for the agent
         sessionKey (str): session routing key (must start with "hook:")
@@ -348,6 +353,13 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
             json_error("unauthorized", message=door.WEBHOOK_TOKEN_NEEDED, status=401),
             route=route,
             refused=refused,
+        )
+    delivery, unnamed = door.delivery_name(request)
+    if unnamed:
+        return door.answer(
+            json_error("invalid_request", message=unnamed, status=400),
+            route=route,
+            refused="a delivery name that names none",
         )
 
     state: DashboardState = request.app["state"]
@@ -459,6 +471,18 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
             refused="timeoutSeconds is not a number",
         )
 
+    from personalclaw import received
+
+    named = (door.HOOK_DELIVERIES, session_key, delivery)
+    if delivery and received.seen(*named):
+        return door.received_again(
+            web.json_response(
+                {"status": "accepted", "sessionKey": session_key, "already_received": True}
+            ),
+            route=route,
+            resources=session_key,
+        )
+
     # Fire-and-forget: run agent in background, return immediately
     if _hook_semaphore.locked():
         return door.answer(
@@ -485,6 +509,8 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
         raise
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
+    if delivery:
+        received.note(*named)
 
     door.accepted(route=route, resources=session_key, bytes_in=request.content_length or 0)
     return web.json_response({"status": "accepted", "sessionKey": session_key})

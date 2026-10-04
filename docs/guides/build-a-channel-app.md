@@ -341,6 +341,20 @@ Notes that bite:
   as proof of the inbound path rather than demanding the `receive()` shape nobody uses.
 - Persist your cursor (poll offset, IMAP UID, gateway session) **before** dispatching the
   message, not after. A crash mid-dispatch must not replay the message forever.
+- Set `ChannelMessage.message_id` to your platform's own id for the message, the one it keeps
+  when it delivers the message again, and `channel_id` to the chat it came in: an id names a
+  message only with its chat (a chat service numbers each chat's messages from one). The door
+  takes each message once by those two. A delivery of it made again (your platform resending
+  what it was not sure you received, your receiver reading again from an older cursor after a
+  crash), while its turn runs, after it finished or failed, or after a restart, is answered
+  `already_received` and changes nothing, so keep no dedup of your own. A message with no
+  `message_id` is refused (`no_message_id`), and the gateway log names your channel.
+- If your channel acts on a message itself before the door, or instead of it (a conversation it
+  runs itself, a pairing code it finds inside a message, mail only your automations get), claim
+  the message at the top of your inbound path, before anything acts on it:
+  `if not claim_message(PROVIDER, msg): return` (`personalclaw.sdk.channel`, and declare
+  `messages-run-once`). It is True the first time your platform delivers the message, and the
+  door takes a message you claimed, once.
 - Set `ChannelMessage.sender` to the id your channel knows the person by, and `thread_id` to
   the conversation. The door records both on the turn it adds to the chat, as where the
   message came from (`source_user`, `source_thread`), with your channel (`source_channel`),
@@ -716,6 +730,7 @@ the only audience for it.
 - [ ] `guard_inbound` is called on **every** inbound path, and `verdict.fenced_text` is what reaches the session.
 - [ ] `health()` and `test()` cannot disagree.
 - [ ] The inbound cursor is persisted before dispatch.
+- [ ] Every inbound message carries your platform's own id for it (`message_id`) and its chat (`channel_id`); a path that acts on a message before the door claims it (`claim_message`).
 - [ ] `assert_channel_contract` passes with `delivery=`, `min_edit_interval=`, `clock=` and `inbound_via=` supplied — not just the bare transport.
 - [ ] No completeness advisory, or a real `no_inbox_source_reason` / `no_trigger_source_reason`.
 - [ ] Your trigger source publishes only what the trust gate admitted, picks its event name from a frozen tuple, and puts every piece of prose in `SourceEvent.text`.

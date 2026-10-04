@@ -108,11 +108,9 @@ def channels(unset_env):
     channel_delivery.register(slack, provider="slack")
     save_credential(owner_id_credential("telegram"), DM)
     save_credential(owner_id_credential("slack"), SLACK_OWNER)
-    ci.reset_admissions()
     ct.allow_sender("telegram", DM, name="Ada")
     ct.allow_sender("slack", SLACK_OWNER, name="Ada")
     yield telegram, slack
-    ci.reset_admissions()
     for provider in providers:
         channel_transports.unregister_transport(provider)
         channel_delivery.register(None, provider=provider)

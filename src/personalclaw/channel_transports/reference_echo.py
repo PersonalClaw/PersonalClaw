@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -77,13 +78,16 @@ class ReferenceEchoTransport(ChannelTransportProvider):
         if not self._connected:
             return False
         self.sent.append(message)
-        # Echo: surface the outbound text back as an inbound message.
+        # Echo: surface the outbound text back as an inbound message. Every inbound message
+        # carries the channel's own id for it, which a real platform hands you with the message
+        # and keeps when it delivers the message again: the door takes each message once by it.
         await self._inbound.put(
             ChannelMessage(
                 channel_id=message.channel_id,
                 text=f"echo: {message.text}",
                 sender=self.name,
                 thread_id=message.thread_id,
+                message_id=uuid.uuid4().hex,
                 ts=time.time(),
             )
         )
@@ -147,7 +151,13 @@ class ReferenceEchoTransport(ChannelTransportProvider):
     # Test/demo helper — inject an inbound message as if it arrived externally.
     async def _simulate_inbound(self, text: str, channel_id: str = "ref") -> None:
         await self._inbound.put(
-            ChannelMessage(channel_id=channel_id, text=text, sender="user", ts=time.time())
+            ChannelMessage(
+                channel_id=channel_id,
+                text=text,
+                sender="user",
+                message_id=uuid.uuid4().hex,
+                ts=time.time(),
+            )
         )
 
 

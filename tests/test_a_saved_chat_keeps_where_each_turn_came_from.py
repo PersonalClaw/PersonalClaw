@@ -85,11 +85,9 @@ def _on_disk(state: DashboardState, name: str) -> list[tuple[str, str, dict]]:
 
 @pytest.fixture(autouse=True)
 def _a_trusted_sender():
-    """Ada is let in, and no verdict outlives its test (the door caches one per message)."""
-    ci.reset_admissions()
+    """Ada is let in."""
     ct.allow_sender(PROVIDER, ADA, name="Ada")
     yield
-    ci.reset_admissions()
 
 
 class _Gateway:

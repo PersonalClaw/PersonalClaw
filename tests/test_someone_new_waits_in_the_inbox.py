@@ -26,6 +26,7 @@ from personalclaw import channel_delivery
 from personalclaw import channel_inbound as ci
 from personalclaw import channel_transports
 from personalclaw import channel_trust as ct
+from personalclaw import received
 from personalclaw.channel_transports.base import (
     ChannelCapabilities,
     ChannelMessage,
@@ -53,9 +54,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setattr(channel_transports, "_transports", {})
     monkeypatch.setattr(channel_transports, "_apps", {})
-    ci.reset_admissions()
     yield tmp_path
-    ci.reset_admissions()
 
 
 class _Channel(ChannelTransportProvider):
@@ -249,7 +248,9 @@ async def test_a_dismissed_row_stays_dismissed_and_a_muted_thread_holds_no_more(
     state._inbox_state.dismissed.add(row.id)
     del state._inbox_store.items[row.id]
     state._inbox_state.muted_threads.add(THREAD)
-    ci.reset_admissions()
+    # The door's record of deliveries has let the message go (it keeps a week), so it is
+    # the Inbox that keeps its dismissed row out when the message is delivered again.
+    received.path().unlink()
 
     await _deliver(state, _mail())
     await _deliver(state, _mail(text="again", mid="<m3@example.org>"))

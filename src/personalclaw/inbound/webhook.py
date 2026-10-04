@@ -168,6 +168,62 @@ def too_large(cap: int) -> str:
     return f"A webhook takes at most {cap // 1024} KB of body, and this request sent more."
 
 
+# ── one delivery, one run ───────────────────────────────────────────────────
+
+#: The header a sender names one delivery with: the same name on the delivery made again (a retry
+#: after an answer it lost) is that delivery again, and starts nothing. A request without it is a
+#: new delivery every time, as a sender that names none would have it.
+DELIVERY_HEADER = "Idempotency-Key"
+
+#: The longest delivery name taken: a delivery id, a UUID or an event id is far shorter.
+_DELIVERY_NAME_MAX = 255
+
+#: The record's names for the two doors (`personalclaw.received`), which keep a delivery a week.
+FIRE_DELIVERIES = "webhook:fire"
+HOOK_DELIVERIES = "webhook:agent"
+
+#: The refusal of a header that names no delivery. Product copy.
+DELIVERY_NAME_REFUSED = (
+    f"The {DELIVERY_HEADER} header names one delivery, in 1 to {_DELIVERY_NAME_MAX} printable "
+    "characters, and this one does not."
+)
+
+
+def delivery_name(request: Any) -> tuple[str, str]:
+    """``(name, "")`` for the delivery *request* names in its :data:`DELIVERY_HEADER`, ``("",
+    "")`` when it names none, and ``("", why not)`` for a header that names none it can be told
+    by. The header's quoted form (``"…"``, a structured string) is read as the name inside it."""
+    raw = request.headers.get(DELIVERY_HEADER)
+    if raw is None:
+        return "", ""
+    name = raw.strip()
+    if len(name) >= 2 and name[0] == name[-1] == '"':
+        name = name[1:-1]
+    printable = all(" " <= c <= "~" and c not in '"\\' for c in name)
+    if not name or len(name) > _DELIVERY_NAME_MAX or not printable:
+        return "", DELIVERY_NAME_REFUSED
+    return name, ""
+
+
+def received_again(
+    response: web.Response, *, route: str, resources: str, client_id: str = "", bytes_in: int = 0
+) -> web.Response:
+    """*response* to a delivery its sender made again, after its inbound-audit row and its log
+    line: it started nothing, and its first delivery's rows already say what that did."""
+    from personalclaw.inbound import audit
+
+    audit.audit(
+        SURFACE, route=route, status=response.status, bytes_in=bytes_in, client_id=client_id
+    )
+    logger.info(
+        "webhook: %s for %s was delivered again (the same %s); it started nothing",
+        route,
+        resources,
+        DELIVERY_HEADER,
+    )
+    return response
+
+
 def too_often(retry_after: int) -> str:
     return f"This sender has sent more than its rate allows. Try again in {retry_after} seconds."
 

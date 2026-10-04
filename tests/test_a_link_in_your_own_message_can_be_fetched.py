@@ -76,9 +76,7 @@ def _the_provenance_refusal(text: str) -> bool:
 def _fresh_provenance(monkeypatch):
     """Each test starts with no conversation having been given any link."""
     monkeypatch.setattr(web_fetch_module, "_seen_by_session", {})
-    channel_inbound.reset_admissions()
     yield
-    channel_inbound.reset_admissions()
 
 
 class _Site:

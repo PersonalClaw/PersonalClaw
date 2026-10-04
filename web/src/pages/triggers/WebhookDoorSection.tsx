@@ -77,7 +77,10 @@ export function WebhookDoorSection({ automationId, automationName, door, onChang
         <code className="font-mono">Authorization: Bearer &lt;sender token&gt;</code>. What it posts, up
         to {kb} KB, reaches what it runs as data, never as instructions. Each post is this
         automation firing, held to the rules its other fires keep: past its hourly cap, in its quiet
-        hours or while a run of it is still going, nothing runs, and its history says why.
+        hours or while a run of it is still going, nothing runs, and its history says why. A program
+        that may send a post again names each one with an{' '}
+        <code className="font-mono">Idempotency-Key</code> header, and the same name sent again
+        within a week fires nothing.
       </p>
 
       {made && (
