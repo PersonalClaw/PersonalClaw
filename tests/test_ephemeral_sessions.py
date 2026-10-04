@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from chat_test_helpers import signed_in
 
 from personalclaw import memory_writes
 from personalclaw.config import loader as config_loader
@@ -41,7 +42,9 @@ def _make_app(state):
     )
     from personalclaw.dashboard.handlers import api_lessons_create
 
-    app = web.Application()
+    # The owner's signed-in page: the session a request names in X-Session-Key is its work only
+    # when a sign-in stands behind it (approval_answer.work_of_request).
+    app = web.Application(middlewares=[signed_in])
     app["state"] = state
     app.router.add_get("/api/chat/sessions", api_chat_sessions)
     app.router.add_post("/api/chat/sessions", api_chat_session_create)
