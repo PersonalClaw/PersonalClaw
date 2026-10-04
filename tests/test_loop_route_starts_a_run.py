@@ -136,7 +136,7 @@ def _launchable() -> Any:
     preexisting = get_provider(PROVIDER_NAME) is not None
     register_bundled_provider()
     original = preflight_mod.preflight
-    preflight_mod.preflight = lambda _spec: _OkPreflight()  # type: ignore[assignment]
+    preflight_mod.preflight = lambda _spec, **_kw: _OkPreflight()  # type: ignore[assignment]
     try:
         yield
     finally:
