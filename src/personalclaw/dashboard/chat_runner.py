@@ -170,7 +170,7 @@ from personalclaw.sel import sel
 from personalclaw.session_pid import tie_to_session
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
-from personalclaw.turn_source import QUEUED_FROM, asked_by, shared_source, source_of
+from personalclaw.turn_source import QUEUED_FROM, asked_by, shared_source, source_of, taught_by
 from personalclaw.turn_streams import close_stream
 from personalclaw.usage_ledger import Attribution, recorder, spent_rows
 
@@ -416,6 +416,8 @@ def _maybe_after_turn_review(
     tool_calls: int,
     provider=None,
     decision=None,
+    *,
+    its_work_teaches: bool = True,
 ) -> bool:
     """Run the after-turn self-improvement review when the turn warrants it.
 
@@ -425,6 +427,10 @@ def _maybe_after_turn_review(
     and the expensive review — and by the skill-ladder review, which is handed the
     same object. Two independent computations of one rule is how they drift.
 
+    ``its_work_teaches`` is whether what the turn did (its tool outcomes, read by procedural memory,
+    the self-model observer and the stumble refinement) teaches too (:func:`_learn_from_turn`).
+    When not, its outcomes still come off the agent, unread, or the next turn would learn them.
+
     The actual capture is best-effort and synchronous-but-cheap (a heuristic + a
     guarded write_lesson — no LLM call in this path). Surfaces a 'Learned: …' chip and
     records it on the turn; returns whether it did, because this runs after the turn's
@@ -433,6 +439,14 @@ def _maybe_after_turn_review(
     from personalclaw import after_turn_review as atr
     from personalclaw.config.loader import AppConfig
 
+    # When what the turn did teaches nothing, its outcomes come off the agent here, unread.
+    drain = getattr(provider, "drain_tool_outcomes", None)
+    if not its_work_teaches and callable(drain):
+        try:
+            drain()
+        except Exception:
+            logger.debug("tool outcome drain failed", exc_info=True)
+        drain = None
     cfg = AppConfig.load().learning
     # The gate owns the whole permission question — config, ephemeral, AND the
     # incognito/temporary registry. Restricted sessions promise "no memory
@@ -501,8 +515,8 @@ def _maybe_after_turn_review(
     #
     # Drained ONCE and shared: `drain_tool_outcomes` clears the accumulator, so a second reader
     # would see an empty list. Procedural memory and the self-model observer both need this turn's
-    # (tool, failed) tuples, so they read the one drained copy.
-    drain = getattr(provider, "drain_tool_outcomes", None)
+    # (tool, failed) tuples, so they read the one drained copy (already gone, unread, when what
+    # the turn did teaches nothing).
     tool_outcomes: list[tuple[str, str]] = []
     if callable(drain):
         try:
@@ -525,7 +539,7 @@ def _maybe_after_turn_review(
     # drift. The turn's route is its agent, its tools are the distinct drained tool names, and the
     # turn SUCCEEDED when no tool failed; `correction` is this turn read as the reaction to the
     # PREVIOUS turn's parked work (the reaction is not observable until the user's next move).
-    if getattr(cfg, "self_model_enabled", True):
+    if its_work_teaches and getattr(cfg, "self_model_enabled", True):
         try:
             from personalclaw.learning import self_model_observer
 
@@ -542,7 +556,8 @@ def _maybe_after_turn_review(
             )
         except Exception:
             logger.debug("self-model observer failed", exc_info=True)
-    _maybe_refine_stumble(state, session, user_message, assistant_text, tool_outcomes, cfg)
+    if its_work_teaches:
+        _maybe_refine_stumble(state, session, user_message, assistant_text, tool_outcomes, cfg)
     _stage_turn_capture(
         session, user_message, learned or (facet_learned.text if facet_learned else None), cfg
     )
@@ -727,6 +742,56 @@ def _maybe_skill_ladder_review(
         t.add_done_callback(state._background_tasks.discard)
     except RuntimeError:
         logger.debug("skill-ladder review: no running loop to schedule on", exc_info=True)
+
+
+def _learn_from_turn(
+    state, session, row, assistant_text: str, tool_calls: int, *, provider=None, asked_for_by=None
+) -> None:
+    """What the turn that just ended teaches, before the next one: best-effort and gated. Both
+    reviews read what she typed in *row*, the message that started it (``own_words``), never the
+    message the model was sent, and share ONE gate decision, as two copies of one rule drift. Her
+    words teach as hers wherever they sit, so the reviews run as asked for by whoever sent the
+    words they read (``turn_source.taught_by``) or the work the turn carries on: a row her queued
+    message and a friend's run as together still teaches her correction. What the turn did (its
+    tools' outcomes, the answer the ladder drafts from) teaches only when nobody else asked for any
+    of it (``memory_writes.asker``, the turn's own)."""
+    try:
+        typed = own_words(row)
+        its_work_teaches = not memory_writes.asker()
+        words_from = (taught_by(row) if row is not None else {}) or dict(asked_for_by or {})
+    except Exception:  # noqa: BLE001 - fail closed: whose words they are is unknown, so none teach
+        logger.debug("the turn's learning could not tell whose words it reads", exc_info=True)
+        return
+    with memory_writes.learning_from_words(words_from):
+        try:
+            decision = learning_decision_for_turn(session, typed, tool_calls)
+        except Exception:
+            logger.debug("learning gate evaluation failed", exc_info=True)
+            decision = None
+        try:
+            # It may take a guarded lesson write after the turn's save, so a turn that learned
+            # something is saved once more to keep the record of it on the turn.
+            if _maybe_after_turn_review(
+                state,
+                session,
+                typed,
+                assistant_text,
+                tool_calls,
+                provider=provider,
+                decision=decision,
+                its_work_teaches=its_work_teaches,
+            ):
+                save_session_to_history(state, session)
+        except Exception:
+            logger.debug("after-turn review failed", exc_info=True)
+        if not its_work_teaches:
+            return
+        try:  # The skill axis: a background review that may PROPOSE a skill.
+            _maybe_skill_ladder_review(
+                state, session, typed, assistant_text, tool_calls, decision=decision
+            )
+        except Exception:
+            logger.debug("skill-ladder review scheduling failed", exc_info=True)
 
 
 def _agent_label(session: object) -> str:
@@ -5329,49 +5394,15 @@ async def run_chat(
             logger.info("Turn ended %s for session %s", _stop_reason, session.key)
         else:
             _maybe_consolidate(state, session)
-            # Continuous learning: after a learning-worthy turn, capture a durable
-            # correction before the next turn (vs waiting for session-end
-            # consolidation). Best-effort + gated; never blocks. Skips incognito.
-            # ONE gate decision for this turn, shared by both reviews below. If they
-            # each computed their own, the two copies of the rule could disagree —
-            # which is exactly the drift the LearningGate exists to prevent.
-            # Both read what she typed (`own_words`), not the message the model was sent: a saved
-            # prompt's body, a file's text, a persona, an automation's message with none of hers,
-            # or what someone else in a channel's conversation sent.
-            _typed = own_words(_turn_row)
-            try:
-                _turn_learning = learning_decision_for_turn(session, _typed, _turn_tool_call_count)
-            except Exception:
-                logger.debug("learning gate evaluation failed", exc_info=True)
-                _turn_learning = None
-            try:
-                # Runs after the save above (it may take a guarded lesson write), so a turn that
-                # learned something is saved once more to keep the record of it on the turn.
-                if _maybe_after_turn_review(
-                    state,
-                    session,
-                    _typed,
-                    assistant_text,
-                    _turn_tool_call_count,
-                    provider=client,
-                    decision=_turn_learning,
-                ):
-                    save_session_to_history(state, session)
-            except Exception:
-                logger.debug("after-turn review failed", exc_info=True)
-            # Skill axis (4-tier ladder): a background LLM review that may PROPOSE a
-            # skill (propose-only queue). Non-blocking; own config flag.
-            try:
-                _maybe_skill_ladder_review(
-                    state,
-                    session,
-                    _typed,
-                    assistant_text,
-                    _turn_tool_call_count,
-                    decision=_turn_learning,
-                )
-            except Exception:
-                logger.debug("skill-ladder review scheduling failed", exc_info=True)
+            _learn_from_turn(
+                state,
+                session,
+                _turn_row,
+                assistant_text,
+                _turn_tool_call_count,
+                provider=client,
+                asked_for_by=asked_for_by,
+            )
         state.sessions.check_context_usage(session_key, client)
         # ``pct`` was read above (once, before the save) — ``None`` when the provider
         # measured nothing, and the ring then shows no percentage — and goes out with the

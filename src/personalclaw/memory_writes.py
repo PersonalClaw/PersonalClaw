@@ -46,12 +46,14 @@ it after the turn has ended and after a restart, and a turn of such work (a loop
 subagent's report handed back to its chat) runs as asked for by them. The stores refuse such
 work's changes (:func:`refuse_memory_write`, the memory database's statement check) saying who
 asked, so do the file tools, the shell and the gate an agent CLI's own tools ask (``file_scope``),
-a read leaves no mark on memory, and the turn's own learning takes nothing. A change the agent's
-memory tools ask for in such a turn is held for her own word instead (``dashboard.memory_holds``):
-she is asked, and what she allows is written as hers (:func:`on_the_owners_word`). Memory
-consolidation is PersonalClaw's own pass over the whole conversation, which takes only her words
-from it, so it runs as the session's own (:func:`as_its_session`), whoever asked for the turn it
-follows.
+a read leaves no mark on memory, and the turn's own learning takes nothing of what it did. What
+that learning takes from the turn's message is her words alone, so it runs as asked for by whoever
+sent them (:func:`learning_from_words`): her message, queued and run beside someone else's, still
+teaches as hers. A change the agent's memory tools ask for in such a turn is held for her own word
+instead (``dashboard.memory_holds``): she is asked, and what she allows is written as hers
+(:func:`on_the_owners_word`). Memory consolidation is PersonalClaw's own pass over the whole
+conversation, which takes only her words from it, so it runs as the session's own
+(:func:`as_its_session`), whoever asked for the turn it follows.
 
 Nothing of such a session is handed to a background model either: its title, tags and suggested
 follow-ups, a condensed copy of its history, the suggestions built from recent chats. Each of those
@@ -712,6 +714,29 @@ def on_the_owners_word() -> Iterator[None]:
         yield
         return
     token = _SCOPE.set(replace(scope, asker={}, marks=()))
+    try:
+        yield
+    finally:
+        _SCOPE.reset(token)
+
+
+@contextmanager
+def learning_from_words(source: Mapping[str, str]) -> Iterator[None]:
+    """Run the enclosed learning from the words of the message that started the current work's
+    turn as asked for by *source*, who asked for what it reads (``turn_source.taught_by``): ``{}``
+    when you did. It reads only your own words (``own_words.own_words``), so someone else's message
+    the turn ran beside yours decides nothing of it, as it decides nothing of consolidation. What
+    the turn did was asked for by them too, and is learned only outside this, where :func:`asker`
+    is the turn's own. As for the turn (:func:`asked_for`), the lasting work the session runs
+    decides when *source* is yours (``lasting_work.asker_of``), and so does everything else:
+    whether the session keeps anything, and whether an app's work may change your memory. Outside
+    any scope it changes nothing."""
+    scope = _SCOPE.get()
+    if scope is None:
+        yield
+        return
+    named = dict(source) or _asked_for_its_work(scope.keys)
+    token = _SCOPE.set(replace(scope, asker=named, marks=()))
     try:
         yield
     finally:

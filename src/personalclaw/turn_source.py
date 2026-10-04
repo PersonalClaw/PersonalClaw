@@ -24,9 +24,10 @@ What a row records decides whose words it holds (:func:`sent_by_owner`), which e
 the owner's own words asks (``own_words.own_words``): a channel's conversation can have other
 people in it, and the door lets in everyone the owner trusts to talk to the agent. It decides who
 asked for the turn a row starts too (:func:`asked_by`), which is what a change to her memory that
-turn makes waits on (``memory_writes.asker``), and how a model is shown such a line in any history
-of the conversation (:func:`turn_line`): as memory consolidation shows it, whole, fenced, and
-labelled as someone else's words.
+turn makes waits on (``memory_writes.asker``), who asked for what that turn learns from its words
+(:func:`taught_by`), and how a model is shown such a line in any history of the conversation
+(:func:`turn_line`): as memory consolidation shows it, whole, fenced, and labelled as someone
+else's words.
 """
 
 from __future__ import annotations
@@ -156,6 +157,20 @@ def asked_by(row: object) -> dict[str, str]:
     if sources is None:
         sources = [source_of(row)]
     return next((source for source in sources if not sent_by_owner(source)), {})
+
+
+def taught_by(row: object) -> dict[str, str]:
+    """Who asked for what the turn *row* starts learns from its words, when the owner did not.
+
+    That learning reads only the words the owner sent (``own_words.own_words``). So a row several
+    queued messages run as teaches her words as hers when she sent one of them, whoever sent the
+    others: ``{}``. Any other row is asked for as its turn is (:func:`asked_by`), a row none of
+    whose messages she sent included. What the turn did is asked for by everyone whose message it
+    ran (:func:`asked_by`), since nothing says which of them it did it for."""
+    queued = _queued(row)
+    if queued is not None and any(map(sent_by_owner, queued)):
+        return {}
+    return asked_by(row)
 
 
 def fence_source(source: Mapping[str, str]) -> str:

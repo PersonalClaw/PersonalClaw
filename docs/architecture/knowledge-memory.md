@@ -1013,7 +1013,16 @@ item vector).
   file tools, the shell, and the gate an agent CLI asks before one of its own
   tools runs, for a memory document (see
   [chat-sessions.md](chat-sessions.md#session-model)); a read leaves no mark, and
-  the turn's own learning takes nothing (`GateReason.ASKED_BY_SOMEONE_ELSE`). What the agent's memory
+  the turn's own learning takes nothing of what the turn did: not its tools'
+  outcomes, which procedural memory, the self-model observer and stumble
+  refinement read (they come off the agent unread, so the next turn is not
+  credited with them), nor the answer the skill ladder drafts from. What that
+  learning reads of the turn's message is the owner's words alone (`own_words`),
+  so it is asked for by whoever sent those words (`turn_source.taught_by`, run
+  under `memory_writes.learning_from_words`): her message, queued and run beside
+  someone else's, still teaches as hers, her correction a lesson and her
+  preference a facet, while theirs teaches nothing
+  (`GateReason.ASKED_BY_SOMEONE_ELSE`), as consolidation reads it. What the agent's memory
   tools ask for in such a turn is held for her instead (`dashboard/memory_holds`):
   `memory_remember`, `memory_forget` and `triage_rules` answer 202 with a
   sentence the agent reads (nothing written, who asked, the owner was asked),

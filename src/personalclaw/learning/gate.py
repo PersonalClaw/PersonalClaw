@@ -85,7 +85,9 @@ class GateReason(str, Enum):
     #: The work of an app that does not hold the ``memory`` permission (a conversation or a run
     #: it started): it changes nothing in your memory (``memory_reads.app_refusal``).
     APP_WITHOUT_MEMORY = "app_without_memory"
-    #: Someone other than you asked for the turn (``memory_writes.asker``): it teaches nothing. A
+    #: Someone other than you asked for what this learning reads (``memory_writes.asker``): it
+    #: teaches nothing. A turn's learning reads only your words in its message, so your queued
+    #: message run beside someone else's still teaches (``memory_writes.learning_from_words``). A
     #: pass over the whole session is not that turn's work and is asked as the session's own
     #: (``chat_utils._maybe_consolidate``), so consolidation is never refused for this.
     ASKED_BY_SOMEONE_ELSE = "asked_by_someone_else"

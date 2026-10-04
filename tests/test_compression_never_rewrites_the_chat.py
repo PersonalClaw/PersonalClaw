@@ -49,6 +49,7 @@ from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
 from personalclaw.memory import MemoryStore
 from personalclaw.sdk.channel import save_conversation_turn
 from personalclaw.skills import SkillsLoader
+from personalclaw.turn_source import DASHBOARD_SOURCE
 
 _SUMMARY_MARK = "EARLIER-TURNS-SUMMARY"
 _THIRTY_DAYS = 30 * 86400
@@ -185,14 +186,15 @@ async def test_the_job_leaves_an_idle_chat_byte_for_byte_and_the_model_reads_its
     assert await _served(_state(home, monkeypatch), key) == rows
 
     # What the model reads of it (the reader a channel thread's history comes through): the
-    # summary in place of the oldest span, the newest turns verbatim. Section 4 drives the
-    # same through a real dashboard turn.
+    # summary in place of the oldest span, the newest turns verbatim, each with where it came
+    # from, which every history the view becomes names its speaker by (`turn_source.turn_line`).
+    # Section 4 drives the same through a real dashboard turn.
     view = state.conversation_log.history_for_model(f"dashboard:{key}", 100)
     assert view[0]["role"] == "summary" and _SUMMARY_MARK in view[0]["content"]
     assert rows[0][1] not in [m["content"] for m in view], "the summarized span was re-read"
     assert view[-2:] == [
-        {"role": "user", "content": rows[-2][1]},
-        {"role": "assistant", "content": rows[-1][1]},
+        {"role": "user", "content": rows[-2][1], **DASHBOARD_SOURCE},
+        {"role": "assistant", "content": rows[-1][1], **DASHBOARD_SOURCE},
     ]
 
 

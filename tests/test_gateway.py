@@ -1656,18 +1656,22 @@ class TestSubagentDone:
         # a notification, it is a ledger row.
         orch.dashboard_state.notify.assert_not_called()
 
-    def test_the_completion_router_reads_the_OWNED_PREFIX_not_a_literal(self):
+    def test_the_completion_router_reads_the_run_owned_row_not_a_literal(self):
         """The rail: one definition of the run-owned key namespace.
 
-        `ownership.OWNED_PREFIX` is where that string lives; a literal `"workflow:"` copied into
-        the router is a second definition that a key-format change would silently strip the
-        exclusion from. Asserted over the SOURCE of `_init_subagents`, because the branch is a
-        closure inside it and there is no other way to see which spelling it used.
+        Its row in ``session_keys`` is where it lives (``WORKFLOW_STEP``, whose prefix
+        ``ownership.OWNED_PREFIX`` is); a literal ``"workflow:"`` copied into the router is a
+        second definition that a key-format change would silently strip the exclusion from. The
+        router skips the parents it announces nothing into by reading the gateway's table of them
+        (``_NOT_ANNOUNCED_INTO``). Asserted over the SOURCE of ``_init_subagents``, because the
+        branch is a closure inside it and there is no other way to see which spelling it used,
+        and over that table, which must hold the run-owned row.
         """
         import ast
         import inspect
         import textwrap
 
+        from personalclaw import gateway, session_keys
         from personalclaw.gateway import GatewayOrchestrator
         from personalclaw.workflows import ownership
 
@@ -1680,13 +1684,16 @@ class TestSubagentDone:
         ]
         assert not literals, (
             f"`_init_subagents` hard-codes {ownership.OWNED_PREFIX!r} instead of reading "
-            "`ownership.OWNED_PREFIX`"
+            "the run-owned row of `session_keys`"
         )
-        attrs = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-        assert "OWNED_PREFIX" in attrs, (
+        names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        assert "_NOT_ANNOUNCED_INTO" in names and (
+            session_keys.WORKFLOW_STEP in gateway._NOT_ANNOUNCED_INTO
+        ), (
             "the completion router no longer excludes the run-owned namespace at all — a "
             "finished stage is being routed as a channel session again"
         )
+        assert session_keys.WORKFLOW_STEP.prefix == ownership.OWNED_PREFIX
 
     @pytest.mark.asyncio
     async def test_slack_parent_injects(self):
