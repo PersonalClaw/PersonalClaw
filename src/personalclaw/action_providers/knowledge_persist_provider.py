@@ -34,7 +34,12 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.action_providers.base import (
+    ActionContext,
+    ActionProvider,
+    ActionResult,
+    run_identity,
+)
 from personalclaw.knowledge import project_scope
 from personalclaw.knowledge.semantics import (
     Claim,
@@ -1236,10 +1241,11 @@ def _scope_metadata(
     explicitly — that is how an item gets promoted from private to shared. An absent
     declaration never silently widens visibility.
     """
-    payload = getattr(ctx, "payload", None) or {}
+    # The run's project and the run, as a step's dispatch states them. A trigger's fire is in no
+    # project and of no run, whatever its payload says.
     scope = project_scope.write_scope(
-        project_id=str(payload.get("project_id", "") or ""),
-        run_id=str(payload.get("run_id", "") or ""),
+        project_id=run_identity(ctx, "project_id"),
+        run_id=run_identity(ctx, "run_id"),
         requested_policy=cfg.get("sharing_policy"),
     )
     if not scope:
@@ -1288,14 +1294,13 @@ async def _push_shared(
 def _run_source_ref(ctx: ActionContext) -> str:
     """Provenance the caller did not have to remember.
 
-    Read from `ctx.payload`, where the engine puts whose work a step is, from the run executing
-    it and never from the template (`engine.RUN_IDENTITY_KEYS`). A step dispatched with no run
-    has its node id alone, which still attributes the write to a template node (what makes two
-    sources distinguishable for mention counting); a trigger's fire has neither.
+    Read as the engine stamps whose work a step is on its dispatch, from the run executing it and
+    never from the template (`base.run_identity`). A step dispatched with no run has its node id
+    alone, which still attributes the write to a template node (what makes two sources
+    distinguishable for mention counting); a trigger's fire has neither, whatever its payload says.
     """
-    payload = getattr(ctx, "payload", None) or {}
-    run_id = str(payload.get("run_id", "") or "")
-    node_id = str(payload.get("node_id", "") or "")
+    run_id = run_identity(ctx, "run_id")
+    node_id = run_identity(ctx, "node_id")
     if run_id and node_id:
         return f"workflow:{run_id}:{node_id}"
     if node_id:

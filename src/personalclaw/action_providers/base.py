@@ -82,6 +82,24 @@ def is_workflow_step(ctx: Any) -> bool:
     return getattr(ctx, "event", "") == WORKFLOW_STEP_EVENT
 
 
+def run_identity(ctx: Any, key: str) -> str:
+    """*key* of whose work a workflow step is, as the engine stamped it on the step's dispatch
+    (`workflows.engine.RUN_IDENTITY_KEYS`: the run, the step's node and instance, the run's
+    project and folder, the attempt's key), or "" when *ctx* is not a step's dispatch.
+
+    Only a step's dispatch carries these, each written from the run executing the step over
+    anything its own payload said by that name. Every other dispatch's payload is what its event
+    carried: a trigger's fire, a lifecycle hook, a view's refresh, a Run now. A value there under
+    one of these names is event data and names no run, project or folder, so a provider that
+    confines, files or attributes its work by one of them reads it here, never from the payload
+    (`tests/test_run_identity_reader_census.py`). The project is also `ActionContext.project_id`.
+    """
+    if not is_workflow_step(ctx):
+        return ""
+    payload = getattr(ctx, "payload", None)
+    return str((payload if isinstance(payload, dict) else {}).get(key, "") or "")
+
+
 @dataclass
 class ActionResult:
     """Provider-agnostic outcome of executing an action."""

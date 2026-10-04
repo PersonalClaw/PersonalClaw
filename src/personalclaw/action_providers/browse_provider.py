@@ -75,7 +75,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult, site_of
+from personalclaw.action_providers.base import (
+    ActionContext,
+    ActionProvider,
+    ActionResult,
+    run_identity,
+    site_of,
+)
 from personalclaw.browse.handoff import PARK_LOGIN_REQUIRED
 from personalclaw.browse.loop import (
     MAX_STEPS_DEFAULT,
@@ -519,13 +525,13 @@ class BrowseActionProvider(ActionProvider):
     def _mirror_sink(self, ctx: ActionContext) -> Callable[[BrowseStep, str], None]:
         """A per-step sink that relays each completed step to the live mirror (BA-5).
 
-        Bound to this run's ``run_id`` (from the structured event payload) so a watcher can tell
+        Bound to this step's run (``base.run_identity``; a fire's is none) so a watcher can tell
         concurrent browse runs apart. It only RELAYS what the loop already produced — the SCREENED
         URL, the rendered action line (a credential ``TYPE`` is already ``[withheld]`` by the loop),
         and the screenshot PATH — so the mirror exposes nothing the run did not already record, and
         the seam swallows a relay failure so watching a run can never break it.
         """
-        run_id = str((getattr(ctx, "payload", None) or {}).get("run_id") or "")
+        run_id = run_identity(ctx, "run_id")
 
         def _sink(step: BrowseStep, screenshot: str) -> None:
             from personalclaw.browse.mirror import broadcast_browse_step
@@ -591,11 +597,11 @@ class BrowseActionProvider(ActionProvider):
             request_login,
         )
 
-        # `run_id` from the structured event payload — `ActionContext` has no such attribute, and
-        # `payload` is where the dataclass docstring says structured event data lives. Empty when
-        # nothing supplied one, which the needs-input card tolerates: an unbound card is answerable
-        # from any surface, the correct posture for a run the user started themselves.
-        run_id = str((getattr(ctx, "payload", None) or {}).get("run_id") or "")
+        # The run this step is of, as its dispatch stamps it (`base.run_identity`), and empty for
+        # any other dispatch, whatever its payload says. The needs-input card tolerates empty: an
+        # unbound card is answerable from any surface, the correct posture for a run the user
+        # started themselves.
+        run_id = run_identity(ctx, "run_id")
         handoff = request_login(url, reason=reason, run_id=run_id, node_id=PROVIDER_NAME)
         if reason == REASON_SESSION_EXPIRED:
             mark_expired(url)

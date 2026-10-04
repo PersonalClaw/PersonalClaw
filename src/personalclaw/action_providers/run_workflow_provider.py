@@ -77,6 +77,7 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
     is_workflow_step,
+    run_identity,
 )
 
 logger = logging.getLogger(__name__)
@@ -206,7 +207,7 @@ class RunWorkflowActionProvider(ActionProvider):
         # run as some other version. The run carries on the versions its own steps may start.
         bound = None
         if is_workflow_step(ctx):
-            parent_id = str((getattr(ctx, "payload", None) or {}).get("run_id") or "")
+            parent_id = run_identity(ctx, "run_id")
             bound = automation_version.bound_in(store.get(parent_id) if parent_id else None)
         carried: dict[str, Any] | None = None
         fire: automation_version.Runs | None
@@ -448,10 +449,10 @@ class RunWorkflowActionProvider(ActionProvider):
 
 def _run_of_step(ctx: Any) -> Any:
     """The run whose step *ctx* dispatches, or ``None`` when it cannot be read. Named by the
-    dispatch (``payload["run_id"]``, which the step's own payload cannot set)."""
+    dispatch (``base.run_identity``), which the step's own payload cannot set."""
     from personalclaw.workflows import store
 
-    run_id = str((getattr(ctx, "payload", None) or {}).get("run_id", "") or "")
+    run_id = run_identity(ctx, "run_id")
     try:
         return store.get(run_id) if run_id else None
     except Exception:  # noqa: BLE001 - a run that cannot be read is answered as not read
@@ -460,8 +461,8 @@ def _run_of_step(ctx: Any) -> Any:
 
 
 def _node_of_step(ctx: Any) -> str | None:
-    """The step *ctx* dispatches, as its dispatch names it (``payload["node_id"]``)."""
-    return str((getattr(ctx, "payload", None) or {}).get("node_id", "") or "") or None
+    """The step *ctx* dispatches, as its dispatch names it (``base.run_identity``)."""
+    return run_identity(ctx, "node_id") or None
 
 
 def _ahead(active: list[Any]) -> str:

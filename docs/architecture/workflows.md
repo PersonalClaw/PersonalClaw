@@ -316,7 +316,13 @@ validation answers `WF_PAYLOAD_RUN_IDENTITY` naming the key (saving, a dry run, 
 a running run), and a run of a definition that reached it another way (an app's, one saved
 before the rule, one edited on disk) ends failed at its first start, before any step runs,
 with the same words (`run_start.admit_step_identities`). Every other payload key is the
-step's own input and reaches its provider as written. No action takes a session or a
+step's own input and reaches its provider as written. Only a step's dispatch carries them:
+a provider reads them through `action_providers.base.run_identity`, which answers nothing
+for any other dispatch (a trigger's fire, a lifecycle hook, a view's refresh, a Run now),
+whose payload is what its event carried. So an event whose data spells one of those names
+gives its action no folder, run or project: `selfqa-evidence` seals only a step's run's
+folder, and `artifact_inspect`, `knowledge-persist` and a ledger row act on no other run's
+(`tests/test_run_identity_reader_census.py`). No action takes a session or a
 trigger from the payload either: an agent `invoke-agent` or `run-prompt` starts gets no
 session from it (a chat named there would lend the agent that chat's Trust), a
 `second-opinion` handoff's audit rows name only the session its config gives, and the triage

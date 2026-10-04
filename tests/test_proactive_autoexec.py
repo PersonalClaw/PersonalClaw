@@ -1275,7 +1275,7 @@ class TestTheCallSite:
         import personalclaw.proactive.pipeline as pipeline_mod
         import personalclaw.workflows.journal as journal_mod
         import personalclaw.workflows.store as store_mod
-        from personalclaw.action_providers.base import ActionContext
+        from personalclaw.action_providers.base import WORKFLOW_STEP_EVENT, ActionContext
         from personalclaw.action_providers.registry import _ensure_default_providers_registered
         from personalclaw.action_providers.triage_digest_provider import (
             TriageDigestActionProvider,
@@ -1332,9 +1332,8 @@ class TestTheCallSite:
         result = await TriageDigestActionProvider().execute(
             {"window_hours": 999999},
             ActionContext(
-                event="clock",
+                event=WORKFLOW_STEP_EVENT,
                 payload={"run_id": "r1", "instance_path": "root.children[0]"},
-                trigger_id="t1",
             ),
         )
         assert result.success is True

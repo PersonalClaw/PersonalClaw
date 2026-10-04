@@ -50,6 +50,7 @@ from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
     ActionResult,
+    run_identity,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,8 +169,8 @@ def _record(result: Any, ctx: ActionContext) -> int:
     it anyway would answer "why was this dropped?" to nobody, so the rows are skipped and the
     absence is reported in the result instead of being faked.
     """
-    run_id = str(ctx.payload.get("run_id", "") or "")
-    instance_path = str(ctx.payload.get("instance_path", "") or "")
+    run_id = run_identity(ctx, "run_id")
+    instance_path = run_identity(ctx, "instance_path")
     if not run_id or not instance_path:
         return 0
 
@@ -290,8 +291,8 @@ def _ledger_writer(ctx: ActionContext) -> Any:
     ledger is exactly the silent unattended write §1.6 exists to prevent, so the absence is
     reported (`auto_ledger_rows: 0`) instead of faked.
     """
-    run_id = str(ctx.payload.get("run_id", "") or "")
-    instance_path = str(ctx.payload.get("instance_path", "") or "")
+    run_id = run_identity(ctx, "run_id")
+    instance_path = run_identity(ctx, "instance_path")
     if not run_id or not instance_path:
         return None
 
@@ -348,7 +349,7 @@ def _auto_stage(action_config: dict[str, Any], ctx: ActionContext, cfg: Any) -> 
     from personalclaw.guardrails.policy import unattended_dispatch_key
     from personalclaw.proactive.autoexec import auto_execute, default_budget_check
 
-    run_id = str(ctx.payload.get("run_id", "") or "")
+    run_id = run_identity(ctx, "run_id")
     # The trigger whose fire this is, as its dispatch says (`ActionContext.trigger_id`), never the
     # payload's: a workflow step's payload is its template's, and could name another automation.
     trigger_id = ctx.trigger_id
@@ -452,7 +453,7 @@ class TriageDigestActionProvider(ActionProvider):
             # what makes its `event_id` derived rather than random (§1.5 / criterion 9). Empty
             # when a caller fires the provider outside a run — the delivery then falls back to
             # the trigger link rather than pointing at a run that does not exist.
-            run_id=str(ctx.payload.get("run_id", "") or ""),
+            run_id=run_identity(ctx, "run_id"),
             trigger_id=ctx.trigger_id,
             # Passed unconditionally, not behind `auto_execute_enabled`: the switch is
             # enforced INSIDE the stage, where a refusal produces a reason per proposal

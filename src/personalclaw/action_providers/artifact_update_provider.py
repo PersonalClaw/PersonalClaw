@@ -42,7 +42,12 @@ import re
 import time
 from typing import Any
 
-from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.action_providers.base import (
+    ActionContext,
+    ActionProvider,
+    ActionResult,
+    run_identity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +180,7 @@ class ArtifactUpdateActionProvider(ActionProvider):
 
         # The run whose step wrote it, on the version's event, so a refusal of a stale write and
         # the timeline can say which run made the version.
-        run_id = str(ctx.payload.get("run_id", "") or "")
+        run_id = run_identity(ctx, "run_id")
         written_by = {"run_id": run_id} if run_id else None
         try:
             if existing is None:

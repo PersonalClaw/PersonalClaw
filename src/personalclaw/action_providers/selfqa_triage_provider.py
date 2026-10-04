@@ -45,6 +45,7 @@ from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
     ActionResult,
+    run_identity,
 )
 from personalclaw.tool_providers.base import RiskLevel
 
@@ -117,12 +118,12 @@ class SelfQaTriageActionProvider(ActionProvider):
         # is the exact ambiguity these rows exist to remove — reporting success without them
         # would ship the silence back.
         recorded = 0
-        run_id = str(ctx.payload.get("run_id", "") or "")
+        run_id = run_identity(ctx, "run_id")
         # The engine's own instance key for THIS node, not the node id. `record_triage` refuses an
         # empty one, because `inspect_node` slices a run's ledger by `instance_path` — a row stamped
         # `triage` instead of `root.children[0]` is written and then invisible in the runs surface,
         # which is exactly the half of the skip contract these rows exist to satisfy.
-        instance_path = str(ctx.payload.get("instance_path", "") or "")
+        instance_path = run_identity(ctx, "instance_path")
         if run_id:
             from personalclaw.workflows.journal import Journal
 
@@ -136,7 +137,7 @@ class SelfQaTriageActionProvider(ActionProvider):
                     success=False, error=f"selfqa-triage could not record its verdicts: {exc}"
                 )
         else:
-            logger.warning("selfqa-triage: no run_id in payload; verdicts not recorded")
+            logger.warning("selfqa-triage: no run on this dispatch; verdicts not recorded")
 
         cap = action_config.get("max_scenarios")
         cap_int = int(cap) if isinstance(cap, (int, float, str)) and str(cap).isdigit() else None

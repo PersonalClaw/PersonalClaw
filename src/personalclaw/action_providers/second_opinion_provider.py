@@ -57,6 +57,7 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
     is_workflow_step,
+    run_identity,
 )
 from personalclaw.action_providers.template import render_template
 
@@ -117,7 +118,6 @@ class SecondOpinionActionProvider(ActionProvider):
                 ),
             )
 
-        payload = ctx.payload if isinstance(ctx.payload, dict) else {}
         if is_workflow_step(ctx):
             # The step's run's folder and identity, as the engine stamps them on the step, and
             # never its arguments' (refused here, as they are when its template is saved).
@@ -126,8 +126,8 @@ class SecondOpinionActionProvider(ActionProvider):
 
             if refused := dispatch_refusal(self.name, action_config):
                 return ActionResult(success=False, error=refused, failure_class="user")
-            workspace, brief_dir = str(payload.get("workspace") or "").strip(), ""
-            run_id = str(payload.get("run_id") or "")
+            workspace, brief_dir = run_identity(ctx, "workspace").strip(), ""
+            run_id = run_identity(ctx, "run_id")
             session_key = unattended_dispatch_key(f"workflow:{run_id}") if run_id else ""
             no_folder = (
                 "a workflow step's handoff works only in its own run's folder, and this run "

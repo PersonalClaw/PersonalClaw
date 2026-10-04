@@ -23,7 +23,12 @@ import logging
 import time
 from typing import Any
 
-from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.action_providers.base import (
+    ActionContext,
+    ActionProvider,
+    ActionResult,
+    run_identity,
+)
 from personalclaw.tool_providers.base import RiskLevel
 
 logger = logging.getLogger(__name__)
@@ -40,8 +45,9 @@ class ArtifactInspectActionProvider(ActionProvider):
             "length": 65536         # optional; how many chars to return from `offset`
         }
 
-    The run id is read from the engine-supplied payload, not the config — a template cannot
-    name another run's artifacts.
+    The run id is the one the engine stamps on a step's dispatch (`base.run_identity`), never the
+    config's: a template cannot name another run's artifacts, and a dispatch that is not a step's
+    reads none, whatever its payload says.
     """
 
     @property
@@ -71,8 +77,7 @@ class ArtifactInspectActionProvider(ActionProvider):
                 error="artifact_inspect is missing 'ref' — bind it to {{nodes.x.artifact}}",
             )
 
-        payload = getattr(ctx, "payload", None) or {}
-        run_id = str(payload.get("run_id", "") or "")
+        run_id = run_identity(ctx, "run_id")
         if not run_id:
             # Without the run id the confinement root is unknowable, so refuse rather than guess:
             # a provider that read from an assumed run dir would be a path-escape by another name.

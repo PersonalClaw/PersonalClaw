@@ -34,7 +34,12 @@ import logging
 import time
 from typing import Any
 
-from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.action_providers.base import (
+    ActionContext,
+    ActionProvider,
+    ActionResult,
+    run_identity,
+)
 from personalclaw.knowledge import updates
 
 logger = logging.getLogger(__name__)
@@ -102,7 +107,7 @@ class KnowledgeProposeActionProvider(ActionProvider):
                 ),
             )
 
-        run_id = str((ctx.payload or {}).get("run_id", "") or "")
+        run_id = run_identity(ctx, "run_id")
         cadence = str(cfg.get("source_cadence", "") or "knowledge-synthesis")
         provenance = str(cfg.get("provenance", "") or "inferred")
         tags = [str(t) for t in (cfg.get("tags") or []) if str(t).strip()]

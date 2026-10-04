@@ -15,7 +15,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from personalclaw.action_providers.base import ActionContext, ActionProvider, ActionResult
+from personalclaw.action_providers.base import (
+    ActionContext,
+    ActionProvider,
+    ActionResult,
+    run_identity,
+)
 
 
 class OptimizeScoreActionProvider(ActionProvider):
@@ -67,9 +72,8 @@ class OptimizeScoreActionProvider(ActionProvider):
         from personalclaw.evals.optimize import LiveMutationError, score_step
 
         payload = dict(action_config or {})
-        provenance = ctx.payload or {}
-        payload["run_id"] = str(provenance.get("run_id") or "")
-        payload["node_id"] = str(provenance.get("node_id") or "")
+        payload["run_id"] = run_identity(ctx, "run_id")
+        payload["node_id"] = run_identity(ctx, "node_id")
         try:
             result = await score_step(payload)
         except (ValueError, LiveMutationError, OSError) as exc:

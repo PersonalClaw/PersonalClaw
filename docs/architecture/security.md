@@ -281,7 +281,9 @@ body is screened and fenced as data, the action denylist and the autonomy ladder
 runs as work nobody answers, the day's budget pauses it, and its run is recorded as a fire, whose
 failures count toward the streak that pauses the automation. Nothing the body says chooses where
 the work happens: an action's folder, project, chat or session is its automation's own, from its
-settings, or the run's for a workflow step, and never the fire's payload.
+settings, or the run's for a workflow step, and never the fire's payload. Every action reads a
+run's folder, project and identity through one door that only a workflow step's dispatch opens
+(`action_providers.base.run_identity`), so no fire's payload can stand in for them.
 
 **The webhook token** is `hooks.webhook_token` in `config.json`, a `{{secret:…}}` reference there,
 resolved from the credential store at the check (`config/secret_refs.py`), and compared in

@@ -39,6 +39,7 @@ from personalclaw.action_providers.base import (
     ActionProvider,
     ActionResult,
     is_workflow_step,
+    run_identity,
 )
 from personalclaw.tool_providers.base import RiskLevel
 
@@ -78,10 +79,7 @@ class CheckWorkActionProvider(ActionProvider):
         # folder, where an upstream stage's files land, which the engine puts on the step's
         # dispatch. An automation's fire carries event data, which names no folder to read, so an
         # automation checks only the `root` its owner names.
-        root = str(action_config.get("root", "") or "").strip()
-        step = is_workflow_step(ctx)
-        if not root and step:
-            root = str(ctx.payload.get("workspace", "") or "")
+        root = str(action_config.get("root", "") or "").strip() or run_identity(ctx, "workspace")
         if not root:
             return ActionResult(
                 success=False,
@@ -89,7 +87,7 @@ class CheckWorkActionProvider(ActionProvider):
                     "check-work has nothing to check against: no 'root' was given and "
                     + (
                         "this run has no workspace"
-                        if step
+                        if is_workflow_step(ctx)
                         else "an automation checks only the folder its own 'root' names"
                     )
                 ),

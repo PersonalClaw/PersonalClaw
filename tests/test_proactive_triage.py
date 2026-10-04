@@ -789,7 +789,7 @@ class TestTheCallSites:
         """A gate drop and a refused proposal each write a row — the only place they exist."""
         import personalclaw.proactive.pipeline as pipeline_mod
         import personalclaw.workflows.journal as journal_mod
-        from personalclaw.action_providers.base import ActionContext
+        from personalclaw.action_providers.base import WORKFLOW_STEP_EVENT, ActionContext
         from personalclaw.action_providers.triage_digest_provider import (
             TriageDigestActionProvider,
         )
@@ -835,7 +835,8 @@ class TestTheCallSites:
         result = await TriageDigestActionProvider().execute(
             {},
             ActionContext(
-                event="clock", payload={"run_id": "r1", "instance_path": "root.children[0]"}
+                event=WORKFLOW_STEP_EVENT,
+                payload={"run_id": "r1", "instance_path": "root.children[0]"},
             ),
         )
         kinds = [r["kind"] for r in rows]
@@ -1083,7 +1084,7 @@ class TestTheProviderDrivesTheRealPipelineEndToEnd:
     ) -> None:
         import personalclaw.action_providers.triage_digest_provider as provider_mod
         import personalclaw.proactive.pipeline as pipeline_mod
-        from personalclaw.action_providers.base import ActionContext
+        from personalclaw.action_providers.base import WORKFLOW_STEP_EVENT, ActionContext
         from personalclaw.action_providers.triage_digest_provider import (
             TriageDigestActionProvider,
         )
@@ -1129,7 +1130,7 @@ class TestTheProviderDrivesTheRealPipelineEndToEnd:
 
         result = await TriageDigestActionProvider().execute(
             {"filter_rules": [{"source": "inbox", "rule": "skip dependabot"}]},
-            ActionContext(event="clock", payload={"run_id": "run-pa2"}, trigger_id="trig-pa2"),
+            ActionContext(event=WORKFLOW_STEP_EVENT, payload={"run_id": "run-pa2"}),
         )
 
         # The run succeeded and spent exactly what the pipeline promises: ONE gate call, ONE

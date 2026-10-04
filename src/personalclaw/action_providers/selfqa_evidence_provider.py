@@ -11,7 +11,9 @@ instead.
 The node reads its bundle from the **run workspace** — the same directory the ``execute`` stage
 wrote ``screenshots/`` and ``recording.mp4`` into. The engine threads that path into the action
 payload as ``workspace`` (the artifact gate at the same dispatch seam already receives it), so the
-provider needs no coupling to the run store to find the files.
+provider needs no coupling to the run store to find the files. Only a step's dispatch carries it
+(``base.run_identity``): an automation's fire or a lifecycle hook is no run's, whatever folder its
+payload names, so it seals nothing and writes nothing.
 
 Output (one JSON object, so the template binds ``{{nodes.evidence.output.*}}``)::
 
@@ -43,6 +45,8 @@ from personalclaw.action_providers.base import (
     ActionContext,
     ActionProvider,
     ActionResult,
+    is_workflow_step,
+    run_identity,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,7 +87,18 @@ class SelfQaEvidenceActionProvider(ActionProvider):
         from personalclaw.selfqa import evidence as ev
         from personalclaw.selfqa.fix_branch import create_fix_branch
 
-        workspace = str(ctx.payload.get("workspace", "") or "").strip()
+        if not is_workflow_step(ctx):
+            # The bundle is a run's. A dispatch that is not a step's names no run, and a folder its
+            # payload carries is event data, so nothing is sealed or written anywhere.
+            return ActionResult(
+                success=False,
+                error=(
+                    "selfqa-evidence seals a workflow run's folder, so it runs only as a step of a "
+                    "run"
+                ),
+                failure_class="user",
+            )
+        workspace = run_identity(ctx, "workspace").strip()
         if not workspace:
             return ActionResult(
                 success=False,
@@ -114,7 +129,7 @@ class SelfQaEvidenceActionProvider(ActionProvider):
             else ev.DEFAULT_REQUIRED_KINDS
         )
 
-        project_id = str(ctx.payload.get("project_id", "") or "")
+        project_id = run_identity(ctx, "project_id")
 
         def seal():
             # Derive the enrichments FIRST so they are on disk when the manifest walks the dir.

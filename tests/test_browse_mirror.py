@@ -22,7 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from personalclaw.action_providers.base import ActionContext
+from personalclaw.action_providers.base import WORKFLOW_STEP_EVENT, ActionContext
 from personalclaw.action_providers.browse_provider import BrowseActionProvider
 from personalclaw.browse import killswitch
 from personalclaw.browse import mirror as bmirror
@@ -187,7 +187,7 @@ class TestTheStepRelay:
         monkeypatch.setattr(
             bmirror, "broadcast_browse_step", lambda payload, **kw: captured.append(payload)
         )
-        ctx = ActionContext(event="e", payload={"run_id": "r9"})
+        ctx = ActionContext(event=WORKFLOW_STEP_EVENT, payload={"run_id": "r9"})
         sink = BrowseActionProvider()._mirror_sink(ctx)
         from personalclaw.browse.loop import BrowseStep
 
