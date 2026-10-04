@@ -196,6 +196,16 @@ REVIEW_FINDING = "review_finding"
 #: "you answered and it did nothing" is distinguishable from "you never answered".
 TRIAGE_REPLY = "triage_reply"
 
+#: What a digest did with the proposals the one before it still had waiting on you
+#: (`proactive.carry`). `proposal_carried` is one it offers again, under its own number, naming the
+#: run that first proposed it; `proposal_dropped` is one it does not, with its reason (its item was
+#: dealt with meanwhile, the fresh look replaced it, your rules filter its item now, or it waited a
+#: week). Two kinds for the reason `auto_executed` and `auto_failed` are two: a reader counting what
+#: is still in front of you counts a kind. Both are written to the NEW digest's run, which is the
+#: one whose card shows the result, so "where did yesterday's proposal go?" is answered there.
+PROPOSAL_CARRIED = "proposal_carried"
+PROPOSAL_DROPPED = "proposal_dropped"
+
 #: The subset a downstream refiner reads. Named so a drift test can assert the engine
 #: still emits all of them.
 LEDGER_KINDS = frozenset(
@@ -206,6 +216,8 @@ LEDGER_KINDS = frozenset(
         AUTO_FAILED,
         SKIPPED_BUDGET,
         TRIAGE_REPLY,
+        PROPOSAL_CARRIED,
+        PROPOSAL_DROPPED,
         STEP_COMPLETED,
         STEP_FAILED,
         STEP_SKIPPED,

@@ -80,6 +80,10 @@ const PENDING = {
   source: 'inbox',
   item_permalink: '',
   materiality: 'action',
+  carried_over: false,
+  carried_note: '',
+  first_proposed_at: '2026-10-04T08:00:00+00:00',
+  first_run_id: 'run-abc',
 }
 
 const AUTO_DONE = {
@@ -644,5 +648,67 @@ describe('an action that did not happen is said as not done', () => {
     expect(list.textContent).toContain('the second item is gone')
     expect(errors.mock.calls.some((call) => String(call[0]).includes('same key'))).toBe(false)
     errors.mockRestore()
+  })
+})
+
+// ── What an earlier digest left waiting comes back ─────────────────────────────────────────────
+//
+// A proposal she had not answered used to vanish with the digest that made it. The next digest now
+// carries it, under its own number there, until she answers it, it is dealt with or a week has
+// passed; one that waited longer is named rather than simply gone. Each test is a pair with the
+// case it must not be confused with: a proposal this digest made says none of it.
+
+describe('what an earlier digest left waiting comes back', () => {
+  const RULE = 'A proposal you have not answered comes back in each digest for up to 7 days.'
+  const CARRIED = {
+    ...PENDING, ordinal: '2', action_type: 'create_task', tier: 'low', clamped: false,
+    pattern_key: 'create_task:sender:venue', action_config: { title: 'Renew the venue booking' },
+    reason: '', title: 'Your booking for the spring talk venue lapses next week.',
+    carried_over: true, carried_note: 'Carried over: proposed 2 days ago, and not answered yet.',
+    first_proposed_at: '2026-10-02T08:00:00+00:00', first_run_id: 'run-mon',
+  }
+
+  it('🔴 says a carried proposal is carried over and how long it has waited, and answers it here', async () => {
+    proactiveDigest.mockResolvedValue(view({ pending: [PENDING, CARRIED], carry_rule: RULE }))
+    render(<TriageDigestCard />)
+    const row = await screen.findByRole('listitem', { name: /^Proposal 2:.*carried over from an earlier digest$/ })
+    expect(row.textContent).toContain('Carried over: proposed 2 days ago, and not answered yet.')
+    expect(screen.getByText(RULE)).toBeTruthy()
+    // Its answer is this digest's, under the number this digest gave it.
+    const yes = row.querySelector('button')
+    expect(yes?.textContent).toBe('Yes')
+    fireEvent.click(yes as HTMLElement)
+    await waitFor(() => expect(proactiveReply).toHaveBeenCalledWith('run-abc', '2 yes'))
+    // The pair: the proposal this digest made says none of it.
+    const own = screen.getByRole('listitem', { name: 'Proposal 1: Draft a reply to Review request on #412, inbox' })
+    expect(own.textContent).not.toContain('Carried over')
+  })
+
+  it('says no rule when nothing was carried — the vacuity pair', async () => {
+    proactiveDigest.mockResolvedValue(view({ pending: [PENDING], carry_rule: RULE }))
+    render(<TriageDigestCard />)
+    await screen.findByRole('listitem', { name: /^Proposal 1:/ })
+    expect(screen.queryByText(RULE)).toBeNull()
+    expect(screen.queryByRole('list', { name: 'No longer offered' })).toBeNull()
+  })
+
+  it('🔴 names what waited a week instead of letting it vanish', async () => {
+    const note = 'Not offered again: proposed 8 days ago, and never answered. Open the item to act on it.'
+    proactiveDigest.mockResolvedValue(view({
+      pending: [],
+      carry_rule: RULE,
+      no_longer_offered: [{
+        action_type: 'dismiss', title: 'Thanks for the notes, nothing needed.', source: 'inbox',
+        item_permalink: '', first_proposed_at: '2026-09-26T08:00:00+00:00', note,
+      }],
+    }))
+    render(<TriageDigestCard />)
+    const gone = await screen.findByRole('list', { name: 'No longer offered' })
+    expect(gone.textContent).toContain('Dismiss Thanks for the notes, nothing needed.')
+    expect(gone.textContent).toContain(note)
+    expect(screen.getByText(RULE)).toBeTruthy()
+    // Nothing is waiting, and the card still says so: what is gone is not offered.
+    expect(screen.getByText('Nothing is waiting on you in this digest.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Yes' })).toBeNull()
   })
 })

@@ -4941,6 +4941,22 @@ export interface TriagePending {
    *  for a "no". */
   answer_not_done: string
   permalink: string; title: string; source: string; item_permalink: string; materiality: string
+  /** An earlier digest proposed it and you have not answered it yet, so this digest carries it,
+   *  under its own number here. `carried_note` is the server's sentence saying so, with how long
+   *  it has waited ("Carried over: proposed 2 days ago, and not answered yet."); empty for a
+   *  proposal this digest made. `first_proposed_at` (a UTC instant) and `first_run_id` name the
+   *  digest that first made it, for every row. */
+  carried_over: boolean
+  carried_note: string
+  first_proposed_at: string
+  first_run_id: string
+}
+
+/** A proposal you had not answered that this digest did not carry, because it waited the week a
+ *  proposal comes back for. `note` is the server's sentence: why it is gone and what is left. */
+export interface TriageNoLongerOffered {
+  action_type: string; title: string; source: string; item_permalink: string
+  first_proposed_at: string; note: string
 }
 
 /** A kept item no proposal or action is about: a run that ended (`TriageDigestView.ran`) or
@@ -5059,7 +5075,15 @@ export interface TriageDigestView {
    *  nothing", which is `true` with an empty `auto_done` — the card must say different things. */
   auto_stage_ran?: boolean
   auto_done?: TriageAutoDone[]
+  /** What waits on you: this digest's own proposals, then what it carried from an earlier one. */
   pending?: TriagePending[]
+  /** What it did not carry because it waited too long; named so it does not simply vanish. */
+  no_longer_offered?: TriageNoLongerOffered[]
+  /** How long a proposal you have not answered comes back for, in the server's words. */
+  carry_rule?: string
+  /** How many items the digest numbers, a carried proposal's among them. `collected` counts only
+   *  what this window collected. */
+  numbered?: number
   /** The runs that ended in the window — the body's "What your machine did". With `pending`,
    *  `auto_done` and `waiting`, every item the gate kept, each once. */
   ran?: TriageRanRow[]

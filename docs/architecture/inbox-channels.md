@@ -112,6 +112,30 @@ against core protocols). Paths are relative to
   group) reaches the chat as before. A DM that crosses the guarded door is answered there
   (`channel_inbound`); a channel that runs a DM's conversation itself offers each direct message to
   `GatewayServices.answer_channel_reply` first (the `digest-replies` core feature).
+- **What waits on her stays in view** (`proactive/carry.py`). A digest's card is answerable until
+  the next digest replaces it, so the next digest carries every proposal the last completed one
+  still had waiting (its pending rows with no answer: its own and the ones it carried itself). Each
+  follows the new window's own proposals under the number the new digest gives it, says it is
+  carried over and how long it has waited, and is answered on the new card or by `N yes` on the DM
+  the new digest reached, through the one answer path. Nothing new with something waiting still
+  makes a digest, and asks no model anything, because the digest that replaces a card is the only
+  place left to answer it. Each is first checked against its item as its lane reads it now
+  (`collect.current_item`): an Inbox message dealt with elsewhere, a conversation that was
+  answered or a run that is gone drops out with no question, and a lane that cannot be read keeps
+  it as it was recorded. One item has one proposal: when the new window collected the item again,
+  a fresh proposal replaces the carried one and an item her rules now filter takes it along;
+  otherwise it keeps the item's new number. A carried proposal is never shown to the model or run
+  on its own again: it waits for her answer. **It comes back for a week** (`carry.CARRY_DAYS`),
+  counted in whole days from the digest that first proposed it, so a schedule that fires a few
+  seconds early still counts the seventh day: the digest a week on drops it, names it under "No
+  longer offered" ("Not offered again: proposed 7 days ago, and never answered. Open the item to
+  act on it.") and says the rule ("A proposal you have not answered comes back in each digest for
+  up to 7 days."), as every digest that carries one does. The new digest's run journal records
+  each as `proposal_carried`, naming the run that first proposed it, or `proposal_dropped` with its
+  reason (`handled`, `superseded`, `filtered`, `waited_too_long`). The window starts where the last
+  completed digest BEGAN, so a message that arrived while it ran is in the next one, and a run is in
+  the window it ENDED in, so one still going when a digest ran is in the next; a Morning triage run
+  is never an item in one.
 - **Agents read it** with `inbox_list` (`agents/native/inbox_tool_defs.py`): the open items
   (`OPEN_STATUSES`), newest first, with what each is, who raised it, when, and its text, the
   sender and text fenced as untrusted data. It declares itself a read, so a read-only automation

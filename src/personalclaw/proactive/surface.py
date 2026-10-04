@@ -37,9 +37,11 @@ zeroes, because both are reachable in normal operation:
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any
 
 from personalclaw.proactive.autoexec import not_done_note, stopped_note
+from personalclaw.proactive.carry import CARRY_RULE, DROPPED_EXPIRED, carried_note, dropped_note
 from personalclaw.proactive.proposals import bind_arguments
 
 #: The bundled WorkflowDef the pack card installs. One name, shared with the provider.
@@ -55,9 +57,10 @@ STATE_ERROR = "error"
 
 #: The ledger kinds the card's "In the run journal" section renders, in the order it renders them.
 #: Ordered so the section reads as a narrative: what landed, what failed, what the spend floor
-#: stopped, what the user answered, what the filter dropped, what the parser refused. It is the
-#: run's record, not "what your machine did": a failure and a refusal are in it, so nothing may
-#: render it under that heading.
+#: stopped, what the user answered, what the filter dropped, what the parser refused, what an
+#: earlier digest left waiting that this one carried, and what it did not carry and why. It is
+#: the run's record, not "what your machine did": a failure and a refusal are in it, so nothing
+#: may render it under that heading.
 JOURNAL_KINDS: tuple[str, ...] = (
     "auto_executed",
     "auto_failed",
@@ -65,6 +68,8 @@ JOURNAL_KINDS: tuple[str, ...] = (
     "triage_reply",
     "skipped_triage",
     "proposal_refused",
+    "proposal_carried",
+    "proposal_dropped",
 )
 
 #: Reply verbs the card's one-tap controls emit. The same vocabulary `approval.parse_reply`
@@ -138,6 +143,21 @@ def answered_ordinals(events: Sequence[Mapping[str, Any]]) -> dict[str, dict]:
     return out
 
 
+def _answer(reply: Mapping[str, Any]) -> dict[str, Any]:
+    """What a pending row says of its answer, from the ``triage_reply`` row that gave it."""
+    return {
+        "answered": bool(reply),
+        "answer": str(reply.get("verb", "") or ""),
+        # A "yes" that did not happen, in the words its reply recorded. Empty for an answer that
+        # happened, a "no" among them.
+        "answer_not_done": (
+            str(reply.get("detail", "") or "")
+            if str(reply.get("outcome", "") or "") in ANSWERS_NOT_DONE
+            else ""
+        ),
+    }
+
+
 def build_digest_view(
     *,
     enabled: bool,
@@ -146,6 +166,7 @@ def build_digest_view(
     output: Mapping[str, Any] | None = None,
     events: Sequence[Mapping[str, Any]] = (),
     error: str = "",
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Assemble §5.1's digest card from what the last digest run persisted.
 
@@ -154,6 +175,11 @@ def build_digest_view(
     (a read that failed cannot report installedness honestly), then uninstalled, then off, then
     never-run. Reversing any two of those would let the card answer a question it did not ask —
     "no digest yet" for a machine whose triage switch is off, for instance.
+
+    ``pending`` holds what the digest carried from an earlier one too (`carry`), after its own
+    proposals: each says it is carried over, how long it has waited (``now`` dates it, the read's
+    own moment), and when and in which digest it was first proposed. ``proposed_at`` is when THIS
+    digest ran, which is when its own proposals were made.
     """
     if error:
         return {"state": STATE_ERROR, "error": error, "enabled": enabled, "installed": installed}
@@ -171,8 +197,11 @@ def build_digest_view(
     if not run or not output:
         return {**base, "state": STATE_NEVER_RUN}
 
+    from personalclaw.instants import as_utc
+
     run_id = str(run.get("run_id", "") or run.get("id", "") or "")
     permalink = run_permalink(run_id)
+    proposed_at = str(as_utc(str(run.get("started_at") or run.get("created_at") or "")) or "")
     items = _item_index(output)
     proposals = _by_ordinal(_rows(output.get("proposals")))
     answered = answered_ordinals(events)
@@ -239,19 +268,56 @@ def build_digest_view(
                     if auto_stage_ran
                     else ""
                 ),
-                "answered": bool(reply),
-                "answer": str(reply.get("verb", "") or ""),
-                # A "yes" that did not happen, in the words its reply recorded. Empty for an answer
-                # that happened, a "no" among them.
-                "answer_not_done": (
-                    str(reply.get("detail", "") or "")
-                    if str(reply.get("outcome", "") or "") in ANSWERS_NOT_DONE
-                    else ""
-                ),
+                **_answer(reply),
                 "permalink": permalink,
                 **_provenance(items, ordinal),
+                "carried_over": False,
+                "first_proposed_at": proposed_at,
+                "first_run_id": run_id,
+                "carried_note": "",
             }
         )
+    # What an earlier digest left waiting on you, which this one carried (`carry`): after its own
+    # proposals, as the digest's text lists them. Never tried on its own here, so nothing was
+    # "not done"; its answer is this digest's, recorded on this run.
+    for row in _rows(output.get("carried")):
+        ordinal = str(row.get("item_id", "") or "")
+        action_type = str(row.get("action_type", "") or "")
+        first = str(row.get("first_proposed_at", "") or "")
+        pending.append(
+            {
+                "ordinal": ordinal,
+                "action_type": action_type,
+                "tier": str(row.get("tier", "") or ""),
+                "pattern_key": str(row.get("pattern_key", "") or ""),
+                "clamped": bool(row.get("clamped")),
+                "action_config": bind_arguments(action_type, row.get("action_config"))[0],
+                "reason": "",
+                "rule": "",
+                "not_done": "",
+                **_answer(answered.get(ordinal) or {}),
+                "permalink": permalink,
+                **_provenance(items, ordinal),
+                "carried_over": True,
+                "first_proposed_at": first,
+                "first_run_id": str(row.get("first_run_id", "") or ""),
+                "carried_note": carried_note(first, now),
+            }
+        )
+    # What it did not carry because it waited too long, named so it does not simply vanish. What
+    # was dealt with meanwhile is in the journal only: there is nothing to ask about it.
+    no_longer_offered = [
+        {
+            "action_type": str(row.get("action_type", "") or ""),
+            "title": str(row.get("title", "") or ""),
+            "source": str(row.get("source", "") or ""),
+            "item_permalink": str(row.get("permalink", "") or ""),
+            "first_proposed_at": str(row.get("first_proposed_at", "") or ""),
+            "note": dropped_note(str(row.get("first_proposed_at", "") or ""), now),
+        }
+        for row in _rows(output.get("carry_dropped"))
+        if str(row.get("reason", "") or "") == DROPPED_EXPIRED
+    ]
     stopped = (
         stopped_note(
             (str(row.get("reason", "") or "") for row in deferred),
@@ -265,6 +331,7 @@ def build_digest_view(
 
     dropped = _int(output.get("dropped"))
     refused = len(_rows(output.get("refused")))
+    carried_rows = len(_rows(output.get("carried"))) + len(_rows(output.get("carry_dropped")))
     recorded = _int(output.get("ledger_rows"))
     return {
         **base,
@@ -273,6 +340,7 @@ def build_digest_view(
         "status": str(run.get("status", "") or ""),
         "finished_at": str(run.get("finished_at", "") or run.get("started_at", "") or ""),
         "permalink": permalink,
+        "proposed_at": proposed_at,
         "window_start": str(output.get("window_start", "") or ""),
         "title": str(output.get("digest_title", "") or ""),
         "body": str(output.get("digest_body", "") or ""),
@@ -291,6 +359,13 @@ def build_digest_view(
         "auto_stage_ran": auto_stage_ran,
         "auto_done": auto_done,
         "pending": pending,
+        "no_longer_offered": no_longer_offered,
+        # How long a proposal you have not answered comes back for, which the card says beside
+        # what it carried or dropped (the digest's text says it too).
+        "carry_rule": CARRY_RULE,
+        # How many items the digest numbers, a carried proposal's among them: the highest number
+        # an answer to it may name. `collected` counts only what this window collected.
+        "numbered": len(items),
         "ran": ran,
         "waiting": waiting,
         # Why nothing (or nothing more) ran on its own when the stage stopped as a whole: incident
@@ -299,7 +374,7 @@ def build_digest_view(
         "degraded": bool(output.get("degraded")),
         "journal": journal_rows(events, permalink=permalink),
         # False means "rows that should exist were not written", never "there were none".
-        "ledger_complete": recorded > 0 or (dropped == 0 and refused == 0),
+        "ledger_complete": recorded > 0 or (dropped == 0 and refused == 0 and carried_rows == 0),
         "ledger_rows": recorded,
     }
 

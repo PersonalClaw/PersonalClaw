@@ -31,6 +31,10 @@ back up and a second place "why was this dropped?" has to be looked up.
         "max_proposals": 8      # optional; clamped to MAX_PROPOSALS
     }
 
+**What the last digest left waiting comes with it.** The last digest that completed is read once:
+the window starts where it began, and what its card still has waiting on you, checked against
+each item as its lane reads it now, is carried into this one (`proactive.carry`).
+
 Output (one JSON object, so the template can bind ``{{nodes.triage.output.*}}``) is
 :meth:`TriageResult.summary`.
 """
@@ -50,10 +54,6 @@ from personalclaw.action_providers.base import (
 
 logger = logging.getLogger(__name__)
 
-#: The bundled template's name. Read here for the "since the last successful digest" window —
-#: the window is a property of THIS pipeline's own history, not of whatever else has run.
-TRIAGE_WORKFLOW = "morning-triage"
-
 #: Fallback look-back when no digest has ever completed. A day, because the schedule default is
 #: daily; the first run of a fresh install therefore sees one day, not the whole backlog, which
 #: is the difference between a digest and a wall of text.
@@ -69,12 +69,33 @@ def _proactive_config() -> Any:
     return AppConfig.load().proactive
 
 
-def _window(config: dict[str, Any]) -> tuple[float, str]:
-    """(epoch seconds, ISO string) for the window start — last completed digest, else N hours.
+def _previous_digest() -> tuple[dict | None, dict | None, list[dict]]:
+    """The last digest that completed: its run row, its output and its ledger slice.
+
+    ``(None, None, [])`` when there is none, and when it cannot be read (which the log says): the
+    window then looks back the fallback hours, and nothing is carried.
+    """
+    from personalclaw.proactive import digest_state
+
+    try:
+        return digest_state.last_completed_digest()
+    except Exception:  # noqa: BLE001 - no run store → the fallback window is correct
+        logger.warning("triage: the last digest could not be read", exc_info=True)
+        return None, None, []
+
+
+def _window(config: dict[str, Any], previous: dict | None) -> tuple[float, str]:
+    """(epoch seconds, ISO string) for the window start — where the last completed digest BEGAN,
+    else N hours back.
+
+    Where it began, not where it ended: it collected as it began and then spent its model calls,
+    so a message that arrived in between was too new for it, and a window that started at its end
+    left that message out of every digest. The two windows now meet exactly.
 
     Both spellings are returned because the three lanes compare against different stamps: the
     inbox store keeps epoch floats, the run store keeps ISO strings. Converting at the boundary
-    once beats each collector guessing.
+    once beats each collector guessing. The ISO one is in the run store's own form, so the run
+    lane's text comparison is exact.
     """
     from datetime import UTC, datetime
 
@@ -84,26 +105,36 @@ def _window(config: dict[str, Any]) -> tuple[float, str]:
         hours = DEFAULT_WINDOW_HOURS
     fallback = time.time() - max(0.0, hours) * 3600.0
 
-    try:
-        from personalclaw.workflows.models import RunStatus
-        from personalclaw.workflows.store import list_runs
+    stamp = str((previous or {}).get("started_at") or (previous or {}).get("created_at") or "")
+    if stamp:
+        try:
+            parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return (parsed.timestamp(), stamp)
+        except ValueError:
+            logger.debug("triage: unparseable last-digest stamp %r", stamp)
+    return (fallback, datetime.fromtimestamp(fallback, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
-        # The run store's own word (`RunStatus.COMPLETE`, "complete"): "completed" matched no
-        # run, so the window never started at the last digest.
-        runs, _total = list_runs(workflow_name=TRIAGE_WORKFLOW, status=RunStatus.COMPLETE, limit=1)
-    except Exception:  # noqa: BLE001 - no run store → the fallback window is correct
-        runs = []
-    if runs:
-        stamp = str(getattr(runs[0], "completed_at", "") or getattr(runs[0], "created_at", ""))
-        if stamp:
-            try:
-                parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=UTC)
-                return (parsed.timestamp(), stamp)
-            except ValueError:
-                logger.debug("triage: unparseable last-digest stamp %r", stamp)
-    return (fallback, datetime.fromtimestamp(fallback, UTC).isoformat())
+
+def _still_waiting(
+    previous: tuple[dict | None, dict | None, list[dict]], *, inbox_store: Any, state: Any
+) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    """``(still waiting, dealt with)``: what the last digest's card has waiting on you, each
+    checked against its item as its lane reads it now (`carry.recheck`)."""
+    from personalclaw.proactive.carry import recheck, waiting_from
+    from personalclaw.proactive.collect import current_item
+    from personalclaw.proactive.surface import build_digest_view
+
+    run, output, events = previous
+    if run is None or output is None:
+        return (), ()
+    view = build_digest_view(enabled=True, installed=True, run=run, output=output, events=events)
+
+    def look(source: str, source_id: str) -> Any:
+        return current_item(source, source_id, inbox_store=inbox_store, state=state)
+
+    return recheck(waiting_from(view), look=look)
 
 
 def _rules(config: dict[str, Any]) -> list[Any]:
@@ -142,7 +173,12 @@ def _record(result: Any, ctx: ActionContext) -> int:
     if not run_id or not instance_path:
         return 0
 
-    from personalclaw.ledger.kinds import PROPOSAL_REFUSED, SKIPPED_TRIAGE
+    from personalclaw.ledger.kinds import (
+        PROPOSAL_CARRIED,
+        PROPOSAL_DROPPED,
+        PROPOSAL_REFUSED,
+        SKIPPED_TRIAGE,
+    )
     from personalclaw.workflows.journal import Journal
 
     journal = Journal(run_id=run_id)
@@ -173,6 +209,39 @@ def _record(result: Any, ctx: ActionContext) -> int:
             item_ordinal=refusal.item_id,
             action_type=refusal.action_type,
             detail=refusal.detail,
+        )
+        written += 1
+    for carried in result.carry.carried:
+        journal.write(
+            PROPOSAL_CARRIED,
+            node_id=_NODE_ID,
+            instance_path=instance_path,
+            epoch=0,
+            actor="triage",
+            item_ordinal=carried.proposal.item_id,
+            item_source=carried.item.source,
+            item_source_id=carried.item.source_id,
+            action_type=carried.proposal.action_type,
+            # The kind is what happened; the detail is where it came from, which the card's
+            # journal line shows.
+            detail=f"first proposed in run {carried.first_run_id}",
+            first_run_id=carried.first_run_id,
+            first_proposed_at=carried.first_proposed_at,
+        )
+        written += 1
+    for gone in result.carry.dropped:
+        journal.write(
+            PROPOSAL_DROPPED,
+            node_id=_NODE_ID,
+            instance_path=instance_path,
+            epoch=0,
+            actor="triage",
+            item_source=gone.waiting.item.source,
+            item_source_id=gone.waiting.item.source_id,
+            action_type=gone.waiting.proposal.action_type,
+            reason=gone.reason,
+            first_run_id=gone.waiting.first_run_id,
+            first_proposed_at=gone.waiting.first_proposed_at,
         )
         written += 1
     return written
@@ -325,6 +394,8 @@ class TriageDigestActionProvider(ActionProvider):
         ctx: ActionContext,
         timeout: int = 30,
     ) -> ActionResult:
+        from datetime import UTC, datetime
+
         from personalclaw.action_providers.services import get_action_services
         from personalclaw.proactive.collect import collect_all
         from personalclaw.proactive.pipeline import run_triage
@@ -353,7 +424,10 @@ class TriageDigestActionProvider(ActionProvider):
                 svc = getattr(state, "_inbox_svc", None)
                 inbox_store = getattr(svc, "inbox", None) if svc is not None else None
 
-        since_ts, since_iso = _window(action_config)
+        now = datetime.now(UTC)
+        previous = _previous_digest()
+        since_ts, since_iso = _window(action_config, previous[0])
+        waiting, handled = _still_waiting(previous, inbox_store=inbox_store, state=state)
         items = collect_all(
             inbox_store=inbox_store,
             state=state,
@@ -385,6 +459,9 @@ class TriageDigestActionProvider(ActionProvider):
             # stage was never wired", which is the failure its own `triage_enabled` refusal
             # is written to avoid one layer up.
             auto_execute=_auto_stage(action_config, ctx, cfg),
+            waiting=waiting,
+            handled=handled,
+            now=now,
         )
 
         summary = result.summary()
@@ -392,16 +469,17 @@ class TriageDigestActionProvider(ActionProvider):
         summary["ledger_rows"] = _record(result, ctx)
         summary["notes"] = list(result.notes)
         if result.batch.degraded:
-            # The digest went out at its floor: the items, the gate applied, and no proposals,
-            # which its body says. A run that did that is degraded, and says so, not a success.
+            # The digest went out at its floor: the items, the gate applied, and no new
+            # proposals, which its body says. A run that did that is degraded, and says so, not a
+            # success. "New": what an earlier digest left waiting is still in it.
             return ActionResult(
                 success=True,
                 exit_code=0,
                 stdout=json.dumps(summary),
                 outcome="degraded",
                 summary=(
-                    "The triage digest went out without proposals: the proposal step gave none it "
-                    "could use."
+                    "The triage digest went out without new proposals: the proposal step gave "
+                    "none it could use."
                 ),
             )
         return ActionResult(success=True, exit_code=0, stdout=json.dumps(summary))

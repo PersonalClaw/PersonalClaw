@@ -10,7 +10,9 @@ each proposal and the same record. Only what the door is (:class:`Door`) differs
   channel. Asked before anything is read, and a refusal is audited there.
 * **That digest, and no other.** An ordinal numbers ONE window, so an answer names the run it
   answers, and a run that is no longer the current digest is refused as expired rather than acted
-  on best-effort against whatever is third today (criterion 9).
+  on best-effort against whatever is third today (criterion 9). A proposal you had not answered
+  when the next digest ran is in that one (`proactive.carry`), under its number there, and is
+  answered there like any of its own.
 * **Attended.** A Yes runs its proposal through the digest's own stage
   (:func:`personalclaw.proactive.autoexec.auto_execute`) with ``answered=True`` and a synthetic
   approve rule standing for the answer — so the action denylist, ``enforce_action``'s SEL row and
@@ -342,7 +344,9 @@ async def answer(run_id: str, text: str, *, door: Door) -> Answered:
         return Answered(outcome=EXPIRED, current_run_id=str(view.get("run_id", "") or ""))
 
     ordinals = [str(row.get("ordinal", "")) for row in (view.get("pending") or [])]
-    parsed = parse_reply(text, max_ordinal=view.get("collected") or None)
+    # Every number the digest gives, a proposal it carried from an earlier one among them: what
+    # the window collected alone would refuse "4 yes" for the fourth, carried, proposal.
+    parsed = parse_reply(text, max_ordinal=view.get("numbered") or None)
     if parsed.action in (ReplyAction.HELP, ReplyAction.UNPARSEABLE):
         return Answered(outcome=HELP, help=HELP_TEXT, help_reason=parsed.error or "")
     targets = ordinals if parsed.applies_to_all else [str(parsed.ordinal)]

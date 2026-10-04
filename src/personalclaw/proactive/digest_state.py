@@ -78,16 +78,12 @@ def install_state() -> dict[str, Any]:
     }
 
 
-def latest_digest() -> tuple[dict | None, dict | None, list[dict]]:
-    """The most recent triage run, its node output and its ledger slice.
-
-    Returns ``(None, None, [])`` when no run exists — which the view turns into ``never_run``,
-    never into an empty digest.
-    """
+def _digest(status: str = "") -> tuple[dict | None, dict | None, list[dict]]:
+    """The most recent triage run (of *status*, when given), its node output and its ledger."""
     from personalclaw.proactive.surface import TRIAGE_NODE_ID, TRIAGE_WORKFLOW
     from personalclaw.workflows import journal, service, store
 
-    runs, _total = store.list_runs(workflow_name=TRIAGE_WORKFLOW, limit=1, offset=0)
+    runs, _total = store.list_runs(workflow_name=TRIAGE_WORKFLOW, status=status, limit=1, offset=0)
     if not runs:
         return None, None, []
     run = runs[0].to_dict()
@@ -97,6 +93,28 @@ def latest_digest() -> tuple[dict | None, dict | None, list[dict]]:
     if result.get("ok"):
         output = decode_output(result.get("output"))
     return run, output, journal.ledger(run_id)
+
+
+def latest_digest() -> tuple[dict | None, dict | None, list[dict]]:
+    """The most recent triage run, its node output and its ledger slice.
+
+    Returns ``(None, None, [])`` when no run exists — which the view turns into ``never_run``,
+    never into an empty digest.
+    """
+    return _digest()
+
+
+def last_completed_digest() -> tuple[dict | None, dict | None, list[dict]]:
+    """The most recent triage run that COMPLETED, its node output and its ledger slice.
+
+    What the next digest starts from: its window begins where this run began, and what this
+    run's card still has waiting on you is carried into it (`proactive.carry`). The run store's
+    own word for it (``RunStatus.COMPLETE``). A digest that failed is neither: what it would have
+    shown is still the last completed one's.
+    """
+    from personalclaw.workflows.models import RunStatus
+
+    return _digest(RunStatus.COMPLETE.value)
 
 
 def decode_output(value: Any) -> dict | None:
@@ -144,6 +162,7 @@ __all__ = [
     "decode_output",
     "find_schedule",
     "install_state",
+    "last_completed_digest",
     "latest_digest",
     "schedule_payload",
     "trigger_store",

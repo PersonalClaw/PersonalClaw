@@ -244,6 +244,10 @@ export function TriageDigestCard() {
   const ran = view.ran || []
   const waiting = view.waiting || []
   const ledger = view.journal || []
+  // What an earlier digest left waiting on you comes back here until you answer it, for a week; one
+  // that waited longer is named below rather than simply gone. The rule is said once, beside them.
+  const carried = pending.some((row) => row.carried_over)
+  const noLonger = view.no_longer_offered || []
 
   return (
     <Surface tone="container" radius="xl" className="mb-l p-l">
@@ -358,6 +362,37 @@ export function TriageDigestCard() {
         </ul>
       )}
       {help && <p data-type="caption" className="mt-s text-warn" role="status">{help}</p>}
+      {carried && view.carry_rule && (
+        <p data-type="caption" className="mt-s text-on-surface-low">{view.carry_rule}</p>
+      )}
+
+      {/* ── No longer offered: what waited a week without an answer ── */}
+      {noLonger.length > 0 && (
+        <>
+          <SectionHead icon={Clock} title="No longer offered" count={noLonger.length} />
+          <ul aria-label="No longer offered" className="flex flex-col gap-s">
+            {noLonger.map((row, i) => (
+              <li key={`${i}-${row.action_type}-${row.title}`} className="flex items-start gap-m rounded-lg bg-surface-high px-m py-s">
+                <div className="min-w-0 flex-1">
+                  <p data-type="body-s" className="truncate text-on-surface">
+                    <span style={fvs(600)}>{proposedVerb(row.action_type)}</span> {row.title || 'an item'}
+                  </p>
+                  <p data-type="caption" className="mt-xs text-on-surface-low">{row.note}</p>
+                </div>
+                {row.item_permalink && (
+                  <TextLink href={row.item_permalink} ink="emphasis" size="xs" className="shrink-0"
+                    aria-label={`Open ${row.title || 'the item'}`}>
+                    open
+                  </TextLink>
+                )}
+              </li>
+            ))}
+          </ul>
+          {!carried && view.carry_rule && (
+            <p data-type="caption" className="mt-s text-on-surface-low">{view.carry_rule}</p>
+          )}
+        </>
+      )}
 
       {/* ── Also waiting: what else the gate kept that no proposal is about ── */}
       {waiting.length > 0 && (
@@ -476,7 +511,7 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
   // differently from the row itself in exactly the case where the field is missing.
   // The task a Yes files, by the title its run recorded: what she approves is what she reads.
   const task = row.action_config?.title || ''
-  const label = `Proposal ${n}: ${proposedVerb(row.action_type)} ${row.title || `item ${n}`}${task ? `, as the task “${task}”` : ''}${row.source ? `, ${row.source}` : ''}`
+  const label = `Proposal ${n}: ${proposedVerb(row.action_type)} ${row.title || `item ${n}`}${task ? `, as the task “${task}”` : ''}${row.source ? `, ${row.source}` : ''}${row.carried_over ? ', carried over from an earlier digest' : ''}`
   // An answered proposal keeps its row and says what was answered. Removing it would make a reply
   // look like it did nothing; re-offering the buttons would invite a second, duplicate answer.
   return (
@@ -498,6 +533,11 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
             <a href={row.item_permalink} className="text-primary-emphasis underline">the item</a>
           )}
         </p>
+        {/* An earlier digest proposed it and you have not answered it: the server's sentence,
+            with how long it has waited. */}
+        {row.carried_over && row.carried_note && (
+          <p data-type="caption" className="mt-xs text-on-surface-low">{row.carried_note}</p>
+        )}
         {/* The digest tried this on its own and it did not happen, or the answer's yes did not:
             the server's sentence, with why and what to do next. A row without it is a proposal
             nobody has tried. */}

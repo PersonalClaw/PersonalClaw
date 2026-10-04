@@ -5,8 +5,11 @@ stages themselves are pure and live beside this module; what is here is the *ord
 model calls, and the four spend decisions that make the order defensible:
 
 1. **Nothing collected ⇒ nothing spent.** The manifest is built before any model is reachable,
-   and an empty manifest returns immediately with `llm_calls == 0`. That is §1.2's
-   precondition guard: one cheap store read decides whether the expensive stages run at all.
+   and an empty manifest asks no model anything (`llm_calls == 0`). That is §1.2's precondition
+   guard: one cheap store read decides whether the expensive stages run at all. It returns
+   without a digest only when nothing waits on you either: a proposal an earlier digest made and
+   you have not answered is carried into this one (`carry`), quiet morning or not, because the
+   digest that replaces a card is the only place left to answer it.
 2. **No rules ⇒ no gate call.** Delegated to `should_call_gate`, which also honours the
    `classifier_gate_enabled` switch.
 3. **Nothing survived the gate ⇒ no proposal call.** A window the user's own rules emptied
@@ -32,8 +35,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from personalclaw.proactive.autoexec import AutoExecResult
+from personalclaw.proactive.carry import CarryResult, Waiting, place
 from personalclaw.proactive.gate import (
     GateResult,
     GateRule,
@@ -85,6 +90,8 @@ class TriageResult:
     digest: Digest | None = None
     #: the outcome, or None when the caller passed no auto-execution stage.
     auto: AutoExecResult | None = None
+    #: what an earlier digest left waiting on you that this one carries, and what it dropped.
+    carry: CarryResult = field(default_factory=CarryResult)
     llm_calls: int = 0
     delivered: bool = False
     #: True when the window was empty and the pipeline returned before any model was reachable.
@@ -101,14 +108,22 @@ class TriageResult:
     def refused(self) -> tuple[RefusedProposal, ...]:
         return self.batch.refused
 
+    @property
+    def numbered(self) -> Manifest:
+        """Every item this digest numbers: the window's, then the carried ones after them."""
+        return self.carry.numbered(self.manifest)
+
     def summary(self) -> dict:
         """The flat, JSON-safe shape a template binds and a ledger row carries."""
         return {
+            # What the WINDOW collected. A carried proposal's item is numbered in `items` and
+            # counted in neither: it is not new.
             "collected": len(self.manifest),
             "lanes": self.manifest.counts(),
             # The ordinal→provenance map, so a surface opened after this process exited can
-            # still redeem an ordinal without re-collecting. See `Manifest.projection`.
-            "items": self.manifest.projection(),
+            # still redeem an ordinal without re-collecting. See `Manifest.projection`. Every
+            # ordinal the digest numbers is here, a carried proposal's among them.
+            "items": self.numbered.projection(),
             # The ordinals the gate kept, so a surface shows each item it counts once and never
             # one the user's rules filtered (`surface.build_digest_view`).
             "kept": [item.ordinal for item in self.gate.kept],
@@ -132,6 +147,35 @@ class TriageResult:
             "refused": [
                 {"reason": r.reason, "item_id": r.item_id, "action_type": r.action_type}
                 for r in self.refused
+            ],
+            # What an earlier digest left waiting on you, under this digest's numbers, with when
+            # and in which digest it was first proposed (`carry`). Its Yes runs it as recorded.
+            "carried": [
+                {
+                    "item_id": c.proposal.item_id,
+                    "action_type": c.proposal.action_type,
+                    "tier": c.proposal.tier,
+                    "pattern_key": c.proposal.pattern_key,
+                    "clamped": c.clamped,
+                    "action_config": dict(c.proposal.action_config),
+                    "first_proposed_at": c.first_proposed_at,
+                    "first_run_id": c.first_run_id,
+                }
+                for c in self.carry.carried
+            ],
+            # What it left waiting that this digest does not offer, and why (`carry.DROPPED_*`).
+            "carry_dropped": [
+                {
+                    "reason": d.reason,
+                    "action_type": d.waiting.proposal.action_type,
+                    "title": d.waiting.item.title,
+                    "source": d.waiting.item.source,
+                    "source_id": d.waiting.item.source_id,
+                    "permalink": d.waiting.item.permalink,
+                    "first_proposed_at": d.waiting.first_proposed_at,
+                    "first_run_id": d.waiting.first_run_id,
+                }
+                for d in self.carry.dropped
             ],
             "llm_calls": self.llm_calls,
             "delivered": self.delivered,
@@ -259,13 +303,19 @@ async def run_triage(
     completion: CompletionFn | None = None,
     deliver: DeliverFn | None = None,
     auto_execute: AutoExecFn | None = None,
+    waiting: tuple[Waiting, ...] | list[Waiting] = (),
+    handled: tuple[Waiting, ...] | list[Waiting] = (),
+    now: datetime | None = None,
 ) -> TriageResult:
     """Run the digest over an already-collected item set and deliver it.
 
     Collection is the CALLER's job (`collect.collect_all`) because the three lanes need live
     handles — the inbox store, the dashboard state — that belong to whoever is running the
     pipeline, and reaching for them here would make every test of the ordering also a test of
-    the gateway's wiring.
+    the gateway's wiring. So is reading what the last digest left waiting: *waiting* is what is
+    still waiting on you, checked against its item (`carry.recheck`), and *handled* what was dealt
+    with meanwhile. Neither reaches a model or the auto-execution stage: a carried proposal was
+    offered to you, and it waits for your answer. *now* dates them (the clock, when absent).
     """
     from personalclaw.guardrails.audit import caller_scope
     from personalclaw.llm_helpers import expecting
@@ -274,19 +324,26 @@ async def run_triage(
     deliver = deliver or make_notify_deliver(run_id=run_id, trigger_id=trigger_id)
 
     manifest = build_manifest(items, window_start=window_start)
+    now = now or datetime.now(timezone.utc)
 
-    # Spend decision 1: an empty window costs nothing and delivers nothing. Delivering a
-    # "nothing happened" notification every morning is how a digest gets muted in week two.
-    if manifest.is_empty:
+    # Spend decision 1: an empty window costs nothing, and with nothing waiting on you it
+    # delivers nothing. Delivering a "nothing happened" notification every morning is how a
+    # digest gets muted in week two. What was dealt with meanwhile is still recorded.
+    if manifest.is_empty and not waiting:
         return TriageResult(
             manifest=manifest,
             gate=GateResult(),
+            carry=place(
+                (), handled=handled, window=manifest, gate=GateResult(), proposals=(), now=now
+            ),
             short_circuited=True,
             notes=("empty window: no model call, no delivery",),
         )
 
     notes: list[str] = []
     llm_calls = 0
+    if manifest.is_empty:
+        notes.append("empty window: no model call, only what still waits on you")
 
     # Stage 2. Spend decision 2 lives inside `should_call_gate`.
     gate_called = False
@@ -387,6 +444,13 @@ async def run_triage(
             auto = None
     pending = auto.pending if auto is not None else batch.proposals
 
+    # What an earlier digest left waiting, placed after the fresh look so it never doubles an
+    # item the fresh look already judged, and numbered after the window so the window's own
+    # numbers are what they would be with nothing carried.
+    carry = place(
+        waiting, handled=handled, window=manifest, gate=gate, proposals=batch.proposals, now=now
+    )
+
     # Stages 4-5. Ranking and rendering are deterministic; delivery is the singular gate.
     digest = render_digest(
         manifest,
@@ -395,6 +459,8 @@ async def run_triage(
         dropped_count=len(gate.dropped),
         degraded=batch.degraded,
         auto=auto,
+        carry=carry,
+        now=now,
     )
     delivered = bool(deliver(digest))
 
@@ -404,6 +470,7 @@ async def run_triage(
         batch=batch,
         digest=digest,
         auto=auto,
+        carry=carry,
         llm_calls=llm_calls,
         delivered=delivered,
         short_circuited=False,

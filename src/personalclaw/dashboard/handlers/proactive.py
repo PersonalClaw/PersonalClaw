@@ -60,6 +60,8 @@ async def api_proactive_digest(request: web.Request) -> web.Response:
     an empty card — "nothing happened yet" is the most confident possible way to say the opposite
     of what is known.
     """
+    from datetime import datetime, timezone
+
     from personalclaw.proactive import digest_state
     from personalclaw.proactive.surface import build_digest_view
 
@@ -69,8 +71,14 @@ async def api_proactive_digest(request: web.Request) -> web.Response:
             view = build_digest_view(enabled=state["enabled"], installed=state["installed"])
         else:
             run, output, events = digest_state.latest_digest()
+            # Dated now, so a carried proposal says how long it has waited as you read it.
             view = build_digest_view(
-                enabled=True, installed=True, run=run, output=output, events=events
+                enabled=True,
+                installed=True,
+                run=run,
+                output=output,
+                events=events,
+                now=datetime.now(timezone.utc),
             )
         view["schedule"] = state["schedule"]
         view["schedule_drift"] = state["drift"]

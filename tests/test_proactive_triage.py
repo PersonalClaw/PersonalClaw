@@ -718,7 +718,7 @@ class TestTheCallSites:
         result = await provider.execute({}, ActionContext(event="clock", payload={}))
         assert result.success is True
         assert result.outcome == "degraded"
-        assert "without proposals" in result.summary
+        assert "without new proposals" in result.summary
         assert json.loads(result.stdout)["degraded"] is True
 
         degraded["batch"] = ProposalBatch()
@@ -1166,8 +1166,11 @@ class TestTheProviderDrivesTheRealPipelineEndToEnd:
         assert len(summary["proposals"]) <= MAX_PROPOSALS
 
 
-def test_the_window_starts_at_the_last_digest_that_completed(monkeypatch) -> None:
-    """The window is "since the last digest", read off the run store by its own status word.
+def test_the_window_starts_where_the_last_completed_digest_began(monkeypatch) -> None:
+    """The window is "since the last digest", read off the run store by its own status word, and
+    it starts where that digest BEGAN: it collected as it began and then spent its model calls, so
+    a message that arrived in between was too new for it, and a window that started at its end
+    left that message out of every digest.
 
     It asked for ``status="completed"``, which the run store never writes (``RunStatus.COMPLETE``
     is ``"complete"``), so no digest was ever found and every run looked back the fallback day.
@@ -1179,15 +1182,22 @@ def test_the_window_starts_at_the_last_digest_that_completed(monkeypatch) -> Non
     from personalclaw.workflows import store as run_store
 
     asked: dict[str, Any] = {}
+    row = {
+        "id": "run-last",
+        "created_at": "2026-09-30T11:59:59Z",
+        "started_at": "2026-09-30T12:00:00Z",
+        "completed_at": "2026-09-30T12:02:00Z",
+    }
 
     def list_runs(**kw: Any):
         asked.update(kw)
         if kw.get("status") != "complete":
             return [], 0
-        return [SimpleNamespace(completed_at="2026-09-30T12:00:00Z", created_at="")], 1
+        return [SimpleNamespace(to_dict=lambda: dict(row))], 1
 
     monkeypatch.setattr(run_store, "list_runs", list_runs)
-    since_ts, since_iso = provider._window({})
+    previous, _output, _events = provider._previous_digest()
+    since_ts, since_iso = provider._window({}, previous)
     assert asked["workflow_name"] == "morning-triage"
     assert since_iso == "2026-09-30T12:00:00Z"
     assert since_ts == datetime.fromisoformat("2026-09-30T12:00:00+00:00").timestamp()

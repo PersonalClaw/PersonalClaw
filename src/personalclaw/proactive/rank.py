@@ -20,6 +20,7 @@ criterion 1 asks for exactly that deferral.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from personalclaw.proactive.autoexec import (
     AutoExecResult,
@@ -27,6 +28,7 @@ from personalclaw.proactive.autoexec import (
     render_auto_lines,
     stopped_note,
 )
+from personalclaw.proactive.carry import CARRY_RULE, CarryResult, carried_note, dropped_note
 from personalclaw.proactive.manifest import (
     MATERIALITY_ERROR,
     SOURCE_RUN,
@@ -109,6 +111,8 @@ def render_digest(
     dropped_count: int,
     degraded: bool = False,
     auto: AutoExecResult | None = None,
+    carry: CarryResult | None = None,
+    now: datetime | None = None,
 ) -> Digest:
     """Assemble the digest body from typed fields — no model call, no free-text passthrough.
 
@@ -132,10 +136,21 @@ def render_digest(
     whole batch here would list an item under "needs you" that the machine had already handled
     seconds earlier, which is the one thing a digest cannot get wrong. Nor is an item it handled
     "also waiting", for the same reason one section down.
+
+    ``carry`` is what an earlier digest left waiting on you (`carry.place`): each carried proposal
+    follows this window's own under "Needs you", under the number this digest gave it, saying it is
+    carried over and how long it has waited (``now`` dates it), and the section says once how long
+    a proposal comes back for. One dropped for its age is named in a section of its own, so it
+    does not simply vanish. One dealt with meanwhile is not mentioned: there is nothing to ask.
     """
     ranked = rank_items(kept)
     ranked_proposals = rank_proposals(proposals, manifest)
-    proposal_ids = {p.item_id for p in ranked_proposals}
+    carried = carry.carried if carry is not None else ()
+    numbered = carry.numbered(manifest) if carry is not None else manifest
+    ranked_carried = rank_proposals(tuple(c.proposal for c in carried), numbered)
+    carried_by_item = {c.proposal.item_id: c for c in carried}
+    expired = carry.expired if carry is not None else ()
+    proposal_ids = {p.item_id for p in ranked_proposals} | set(carried_by_item)
     acted_on = {a.proposal.item_id for a in auto.executed} if auto is not None else set()
     deferred = auto.deferred if auto is not None else ()
     not_done = {d.proposal.item_id: not_done_note(d.reason, d.detail) for d in deferred}
@@ -157,24 +172,43 @@ def render_digest(
             lines.append(f"{_line(item)}{flag}")
         sections.append("\n".join(lines))
 
-    if ranked_proposals:
+    if ranked_proposals or ranked_carried:
         lines = ["Needs you:"]
-        if stopped:
+        if stopped and ranked_proposals:
             lines.append(f"  {stopped}")
-        for p in ranked_proposals:
-            about = manifest.by_ordinal(p.item_id)
+        if degraded and not ranked_proposals:
+            # What was carried is listed; that this window got no proposals is still said.
+            lines.append("  (no new proposals this run — the proposal stage was refused)")
+        for p in (*ranked_proposals, *ranked_carried):
+            about = numbered.by_ordinal(p.item_id)
             subject = about.title if about is not None else f"item {p.item_id}"
             lines.append(f"  {p.item_id}. [{p.tier}] {p.action_type} — {subject}")
             # The task a yes files, by the title it is filed under, as the card shows it.
             if p.action_config.get("title"):
                 lines.append(f"       Task: {p.action_config['title']}")
+            if p.item_id in carried_by_item:
+                first = carried_by_item[p.item_id].first_proposed_at
+                lines.append(f"       {carried_note(first, now)}")
             if not_done.get(p.item_id):
                 lines.append(f"       {not_done[p.item_id]}")
             if p.reasoning:
                 lines.append(f"       {p.reasoning}")
+        if ranked_carried:
+            lines.append(f"  {CARRY_RULE}")
         sections.append("\n".join(lines))
     elif degraded:
         sections.append("Needs you:\n  (no proposals this run — the proposal stage was refused)")
+
+    if expired:
+        lines = ["No longer offered:"]
+        for gone in expired:
+            item = gone.waiting.item
+            link = f" ({item.permalink})" if item.permalink else ""
+            lines.append(f"  {gone.waiting.proposal.action_type} — {item.title}{link}")
+            lines.append(f"       {dropped_note(gone.waiting.first_proposed_at, now)}")
+        if not ranked_carried:
+            lines.append(f"  {CARRY_RULE}")
+        sections.append("\n".join(lines))
 
     rest = [
         i
@@ -197,7 +231,9 @@ def render_digest(
         body="\n\n".join(sections),
         kind=DIGEST_NOTIFY_KIND,
         collected=len(manifest),
-        proposed=len(ranked_proposals),
+        # What waits for an answer, a carried proposal among it: what a reply to this digest
+        # answers (`pipeline.make_notify_deliver`).
+        proposed=len(ranked_proposals) + len(ranked_carried),
         surfaced=len(kept),
         dropped=dropped_count,
     )
