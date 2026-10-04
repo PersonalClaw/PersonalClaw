@@ -209,4 +209,6 @@ def test_every_hand_run_and_outside_fire_hands_the_dispatch_its_state():
                 continue
             callers += 1
             assert "state" in {k.arg for k in node.keywords}, ast.unparse(node)
-    assert callers >= 5, f"found only {callers} callers; the scan is not seeing them"
+    # Three callers remain since webhook fires and view refreshes moved to the fire dispatch. The
+    # floor is that count, so a caller the scan stops seeing fails here instead of passing empty.
+    assert callers >= 3, f"found only {callers} callers; the scan is not seeing them"

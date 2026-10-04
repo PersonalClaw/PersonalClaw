@@ -184,7 +184,8 @@ FACET_COPY: dict[str, dict[str, str]] = {
         "label": "Server says it only reads",
         "detail": (
             "The server that offers this tool labels it read-only. PersonalClaw takes that label"
-            " only from a server you trust on the Tools page."
+            " only from a server you trust on the Tools page, and only for its tools as they were"
+            " when you trusted it: one it adds or changes asks until you review it there."
         ),
     },
     "readOnly": {
