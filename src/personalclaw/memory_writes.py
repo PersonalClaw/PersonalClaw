@@ -124,6 +124,11 @@ _BY_STRICTNESS = ("temporary", UNREADABLE, "incognito", PERSISTENT, _GARBLED, _N
 #: The refusal, in the words the API has always answered a restricted session's write with.
 REFUSAL = "Memory writes are not allowed in this session mode."
 
+#: The codes a refused write is recorded under (:attr:`MemoryWriteRefused.code`): work that derives
+#: from a session that keeps nothing, and an app's work that may not change your memory.
+RESTRICTED_SESSION_BLOCK = "restricted_session_block"
+APP_MEMORY_NOT_GRANTED = "app_memory_not_granted"
+
 
 class MemoryWriteRefused(Exception):
     """A write to long-term memory was refused because the work derives from a session that keeps
@@ -134,6 +139,11 @@ class MemoryWriteRefused(Exception):
         self.reason = reason or REFUSAL
         super().__init__(f"{self.reason} ({what})" if what else self.reason)
         self.what = what
+
+    @property
+    def code(self) -> str:
+        """Why, as the security log and a refused tool call's audit row name it."""
+        return RESTRICTED_SESSION_BLOCK if self.reason == REFUSAL else APP_MEMORY_NOT_GRANTED
 
 
 class OtherModelRefused(RuntimeError):
@@ -500,6 +510,17 @@ def refuse_memory_write(what: str) -> None:
     refused = app_change_refusal()
     if refused:
         raise MemoryWriteRefused(what, reason=refused)
+
+
+def memory_write_refusal(what: str = "") -> MemoryWriteRefused | None:
+    """The refusal a write of ``what`` to your memory would get now (:func:`refuse_memory_write`),
+    or ``None`` when it would be made. Asked by a check made before anything is written: a file
+    tool's or the shell's, before anyone is asked to approve the call."""
+    try:
+        refuse_memory_write(what)
+    except MemoryWriteRefused as refused:
+        return refused
+    return None
 
 
 def written_by(source: str) -> str:

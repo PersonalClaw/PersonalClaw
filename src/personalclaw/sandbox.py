@@ -9,6 +9,10 @@ other SSH files (keys, config, etc.), using platform-native isolation:
   The child retains the real UID so all toolchains work normally.
 - **macOS**: ``sandbox-exec`` with a Seatbelt profile that denies reads
 
+Both also keep what runs as the owner (``owner_only``) unwritable at every level, and, for a
+command started for work that may change none of your memory (an Incognito or Temporary chat's,
+an app's not given your memory), the memory folders too (:func:`_memory_fence`).
+
 The parent PersonalClaw process is completely unaffected — isolation applies
 only to the spawned child.  Falls back gracefully to no sandbox when the
 OS mechanism is unavailable (logged as warning).
@@ -792,6 +796,7 @@ def _build_launcher_script(sandbox_level: str = "strict") -> str:
     owner_home_json = json.dumps(owner_home)
     owner_only_names_json = json.dumps(owner_only_names)
     pinned_json = json.dumps(_pinned_dirs(realpath_only=True, include_home=False))
+    memory_json = json.dumps(_memory_fence(realpath_only=True))
     strict_host_key_opt = (
         " -o StrictHostKeyChecking=accept-new" if _ssh_supports_accept_new() else ""
     )
@@ -827,6 +832,7 @@ HIDE_SSH = {hide_ssh}
 OWNER_HOME = {owner_home_json}
 OWNER_ONLY_NAMES = {owner_only_names_json}
 PINNED = {pinned_json}
+MEMORY_FOLDERS = {memory_json}
 
 # The tmpfs the empty bind sources come from, first usable one wins. Same-fs binds (e.g. /tmp
 # on ext4 over ~/.personalclaw/.env on ext4) can corrupt the target's host directory entry via
@@ -1084,6 +1090,25 @@ def main():
             if libc.mount(None, h, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None) != 0:
                 sys.exit(f"sandbox: could not fence the home: errno {{ctypes.get_errno()}}")
 
+        # Long-term memory, for a command started for work that may change none of it: each
+        # memory folder, made when it is missing, is bound onto itself read-only, so nothing in it
+        # is written, added or removed from in here, and as a mount point it stays where it is (the
+        # folder holding it is an entry at the top of the home, fixed above). One that cannot be
+        # fenced stops the command.
+        for target in MEMORY_FOLDERS:
+            try:
+                os.makedirs(target, mode=0o700, exist_ok=True)
+            except OSError:
+                pass
+            t = target.encode()
+            if (
+                not os.path.isdir(target)
+                or os.path.islink(target)
+                or libc.mount(t, t, None, _MS_BIND | _MS_REC, None) != 0
+                or libc.mount(None, t, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None) != 0
+            ):
+                sys.exit(f"sandbox: could not fence memory: errno {{ctypes.get_errno()}}")
+
         # Scrub sensitive env vars
         for key in list(os.environ):
             for prefix in ENV_PREFIXES:
@@ -1227,6 +1252,16 @@ def _build_seatbelt_profile(sandbox_level: str = "strict") -> str:
     for target, is_dir in _owner_only_targets():
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-write* ({"subpath" if is_dir else "literal"} "{escaped}"))')
+    # Long-term memory, never written from in here by a command started for work that may change
+    # none of it (`_memory_fence`), at any level. The folder that holds the memory folders keeps
+    # its own entry too, as the home does below, so they stay at the paths these rules name.
+    memory = _memory_fence(realpath_only=False)
+    for target in memory:
+        escaped = target.replace('"', '\\"')
+        rules.append(f'(deny file-write* (subpath "{escaped}"))')
+    for target in dict.fromkeys(os.path.dirname(t) for t in memory):
+        escaped = target.replace('"', '\\"')
+        rules.append(f'(deny file-write* (literal "{escaped}"))')
     # The home, and every folder above it the owner could rename, cannot itself be renamed,
     # removed or re-moded from in here: the rules above name paths, and moving the home aside,
     # editing it there and moving it back would otherwise walk every one of them. Entries inside
@@ -1280,6 +1315,23 @@ def _pinned_dirs(*, realpath_only: bool, include_home: bool) -> list[str]:
     ordered = list(dict.fromkeys(p for p in out if include_home or p not in spellings))
     # Outermost first, so a folder is bound before anything inside it.
     return sorted(ordered, key=lambda p: p.count(os.sep))
+
+
+def _memory_fence(*, realpath_only: bool) -> list[str]:
+    """The memory folders a command started now may not write (``memory.memory_folders``: the
+    home's memory documents and every working folder's memory), each in both of its spellings
+    unless *realpath_only*: all of them when the work the command is started for may change none of
+    your memory (``memory_writes.changes_no_memory``: an Incognito or Temporary chat's, an app's
+    not given your memory), none for any other. Asked when the command is wrapped, in its work."""
+    from personalclaw import memory, memory_writes
+
+    if not memory_writes.changes_no_memory():
+        return []
+    out: list[str] = []
+    for folder in memory.memory_folders():
+        real = os.path.realpath(folder)
+        out.extend([real] if realpath_only else [os.path.abspath(folder), real])
+    return list(dict.fromkeys(out))
 
 
 def _owner_only_targets() -> list[tuple[str, bool]]:

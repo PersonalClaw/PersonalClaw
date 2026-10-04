@@ -1347,7 +1347,11 @@ Restricted sessions (temporary/incognito) gate memory reads/writes and lesson
 capture — enforced in the after-turn path, session listing/search, and the
 recall API — and keep nothing in long-term memory by any path: the stores
 refuse every write made for one (`memory_writes.py`, failing closed on a mode it
-cannot read), no background model is given anything of one
+cannot read), the agent's file tools and shell change nothing in the memory
+folders for one (refused before anyone is asked, and kept read-only to its
+commands by the OS sandbox; what that does not cover is
+[limitations §19](../security/limitations.md#19-a-private-chat-is-kept-out-of-the-memory-folders-not-out-of-every-store)),
+no background model is given anything of one
 (`blocks_background_models`), and nothing of one reaches any model but the one
 its turn runs on: not the embedding model, a tool's model, a subagent's, the
 image reader or a fallback (`model_may_read`, asked at every seam that reaches a

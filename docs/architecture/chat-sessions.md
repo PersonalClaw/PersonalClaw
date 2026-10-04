@@ -145,6 +145,24 @@ chat, channel thread, loop worker, webhook, subagent).
     and `MemoryStore._persist` refuses the markdown files. Reads still work, by
     keyword, and leave no mark (no recall counts, access stamps or volunteer
     log). The API answers a refused write `403`.
+  - The markdown memory files are also files in the folder every chat starts in
+    (`<home>/workspace`), so the agent's own tools reach them, and they hold the
+    same line. The memory folders (`memory.memory_folders`: the home's `memory`
+    folder, with preferences.md, projects.md and the daily history, and `_ext`,
+    every working folder's memory) are changed by no tool in work that may
+    change none of your memory (an Incognito or Temporary chat's, an app's not
+    given your memory). `write_file` and `edit_file` refuse the change before
+    anyone is asked to approve it (`file_scope.memory_kept_from_work`, in the
+    one check every file tool makes), in the memory-write refusal's sentence
+    and under its code (`restricted_session_block`, `app_memory_not_granted`),
+    and tell the agent nothing was written. The shell refuses a command that
+    names a path there and does more than read it (`file_scope.memory_named_in`),
+    and the OS sandbox keeps the folders read-only to every command started for
+    such work (`sandbox._memory_fence`), whatever the command says. An ordinary
+    chat's write of a memory document, and the owner's save of one in Files,
+    is the document's store's own write (`memory.write_document`), under the
+    documents' lock and indexed. What this does not hold is in
+    [limitations §19](../security/limitations.md#19-a-private-chat-is-kept-out-of-the-memory-folders-not-out-of-every-store).
   - Nothing of a restricted session reaches a model but the one its turn runs
     on. `model_may_read(ref)` is the one answer to "may this work hand what it
     carries to that model": the turn names its model once its runtime is built

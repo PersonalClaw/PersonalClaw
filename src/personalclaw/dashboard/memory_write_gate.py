@@ -96,11 +96,7 @@ def memory_write_middleware() -> Any:
                     operation=f"{request.method} {request.path}",
                     outcome="denied",
                     source="dashboard",
-                    resources=(
-                        "app_memory_not_granted"
-                        if refused.reason != memory_writes.REFUSAL
-                        else "restricted_session_block"
-                    ),
+                    resources=refused.code,
                     error=refused.what,
                 )
                 return web.json_response({"error": refused.reason}, status=403)

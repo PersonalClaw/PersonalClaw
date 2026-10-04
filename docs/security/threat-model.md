@@ -561,7 +561,11 @@ Data leaving the running system:
   `primary_deliverable` named out of either reads nothing.
 - **Memory privacy** (`session_restrictions.py`, `memory_writes.py`):
   temporary/incognito sessions gate memory reads/writes; the memory, knowledge
-  and vocabulary stores refuse every write made for one, by any path; no
+  and vocabulary stores refuse every write made for one, by any path; the
+  agent's file tools and shell change nothing in the memory folders for one,
+  refused before anyone is asked and fenced read-only by the OS sandbox around
+  its commands (what that leaves open:
+  [limitations §19](limitations.md#19-a-private-chat-is-kept-out-of-the-memory-folders-not-out-of-every-store)); no
   background model (titles, tags, follow-ups, a condensed history, suggestions)
   is given anything of one; and nothing of one reaches any model but the one its
   turn runs on (the embedding model, a tool's or a subagent's model, the image

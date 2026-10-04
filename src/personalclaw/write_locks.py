@@ -1,4 +1,4 @@
-"""The lock a file is written under, for the writers that reach any file.
+"""The lock a file is written under, and how it is written, for the writers that reach any file.
 
 Two kinds of file are read by a task of the gateway that then waits and writes them again:
 HEARTBEAT.md, whose finished tasks a heartbeat pass takes out once its turns end
@@ -12,11 +12,13 @@ read and its write.
 The writers that know the file take its lock where they write it (``heartbeat.hold_queue``,
 ``memory.hold_documents``). The writers that reach any file, the Files editor's save and the
 agent's ``write_file`` and ``edit_file``, take it here: :func:`write_lock` holds the lock its path
-is written under, and nothing for any other path. A file-backed artifact's write-through and a
-restore from the workspace's history write in one step on the event loop, where a heartbeat pass
-and a consolidation write too, so neither lands inside theirs. A command the agent's shell runs,
-or another program, takes no lock; it can meet one of these writers only in the instant that
-writer writes the file, never across the minutes it waits.
+is written under, and nothing for any other path. They write a memory document as its store does
+(:func:`write_text`, ``memory.write_document``): indexed, and refused inside work that may change
+none of your memory. A file-backed artifact's write-through and a restore from the workspace's
+history write in one step on the event loop, where a heartbeat pass and a consolidation write too,
+so neither lands inside theirs. A command the agent's shell runs, or another program, takes no
+lock; it can meet one of these writers only in the instant that writer writes the file, never
+across the minutes it waits.
 """
 
 from __future__ import annotations
@@ -57,3 +59,14 @@ def write_locked(path: Path | str, write: Callable[[], _T]) -> Callable[[], _T]:
             return write()
 
     return locked
+
+
+def write_text(path: Path | str, text: str) -> None:
+    """Write *text* as the whole of *path*, for a writer that reaches any file and holds
+    :func:`write_lock` across its read and this write: a memory document through its store's one
+    write (``memory.write_document``, which raises ``memory_writes.MemoryWriteRefused`` in work
+    that may change none of your memory), any other file in place."""
+    from personalclaw import memory
+
+    if not memory.write_document(path, text):
+        Path(path).write_text(text, encoding="utf-8")

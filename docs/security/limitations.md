@@ -1015,6 +1015,39 @@ MCP server. It is not a network fence around the machine: an automation's comman
 reaches, and an app you do not trust with the network should not be installed where its code runs
 as you (§7).
 
+## 19. A private chat is kept out of the memory folders, not out of every store
+
+In an Incognito or Temporary chat, and in the work of an app you did not give your memory, the agent
+changes nothing in the memory folders: `workspace/memory` in the home (preferences.md, projects.md
+and the daily history) and `workspace/_ext` (each working folder's memory, its documents and its
+database).
+
+- `write_file` and `edit_file` refuse the change before you are asked to approve it, and tell the
+  agent nothing was written and why.
+- The agent's shell refuses a command that names a path there and does more than read it, before
+  you are asked.
+- The OS sandbox keeps those folders read-only to every command started for such work, whatever its
+  text says: the native agent's shell, and an agent CLI started for that chat.
+
+What this does not hold:
+
+- **Where no OS sandbox runs.** With the sandbox off, or on a system that offers none, only the
+  reading of the command's text holds, and a path a command builds while it runs is not seen.
+- **An agent CLI that was already running.** A CLI that serves several chats on one process is
+  fenced or not by the chat it was started for, and one the session warm pool starts ahead of any
+  chat is not fenced. In a private chat on such a process, the CLI's own file and shell tools are
+  not held, and a tool it runs without asking first is screened by nothing (§1, §11).
+- **PersonalClaw's databases.** A command that opens one itself is not fenced: `memory.db` at the
+  top of the home is not refused either, and the knowledge library's and the vocabulary's are
+  refused only by their names in the command's text (§13 explains why a text screen is not a
+  fence). The stores refuse a change only when it is made through PersonalClaw.
+- **A two-way vault.** With the memory or knowledge vault set to two-way, a page a command edits is
+  read back into memory or knowledge by the next sync, as your edit.
+
+**What this means for you:** a private chat's agent cannot save to your memory by writing its files.
+Keep the sandbox on, run private chats on the native agent or on an agent CLI that runs one chat per
+process, and keep the vaults one-way if a private chat's commands could reach them.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -1035,6 +1068,9 @@ programs a run may start, enforced by its sandbox rather than read from the comm
 enforced by the OS rather than read from a command line, for #16; reading the whole of a long
 text a reader makes of a document, and an archive's files one by one as an import writes them
 out, for #17; a network fence, enforced by the OS, around an automation's commands, an app's own
-requests and an MCP server's program, for #18). This page will shrink as those land.
+requests and an MCP server's program, for #18; the same fence around every store of long-term
+memory a private chat's commands could reach, an agent CLI's process kept to one private chat, and
+a vault that reads back no edit made by such a chat's commands, for #19). This page will shrink as
+those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

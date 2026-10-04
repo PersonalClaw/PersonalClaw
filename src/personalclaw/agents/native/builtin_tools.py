@@ -39,7 +39,7 @@ from personalclaw.agents.native.project_run_tool_defs import project_run_tool_de
 from personalclaw.agents.native.smart_case import LineQuery, glob_case_sensitive
 from personalclaw.agents.native.task_tool_defs import task_tool_definitions, task_write_fields
 from personalclaw.doc_parser import DOC_EXTENSIONS, extract_text, text_for_model
-from personalclaw.file_scope import FileScope, OutOfScope, pattern_refusal
+from personalclaw.file_scope import FileScope, OutOfScope, memory_named_in, pattern_refusal
 from personalclaw.file_scope import refusal as scope_refusal
 from personalclaw.file_scope import store_named_in
 from personalclaw.file_view import BINARY_SNIFF_BYTES, is_binary
@@ -63,7 +63,7 @@ from personalclaw.tool_providers.base import (
     ToolResult,
 )
 from personalclaw.tool_providers.projection import project_and_retain, project_output
-from personalclaw.write_locks import write_locked
+from personalclaw.write_locks import write_locked, write_text
 
 logger = logging.getLogger(__name__)
 
@@ -897,7 +897,7 @@ class NativeBuiltinToolProvider(ToolProvider):
         """
         if isinstance(exc, OutOfScope):
             return _refused_by(
-                tool_name, "file_scope", str(exc), str(exc), [exc.hint] if exc.hint else []
+                tool_name, exc.control, str(exc), str(exc), [exc.hint] if exc.hint else []
             )
         error, hints = f"{type(exc).__name__}: {exc}", []
         if isinstance(exc, ValueError):  # an argument error → surface to model
@@ -1151,11 +1151,11 @@ class NativeBuiltinToolProvider(ToolProvider):
                 except MaskConflict as refused:
                     return f"mask: {refused}"
             parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(written, encoding="utf-8")
+            write_text(path, written)
             return None
 
         # HEARTBEAT.md and the memory documents are rewritten by the gateway too (a heartbeat pass,
-        # a consolidation): every writer of them holds their lock (`write_locks.write_lock`).
+        # a consolidation): every writer holds their lock, and a document is its store's write.
         err = await asyncio.get_event_loop().run_in_executor(None, write_locked(path, _write))
         if err and err.startswith("mask: "):
             return ToolResult(success=False, error=err.removeprefix("mask: "))
@@ -1227,14 +1227,14 @@ class NativeBuiltinToolProvider(ToolProvider):
             if count > 1 and not replace_all:
                 return False, f"old_str matched {count} times (not unique)"
             n = count if replace_all else 1
-            path.write_text(edited, encoding="utf-8")
+            write_text(path, edited)
             return True, (
                 f"Edited {a['path']} ({n} replacement{'s' if n != 1 else ''})"
                 + _marker_note(new, edited, text)
             )
 
         # HEARTBEAT.md and the memory documents are rewritten by the gateway too (a heartbeat pass,
-        # a consolidation): every writer of them holds their lock (`write_locks.write_lock`).
+        # a consolidation): every writer holds their lock, and a document is its store's write.
         ok, msg = await asyncio.get_event_loop().run_in_executor(None, write_locked(path, _edit))
         if ok:
             return ToolResult(success=True, output=msg)
@@ -1550,6 +1550,10 @@ class NativeBuiltinToolProvider(ToolProvider):
         if (held := check_command(command, session_key=self._session_key, written=written)).blocked:
             said = security.redact_known_values(held.refusal(), handed)
             return _refused_by("bash", "action_denylist", said, held.matched)
+        # Long-term memory, which work that may change none of it does not (`memory_named_in`).
+        if (kept := memory_named_in(command, cwd=self._cwd)) is not None:
+            said = security.redact_known_values(str(kept), handed)
+            return _refused_by("bash", kept.control, said, said, [kept.hint])
         if (denied := security.denied_command(command)) is not None:
             return _refused_by(
                 "bash",

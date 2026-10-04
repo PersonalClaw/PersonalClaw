@@ -43,6 +43,15 @@ the store. So the file tools refuse them and their listings leave them out
 (:meth:`FileScope.own_store`), and a shell command that names one is refused before it is approved
 (:func:`store_named_in`), with the tool to use instead.
 
+**Long-term memory is changed only by work that may change it.** The memory folders in the
+workspace (the home's preferences.md, projects.md and daily history, and every working folder's
+memory: ``memory.memory_folders``) are files the tools read and, with approval, change, and a
+change to a memory document is its store's own write (``memory.write_document``). Work that may
+change none of your memory, an Incognito or Temporary chat's or an app's not given your memory,
+changes nothing there: the file tools refuse it with the memory-write refusal, before anyone is
+asked (:func:`memory_kept_from_work`), and so does the shell for a command that names a path there
+and does more than read it (:func:`memory_named_in`), whose sandbox keeps the folders read-only.
+
 Inside every place the checks the Files view makes still hold (``file_roots.Admission``):
 symlinks and ``..`` are resolved first, so a link or a climb out of a place reaches nothing it
 does not already reach; no credential location or secret file; and nothing in PersonalClaw's own
@@ -99,11 +108,14 @@ _REACH_HINT = (
 
 
 class OutOfScope(ValueError):
-    """A path the file tools do not reach: the sentence saying why, and a hint saying what would."""
+    """A path the file tools do not reach: the sentence saying why, a hint saying what would, and
+    the control that refused it, as the call's audit row names it: ``file_scope``, or the code of
+    the memory-write refusal for a change to long-term memory (:func:`memory_kept_from_work`)."""
 
-    def __init__(self, message: str, hint: str = "") -> None:
+    def __init__(self, message: str, hint: str = "", *, control: str = "file_scope") -> None:
         super().__init__(message)
         self.hint = hint
+        self.control = control
 
 
 @dataclass(frozen=True)
@@ -329,6 +341,8 @@ class FileScope:
         store = self.own_store(real)
         if store is not None:
             raise OutOfScope(*_store_refusal(f"path {raw!r}", store))
+        if change and (kept := memory_kept_from_work(f"path {raw!r}", real)) is not None:
+            raise kept
         if not any(p.takes(real) for p in places):
             raise _not_shared(raw, real, places[0])
         return real
@@ -485,6 +499,62 @@ def store_named_in(command: str, *, cwd: str | os.PathLike | None = None) -> str
             sentence, hint = _store_refusal(repr(word), entry)
             return f"Blocked: {sentence}. {hint}"
     return ""
+
+
+#: What the agent is told to do about a change to long-term memory its work may not make.
+_MEMORY_KEPT_HINT = (
+    "Nothing was written. Tell the user it was not saved, and why; do not try to save it "
+    "another way."
+)
+
+
+def memory_kept_from_work(subject: str, real: str | os.PathLike[str]) -> OutOfScope | None:
+    """Why the current work may not change *real*, the path *subject* names, or ``None``.
+
+    *real* is in long-term memory (``memory.in_memory_folders``: the home's memory folder, or a
+    working folder's memory) and the work may change none of it (``memory_writes``: an Incognito
+    or Temporary chat's, an app's not given your memory). Refused in the memory-write refusal's own
+    sentence and under its code, so the call is recorded as that refusal."""
+    from personalclaw import memory
+
+    return _memory_kept(subject) if memory.in_memory_folders(real) else None
+
+
+def _memory_kept(subject: str) -> OutOfScope | None:
+    """The refusal a change to long-term memory, which *subject* names, gets in the current work,
+    or ``None`` when the work may make it."""
+    from personalclaw import memory_writes
+
+    refused = memory_writes.memory_write_refusal()
+    if refused is None:
+        return None
+    return OutOfScope(
+        f"{subject} is part of long-term memory. {refused.reason}",
+        _MEMORY_KEPT_HINT,
+        control=refused.code,
+    )
+
+
+def memory_named_in(
+    command: str, *, cwd: str | os.PathLike[str] | None = None
+) -> OutOfScope | None:
+    """Why a shell *command* that would change long-term memory is refused in work that may change
+    none of it (:func:`memory_kept_from_work`), or ``None``. A command that only reads
+    (``task_modes.is_read_only_bash``) runs: an Incognito chat reads its memory.
+
+    Every path the command names is read as its shell would find it (``command_paths.named_paths``,
+    from *cwd*). Defence in depth, which says why before anyone is asked: the sandbox keeps the
+    memory folders read-only to such work's commands whatever their text says (``sandbox``)."""
+    from personalclaw import memory, memory_writes
+    from personalclaw.command_paths import named_paths
+    from personalclaw.task_modes import is_read_only_bash
+
+    if memory_writes.memory_write_refusal() is None or is_read_only_bash(command):
+        return None
+    for word, path in named_paths(command, cwd=cwd):
+        if memory.in_memory_folders(path):
+            return _memory_kept(f"Blocked: {word!r}")
+    return None
 
 
 def pattern_refusal(arg: str, pattern: str) -> OutOfScope | None:

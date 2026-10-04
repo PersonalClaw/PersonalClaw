@@ -21,6 +21,13 @@ written over it from the copy it read (:meth:`MemoryStore.rewrite`, :func:`apply
 and every writer of the documents and of the daily history reads and writes them under one lock
 (:func:`hold_documents`), so none lands between another's read and its write.
 
+**Every change to a document is the store's own write** (:meth:`MemoryStore._persist`): indexed,
+and refused inside work that may change none of your memory, an Incognito or Temporary chat's or
+an app's not given your memory (``memory_writes``). The writers that reach any file, the agent's
+file tools and the Files editor's save, write a document through it too (:func:`write_document`),
+and the agent's tools change nothing else in the memory folders for such work either
+(:func:`memory_folders`: ``file_scope`` refuses the call, the sandbox keeps them read-only).
+
 **Each day of the daily history is its own file.** A consolidation appends its entry to today's;
 the owner reads and saves one day at a time (:meth:`MemoryStore.read_history_day`,
 :meth:`MemoryStore.write_history_day`), so a save of one day changes no other. The recent days read
@@ -129,6 +136,64 @@ def is_document(path: Path | str) -> bool:
         and real.parent.name == HISTORY_DIR_NAME
         and real.parent.parent.name == MEMORY_DIR_NAME
     )
+
+
+def memory_folders() -> tuple[Path, Path]:
+    """The folders long-term memory keeps its files in, in the home's ``workspace``
+    (``config.loader.memory_root``): the ``memory`` folder of the home's own preferences.md,
+    projects.md and daily history, and the folder every working folder's memory is kept in, its
+    documents and its database (``config.loader.memory_dir_for_cwd``). Worked out, never made."""
+    return (
+        config_loader.memory_root() / MEMORY_DIR_NAME,
+        config_loader.memory_dir_for_cwd(None).parent,
+    )
+
+
+def in_memory_folders(path: "str | os.PathLike[str]") -> bool:
+    """Whether *path*, once links and ``..`` are resolved, is one of the memory folders
+    (:func:`memory_folders`) or lies inside one, so that a change to it changes long-term memory."""
+    real = os.path.realpath(path)
+    tops = (os.path.realpath(folder) for folder in memory_folders())
+    return any(real == top or real.startswith(top + os.sep) for top in tops)
+
+
+def write_document(path: Path | str, content: str) -> bool:
+    """Write *content* as the memory document *path* names through its store's one write of a
+    memory file (:meth:`MemoryStore._persist`), which refuses it inside work that may change none
+    of your memory and indexes it. False, writing nothing, for a path no store keeps a document at:
+    its writer writes it as any other file.
+
+    For the writers that reach any file, the agent's ``write_file`` and ``edit_file`` and the Files
+    editor's save, which hold the documents' lock across their read and this write
+    (``write_locks``). A document is a preferences.md, a projects.md or a ``.md`` file in the daily
+    history of the home's memory or a working folder's (:func:`memory_folders`), named directly or
+    through a link, and it is written at the path its store names it by, the one its index uses.
+    """
+    real = Path(os.path.realpath(path))
+    home_memory, partitions = memory_folders()
+    if (name := _document_in(real, home_memory)) is not None:
+        store = MemoryStore()
+    else:
+        try:
+            partition = partitions / real.relative_to(os.path.realpath(partitions)).parts[0]
+        except (ValueError, IndexError):
+            return False
+        if (name := _document_in(real, partition / MEMORY_DIR_NAME)) is None:
+            return False
+        store = MemoryStore(workspace=partition)
+    store._persist(store._memory_dir / name, content)
+    return True
+
+
+def _document_in(real: Path, memory: Path) -> Path | None:
+    """Where the resolved path *real* is in the memory folder *memory*, when it is one of that
+    folder's documents: its preferences.md or projects.md, or a ``.md`` file of its history."""
+    folder = Path(os.path.realpath(memory))
+    if real.parent == folder and real.name in (PREFERENCES_FILE, PROJECTS_FILE):
+        return Path(real.name)
+    if real.parent == folder / HISTORY_DIR_NAME and real.suffix == ".md":
+        return Path(HISTORY_DIR_NAME, real.name)
+    return None
 
 
 #: How the daily history names a day: its file is ``history/<YYYY-MM-DD>.md``.

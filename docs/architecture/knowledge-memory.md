@@ -631,6 +631,15 @@ item vector).
     command the agent's shell runs, or another program, takes no lock: it can meet a
     consolidation only in the instant the consolidation writes, never across its model
     call.
+  - **A writer that reaches any file writes a document as its store does.** The agent's
+    `write_file` and `edit_file` and the Files editor's save write a memory document
+    through `MemoryStore._persist` (`memory.write_document`, for preferences.md,
+    projects.md and a history file of the home's memory or a working folder's), so it
+    is indexed at once and refused where every memory write is. Work that may change
+    none of your memory changes nothing in the memory folders at all: the file tools
+    and the shell refuse it before anyone is asked, and the sandbox keeps the folders
+    read-only to its commands (see
+    [chat-sessions.md](chat-sessions.md#session-model)).
 - **`memory_record.py`** — the typed `MemoryRecord` with a `kind`
   discriminator, the one shape the subsystem speaks. The key taxonomy is
   prefix-based: `pref.*` / `project.*` keys are semantic facts; `lesson.*`

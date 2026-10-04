@@ -1584,9 +1584,6 @@ async def api_file_write(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
 
-    if not isinstance(body, dict):
-        return web.json_response({"error": "invalid JSON body"}, status=400)
-
     try:
         # `content` as sent: an absent one is refused as absent, never read as "" first.
         validate_tool_args(
@@ -1619,6 +1616,7 @@ async def api_file_write(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": "not found"}, status=404)
     try:
+        from personalclaw import memory
         from personalclaw.write_locks import write_lock
 
         # 🔴 A PAGE'S COPY IS SAVED ONLY OVER THE FILE IT WAS BUILT FROM. Read, compared and
@@ -1644,21 +1642,23 @@ async def api_file_write(request: web.Request) -> web.Response:
             content = keep_masked_spans(
                 str(body["content"]), head.decode("utf-8", errors="replace")
             )
-            tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path))
-            try:
+            # A memory document is its store's write, indexed (`memory.write_document`).
+            if not memory.write_document(path, content):
+                tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(path))
                 try:
-                    shutil.copymode(path, tmp_path)
-                except OSError:
-                    pass
-                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-                    f.write(content)
-                os.replace(tmp_path, path)
-            except Exception:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
+                    try:
+                        shutil.copymode(path, tmp_path)
+                    except OSError:
+                        pass
+                    with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    os.replace(tmp_path, path)
+                except Exception:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
         _sel().log_tool_invocation(
             session_key="dashboard", tool_name="file_write", outcome="success", resources=path
         )
