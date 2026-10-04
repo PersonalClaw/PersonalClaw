@@ -1,4 +1,4 @@
-"""Per-task browser-grant flow — BA-9 (plan §(c): per-task authorization IS the security control).
+"""Per-task browser-grant flow: per-task authorization IS the security control.
 
 The ``user_browser`` target drives the operator's OWN, already-logged-in browser, so its
 authorization is NOT the earned-autonomy ladder (which governs unattended trust) but a fresh,
@@ -9,15 +9,24 @@ end to end:
   :class:`~personalclaw.agents.native.approval.ApprovalGate`. No answer in :data:`GRANT_TIMEOUT`
   → REJECT; a gate that is absent, or that raises, → REJECT. It NEVER fails open: a
   ``user_browser`` run that cannot prove a human authorized it does not touch the browser.
-* :func:`task_group_name` — the run's tabs live in a group named after the task, so the human sees
-  WHAT they authorized and can click in to take over. Core owns only the NAME and the close
-  CONTRACT; the tabs and the ``close`` verb live in the extension (apps repo).
-* :func:`make_close_check` — closing that tab group is a HARD STOP, OBSERVED not requested. The
-  extension turns a close into a connector disconnect (or a re-attach as a different session);
-  this returns ``(True, reason)`` the moment the live connector is no longer the one the grant was
-  bound to, so :func:`~personalclaw.browse.loop.run_browse_loop` parks within one step — the same
-  per-step seam the kill switch uses. **Distinct from** :mod:`personalclaw.browse.killswitch`:
-  that flag stops ALL unattended browse; this ends ONE attended run when its own tab closes.
+* :func:`open_run_tab` — a granted run works only in a tab it opened for itself. It asks the
+  connected browser for one (:func:`personalclaw.browse.target.request_run_tab`); the extension
+  opens a new BACKGROUND tab in a group named by :func:`task_group_name` (a window of its own in a
+  browser without tab groups) and announces that tab's own page target, and the grant is bound to
+  it. No tab within :data:`~personalclaw.browse.target.RUN_TAB_TIMEOUT` is a refusal
+  (:func:`no_run_tab_error`): the run never falls back to a tab the operator already has open.
+* :func:`task_group_name` — the run's tab lives in a group named after the task, so the human sees
+  WHAT they authorized. Core owns only the NAME and the close CONTRACT; the tab and the ``close``
+  verb live in the extension (apps repo).
+* :func:`make_close_check` — closing that group (or the run's window, or its tab) is a HARD STOP,
+  OBSERVED not requested: the extension reports it, and this returns ``(True, reason)`` from the
+  next step, as it does when the browser disconnects or the run's tab names any page target but
+  the one the grant was bound to — so :func:`~personalclaw.browse.loop.run_browse_loop` parks within
+  one step, the same per-step seam the kill switch uses. **Distinct from**
+  :mod:`personalclaw.browse.killswitch`: that flag stops ALL unattended browse; this ends ONE
+  attended run when its own tab closes.
+* :func:`make_takeover_check` — the operator bringing the run's tab to the front is a TAKE-OVER:
+  the run pauses there, and says so, rather than typing into a page a person is now using.
 * SEL audit — ``browser_grant`` when the grant is REQUESTED and again when it resolves,
   ``browser_revoked`` at run-end / close / kill. The row carries the task label, the site scope
   (hostnames), and a reason ONLY; NEVER a credential, cookie, or session token (§5.2's
@@ -55,7 +64,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
 from personalclaw.agents.native.approval import APPROVE, REJECT, ApprovalGate
@@ -165,8 +174,8 @@ def scope_for_url(url: str) -> tuple[str, ...]:
 
 
 def task_group_name(task: str) -> str:
-    """The tab-group name the run's tabs live under — named after the task so the human can see what
-    they authorized (plan §(c).3). Collapsed whitespace, trimmed to a short scannable label."""
+    """The tab-group name the run's tab lives under — named after the task so the human can see what
+    they authorized. Collapsed whitespace, trimmed to a short scannable label."""
     label = " ".join((task or "").split())
     if len(label) > 80:
         label = label[:79] + "…"
@@ -188,9 +197,12 @@ class BrowserGrant:
     #: ``granted_at is not None``, never a numeric floor.
     granted_at: float | None = None
     reason: str = ""
-    #: The connector identity the grant is bound to, captured at grant time so close-to-kill can
-    #: tell "the tab the user authorized" from a later re-attach. Empty for a rejected grant.
+    #: The paired device the grant was given for, captured at grant time so close-to-kill can tell
+    #: the browser the user authorized from a later attach by another one. Empty when rejected.
     bound_device_id: str = ""
+    #: The run's own tab (:func:`open_run_tab`): core's id for it, and its page target — the ONLY
+    #: page the run drives. Both empty until the browser has opened that tab.
+    bound_tab: str = ""
     bound_cdp_url: str = ""
 
 
@@ -202,7 +214,6 @@ async def request_grant(
     request_id: str | None = None,
     timeout: float = GRANT_TIMEOUT,
     bound_device_id: str = "",
-    bound_cdp_url: str = "",
 ) -> BrowserGrant:
     """Ask a human to authorize ONE ``user_browser`` task — fail-closed.
 
@@ -282,7 +293,6 @@ async def request_grant(
         granted_at=time.monotonic() if granted else None,
         reason="" if granted else reason,
         bound_device_id=bound_device_id if granted else "",
-        bound_cdp_url=bound_cdp_url if granted else "",
     )
     _audit(
         SEL_OP_GRANT,
@@ -305,35 +315,118 @@ def revoke_grant(grant: BrowserGrant, *, reason: str) -> None:
     _audit(SEL_OP_REVOKE, _OUTCOME_REVOKED, task=grant.group_name, scope=grant.scope, reason=reason)
 
 
-def make_close_check(grant: BrowserGrant, *, status_reader=None):
-    """A per-step "has the user closed this task's tab group?" check for the browse loop.
+async def open_run_tab(grant: BrowserGrant, *, timeout: float | None = None) -> BrowserGrant:
+    """Have the operator's browser open the run's OWN tab, and bind the grant to it.
 
-    Bound to the connector the grant was authorized against. Closing the task tab group is a HARD
-    STOP the extension turns into a connector disconnect (or a re-attach as a different session);
-    this returns ``(True, reason)`` as soon as the live connector is no longer the one the grant
-    bound to, so :func:`~personalclaw.browse.loop.run_browse_loop` parks within one step. Reads the
-    live connector through :func:`~personalclaw.browse.target.connector_status`; ``status_reader``
-    injects one for tests.
+    Returns the grant with ``bound_tab`` and ``bound_cdp_url`` set to the tab the browser opened
+    for this run. Returned UNBOUND, with a ``reason`` saying why, when no tab of the run's own came
+    to be: the browser was gone, it said it could not open one, the person closed it first, or it
+    did not answer within ``timeout`` (:data:`~personalclaw.browse.target.RUN_TAB_TIMEOUT`). An
+    unbound grant is a refusal (:func:`no_run_tab_error`); there is no path from here to a page
+    the operator already had open.
     """
-    from personalclaw.browse.target import connector_status
+    from personalclaw.browse.target import (
+        RUN_TAB_TIMEOUT,
+        TAB_CLOSED,
+        TAB_OPEN,
+        TAB_REQUESTED,
+        release_run_tab,
+        request_run_tab,
+        wait_for_run_tab,
+    )
+
+    gone = "the browser disconnected before it could open the task's tab"
+    if not grant.granted:
+        return grant
+    tab = request_run_tab(group=grant.group_name, device_id=grant.bound_device_id)
+    if tab is None:
+        return replace(grant, reason=gone)
+    wait = RUN_TAB_TIMEOUT if timeout is None else timeout
+    answered = await wait_for_run_tab(tab.request_id, timeout=wait)
+    if answered is not None and answered.state == TAB_OPEN and answered.cdp_url:
+        return replace(grant, bound_tab=answered.request_id, bound_cdp_url=answered.cdp_url)
+    release_run_tab(tab.request_id)
+    if answered is None:
+        reason = gone
+    elif answered.state == TAB_REQUESTED:
+        reason = f"your browser did not open a tab for the task within {int(wait)}s"
+    elif answered.state == TAB_CLOSED:
+        reason = "the task's tab was closed before the task could start"
+    else:
+        reason = "your browser could not open a tab of the task's own"
+    return replace(grant, reason=reason)
+
+
+def _read_run_tab(request_id: str):
+    from personalclaw.browse.target import run_tab
+
+    return run_tab(request_id)
+
+
+def make_close_check(grant: BrowserGrant, *, status_reader=None, tab_reader=None):
+    """A per-step "has this run lost its own tab?" check for the browse loop.
+
+    Bound to the browser the grant was given for and to the run's own tab (:func:`open_run_tab`).
+    Returns ``(True, reason)`` as soon as the browser disconnects or is replaced by another device,
+    the person closes the run's tab (its group, or its window), or that tab names any page target
+    but the one the grant was bound to — so :func:`~personalclaw.browse.loop.run_browse_loop` parks
+    within one step. Each ``reason`` is a clause the parked run's sentence ends with ("Browse
+    stopped because …"), so it says what happened. Reads the live connector through
+    :func:`~personalclaw.browse.target.connector_status` and the tab through
+    :func:`~personalclaw.browse.target.run_tab`; ``status_reader`` and ``tab_reader`` inject
+    them for tests.
+    """
+    from personalclaw.browse.target import TAB_CLOSED, connector_status
 
     read = status_reader or connector_status
+    read_tab = tab_reader or _read_run_tab
 
     def _check() -> tuple[bool, str]:
         try:
             st = read()
+            tab = read_tab(grant.bound_tab)
         except Exception:
             # Fail TOWARD stop: if we cannot confirm the authorized tab is still open, end the run
             # rather than keep driving a browser we can no longer see. The OPPOSITE of the kill
             # switch's fail-open default, on purpose — this control guards a live logged-in session.
             logger.debug("browse grant: connector unreadable → close-to-kill", exc_info=True)
-            return True, "the browser connection could not be read; ending the run"
+            return True, "the browser connection could not be read"
         if not getattr(st, "connected", False):
-            return True, "the task tab group was closed"
-        if grant.bound_cdp_url and getattr(st, "cdp_url", "") != grant.bound_cdp_url:
-            return True, "the browser was reconnected as a different session"
+            # The status says which "no" it is: no browser attached, or the switch turned off.
+            return True, getattr(st, "reason", "") or "the browser disconnected"
         if grant.bound_device_id and getattr(st, "device_id", "") != grant.bound_device_id:
             return True, "the browser was reconnected as a different device"
+        if tab is None:
+            return True, "the browser no longer holds the task's tab"
+        if getattr(tab, "state", "") == TAB_CLOSED:
+            return True, "you closed the task's tab"
+        if not grant.bound_cdp_url or getattr(tab, "cdp_url", "") != grant.bound_cdp_url:
+            return True, "the task's tab no longer names the page the grant was bound to"
+        return False, ""
+
+    return _check
+
+
+def make_takeover_check(grant: BrowserGrant, *, tab_reader=None):
+    """A per-step "has the person taken over this run's tab?" check for the browse loop.
+
+    ``(True, reason)`` once the operator has brought the run's own tab to the front: the run then
+    pauses (parks) before its next model call instead of acting in a page a person is using. An
+    unreadable tab reads as no take-over HERE because :func:`make_close_check`, which the loop
+    consults first, already fails toward stop on the same read.
+    """
+    from personalclaw.browse.target import TAB_TAKEN_OVER
+
+    read_tab = tab_reader or _read_run_tab
+
+    def _check() -> tuple[bool, str]:
+        try:
+            tab = read_tab(grant.bound_tab)
+        except Exception:
+            logger.debug("browse grant: run tab unreadable for the take-over check", exc_info=True)
+            return False, ""
+        if tab is not None and getattr(tab, "state", "") == TAB_TAKEN_OVER:
+            return True, "you brought the task's tab to the front"
         return False, ""
 
     return _check
@@ -353,6 +446,24 @@ def grant_denied_error(grant: BrowserGrant) -> AgentError:
             "run the task again and answer the browser-control prompt in the dashboard's Browse "
             "live view — it names the sites the task will touch; a grant left unanswered for 5 "
             "minutes is refused"
+        ),
+    )
+
+
+def no_run_tab_error(grant: BrowserGrant) -> AgentError:
+    """The typed WHAT/WHY/FIX when a granted ``user_browser`` task got no tab of its own — refused,
+    and NOT started: it never falls back to a tab the operator already has open."""
+    said = f"{grant.reason}; " if grant.reason else ""
+    return AgentError(
+        code="ERR_BROWSE_RUN_TAB_UNAVAILABLE",
+        what="the browse task did not start, because your browser opened no tab of its own for it",
+        why=(
+            f"{said}a task in your own browser works only in a tab it opens for itself, never in "
+            "one you already have open"
+        ),
+        fix=(
+            "check that the PersonalClaw extension is connected in your browser and may open tabs, "
+            "then run the task again"
         ),
     )
 

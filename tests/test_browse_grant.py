@@ -144,9 +144,13 @@ def test_revoke_emits_browser_revoked(monkeypatch) -> None:
 # ── close-to-kill ───────────────────────────────────────────────────────────────
 
 
-def test_close_check_observes_disconnect() -> None:
-    """make_close_check closes when the bound connector is gone / re-attached; fails toward stop."""
-    g = grant.BrowserGrant(
+RUN_TAB_PAGE = "ws://127.0.0.1:9222/devtools/page/RUNSOWNTAB"
+OWNER_PAGE = "ws://127.0.0.1:9222/devtools/page/OWNERSPAGE"
+
+
+def _bound_grant(**overrides) -> grant.BrowserGrant:
+    """A granted grant bound to device ``dev1`` and to the run's own tab ``t1``."""
+    fields = dict(
         task="t",
         scope=(),
         group_name="t",
@@ -154,30 +158,69 @@ def test_close_check_observes_disconnect() -> None:
         granted=True,
         granted_at=1.0,
         bound_device_id="dev1",
-        bound_cdp_url="ws://127.0.0.1:9222/devtools/page/A",
+        bound_tab="t1",
+        bound_cdp_url=RUN_TAB_PAGE,
     )
+    fields.update(overrides)
+    return grant.BrowserGrant(**fields)
 
-    class _St:
-        def __init__(
-            self, connected, device_id="dev1", cdp_url="ws://127.0.0.1:9222/devtools/page/A"
-        ):
-            self.connected = connected
-            self.device_id = device_id
-            self.cdp_url = cdp_url
 
-    assert grant.make_close_check(g, status_reader=lambda: _St(True))() == (False, "")
-    assert grant.make_close_check(g, status_reader=lambda: _St(False))()[0] is True
-    assert (
-        grant.make_close_check(
-            g, status_reader=lambda: _St(True, cdp_url="ws://127.0.0.1:9222/devtools/page/B")
-        )()[0]
-        is True
-    )
+class _St:
+    def __init__(self, connected: bool, device_id: str = "dev1") -> None:
+        self.connected = connected
+        self.device_id = device_id
+
+
+def _tab(state: str = "open", cdp_url: str = RUN_TAB_PAGE):
+    from personalclaw.browse.target import RunTab
+
+    return RunTab(request_id="t1", device_id="dev1", group="t", state=state, cdp_url=cdp_url)
+
+
+def test_close_check_observes_the_run_losing_its_own_tab() -> None:
+    """The close check stops the run when the browser disconnects or is replaced, when the run's
+    own tab is closed or forgotten, and when that tab names any page but the bound one; it fails
+    toward stop when nothing can be read."""
+    g = _bound_grant()
+
+    def check(status=_St(True), tab=_tab()):
+        return grant.make_close_check(g, status_reader=lambda: status, tab_reader=lambda _id: tab)()
+
+    assert check() == (False, "")
+    assert check(status=_St(False)) == (True, "the browser disconnected")
+    assert check(status=_St(True, device_id="dev2"))[0] is True
+    assert check(tab=None) == (True, "the browser no longer holds the task's tab")
+    assert check(tab=_tab(state="closed")) == (True, "you closed the task's tab")
+    assert check(tab=_tab(state="taken_over")) == (False, ""), "a take-over pauses; it is no stop"
 
     def _boom():
         raise RuntimeError("cannot read connector")
 
-    assert grant.make_close_check(g, status_reader=_boom)()[0] is True  # fail toward STOP
+    stopped = grant.make_close_check(g, status_reader=_boom, tab_reader=lambda _id: _tab())()
+    assert stopped[0] is True  # fail toward STOP
+
+
+def test_a_grant_bound_to_the_runs_tab_refuses_a_different_target() -> None:
+    """THE binding. The grant names the run's own tab and that tab's page target; a tab that names
+    any other page (the one the owner is looking at, say) is not the tab the owner allowed, so the
+    run stops at the next step. And the endpoint the run connects to is the bound one, whatever
+    the action's config or the browser's other pages say."""
+    from personalclaw.browse import target as bt
+
+    g = _bound_grant()
+    elsewhere = grant.make_close_check(
+        g, status_reader=lambda: _St(True), tab_reader=lambda _id: _tab(cdp_url=OWNER_PAGE)
+    )()
+    assert elsewhere == (True, "the task's tab no longer names the page the grant was bound to")
+    unbound = grant.make_close_check(
+        _bound_grant(bound_cdp_url=""),
+        status_reader=lambda: _St(True),
+        tab_reader=lambda _id: _tab(),
+    )()
+    assert unbound[0] is True, "a grant with no tab of its own may drive nothing"
+    assert bt.resolve_cdp_url(bt.TARGET_USER_BROWSER, {"cdp_url": OWNER_PAGE}, grant=g) == (
+        RUN_TAB_PAGE
+    )
 
 
 def test_close_to_kill_ends_run_in_one_step() -> None:
@@ -213,6 +256,27 @@ def test_close_to_kill_ends_run_in_one_step() -> None:
     assert result.park_reason == PARK_TAB_CLOSED
 
 
+def _the_browser_opens_each_run_a_tab(monkeypatch, page: str = RUN_TAB_PAGE) -> list[str]:
+    """The extension answering every run's request for a tab at once, as a live one does on its
+    next poll: it opens the tab and announces that tab's page target. Returns the run-tab ids
+    answered. The real request / wait / bind path stays in play; only the browser is stood in for.
+    """
+    from personalclaw.browse import target as bt
+
+    real = bt.request_run_tab
+    answered: list[str] = []
+
+    def _request(*, group: str, device_id: str):
+        tab = real(group=group, device_id=device_id)
+        if tab is not None:
+            bt.announce_run_tab(device_id=device_id, request_id=tab.request_id, cdp_url=page)
+            answered.append(tab.request_id)
+        return tab
+
+    monkeypatch.setattr(bt, "request_run_tab", _request)
+    return answered
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # The revoke closes the trail on EVERY exit
 # ══════════════════════════════════════════════════════════════════════════════
@@ -233,7 +297,8 @@ class TestAnApprovedGrantIsAlwaysRevoked:
         cfg = AppConfig(browse=BrowseConfig(user_browser_enabled=True))
         monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls: cfg))
         bt.clear_connector()
-        bt.register_connector(device_id="dev-ba9", cdp_url="ws://127.0.0.1:9222/devtools/page/X")
+        bt.register_connector(device_id="dev-grant")
+        _the_browser_opens_each_run_a_tab(monkeypatch)
         yield
         bt.clear_connector()
 
@@ -683,3 +748,314 @@ class TestTheGrantRoutes:
         }
         assert ("POST", "/api/browse/grants/{request_id}/{action}") in registered
         assert ("GET", "/api/browse/status") in registered
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# A run in the owner's browser works only in a tab it opened for itself
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _granted_for(device_id: str) -> grant.BrowserGrant:
+    return grant.BrowserGrant(
+        task="Check the lamp prices",
+        scope=("shop.example.com",),
+        group_name="Check the lamp prices",
+        request_id="g1",
+        granted=True,
+        granted_at=1.0,
+        bound_device_id=device_id,
+    )
+
+
+async def _browser_answers(device_id: str, answer) -> None:
+    """A browser polling for runs that want a tab, and answering the first with ``answer``."""
+    from personalclaw.browse import target as bt
+
+    for _ in range(400):
+        asked = [t for t in bt.run_tabs_for(device_id) if t.state == bt.TAB_REQUESTED]
+        if asked:
+            answer(asked[0])
+            return
+        await asyncio.sleep(0.005)
+    raise AssertionError("no run asked the browser for a tab")
+
+
+class TestARunWorksOnlyInItsOwnTab:
+    @pytest.fixture(autouse=True)
+    def _attached(self, monkeypatch):
+        from personalclaw.browse import target as bt
+
+        monkeypatch.setattr(bt, "user_browser_enabled", lambda: True)
+        bt.clear_connector()
+        bt.register_connector(device_id="dev1")
+        yield
+        bt.clear_connector()
+
+    def test_the_switch_turned_off_mid_run_stops_it_and_says_so(self, monkeypatch) -> None:
+        from personalclaw.browse import target as bt
+
+        tab = bt.request_run_tab(group="t", device_id="dev1")
+        bt.announce_run_tab(device_id="dev1", request_id=tab.request_id, cdp_url=RUN_TAB_PAGE)
+        check = grant.make_close_check(_bound_grant(bound_tab=tab.request_id))
+        assert check() == (False, "")
+        monkeypatch.setattr(bt, "user_browser_enabled", lambda: False)
+        assert check() == (True, "the user-browser target is switched off")
+
+    def test_the_grant_is_bound_to_the_tab_the_browser_opened(self) -> None:
+        from personalclaw.browse import target as bt
+
+        async def _run():
+            def _open(tab):
+                bt.announce_run_tab(
+                    device_id="dev1", request_id=tab.request_id, cdp_url=RUN_TAB_PAGE
+                )
+
+            answering = asyncio.create_task(_browser_answers("dev1", _open))
+            bound = await grant.open_run_tab(_granted_for("dev1"), timeout=5)
+            await answering
+            return bound
+
+        bound = asyncio.run(_run())
+        assert bound.bound_cdp_url == RUN_TAB_PAGE
+        tab = bt.run_tab(bound.bound_tab)
+        assert tab is not None and tab.state == bt.TAB_OPEN
+        assert tab.group == "Check the lamp prices", "the group is not named after the task"
+        assert bt.resolve_cdp_url(bt.TARGET_USER_BROWSER, {}, grant=bound) == RUN_TAB_PAGE
+
+    def test_a_second_announce_cannot_re_point_the_run(self) -> None:
+        from personalclaw.browse import target as bt
+
+        tab = bt.request_run_tab(group="t", device_id="dev1")
+        assert bt.announce_run_tab(
+            device_id="dev1", request_id=tab.request_id, cdp_url=RUN_TAB_PAGE
+        )
+        again = bt.announce_run_tab(device_id="dev1", request_id=tab.request_id, cdp_url=OWNER_PAGE)
+        assert again is None
+        assert bt.run_tab(tab.request_id).cdp_url == RUN_TAB_PAGE
+        assert (
+            bt.announce_run_tab(device_id="dev2", request_id=tab.request_id, cdp_url=OWNER_PAGE)
+            is None
+        )
+
+    def test_no_answer_in_time_is_a_refusal_that_leaves_no_request_behind(self) -> None:
+        from personalclaw.browse import target as bt
+
+        unbound = asyncio.run(grant.open_run_tab(_granted_for("dev1"), timeout=0.05))
+        assert unbound.bound_cdp_url == "" and unbound.bound_tab == ""
+        assert "did not open a tab for the task" in unbound.reason
+        assert bt.run_tabs_for("dev1") == [], "an unanswered request was left for the browser"
+
+    @pytest.mark.parametrize(
+        "state, said",
+        [
+            ("unavailable", "your browser could not open a tab of the task's own"),
+            ("closed", "the task's tab was closed before the task could start"),
+        ],
+    )
+    def test_a_browser_that_opens_no_tab_is_a_refusal(self, state: str, said: str) -> None:
+        from personalclaw.browse import target as bt
+
+        async def _run():
+            def _report(tab):
+                bt.report_run_tab(device_id="dev1", request_id=tab.request_id, state=state)
+
+            answering = asyncio.create_task(_browser_answers("dev1", _report))
+            unbound = await grant.open_run_tab(_granted_for("dev1"), timeout=5)
+            await answering
+            return unbound
+
+        unbound = asyncio.run(_run())
+        assert unbound.bound_cdp_url == "" and unbound.reason == said
+        assert bt.run_tabs_for("dev1") == []
+        typed = grant.no_run_tab_error(unbound)
+        assert typed.code == "ERR_BROWSE_RUN_TAB_UNAVAILABLE"
+        assert said in typed.why and "never in one you already have open" in typed.why
+
+    def test_a_browser_that_is_gone_is_not_asked(self) -> None:
+        from personalclaw.browse import target as bt
+
+        bt.clear_connector()
+        unbound = asyncio.run(grant.open_run_tab(_granted_for("dev1"), timeout=5))
+        assert unbound.bound_cdp_url == ""
+        assert unbound.reason == "the browser disconnected before it could open the task's tab"
+
+    def test_bringing_the_tab_to_the_front_is_a_take_over(self) -> None:
+        from personalclaw.browse import target as bt
+
+        tab = bt.request_run_tab(group="t", device_id="dev1")
+        bt.announce_run_tab(device_id="dev1", request_id=tab.request_id, cdp_url=RUN_TAB_PAGE)
+        g = _bound_grant(bound_tab=tab.request_id)
+        check = grant.make_takeover_check(g)
+        assert check() == (False, "")
+        bt.report_run_tab(device_id="dev1", request_id=tab.request_id, state=bt.TAB_TAKEN_OVER)
+        assert check() == (True, "you brought the task's tab to the front")
+        assert grant.make_close_check(g)() == (False, ""), "a take-over is a pause, not a stop"
+
+    def test_a_take_over_pauses_the_loop_before_any_model_call(self) -> None:
+        from personalclaw.action_providers.browse_provider import BrowseActionProvider
+        from personalclaw.browse.loop import PARK_TAKEN_OVER
+
+        result = asyncio.run(
+            run_browse_loop(
+                goal="do a thing",
+                start_url="https://shop.example.com",
+                session=_NavigatingSession(),
+                page=object(),
+                decide=_never_decide,
+                max_steps=20,
+                close_check=lambda: (False, ""),
+                takeover_check=lambda: (True, "you brought the task's tab to the front"),
+            )
+        )
+        assert result.parked is True and result.park_reason == PARK_TAKEN_OVER
+        said = BrowseActionProvider._park_sentence(result)
+        assert said.startswith("Browse paused because you brought its tab to the front"), said
+
+    def test_closing_the_group_stops_the_run_and_says_so(self) -> None:
+        from personalclaw.action_providers.browse_provider import BrowseActionProvider
+        from personalclaw.browse import target as bt
+
+        tab = bt.request_run_tab(group="t", device_id="dev1")
+        bt.announce_run_tab(device_id="dev1", request_id=tab.request_id, cdp_url=RUN_TAB_PAGE)
+        g = _bound_grant(bound_tab=tab.request_id)
+        bt.report_run_tab(device_id="dev1", request_id=tab.request_id, state=bt.TAB_CLOSED)
+        result = asyncio.run(
+            run_browse_loop(
+                goal="do a thing",
+                start_url="https://shop.example.com",
+                session=_NavigatingSession(),
+                page=object(),
+                decide=_never_decide,
+                max_steps=20,
+                close_check=grant.make_close_check(g),
+                takeover_check=grant.make_takeover_check(g),
+            )
+        )
+        assert result.park_reason == PARK_TAB_CLOSED
+        said = BrowseActionProvider._park_sentence(result)
+        assert said.startswith("Browse stopped because you closed the task's tab;"), said
+
+
+class _NavigatingSession:
+    async def start(self):
+        return None
+
+    async def navigate(self, url):
+        class _Nav:
+            ok = True
+            reason = ""
+            error = ""
+
+        return _Nav()
+
+
+async def _never_decide(_prompt):
+    raise AssertionError("the run must stop before the model is called")
+
+
+class TestTheProviderDrivesOnlyTheRunsOwnTab:
+    """The provider end to end, with the CDP connect and the loop stubbed: which page it connects
+    to, and what it does when the browser opens no tab for the run."""
+
+    @pytest.fixture(autouse=True)
+    def _enabled_attached_and_allowed(self, monkeypatch, tmp_path):
+        from personalclaw.agents.native.approval import APPROVE, ApprovalGate
+        from personalclaw.browse import target as bt
+        from personalclaw.config.loader import AppConfig, BrowseConfig
+
+        class _Yes(ApprovalGate):
+            async def request(self, request_id: str, *, timeout: float = 300.0) -> str:
+                return APPROVE
+
+        cfg = AppConfig(browse=BrowseConfig(user_browser_enabled=True))
+        monkeypatch.setattr(AppConfig, "load", classmethod(lambda cls: cfg))
+        monkeypatch.setattr(grant, "_gate", _Yes())
+        monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
+        bt.clear_connector()
+        bt.register_connector(device_id="dev-grant")
+        yield
+        bt.clear_connector()
+
+    @staticmethod
+    def _execute(monkeypatch, connected: list[str]):
+        import personalclaw.action_providers.browse_provider as bp
+        from personalclaw.action_providers.base import ActionContext
+        from personalclaw.browse.loop import BrowseLoopResult
+
+        async def _open(_self, _cfg, _ctx, *, cdp_url: str):
+            connected.append(cdp_url)
+            return object(), object(), None
+
+        async def _loop(**kw):
+            return BrowseLoopResult(goal=kw["goal"], ok=True, final_url=kw["start_url"])
+
+        monkeypatch.setattr(bp.BrowseActionProvider, "_open", _open)
+        monkeypatch.setattr(bp, "run_browse_loop", _loop)
+        return asyncio.run(
+            bp.BrowseActionProvider().execute(
+                {
+                    "goal": "Check the lamp prices",
+                    "start_url": "https://shop.example.com/lamps",
+                    "target": "user_browser",
+                    "cdp_url": OWNER_PAGE,
+                },
+                ActionContext(event="manual"),
+            )
+        )
+
+    def test_the_run_connects_to_its_own_tab_and_to_nothing_else(self, monkeypatch) -> None:
+        from personalclaw.browse import target as bt
+
+        rows = _capture_sel(monkeypatch)
+        answered = _the_browser_opens_each_run_a_tab(monkeypatch)
+        connected: list[str] = []
+        result = self._execute(monkeypatch, connected)
+        assert result.success is True, result.error
+        assert connected == [RUN_TAB_PAGE], "the run connected to a page it did not open"
+        assert len(answered) == 1
+        assert bt.run_tab(answered[0]) is None, "the ended run's tab was not released"
+        revoked = [r for r in rows if r["operation"] == "browser_revoked"]
+        assert revoked and "run_complete" in revoked[0]["resources"]
+
+    def test_a_run_whose_browser_opens_no_tab_is_refused_and_never_connects(
+        self, monkeypatch
+    ) -> None:
+        from personalclaw.browse import target as bt
+
+        rows = _capture_sel(monkeypatch)
+        monkeypatch.setattr(bt, "RUN_TAB_TIMEOUT", 0.05)
+        connected: list[str] = []
+        result = self._execute(monkeypatch, connected)
+        assert result.success is False
+        assert result.agent_error is not None
+        assert result.agent_error.code == "ERR_BROWSE_RUN_TAB_UNAVAILABLE"
+        assert "never in one you already have open" in result.agent_error.why
+        assert connected == [], "a run with no tab of its own reached a browser page"
+        assert bt.run_tabs_for("dev-grant") == []
+        revoked = [r for r in rows if r["operation"] == "browser_revoked"]
+        assert revoked and "no_run_tab" in revoked[0]["resources"]
+
+
+def test_a_browser_that_disconnects_while_asked_is_named_as_such(monkeypatch) -> None:
+    """Disconnecting while the run waits is not a slow browser: the refusal says which it was."""
+    from personalclaw.browse import target as bt
+
+    monkeypatch.setattr(bt, "user_browser_enabled", lambda: True)
+    bt.clear_connector()
+    bt.register_connector(device_id="dev1")
+
+    async def _run():
+        async def _detach_once_asked():
+            await _browser_answers("dev1", lambda _tab: bt.clear_connector())
+
+        detaching = asyncio.create_task(_detach_once_asked())
+        unbound = await grant.open_run_tab(_granted_for("dev1"), timeout=5)
+        await detaching
+        return unbound
+
+    try:
+        unbound = asyncio.run(_run())
+    finally:
+        bt.clear_connector()
+    assert unbound.bound_cdp_url == ""
+    assert unbound.reason == "the browser disconnected before it could open the task's tab"

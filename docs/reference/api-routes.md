@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **921 registrations** over **747 distinct paths** — 914 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **923 registrations** over **749 distinct paths** — 916 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -52,13 +52,13 @@ The 128 families the surface divides into, largest first.
 | `/api/lexicon` | 10 | 6 |
 | `/api/model-providers` | 10 | 8 |
 | `/api/rooms` | 10 | 8 |
+| `/api/browse` | 9 | 7 |
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
 | `/api/learning` | 9 | 7 |
 | `/api/security` | 9 | 9 |
 | `/api/agent-marketplace` | 8 | 5 |
 | `/api/auth` | 8 | 8 |
-| `/api/browse` | 7 | 5 |
 | `/api/devices` | 7 | 7 |
 | `/api/config` | 6 | 3 |
 | `/api/doc-comments` | 6 | 3 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 914 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 916 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -268,6 +268,8 @@ The 914 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/browse/connector` | detach the operator's browser. Idempotent. |
 | `GET` | `/api/browse/connector` | whether a browser is attached right now. |
 | `POST` | `/api/browse/connector` | record the operator's attached browser. |
+| `GET` | `/api/browse/connector/tabs` | the runs that asked this browser for a tab of their own. |
+| `POST` | `/api/browse/connector/tabs/{request_id}` | announce or report one run's tab. |
 | `POST` | `/api/browse/grants/{request_id}/{action}` | answer one pending per-task browse grant. |
 | `POST` | `/api/browse/kill` | stop unattended browsing. Body: ``{reason?: str}``. |
 | `POST` | `/api/browse/kill/release` | re-enable unattended browsing. |

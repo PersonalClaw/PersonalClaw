@@ -103,12 +103,16 @@ PARK_NAVIGATION_BLOCKED = "navigation_blocked"
 #: resume, exactly like the step/budget parks. ``killswitch`` owns the flag; the loop only reads a
 #: verdict through the injected ``kill_check``.
 PARK_KILLED = "killed"
-#: the close-to-kill: the user closed the task's tab group. A HARD STOP OBSERVED as a connector
-#: disconnect, parked (not failed) within one step exactly like the kill switch — but DISTINCT from
-#: it: ``killswitch`` stops ALL unattended browse via a flag, this ends ONE attended run when its
-#: own tab closes. ``browse.grant`` owns the observation; the loop only reads the injected
-#: ``close_check``.
+#: the close-to-kill: the user closed the task's tab group (or its window, or the run's tab). A
+#: HARD STOP the browser reports, parked (not failed) within one step exactly like the kill switch —
+#: but DISTINCT from it: ``killswitch`` stops ALL unattended browse via a flag, this ends ONE
+#: attended run when its own tab closes. ``browse.grant`` owns the observation; the loop only reads
+#: the injected ``close_check``.
 PARK_TAB_CLOSED = "tab_closed"
+#: the take-over: the user brought the run's own tab to the front. The run PAUSES there — parked,
+#: notes kept — rather than act in a page a person is now using. ``browse.grant`` owns the
+#: observation; the loop only reads the injected ``takeover_check``.
+PARK_TAKEN_OVER = "taken_over"
 #: the credential handoff park is :data:`personalclaw.browse.handoff.PARK_LOGIN_REQUIRED`,
 #: imported above rather than restated here. ``handoff`` owns the value because it also builds the
 #: card that answers it; a second literal in this module would be the fifth park reason and the
@@ -252,10 +256,15 @@ StepSink = Callable[["BrowseStep", str], None]
 KillCheck = Callable[[], tuple[bool, str]]
 
 #: Returns (closed, reason). Injected like :data:`KillCheck`; the provider supplies one bound to the
-#: run's connector (:func:`personalclaw.browse.grant.make_close_check`). Checked before every model
+#: run's own tab (:func:`personalclaw.browse.grant.make_close_check`). Checked before every model
 #: call — and BEFORE the kill switch, because the user closing the very tab this run drives is the
-#: most immediate hard stop of all, and it must be felt within one step (BA-9 close-to-kill).
+#: most immediate hard stop of all, and it must be felt within one step.
 CloseCheck = Callable[[], tuple[bool, str]]
+
+#: Returns (taken_over, reason). Injected like :data:`CloseCheck`, and checked right after it: the
+#: user bringing the run's tab to the front pauses the run before its next model call
+#: (:func:`personalclaw.browse.grant.make_takeover_check`).
+TakeoverCheck = Callable[[], tuple[bool, str]]
 
 
 # ── results ───────────────────────────────────────────────────────────────────
@@ -509,6 +518,7 @@ async def run_browse_loop(
     on_step: StepSink | None = None,
     kill_check: KillCheck | None = None,
     close_check: CloseCheck | None = None,
+    takeover_check: TakeoverCheck | None = None,
     vision_grounding: bool = False,
 ) -> BrowseLoopResult:
     """Drive ``page`` toward ``goal``, navigating only through ``session``'s gate.
@@ -522,6 +532,9 @@ async def run_browse_loop(
     provider is the point: the provider is one caller, and a guard that lives in one caller
     is bypassed by the next one. ``kill_check`` (BA-5) is checked at the SAME seam and for the
     same reason — the mirror's stop button must halt an in-flight run, not just refuse the next.
+    So are ``close_check`` and ``takeover_check``, which a run in the operator's own browser binds
+    to its own tab: the tab closing stops the run, and the operator bringing it to the front
+    pauses it.
 
     ``on_step`` (BA-5) is called once per completed step with the step record and its screenshot
     path — the provider turns each into a ``browse_step`` broadcast so a human can watch the run
@@ -589,7 +602,19 @@ async def run_browse_loop(
                 # before the model call, so the close is felt within one step — checked FIRST,
                 # ahead of the kill switch and the budget, because it is the most immediate stop.
                 return _park(
-                    st, goal=goal, url=url, reason=PARK_TAB_CLOSED, detail=why or "tab closed"
+                    st,
+                    goal=goal,
+                    url=url,
+                    reason=PARK_TAB_CLOSED,
+                    detail=why or "the task's tab closed",
+                )
+        if takeover_check is not None:
+            taken, why = takeover_check()
+            if taken:
+                # The user is in the run's tab now. Paused before the model call, so the agent
+                # never acts in a page a person has just taken over.
+                return _park(
+                    st, goal=goal, url=url, reason=PARK_TAKEN_OVER, detail=why or "taken over"
                 )
         if kill_check is not None:
             killed, why = kill_check()

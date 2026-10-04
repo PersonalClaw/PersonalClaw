@@ -32,6 +32,7 @@ from personalclaw.browse import target as bt
 from personalclaw.config.loader import AppConfig, BrowseConfig
 
 GATEWAY_URL = "ws://127.0.0.1:9222/devtools/page/GATEWAYPROFILE"
+#: The page target of the tab the operator's browser opened for the run.
 USER_URL = "ws://127.0.0.1:9333/devtools/page/MYOWNBROWSER"
 START_URL = "https://example.test/start"
 
@@ -102,6 +103,22 @@ def _done(value):
         return value
 
     return _coro()
+
+
+@pytest.fixture
+def browser_opens_tabs(monkeypatch):
+    """The operator's browser answering each granted run's request for a tab at once, as the
+    extension does on its next poll: it opens the tab and announces that tab's page target
+    (``USER_URL``). The real request / wait / bind path stays in play."""
+    real = bt.request_run_tab
+
+    def _request(*, group: str, device_id: str):
+        tab = real(group=group, device_id=device_id)
+        if tab is not None:
+            bt.announce_run_tab(device_id=device_id, request_id=tab.request_id, cdp_url=USER_URL)
+        return tab
+
+    monkeypatch.setattr(bt, "request_run_tab", _request)
 
 
 @pytest.fixture
@@ -287,12 +304,13 @@ class TestAnUnconnectedUserBrowserTaskSkipsAndNeverFallsBack:
         assert bt.resolve_cdp_url(bt.TARGET_USER_BROWSER, {"cdp_url": GATEWAY_URL}) == ""
 
     def test_VACUITY_a_CONNECTED_user_browser_task_runs_the_same_path_and_does_not_skip(
-        self, monkeypatch, switch, auto_grant
+        self, monkeypatch, switch, auto_grant, browser_opens_tabs
     ):
         """The leg that proves the two assertions above are not vacuous: the same provider, the
-        same config shape, the same `_open` seam — and it neither skips nor uses GATEWAY_URL."""
+        same config shape, the same `_open` seam — and it neither skips nor uses GATEWAY_URL, but
+        drives the tab the browser opened for the run."""
         switch(True)
-        bt.register_connector(device_id="my-mac", cdp_url=USER_URL)
+        bt.register_connector(device_id="my-mac")
         probe = _Probe()
         probe.install(monkeypatch)
         result = _execute(
@@ -311,9 +329,9 @@ class TestAnUnconnectedUserBrowserTaskSkipsAndNeverFallsBack:
     def test_the_connector_status_names_the_attached_device(self, switch):
         switch(True)
         assert bt.connector_status().connected is False
-        bt.register_connector(device_id="my-mac", cdp_url=USER_URL)
+        bt.register_connector(device_id="my-mac")
         status = bt.connector_status()
-        assert (status.connected, status.device_id, status.cdp_url) == (True, "my-mac", USER_URL)
+        assert (status.connected, status.device_id) == (True, "my-mac")
         bt.clear_connector()
         assert bt.connector_status().connected is False
 
@@ -359,7 +377,7 @@ class TestTheUserBrowserTargetCanNeverRunUnattended:
         from personalclaw.durability.state_history import SURFACE_BACKGROUND, writing_surface
 
         switch(True)
-        bt.register_connector(device_id="my-mac", cdp_url=USER_URL)
+        bt.register_connector(device_id="my-mac")
         probe = _Probe()
         probe.install(monkeypatch)
         with writing_surface(SURFACE_BACKGROUND):
@@ -371,12 +389,12 @@ class TestTheUserBrowserTargetCanNeverRunUnattended:
         assert probe.connected == []
 
     def test_VACUITY_the_same_call_is_permitted_attended_and_for_the_gateway_target(
-        self, monkeypatch, switch, auto_grant
+        self, monkeypatch, switch, auto_grant, browser_opens_tabs
     ):
         from personalclaw.durability.state_history import SURFACE_BACKGROUND, writing_surface
 
         switch(True)
-        bt.register_connector(device_id="my-mac", cdp_url=USER_URL)
+        bt.register_connector(device_id="my-mac")
         probe = _Probe()
         probe.install(monkeypatch)
         # (a) attended + user_browser: runs.

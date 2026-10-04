@@ -246,6 +246,17 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "browse_connector_unpaired": "Only a paired device may attach as the browse connector.",
     "browse_connector_endpoint_invalid": "The announced CDP page-target endpoint is missing "
     "or is not a loopback ws(s) URL.",
+    # A run's own tab (the same module): `not_attached` is "attach this browser again" (the
+    # gateway restarted), `replaced` is "another browser is the connector now" (go quiet),
+    # `run_tab_unknown` is "no run asked this browser for that tab, or the report no longer
+    # applies" (nothing to retry), and `run_tab_report_invalid` is "a report names a cdp_url or
+    # one state" (a value to fix).
+    "browse_connector_not_attached": "This browser is not attached as the browse connector.",
+    "browse_connector_replaced": "Another browser is attached as the browse connector now.",
+    "browse_run_tab_unknown": "No run asked this browser for that tab, or the report no "
+    "longer applies to it.",
+    "browse_run_tab_report_invalid": "A run tab report names either a loopback cdp_url or one "
+    "state: unavailable, closed or taken_over.",
     # ── per-task browse grant (handlers/browse_mirror.py) ──
     # Two codes because the remedies differ: `action_invalid` is "you named something other
     # than approve/reject" (a value to fix), `not_pending` is "no grant is waiting on that id"

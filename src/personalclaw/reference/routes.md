@@ -115,6 +115,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/browse/connector` — detach the operator's browser. Idempotent.
 - `GET /api/browse/connector` — whether a browser is attached right now.
 - `POST /api/browse/connector` — record the operator's attached browser.
+- `GET /api/browse/connector/tabs` — the runs that asked this browser for a tab of their own.
+- `POST /api/browse/connector/tabs/{request_id}` — announce or report one run's tab.
 - `POST /api/browse/grants/{request_id}/{action}` — answer one pending per-task browse grant.
 - `POST /api/browse/kill` — stop unattended browsing. Body: ``{reason?: str}``.
 - `POST /api/browse/kill/release` — re-enable unattended browsing.

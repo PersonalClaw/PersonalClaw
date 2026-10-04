@@ -1176,9 +1176,19 @@ rules are load-bearing controls, not UX:
   request row is what makes an authorization attempt against the operator's own logged-in browser
   auditable even when nobody answers it or the run abandons it — a request whose only row was
   written after resolution left no trace at all in exactly that case.
-- **Close-to-kill.** The task runs in a tab group named after the task; the user closing it is a
-  hard stop the run observes within one step. This is distinct from the browse kill switch
-  (`browse/killswitch.py`), which stops *all* unattended browse via a flag.
+- **A tab of the run's own.** A granted task works only in a tab the browser opens for it: the
+  extension opens a new background tab in a tab group named after the task (in a browser without
+  tab groups, an unfocused window of its own) and announces that tab's own page target, which the
+  grant is then bound to (`browse/grant.py:open_run_tab`). Attaching the browser announces no
+  page, so a page the user already has open is never a browse target, whichever tab has focus,
+  and the tab's page target is set once and never re-pointed. If no tab of the run's own comes to
+  be within 15 seconds, the task is refused (`ERR_BROWSE_RUN_TAB_UNAVAILABLE`) and never falls
+  back to another page.
+- **Close-to-kill and take-over.** Closing the task's group (or its window, or the tab) is a hard
+  stop the run observes within one step; so is the browser disconnecting. Bringing the run's tab
+  to the front is a take-over: the run pauses (parks, notes kept) before its next model call and
+  says so, rather than act in a page the user is now using. This is distinct from the browse kill
+  switch (`browse/killswitch.py`), which stops *all* unattended browse via a flag.
 - **Honest limit — no IP pinning on a real browser.** A real browser does its own DNS and opens
   its own sockets, so `net.fetch`'s resolved-IP pinning does **not** apply to `user_browser`: every
   navigation is still pre-flighted through the egress guard, but that is validation only and stays

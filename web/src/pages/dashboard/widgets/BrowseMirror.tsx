@@ -257,6 +257,10 @@ export function BrowseMirror() {
                   browser you are already signed in to.
                 </p>
                 <p data-type="body-s" className="min-w-0">
+                  It works in a new tab of its own, in a group named after the task, and never in a
+                  tab you have open. Close the group to stop it; open its tab to take over.
+                </p>
+                <p data-type="body-s" className="min-w-0">
                   Task: <span className="font-mono">{g.task || '(unnamed task)'}</span>
                 </p>
                 <p data-type="body-s" className="min-w-0">

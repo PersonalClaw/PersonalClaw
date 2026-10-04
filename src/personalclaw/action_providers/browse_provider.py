@@ -86,6 +86,7 @@ from personalclaw.browse.loop import (
     PARK_STEP_EXHAUSTED,
     PARK_STUCK,
     PARK_TAB_CLOSED,
+    PARK_TAKEN_OVER,
     PARK_VISION_UNAVAILABLE,
     BrowseLoopResult,
     BrowseStep,
@@ -178,10 +179,12 @@ def _revoke_reason(result: BrowseLoopResult | None) -> str:
     """Why a granted user_browser run's authorization ended, for the ``browser_revoked`` row.
 
     One task, one grant: the grant is spent when the task stops, and the reason distinguishes a
-    normal finish from the user closing the tab (BA-9) or a kill-switch stop (BA-5)."""
+    normal finish from the user closing the run's tab, taking it over, or a kill-switch stop."""
     park = getattr(result, "park_reason", "") if result is not None else ""
     if park == PARK_TAB_CLOSED:
         return "tab_closed"
+    if park == PARK_TAKEN_OVER:
+        return "taken_over"
     if park == PARK_KILLED:
         return "kill_switch"
     if result is None:
@@ -314,6 +317,7 @@ class BrowseActionProvider(ActionProvider):
 
         grant = None
         close_check = None
+        takeover_check = None
         cdp_url = resolve_cdp_url(target, action_config)
         if target == TARGET_USER_BROWSER:
             status = connector_status()
@@ -339,12 +343,11 @@ class BrowseActionProvider(ActionProvider):
             # sites it will touch, routed through the SHIPPED fail-closed ApprovalGate (300s ->
             # REJECT). A denied / timed-out / channel-less grant REFUSES the run — it never falls
             # open — and it is requested HERE, ahead of `_open`, so an unauthorized task never
-            # reaches the browser. The grant binds to THIS connector so close-to-kill can tell the
-            # authorized tab from a later re-attach.
+            # reaches the browser. The grant binds to THIS browser, and below to the tab the
+            # browser opens for this run, so close-to-kill can tell that tab from any other.
             from personalclaw.browse.grant import (
                 grant_denied_error,
                 grant_gate,
-                make_close_check,
                 request_grant,
                 scope_for_url,
             )
@@ -354,7 +357,6 @@ class BrowseActionProvider(ActionProvider):
                 scope=scope_for_url(start_url),
                 gate=grant_gate(),
                 bound_device_id=status.device_id,
-                bound_cdp_url=status.cdp_url,
             )
             if not grant.granted:
                 typed = grant_denied_error(grant)
@@ -364,8 +366,6 @@ class BrowseActionProvider(ActionProvider):
                     duration_ms=int((time.monotonic() - started) * 1000),
                     agent_error=typed,
                 )
-            # Closing the task tab group is a hard stop the loop observes within one step.
-            close_check = make_close_check(grant)
 
         # ── The pre-run session check, before a browser or a token is spent ──
         from personalclaw.browse.handoff import (
@@ -388,6 +388,7 @@ class BrowseActionProvider(ActionProvider):
         # and never said the authorization ended. This `finally` spans from the grant to the return,
         # so the trail closes however the task exits.
         result = None
+        revoked_because = ""
         try:
             state_before = session_state(start_url)
             # On the dispatch a person's answer started (`ActionContext.answer`: "I have signed
@@ -413,6 +414,37 @@ class BrowseActionProvider(ActionProvider):
             except (TypeError, ValueError):
                 max_steps = MAX_STEPS_DEFAULT
             max_steps = max(1, max_steps)
+
+            if grant is not None:
+                # ── The run's own tab, opened right before it is driven ──
+                #
+                # A run in the operator's browser works only in a tab it opened for itself, never
+                # in a page the operator has open, whichever has focus. The browser opens a new
+                # background tab in a group named after the task, and the grant is bound to that
+                # tab's page target, the only one `resolve_cdp_url` will hand to `_open`. No tab of
+                # the run's own is a refusal, never a fall back to some other page.
+                from personalclaw.browse.grant import (
+                    make_close_check,
+                    make_takeover_check,
+                    no_run_tab_error,
+                    open_run_tab,
+                )
+
+                grant = await open_run_tab(grant)
+                if not grant.bound_cdp_url:
+                    revoked_because = "no_run_tab"
+                    typed = no_run_tab_error(grant)
+                    return ActionResult(
+                        success=False,
+                        error=typed.what,
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        agent_error=typed,
+                    )
+                cdp_url = resolve_cdp_url(target, action_config, grant=grant)
+                # Closing that tab's group stops the run, and bringing the tab to the front pauses
+                # it — each observed before the loop's next model call.
+                close_check = make_close_check(grant)
+                takeover_check = make_takeover_check(grant)
 
             session, page, closer = None, None, None
             try:
@@ -449,6 +481,7 @@ class BrowseActionProvider(ActionProvider):
                     on_step=self._mirror_sink(ctx),
                     kill_check=_kill_check,
                     close_check=close_check,
+                    takeover_check=takeover_check,
                     # Truthy-only, so an absent key, `false`, `0` and `""` all mean OFF.
                     # The located path is never enabled by the ABSENCE of a decision.
                     vision_grounding=bool(action_config.get("vision_grounding")),
@@ -465,15 +498,21 @@ class BrowseActionProvider(ActionProvider):
             )
         finally:
             if grant is not None and grant.granted:
-                # The reason distinguishes a normal finish from the user closing the tab or a
-                # kill-switch stop; a task that never reached the loop reads `run_ended`.
-                # Best-effort so an audit hiccup never masks the run's own result.
+                # The reason distinguishes a normal finish from the user closing the tab, taking it
+                # over or a kill-switch stop; a task that never reached the loop reads `run_ended`,
+                # and one whose browser opened it no tab, `no_run_tab`. Best-effort so an audit
+                # hiccup never masks the run's own result.
                 from personalclaw.browse.grant import revoke_grant
+                from personalclaw.browse.target import release_run_tab
 
                 try:
-                    revoke_grant(grant, reason=_revoke_reason(result))
+                    revoke_grant(grant, reason=revoked_because or _revoke_reason(result))
                 except Exception:
                     logger.debug("browse: grant revoke failed", exc_info=True)
+                # The run is over: its tab stays in the browser, as the operator's, and nothing
+                # here reaches it any more.
+                if grant.bound_tab:
+                    release_run_tab(grant.bound_tab)
 
     # ── plumbing ─────────────────────────────────────────────────────────────
 
@@ -685,7 +724,12 @@ class BrowseActionProvider(ActionProvider):
         elif result.park_reason == PARK_KILLED:
             head = "Browse was stopped by the kill switch"
         elif result.park_reason == PARK_TAB_CLOSED:
-            head = "Browse stopped because you closed the task's browser tab"
+            # The close check's reason is the clause: the owner closing the tab is one of several
+            # ways a run loses it (the browser disconnecting is another), and each says which.
+            detail = result.park_detail or "the task's tab closed"
+            head = f"Browse stopped because {detail}"
+        elif result.park_reason == PARK_TAKEN_OVER:
+            head = "Browse paused because you brought its tab to the front to take over"
         elif result.park_reason == PARK_STUCK:
             head = "Browse stopped because it kept repeating the same action without progress"
         elif result.park_reason == PARK_NAVIGATION_BLOCKED:

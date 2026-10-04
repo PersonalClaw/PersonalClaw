@@ -174,6 +174,10 @@ describe('the dashboard Browse live view band', () => {
 
     const card = await waitFor(() => screen.getByRole('alert'))
     expect(card.textContent).toMatch(/allow this task to use your browser\?/i)
+    // Where it will act, and the two gestures that stop it and take it over.
+    expect(card.textContent).toMatch(/a new tab of its own, in a group named after the task/i)
+    expect(card.textContent).toMatch(/never in a tab you have open/i)
+    expect(card.textContent).toMatch(/close the group to stop it; open its tab to take over/i)
     // The task label and the host scope are the two facts a human decides on.
     expect(card.textContent).toContain('Download my October invoices')
     expect(card.textContent).toContain('billing.example.com')

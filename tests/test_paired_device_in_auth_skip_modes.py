@@ -49,10 +49,6 @@ from personalclaw.dashboard.handlers import devices as devices_h
 PORT = 10000
 COOKIE = f"pc_token_{PORT}"
 
-#: A loopback CDP page-target endpoint — the only shape ``_LOOPBACK_WS`` admits, so a 400 here
-#: would be about the URL rather than about the pairing this module is measuring.
-CDP_URL = "ws://127.0.0.1:9222/devtools/page/DEADBEEF"
-
 
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
@@ -118,9 +114,7 @@ async def _pair_a_device(owner: TestClient, device: TestClient) -> str:
 
 
 async def _attach(client: TestClient, cookies: dict[str, str] | None) -> aiohttp.ClientResponse:
-    return await client.post(
-        "/api/browse/connector", json={"cdp_url": CDP_URL}, cookies=cookies or {}
-    )
+    return await client.post("/api/browse/connector", json={}, cookies=cookies or {})
 
 
 # ── vacuity floor: the paired-device gate is LIVE on the strict path ──────
