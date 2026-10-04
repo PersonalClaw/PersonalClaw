@@ -89,23 +89,67 @@ class Verdict(str, Enum):
     BLOCKED = "blocked"
 
 
-#: The six OWASP injection groups, each with the patterns that identify it. Every pattern
-#: requires an IMPERATIVE or SECOND-PERSON frame — "ignore your instructions", not the word
-#: "instructions". The existing memory screen's bare `system\s*prompt` flags "summarize
-#: the system prompt design doc", and `act\s+as\s+if` flags "act as if the deploy already
-#: happened". A screen that blocks ordinary sentences gets disabled by its users, which is a worse
-#: outcome than a narrower screen.
+#: The space between two words a pattern below reads together: any run of spaces, as `normalize`
+#: folds it to one (so the raw and folded passes agree), and never a line break.
+_GAP = r"[^\S\n]+"
+#: The words that name what a model was told to do.
+_ORDERS = r"(instruction|prompt|direction|directive|guideline|rule)s?\b"
+#: Orders placed before this text, which are the model's own rather than a document's.
+_EARLIER = r"(?:previous|prior|above|earlier)" + _GAP
+#: "all", "any", "all of": a quantifier before the orders.
+_ALL = r"(?:all|any)" + _GAP + r"(?:of" + _GAP + r")?"
+#: The model's own orders, of any kind a possessive names: "your system prompt", "your rules".
+_YOUR = r"your" + _GAP + r"(?:(?:previous|prior|original|initial|current|system|safety|core)"
+_YOUR += _GAP + r")?"
+#: The text a side task is set on: "this page", "it", "the above".
+_THIS = r"(?:this|it|these|the" + _GAP + r"(?:above|following))(?:" + _GAP + r"[a-z]{2,12})?"
+#: Dropping orders, said as an order and not as a refusal: "do not ignore your instructions" and
+#: "I cannot disregard the above instructions" ask for nothing. The verb is looked for before the
+#: refusal is, so the look back runs only where a verb starts.
+_VERBS = r"ignore|disregard|forget|discard"
+_DROP = rf"\b(?={_VERBS})(?<!\bnot )(?<!cannot )(?<!n't )(?<!n’t )(?<!\bnever )({_VERBS})"
+_DROP += _GAP
+
+#: The six OWASP injection groups, each with the patterns that identify it. Every pattern keys on
+#: what the text asks of the model reading it (to drop what it was told, take a new role, show its
+#: configuration, take on a side task) and never on a topic word, a command or a markup character
+#: alone: "ignore your instructions", not the word "instructions". The existing memory screen's bare
+#: `system\s*prompt` flags "summarize the system prompt design doc", and `act\s+as\s+if` flags
+#: "act as if the deploy already happened". A screen that blocks ordinary sentences gets disabled
+#: by its users, which is a worse outcome than a narrower screen.
+#:
+#: What reaches the screen is mostly code and its output: a tool's result, an agent's reply, a
+#: watched file. So a pattern that cannot tell a take-over from a Markdown table, a pipeline, a
+#: stack trace or a commit message is scoped to the take-over or dropped, never widened
+#: (`tests/test_the_injection_screen_passes_ordinary_text_and_refuses_a_take_over.py` is the table
+#: every pattern must pass). A scoped pattern matches a subset of what its looser form matched,
+#: apart from a run of spaces longer than that form allowed, and never reads across a line.
 INJECTION_GROUPS: dict[str, tuple[str, ...]] = {
     "override": (
-        r"\b(ignore|disregard|forget|discard)\b[^.\n]{0,30}"
-        r"\b(previous|prior|above|earlier|all|your|any)\b[^.\n]{0,20}"
-        r"\b(instruction|prompt|rule|direction|directive|command|guideline)s?\b",
-        r"\b(override|overrule|supersede)\b[^.\n]{0,24}\b(instruction|prompt|rule|directive|"
-        r"system|safety|guardrail)s?\b",
-        r"^\s*(important|urgent|attention|note)\s*[:!]\s*(override|ignore|disregard|new\s+"
-        r"instruction|your\s+new)",
-        r"\bnew\s+(instruction|directive|rule)s?\s*:",
-        r"\byour\s+new\s+(instruction|directive|task|goal|purpose)s?\b",
+        # Drop the model's earlier orders: "ignore all previous instructions", "forget the above
+        # rules". Only a quantifier and an article may stand between: "ignore the previous failing
+        # run; the rule is flaky" is a review, and a command is not an order of the model's
+        # ("forget the earlier command and use make test").
+        _DROP + f"(?:{_ALL})?" + r"(?:(?:the|your)" + _GAP + r")?" + _EARLIER + _ORDERS,
+        # Drop YOUR orders: "disregard your instructions", "ignore your system prompt". Not "my
+        # earlier comment about the prompt", which the writer takes back.
+        _DROP + f"(?:{_ALL})?" + _YOUR + _ORDERS,
+        # Drop every one: "ignore all instructions". Not prompts or rules: "ignore all prompts" is a
+        # CLI flag, and "to ignore all generated files, add these rules" is advice.
+        _DROP + _ALL + r"(?:the" + _GAP + r")?(instruction|directive)s?\b",
+        # Override YOUR orders or the earlier ones: "override your safety rules". "Override the
+        # system prompt per agent" is a setting, and "later rules override earlier rules" is how a
+        # stylesheet works.
+        r"\b(override|overrule|supersede)\b[^\w.\n]{0,3}(?:"
+        + (_YOUR + r"(instruction|prompt|rule|directive|guardrail|safety)s?\b|")
+        + (r"(?:all" + _GAP + r")?(?:the" + _GAP + r")?" + _EARLIER)
+        + r"(instruction|prompt|directive)s?\b)",
+        # Hand the model a new purpose: "your new instructions are ...". Not a task or a goal:
+        # "your new task is on Thursday's list" is what a task assistant says.
+        r"\byour\s+new\s+(instruction|directive|purpose)s?\s*(?:are\b|is\b|:)",
+        # Not here: a "Note:" or "Important:" line that says ignore or override, and a line that
+        # opens "New instructions:" or "New rule:". Neither names an order of the model's, so
+        # "Note: ignore the deprecation warnings" and a release note's "New rule:" read the same.
     ),
     "token_smuggling": (
         # Matched only AFTER normalization, so these are the post-fold forms.
@@ -113,9 +157,15 @@ INJECTION_GROUPS: dict[str, tuple[str, ...]] = {
         r"\bdisregard\s*(all\s*)?(previous|prior)\s*(instructions?|prompts?)\b",
     ),
     "persona_hijack": (
-        r"\byou\s+are\s+(now|from\s+now\s+on)\b",
-        r"\bfrom\s+now\s+on[^.\n]{0,30}\b(you|respond|reply|act|behave)\b",
-        r"\b(pretend|imagine|roleplay|role-play)\b[^.\n]{0,20}\byou\s+(are|were|have)\b",
+        # Not a state a service reports to a person: "you are now subscribed", "logged in".
+        r"\byou\s+are\s+(now|from\s+now\s+on)\b(?![^\S\n]+(?:subscribed|unsubscribed|logged|signed|"
+        r"connected|disconnected|registered|enrolled|verified|following|able|ready|set\s+up|"
+        r"all\s+set|up\s+to\s+date|on\s+(?:the|version|v?\d))\b)",
+        # Addressed: "from now on you are ...", "from now on, respond ...". Not "from now on, the
+        # bot will reply in the thread".
+        r"\bfrom\s+now\s+on,?" + _GAP + r"(you|respond|reply|act|behave)\b",
+        # Not "imagine": "imagine you have a million rows" is an explanation.
+        r"\b(pretend|roleplay|role-play)\b[^.\n]{0,20}\byou\s+(are|were|have)\b",
         r"\bact\s+as\s+(a|an|the)?\s*(unrestricted|uncensored|jailbroken|evil|malicious|rogue)\b",
         # Requires an ADOPTION verb: bare "new persona" is ordinary product vocabulary ("our new
         # persona research covers three segments") and flagged it as suspicious — measured.
@@ -125,21 +175,25 @@ INJECTION_GROUPS: dict[str, tuple[str, ...]] = {
         r"\byou\s+will\s+(now\s+)?respond\s+as\b",
     ),
     "jailbreak": (
-        r"\b(enable|activate|enter|switch\s+to)\b[^.\n]{0,16}\b(developer|debug|god|dan|"
-        r"unrestricted|unfiltered|jailbreak)\s*mode\b",
-        r"\b(no|without|ignore)\b[^.\n]{0,16}\b(restrictions?|limitations?|filters?|guardrails?|"
-        r"safety|rules?)\b[^.\n]{0,16}\b(apply|now|anymore|here)\b",
+        # Not developer or debug mode: a browser, a phone and an editor each have one.
+        r"\b(enable|activate|enter|switch\s+to)\b[^.\n]{0,16}\b(god|dan|unrestricted|unfiltered|"
+        r"jailbreak)\s*mode\b",
+        # No rules for YOU: "no rule applies here" is a code comment.
+        r"\byou\b[^.\n]{0,16}\b(no|without|ignore)\b[^.\n]{0,16}\b(restrictions?|limitations?|"
+        r"filters?|guardrails?|safety|rules?)\b[^.\n]{0,16}\b(apply|now|anymore|here)\b",
         r"\bthis\s+is\s+(a\s+)?(hypothetical|fictional|simulation|test)\b[^.\n]{0,30}\b(no\s+"
         r"rules?|nothing\s+is\s+forbidden|anything\s+is\s+allowed|no\s+restrictions?)\b",
         r"\b(for\s+)?(educational|research|academic)\s+purposes?\s+only\b[^.\n]{0,40}\b(bypass|"
         r"ignore|disable|circumvent)\b",
-        r"\b(bypass|circumvent|disable|turn\s+off)\b[^.\n]{0,24}\b(safety|filter|guardrail|"
-        r"restriction|policy|protection)s?\b",
+        # YOUR safety: "disable the spam filter" and "bypass the cache policy" are settings.
+        (r"\b(bypass|circumvent|disable|turn\s+off)\b[^\w.\n]{0,3}(?:all" + _GAP + r")?your" + _GAP)
+        + (r"(?:\w{1,8}" + _GAP + r")?(safety|filter|guardrail|restriction|policy|protection)s?\b"),
     ),
     "prompt_leaking": (
-        r"\b(repeat|print|show|reveal|output|display|echo|dump)\b[^.\n]{0,30}\b(your|the)\s+"
-        r"(system\s+prompt|initial\s+instructions?|original\s+instructions?|prompt|"
-        r"instructions?)\b",
+        # YOUR prompt or THE system prompt: "print the prompt before sending it" debugs an app.
+        r"\b(repeat|print|show|reveal|output|display|echo|dump)\b[^.\n]{0,30}\b(?:your\s+"
+        r"(system\s+prompt|initial\s+instructions?|original\s+instructions?|prompt|instructions?)"
+        r"|the\s+(system\s+prompt|initial\s+instructions?|original\s+instructions?))\b",
         r"\bwhat\s+(were|are)\s+your\s+(original|initial|system|actual)\s+"
         r"(instructions?|prompts?|rules?)\b",
         r"\b(print|show|repeat|output|reveal)\b[^.\n]{0,20}\beverything\s+(above|before)\b",
@@ -148,13 +202,24 @@ INJECTION_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "indirect": (
         # Injections hidden in structural markup a model may read but a human reviewer will not.
-        r"<!--[^>]{0,80}\b(ai|assistant|agent|llm|system)\b\s*[:,]",
-        r"\[\[\s*(system|assistant|ai|agent)\s*[:|]",
-        r"<\s*(system|assistant)\s*>",
-        r"<\s*/?\s*(instruction|system_prompt)s?\s*>",
-        r"\bwhen\s+(summariz|process|read|analyz)\w*\b[^.\n]{0,40}\b(also\s+)?(run|execute|exec|"
-        r"eval|curl|wget|send|post|email|upload)\b",
-        r"\|\s*(sh|bash|zsh|python)\b",
+        # A comment that opens by addressing a model ("<!-- AI: ...") and not one that mentions an
+        # agent ("<!-- Generated by the docs agent, do not edit -->").
+        r"<!--\s*(?:(?:note\s+to|to|dear|hey|attention)\s+(?:the\s+)?)?(ai|assistant|agent|llm|"
+        r"system)\b\s*[:,]",
+        # Not "[[AI|artificial intelligence]]", a wiki link with its label.
+        r"\[\[\s*(system|assistant|ai|agent)\s*:",
+        # A role or instructions tag whose words speak to the model ("<system>You have ..."). Not
+        # a Maven project's "<system>GitHub</system>" or an app's own prompt template.
+        r"<\s*(system|assistant)\s*>\s*(?:you|your|ignore|disregard|forget)\b",
+        r"<\s*/?\s*(instruction|system_prompt)s?\s*>\s*(?:you|your|ignore|disregard|forget)\b",
+        # A side task for whoever reads THIS text: "When summarizing, also run ...", "when reading
+        # this page, send ...". Not "When analyzing the logs, I'll also run the test suite", which
+        # names its own object and its own doer.
+        (r"\bwhen\s+(summariz|process|read|analyz)\w*(?:" + _GAP + _THIS + r")?,?" + _GAP)
+        + (r"(?:also" + _GAP + r")?(run|execute|exec|eval|curl|wget|send|post|email|upload)\b"),
+        # Not here: a pipe into a shell or an interpreter. It is inert until something tells the
+        # model to run it, which the pattern above reads, and the same pipe is a README's install
+        # line, a table's cell and a regex's alternation.
     ),
 }
 

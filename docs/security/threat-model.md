@@ -273,6 +273,19 @@ Content and requests arriving from outside the owner's trust boundary:
   every agent is handed whatever its own prompt says
   (`prompt_providers/runtime.py::with_safety_rules`; a path that starts an agent
   without them fails `tests/test_agent_safety_rules_census.py`).
+- **Injection screen** (`triggers/screen.py::screen`) reads that text before a
+  model does: a trigger's payload, a lifecycle trigger's words and what its
+  action prints, a refiner's evidence. It refuses text addressed to the model
+  that tells it to drop what it was told, hands it a new purpose, speaks as its
+  system turn, gives whoever reads it a side task, or hides one of those behind
+  encoding or invisible characters, and it fences text that gives the model a
+  role or asks for its configuration. It passes ordinary content: code, Markdown
+  tables, shell pipelines, stack traces, diffs, logs, commit messages and
+  release notes
+  (`tests/test_the_injection_screen_passes_ordinary_text_and_refuses_a_take_over.py`).
+  Text quoting a take-over phrase word for word is refused like the phrase. It
+  is a filter, not a proof: the fence and a trigger's frozen capability set hold
+  when it misses.
 - **Webhook auth** (`inbound/webhook.py`): the webhook's two doors take requests
   only from programs on this machine and each its own token, compared in constant
   time — a sender token made for one automation at
