@@ -312,6 +312,20 @@ def _resolution_moved(provider: Any) -> bool:
     return basis is not None and not basis.holds()
 
 
+def _rebuild_reason(sess: "_Session", asked: dict[str, Any]) -> str:
+    """Why *sess*'s cached runtime cannot answer the turn *asked* (``get_or_create``'s factory
+    arguments) acquires it for, or ``""`` when it can."""
+    if sess.forgotten:
+        return "the conversation it holds was let go"
+    if sess.definition_stale:
+        return "its agent was edited"
+    if _resolution_moved(sess.provider):
+        return "what its model was resolved from changed"
+    if _posture_moved(sess, asked):
+        return "who answers it or whose spend it is changed"
+    return ""
+
+
 def _record_runner_lease(runtime_id: str, holder: str) -> None:
     """Record that session *holder* started a chat on the external runner *runtime_id*.
 
@@ -370,6 +384,9 @@ class _Session:
     # finishes, never under it — so an open chat or room answers its next turn as the agent
     # now reads. See ``SessionManager.mark_agent_stale``.
     definition_stale: bool = False
+    # The conversation this runtime holds was let go (``SessionManager.forget_conversation``): it
+    # answers no further turn, and nothing writes the id that resumes it back to the session map.
+    forgotten: bool = False
     # Who answers this runtime and whose spend it is, as the request that built it said
     # (:data:`_POSTURE_KEYS`): a runtime keeps both from when it was built, so a request naming
     # others gets a runtime built for them (:func:`_posture_moved`).
@@ -1047,28 +1064,17 @@ class SessionManager:
             except BaseException:
                 sess.semaphore.release()
                 raise
-            stale = (
-                "its agent was edited"
-                if sess.definition_stale
-                else (
-                    "what its model was resolved from changed"
-                    if _resolution_moved(provider)
-                    else (
-                        "who answers it or whose spend it is changed"
-                        if _posture_moved(sess, extra_factory_kwargs)
-                        else ""
-                    )
-                )
-            )
+            stale = _rebuild_reason(sess, extra_factory_kwargs)
             if not stale:
                 return provider, was_new, False
             # The agent was edited while this runtime was cached, or what its model was resolved
             # from moved (a rebind in Settings → Models, an edit or removal of the instance it
-            # serves from). Checked AFTER the permit is held, so a turn that was running when the
-            # change landed finished on what it started with, and this one — the first to start
-            # after — gets a runtime built from how things now read. The session map is kept, as
-            # for a dead provider, so an ACP runtime resumes its conversation; a native chat
-            # restores its own.
+            # serves from), or the conversation it holds was let go. Checked AFTER the permit is
+            # held, so a turn that was running when the change landed finished on what it started
+            # with, and this one — the first to start after — gets a runtime built from how things
+            # now read. The session map is kept, as for a dead provider, so an ACP runtime resumes
+            # its conversation and a native chat restores its own; a conversation let go has no id
+            # left in it to resume from.
             sess.semaphore.release()
             await self._drop_session(key, sess)
             logger.info("Session %s: %s — rebuilding its runtime", key, stale)
@@ -1491,6 +1497,25 @@ class SessionManager:
                 marked.append(key)
         return marked
 
+    def forget_conversation(self, key: str) -> None:
+        """Let go of the conversation *key*'s runtime holds, so the next turn of *key* starts one.
+
+        A runtime keeps its own copy of every turn it answered: the in-process loop its message
+        history, an agent CLI its session, and the session record the id that loads that session
+        back and a stopped turn waiting to be sent again. Clearing what a chat shows reaches none
+        of them, so this runtime answers no further turn: the next acquire builds a fresh one
+        (after a turn already running on it finishes, never under it, as for an edited agent). The
+        id is forgotten now, so neither that acquire nor a start after an idle reap or a restart
+        loads the conversation back. A channel link stays (``SessionMap.forget_session_id``).
+
+        Synchronous, so a caller can let a conversation go and start the turn that replaces it in
+        one step, with nothing able to start a turn on *key* in between.
+        """
+        sess = self._sessions.get(key)
+        if sess is not None:
+            sess.forgotten = True
+        self._session_map.forget_session_id(key)
+
     async def _drop_session(self, key: str, sess: "_Session") -> None:
         """Retire ``sess`` from ``key`` so the next acquire builds a fresh runtime; keeps the map.
 
@@ -1564,7 +1589,7 @@ class SessionManager:
                 _cwd_str = (
                     str(sess.provider._work_dir) if hasattr(sess.provider, "_work_dir") else ""
                 )
-                if isinstance(sess.provider, AgentProvider):
+                if isinstance(sess.provider, AgentProvider) and not sess.forgotten:
                     sid = sess.provider.session_id
                     if sid and not any(key.startswith(p) for p in _STATELESS_PREFIXES):
                         self._session_map.set(key, sid, cwd=_cwd_str)

@@ -15,8 +15,13 @@ So this module checks membership in ``config.agents`` ITSELF and 404s, and only 
 calls the resolver. Deleting that pre-check does not fail any obvious test — it turns
 a 404 into a plausible wrong answer. The same holds for a session that already runs
 another agent: the request's agent answers its turn on a runtime built for it (the
-injected ``agent_mover``), and a request that would change it under a turn still
-running is refused with a 409.
+injected ``agent_mover``).
+
+**A session answers one request at a time.** Its turn's rows reach the request through
+one queue, read by one reader, so a request that arrives while the session is answering
+another (a turn running, or its answer still being read out) is refused with a 409
+``session_busy`` and not run beside it: two readers on one queue hand one caller the
+other's answer.
 
 **Tool calls execute server-side and are NEVER surfaced as `tool_calls` deltas.**
 The caller is not the tool executor; the headless profile is. A dialect that
@@ -38,7 +43,7 @@ specific way this tenet dies.
 
 Statelessness is enforced HERE rather than by adding ``inbound:`` to
 ``session._STATELESS_PREFIXES`` — see ``_reset_session`` for why that list is the
-wrong lever and what EA-9 measured.
+wrong lever.
 """
 
 from __future__ import annotations
@@ -419,46 +424,43 @@ def session_tag_from(body: dict, request: web.Request, client: Any) -> tuple[str
     return (tag or DEFAULT_SESSION_TAG), True
 
 
-def _reset_session(session: Any, key: str, state: Any = None) -> None:
-    """Make a non-persistent turn genuinely context-free, on BOTH axes.
+def _reset_session(session: Any, key: str, state: Any) -> None:
+    """Let go of everything *session* holds of the requests before this one: the one reset made
+    before each turn of a client that keeps no conversation.
 
-    §2.1 asked for ``inbound:`` in ``session._STATELESS_PREFIXES``. EA-9 measured why
-    that is the wrong lever and this module honours its ruling: that list is the
-    PROVIDER resume/pool axis, and ``inbound:cli:`` — headless ``personalclaw run`` —
-    shares this prefix. Adding ``inbound:`` would have silently broken §9.5's own
-    ``--session`` clause, whose entire purpose is to let a NAMED headless session
-    continue a conversation. No narrower literal prefix separates them, because the
-    middle segment is a client_id and ``cli`` is one of the values it can take.
+    Adding ``inbound:`` to ``session._STATELESS_PREFIXES`` is the wrong lever: that list
+    is the PROVIDER resume/pool axis, and ``inbound:cli:`` — headless ``personalclaw run``
+    — shares this prefix, so it would silently break ``run --session``, whose entire
+    purpose is to let a NAMED headless session continue a conversation. No narrower
+    literal prefix separates them, because the middle segment is a client_id and ``cli``
+    is one of the values it can take.
 
     So statelessness is enforced per-request, here, where the persistence decision
-    actually lives — and it covers the two things that would otherwise carry context:
+    actually lives, and it reaches every place an earlier request lives on:
 
-    1. the transcript the model is shown (``session.messages``), and
-    2. the provider-side resume id (``SessionMap``), which is what
-       ``_STATELESS_PREFIXES`` suppresses for cron and channel keys.
+    1. the conversation the session records (``session.messages``): what a fresh runtime
+       is given back, with the rows still queued for a reader and the notes an earlier
+       turn's subagents left for the next one;
+    2. the runtime the session manager holds for the session, which keeps its own copy of
+       every turn it answered (the in-process loop its message history, an agent CLI its
+       session), and the id that loads that session back after an idle reap or a restart.
+       ``SessionManager.forget_conversation`` lets both go, under the key the session's
+       turns run under (``dashboard_history_key``).
 
-    Clearing only (1) would look right in a transcript assertion and still leak the
-    previous turn through an ACP resume.
+    Clearing (1) alone passed a transcript assertion while the reused runtime handed the
+    next request's model every earlier one, and the id was purged under the bare session
+    name, which the session manager never writes, so a restarted agent CLI loaded the
+    earlier conversation back.
 
-    🔴 The resume purge goes through the LIVE ``SessionManager``'s map when there is
-    one, and only falls back to a fresh ``SessionMap()``. ``SessionMap`` loads from
-    disk once in ``__init__`` and every read answers from ``self._data``, so a fresh
-    instance deleting the row removes it from DISK while the gateway's long-lived
-    instance keeps it in memory — and the next ``set``/shutdown writes the whole
-    in-memory dict back, restoring the id this function just removed. The purge would
-    have looked correct in isolation and been silently undone in the running gateway.
+    Fails closed: a failure here is raised, never swallowed, and the caller refuses the
+    turn. A request that cannot be started apart from the ones before it is not started.
     """
-    with _quiet():
-        session.messages.clear()
-    with _quiet():
-        session._pending.clear()
-    with _quiet():
-        smap = getattr(getattr(state, "sessions", None), "_session_map", None)
-        if smap is None:
-            from personalclaw.session_map import SessionMap
+    from personalclaw.constants import dashboard_history_key
 
-            smap = SessionMap()
-        smap.delete(key)
+    session.messages.clear()
+    session._pending.clear()
+    session._pending_subagent_failures.clear()
+    state.sessions.forget_conversation(dashboard_history_key(key))
 
 
 def _answered_by(session: Any, agent: str) -> bool:
@@ -467,19 +469,30 @@ def _answered_by(session: Any, agent: str) -> bool:
     return getattr(session, "agent", "") == agent and not getattr(session, "acp_provider", "")
 
 
-def _agent_change_mid_turn(client_id: str, model: str) -> web.Response:
-    """The refusal for a request that names another agent while the session's turn runs."""
-    audit(
-        OPENAI_SURFACE,
-        route=ROUTE_CHAT,
-        status=409,
-        client_id=client_id,
-        refused=f"agent change mid-turn: model={model!r}",
-    )
+def _busy(session: Any) -> bool:
+    """Whether *session* is answering a request: a turn runs on it, or a reader still holds the
+    queue its turns are delivered on (an answer being read out to its caller, or a dashboard page
+    streaming one). A session has that one queue, so it answers one request at a time."""
+    return bool(session.running or session._has_reader)
+
+
+def _session_busy(client_id: str, persistent: bool) -> web.Response:
+    """The refusal for a request that arrives while its session is answering another one.
+
+    The sentence says what the caller can do. A client that keeps its conversation may send the
+    request in another session; one that keeps none has a single session, so it can only wait.
+    """
+    audit(OPENAI_SURFACE, route=ROUTE_CHAT, status=409, client_id=client_id, refused="session busy")
     return openai_error(
-        "This session is still answering another request, and its agent changes only between "
-        "requests. Ask again when that answer has finished, or use another session.",
-        code="agent_change_mid_turn",
+        (
+            "This session is busy with another request, and a session answers one at a time. "
+            "Ask again when that one has finished, or send this one in another session "
+            "(another value in its user field)."
+            if persistent
+            else "This client's requests share one session, which is busy with another "
+            "request; a session answers one at a time. Ask again when that one has finished."
+        ),
+        code="session_busy",
         status=409,
     )
 
@@ -625,67 +638,87 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
         return openai_error("Gateway state unavailable.", code="service_unavailable", status=503)
 
     session = state.get_or_create_session(key, agent=agent)
-    if not _answered_by(session, agent):
-        # The request names an agent other than the one answering this existing session. The
-        # change is made the way every door makes it (the injected mover): the session's runtime
-        # is retired, so this turn runs on one built for the agent named — its model and the
-        # instructions a runtime is given when it is built — instead of on the one already
-        # running. Never under a turn that is still running: that turn is another request's,
-        # and its caller is waiting for the agent it named.
-        if session.running:
-            return _agent_change_mid_turn(client_id, model)
-        mover = request.app.get(AGENT_MOVER_KEY)
-        if mover is None:
-            logger.error("openai dialect: no agent mover injected; refusing the turn")
+    # One request at a time per session: its turns are delivered on one queue, to one reader. A
+    # second request beside the first started a second turn, and the two readers took each
+    # other's rows, so one caller was handed the other's answer while the other waited out the
+    # turn deadline. Refused while a turn runs, and while the last answer is still being read out.
+    if _busy(session):
+        return _session_busy(client_id, persistent)
+    # The session is this request's from here until its answer has been read out. The reader
+    # slot is claimed in the same step as the check, before anything below awaits, so no other
+    # request can start in between; `_ChatSession.append` then routes this turn's rows to
+    # `_pending` for this request to drain instead of broadcasting them at the dashboard's SSE
+    # listeners. Every way out of the request releases it (`_finish`).
+    session._has_reader = True
+    try:
+        if not _answered_by(session, agent):
+            # The request names an agent other than the one answering this existing session.
+            # The change is made the way every door makes it (the injected mover): the
+            # session's runtime is retired, so this turn runs on one built for the agent named —
+            # its model and the instructions a runtime is given when it is built — instead of
+            # on the one already running.
+            mover = request.app.get(AGENT_MOVER_KEY)
+            if mover is None:
+                logger.error("openai dialect: no agent mover injected; refusing the turn")
+                return openai_error(
+                    "This surface is not wired to change a session's agent.",
+                    code="service_unavailable",
+                    type_="server_error",
+                    status=503,
+                )
+            await mover(state, session, agent)
+            # Read again after the wait: another door (the dashboard) may have started a turn
+            # here meanwhile, or handed the session to another agent. Nothing awaits from here to
+            # this turn's start, so what is checked now is what the turn starts with.
+            if session.running or not _answered_by(session, agent):
+                return _session_busy(client_id, persistent)
+        if not persistent:
+            try:
+                _reset_session(session, key, state)
+            except Exception:  # noqa: BLE001 — refused below: this control fails closed
+                logger.error(
+                    "openai dialect: could not let go of the earlier requests; refusing the turn",
+                    exc_info=True,
+                )
+                return openai_error(
+                    "This request could not be started apart from the ones before it, so it "
+                    "was not run. Try again; if it keeps failing, check the gateway log.",
+                    code="service_unavailable",
+                    type_="server_error",
+                    status=503,
+                )
+
+        session.drain()
+        before_in, before_out = _token_totals(key)
+
+        runner = request.app.get(TURN_RUNNER_KEY)
+        if runner is None:
+            # Nothing injected the turn runner, so this surface cannot run a turn. Honest
+            # 503 rather than a crash — and it is a wiring bug, so it is logged loudly.
+            logger.error("openai dialect: no turn runner injected; refusing the turn")
             return openai_error(
-                "This surface is not wired to change a session's agent.",
+                "This surface is not wired to run turns.",
                 code="service_unavailable",
                 type_="server_error",
                 status=503,
             )
-        await mover(state, session, agent)
-        # Read again after the wait: a request that came in meanwhile may have started a turn
-        # here, or moved the session on to its own agent. Nothing awaits from here to this
-        # turn's start, so what is checked now is what the turn starts with.
-        if session.running or not _answered_by(session, agent):
-            return _agent_change_mid_turn(client_id, model)
-    if not persistent:
-        _reset_session(session, key, state)
 
-    # Claim the reader slot the same way the dashboard's SSE path does, so
-    # `_ChatSession.append` routes this turn's rows to `_pending` for us to drain
-    # instead of broadcasting them at the dashboard's global SSE listeners.
-    session._has_reader = True
-    session.drain()
-    before_in, before_out = _token_totals(key)
+        session.append("user", prompt, "msg msg-u")
+        task = asyncio.create_task(runner(state, session, prompt))
+        session.task = task
+        with _quiet():
+            state._background_tasks.add(task)
+            task.add_done_callback(state._background_tasks.discard)
 
-    runner = request.app.get(TURN_RUNNER_KEY)
-    if runner is None:
-        # Nothing injected the turn runner, so this surface cannot run a turn. Honest
-        # 503 rather than a crash — and it is a wiring bug, so it is logged loudly.
-        logger.error("openai dialect: no turn runner injected; refusing the turn")
-        _finish(session, key)
-        return openai_error(
-            "This surface is not wired to run turns.",
-            code="service_unavailable",
-            type_="server_error",
-            status=503,
+        if stream:
+            return await _stream_completion(
+                request, session, key, model, client_id, (before_in, before_out), started
+            )
+        return await _buffered_completion(
+            session, key, model, client_id, (before_in, before_out), started
         )
-
-    session.append("user", prompt, "msg msg-u")
-    task = asyncio.create_task(runner(state, session, prompt))
-    session.task = task
-    with _quiet():
-        state._background_tasks.add(task)
-        task.add_done_callback(state._background_tasks.discard)
-
-    if stream:
-        return await _stream_completion(
-            request, session, key, model, client_id, (before_in, before_out), started
-        )
-    return await _buffered_completion(
-        session, key, model, client_id, (before_in, before_out), started
-    )
+    finally:
+        _finish(session)
 
 
 async def _drain_turn(
@@ -722,8 +755,13 @@ async def _drain_turn(
                 session.event.clear()
 
 
-def _finish(session: Any, key: str, persistent_ok: bool = False) -> None:
-    """Release the reader slot. Always runs, including on a client disconnect."""
+def _finish(session: Any) -> None:
+    """Let go of the session: drop what is left in its queue and release the reader slot.
+
+    Runs once, on every way out of a request that claimed the slot: an answer read out, a
+    refusal after the claim, a client that hung up, a turn past its deadline. A turn still
+    running then keeps the session busy (``_busy``) until it ends.
+    """
     with _quiet():
         session.drain()
     with _quiet():
@@ -744,12 +782,9 @@ async def _buffered_completion(
     async def _collect(text: str) -> None:
         parts.append(text)
 
-    try:
-        completed, needs_approval = await _drain_turn(
-            session, on_text=_collect, deadline=time.monotonic() + TURN_TIMEOUT_SECS
-        )
-    finally:
-        _finish(session, key)
+    completed, needs_approval = await _drain_turn(
+        session, on_text=_collect, deadline=time.monotonic() + TURN_TIMEOUT_SECS
+    )
 
     content = "".join(parts).strip()
     if needs_approval:
@@ -868,7 +903,6 @@ async def _stream_completion(
         # closed a socket would lose real work.
         pass
     finally:
-        _finish(session, key)
         audit(
             OPENAI_SURFACE,
             route=ROUTE_CHAT,

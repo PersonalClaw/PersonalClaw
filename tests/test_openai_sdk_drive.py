@@ -66,6 +66,10 @@ class _Session:
         self._pending.clear()
         return out
 
+    @property
+    def running(self) -> bool:
+        return self.task is not None and not self.task.done()
+
 
 class _State:
     def __init__(self) -> None:

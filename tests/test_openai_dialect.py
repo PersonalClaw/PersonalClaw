@@ -16,8 +16,10 @@ Four properties carry the weight:
 * **No `tool_calls` ever reach the wire**, even when the turn's transcript contains tool
   and permission rows — asserted with those rows present, so the test would notice a
   translation that started passing them through.
-* **Statelessness is real on both axes** — transcript AND the provider resume id — and a
-  ``persistent_sessions`` client keeps both.
+* **Statelessness reaches every place an earlier request lives on** — the transcript, and
+  the runtime and resume id the session manager holds — and fails closed. Driven end to end,
+  with a ``persistent_sessions`` client keeping its conversation beside it, in
+  ``test_an_openai_endpoint_request_is_answered_alone.py``.
 * **Zero bindable provider names in the dialect module**, with a vacuity case proving the
   grep can fail.
 
@@ -131,6 +133,7 @@ class _FakeSession:
         self.agent = agent
         self.messages: list[dict] = []
         self._pending: list[dict] = []
+        self._pending_subagent_failures: list[str] = []
         self._has_reader = False
         self.task = None
         self.event = asyncio.Event()
@@ -155,10 +158,21 @@ async def _no_other_agent(*_a, **_k):  # noqa: ANN002, ANN003
     raise AssertionError("no request here names another agent for an existing session")
 
 
+class _FakeSessions:
+    """The session manager, as far as the dialect asks it anything: to let a conversation go."""
+
+    def __init__(self) -> None:
+        self.forgotten: list[str] = []
+
+    def forget_conversation(self, key: str) -> None:
+        self.forgotten.append(key)
+
+
 class _FakeState:
     def __init__(self) -> None:
         self._sessions: dict[str, _FakeSession] = {}
         self._background_tasks: set = set()
+        self.sessions = _FakeSessions()
 
     def get_or_create_session(self, name=None, agent="", **kw) -> _FakeSession:
         if name not in self._sessions:
@@ -506,67 +520,66 @@ def test_persistent_sessions_parses_only_a_real_true(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_stateless_turn_clears_both_axes(monkeypatch, tmp_path):
-    """Statelessness covers the transcript AND the provider resume id.
+async def test_a_stand_alone_reset_lets_go_of_what_the_session_manager_holds(monkeypatch):
+    """The reset reaches every place an earlier request lives on, under the key the session
+    manager holds them by.
 
-    Clearing only the transcript would satisfy a naive assertion and still leak the
-    previous turn through an ACP resume, which is precisely what
-    ``_STATELESS_PREFIXES`` suppresses for cron and channel keys. Both are asserted,
-    and the persistent case is asserted beside it so the test is not just proving that
-    everything is always wiped.
+    The transcript is the session's; the runtime and the id an agent CLI resumes its
+    conversation from are the session manager's, keyed by the name the session's turns run
+    under (``dashboard_history_key``). The id used to be purged under the bare session name,
+    which the manager never writes, so it survived every reset, and the runtime was not reached
+    at all. Asserted on a real session manager, a session the reset does not name beside it.
     """
-    from personalclaw.session_map import SessionMap
+    from personalclaw.config.loader import AppConfig
+    from personalclaw.constants import dashboard_history_key
+    from personalclaw.session import SessionManager, _Session
 
     _enable(monkeypatch)
     key = dialect.session_key_for("c1", "default")
-
-    # The LIVE map, handed over the way the gateway does (`state.sessions._session_map`).
-    # Passing the live instance is the point: `SessionMap` answers reads from the
-    # in-memory dict it loaded at construction, so a purge performed on a FRESH
-    # instance removes the row from disk while this one still returns the sid — and the
-    # next write from this instance would restore it.
-    live = SessionMap()
+    other = dashboard_history_key(dialect.session_key_for("c1", "kept"))
+    manager = SessionManager(AppConfig())
+    for name in (dashboard_history_key(key), other):
+        manager._session_map.set(name, f"resume-{name}")
+        manager._sessions[name] = _Session(provider=object())
     state = _FakeState()
-    state.sessions = type("_M", (), {"_session_map": live})()
-    live.set(key, "resume-sid-1")
-    assert live.get(key) == "resume-sid-1", "vacuity floor: the map really held the id"
+    state.sessions = manager
 
     session = _FakeSession(key)
     session.append("assistant", "an earlier turn", "msg")
+    session._pending_subagent_failures.append("a note an earlier turn's subagent left")
     dialect._reset_session(session, key, state)
-    assert session.messages == [], "the transcript the model sees must not carry over"
-    assert live.get(key) is None, "the provider resume id must not carry over either"
 
-    # The persistent path leaves both alone — the flag has to mean something.
-    live.set(key, "resume-sid-2")
-    keeper = _FakeSession(key)
-    keeper.append("assistant", "kept", "msg")
-    assert keeper.messages and live.get(key) == "resume-sid-2"
+    assert session.messages == [] and session._pending == []
+    assert session._pending_subagent_failures == []
+    assert manager._session_map.get(dashboard_history_key(key)) is None
+    assert manager._sessions[dashboard_history_key(key)].forgotten
+    # A session the reset does not name keeps its runtime and its id.
+    assert manager._session_map.get(other) == f"resume-{other}"
+    assert not manager._sessions[other].forgotten
 
 
 @pytest.mark.asyncio
-async def test_reset_reaches_the_live_map_not_a_fresh_copy(monkeypatch, tmp_path):
-    """The specific defect the live-map lookup exists to prevent.
-
-    A fresh ``SessionMap()`` deletes the row on DISK; the gateway's long-lived instance
-    keeps it in memory and writes the whole dict back on its next save, restoring the
-    id. Asserted by proving the purge landed on the instance the gateway holds — not
-    merely that some copy somewhere lost the row.
-    """
-    from personalclaw.session_map import SessionMap
-
+async def test_a_request_whose_reset_cannot_be_made_is_not_run(monkeypatch):
+    """The reset is a control, so it fails closed: a request that cannot be started apart from
+    the ones before it is refused in the wire's error shape, and its turn never starts."""
     _enable(monkeypatch)
-    key = dialect.session_key_for("c1", "default")
-    live = SessionMap()
-    live.set(key, "sid-live")
-    state = _FakeState()
-    state.sessions = type("_M", (), {"_session_map": live})()
+    token = _token()
+    client, state = await _client(monkeypatch)
 
-    dialect._reset_session(_FakeSession(key), key, state)
-    assert live.get(key) is None, "the purge must land on the live in-memory map"
-    # And a save from the live instance must not resurrect it.
-    live.set("other", "sid-other")
-    assert SessionMap().get(key) is None, "a later save must not restore the purged id"
+    def _cannot(key: str) -> None:
+        raise OSError("the session map could not be written")
+
+    state.sessions.forget_conversation = _cannot
+    try:
+        resp = await client.post(dialect.ROUTE_CHAT, data=_body(), headers=_auth(token))
+        payload = await resp.json()
+    finally:
+        await client.close()
+    assert resp.status == 503, payload
+    assert payload["error"]["code"] == "service_unavailable"
+    (session,) = state._sessions.values()
+    assert session.task is None, "the turn was started"
+    assert session._has_reader is False, "the session was left claimed"
 
 
 # ── 5. GET /v1/models ─────────────────────────────────────────────────────────

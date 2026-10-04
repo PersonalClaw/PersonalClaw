@@ -501,13 +501,18 @@ under those prefixes still needs a dashboard sign-in.
 On the `openai` surface, `model` names one of your **agents** (`personalclaw/<agent>` or the
 bare name), and `GET /v1/models` lists the ones a client may ask for. A client's requests share
 a session: one per `user` field (or `X-PersonalClaw-Session` header) when the client is
-registered to keep its conversation, otherwise one for the client. A request that names another
-agent than its session runs hands the session to that agent first, the way the dashboard's agent
-picker hands a chat over, so its turn runs on a runtime built for that agent, with its model and
-its instructions, and what the conversation records names it. A request that names another agent
-while its session is still answering an earlier request is refused with `409` and the code
-`agent_change_mid_turn`, and the answer in progress is left as it is; ask again once it has
-finished, or use another session.
+registered to keep its conversation, otherwise one for the client. A client that keeps no
+conversation is answered as if each request were its first: each runs on a runtime started for
+it (an agent CLI opens a new session for it), and nothing an earlier request said, or was
+answered, reaches the next one's model. A request that names another agent than its session runs
+hands the session to that agent first, the way the dashboard's agent picker hands a chat over, so
+its turn runs on a runtime built for that agent, with its model and its instructions, and what
+the conversation records names it.
+
+A session answers one request at a time. A request that arrives while its session is still
+answering another, or while that answer is still being sent, is refused with `409` and the code
+`session_busy`, and the answer in progress is left as it is. Ask again once it has finished; a
+client that keeps its conversation can also send it in another session.
 
 | Command | What it does |
 |---|---|

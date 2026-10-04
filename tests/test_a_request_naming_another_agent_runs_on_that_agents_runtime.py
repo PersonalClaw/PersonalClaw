@@ -41,19 +41,21 @@ from personalclaw import usage_ledger
 from personalclaw.config.external_access import ExternalAccessConfig
 from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
 from personalclaw.config.loader import AgentProfile, AppConfig
+from personalclaw.config.transactions import mutate_config
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard.chat_handlers import api_chat
 from personalclaw.dashboard.chat_utils import _history_key_for, persisted_history_key
 from personalclaw.dashboard.routes import register_dashboard_routes
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
-from personalclaw.inbound import auth, clients
+from personalclaw.inbound import auth, caps, clients
 from personalclaw.inbound import openai_dialect as dialect
 from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
 from personalclaw.memory import MemoryStore
 from personalclaw.providers.provider_bridge import create_provider_factory
+from personalclaw.providers.use_cases import save_active_models
 from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 
@@ -126,10 +128,6 @@ class _World:
         )
         registry.register_entry(ProviderEntry(name=ENTRY, type=ENTRY, model="research-1"))
         monkeypatch.setattr("personalclaw.llm.registry.get_default_registry", lambda: registry)
-        chat_models = {"chat": [f"{ENTRY}:research-1", f"{ENTRY}:write-1"]}
-        monkeypatch.setattr(
-            "personalclaw.providers.use_cases.load_active_models", lambda: chat_models
-        )
 
         cfg = AppConfig.load()
         cfg.agents.update(PROFILES)
@@ -137,6 +135,16 @@ class _World:
             enabled=True, openai=Surface(enabled=True, allow_remote=False)
         )
         cfg.save()
+        # The models' provider is configured as one added in Settings is, and the chat chain is
+        # bound in the store Settings → Models writes. The reader of that store is not patched: a
+        # module first imported while such a patch stands keeps the fake after the test, and
+        # every later test in the worker reads it.
+        mutate_config(
+            lambda doc: doc.setdefault("providers", []).append(
+                {"name": ENTRY, "type": ENTRY, "model": "research-1"}
+            )
+        )
+        save_active_models({"chat": [f"{ENTRY}:research-1", f"{ENTRY}:write-1"]})
 
         production = create_provider_factory()
         #: Every runtime the session manager had built, in order — what each was built with is
@@ -242,12 +250,15 @@ class _World:
 async def world(tmp_path, monkeypatch):
     for surface in _SURFACES:
         monkeypatch.delenv(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", raising=False)
+    # The rate buckets are process-wide: no test inherits a budget another spent.
+    caps.reset_for_tests()
     w = _World(tmp_path, monkeypatch)
     await w.start()
     try:
         yield w
     finally:
         await w.close()
+        caps.reset_for_tests()
         for surface in _SURFACES:
             os.environ.pop(f"PERSONALCLAW_INBOUND_{surface}_TOKEN", None)
 
@@ -380,9 +391,9 @@ async def test_a_request_naming_another_agent_mid_turn_is_refused_and_the_turn_i
         refusal = await resp.json()
         assert resp.status == 409, refusal
         error = refusal["error"]
-        assert error["code"] == "agent_change_mid_turn"
+        assert error["code"] == "session_busy"
         assert error["type"] == "invalid_request_error"
-        assert "still answering" in error["message"]
+        assert "busy with another request" in error["message"]
         # The running turn kept its agent and its runtime, and nothing else was started.
         assert w.session.agent == RESEARCHER
         assert w.runtime() is researchers

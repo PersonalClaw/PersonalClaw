@@ -472,12 +472,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "agent_binding_violation": "This client is pinned to a different agent than it requested.",
     "empty_messages": "The request carried no message with content.",
     "turn_timeout": "The agent did not finish the turn within this surface's deadline.",
-    # A 409: the request named another agent than the one its session runs while that session
-    # was still answering a turn. The turn is another request's, so its agent is not changed
-    # under it; the same request succeeds once that turn has ended.
-    "agent_change_mid_turn": (
-        "The request named another agent while its session was still answering a turn."
-    ),
+    # A 409: the request arrived while its session was answering another one (a turn running, or
+    # its answer still being read out). A session answers one request at a time, so nothing of
+    # this one was run; the same request succeeds once the other has finished.
+    "session_busy": "The request's session was still answering another request.",
     # Audio aliases. "No voice is bound" and "synthesis broke" are separate codes
     # because the first is fixed in Settings and the second is a fault to report; a client
     # that cannot tell them apart will retry a configuration problem forever.
