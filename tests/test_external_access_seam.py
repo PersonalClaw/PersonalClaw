@@ -456,6 +456,8 @@ class TestClientStore:
             "tools",
             "scope",
             "rate_overrides",
+            "persistent_sessions",
+            "conversation_round",
             "disabled",
         ):
             assert field in raw, f"{field} missing from the persisted record"

@@ -5,7 +5,7 @@ import { notify } from '../../app/appSdk'
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { ConsentDeclined } from '../../lib/securityConsent'
 import { Button } from '../../ui/Button'
-import { PanelHeader, Section, RowGroup, Row, Toggle, NumberRow, StrListField } from './settingsUI'
+import { PanelHeader, Section, RowGroup, Row, Toggle, NumberRow, SegPills, StrListField } from './settingsUI'
 import { LoadError, Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 import { absTime } from '../schedule/scheduleMeta'
 import { StatusPill } from '../../ui/StatusPill'
@@ -349,9 +349,11 @@ export function ExternalAccessPanel() {
         {clients.length === 0 ? (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-4 py-3 text-on-surface-low">
             No clients yet. A client is created through the API,{' '}
-            <code>POST /api/external-access/clients</code>, which returns its token once. A plain
-            surface token also works, but it cannot be scoped. Every token lasts at most 90 days,
-            and Settings → Devices lists each one, with a revoke.
+            <code>POST /api/external-access/clients</code>, which returns its token once; send{' '}
+            <code>"persistent_sessions": true</code> for a client of the OpenAI-compatible API to
+            keep its conversation, or choose that here later. A plain surface token also works, but
+            it cannot be scoped. Every token lasts at most 90 days, and Settings → Devices lists
+            each one, with a revoke.
           </div>
         ) : (
           <div className="flex flex-col gap-1">
@@ -362,6 +364,9 @@ export function ExternalAccessPanel() {
                 busy={busy}
                 onToggleDisabled={(v) =>
                   act(() => api.externalAccessSetClientDisabled(c.client_id, v), c.client_id)
+                }
+                onChooseConversation={(keep) =>
+                  act(() => api.externalAccessSetClientPersistentSessions(c.client_id, keep), c.client_id)
                 }
                 onRevoke={() =>
                   act(() => api.externalAccessRevokeClient(c.client_id), c.client_id)
@@ -466,18 +471,31 @@ function SurfaceRow({
   )
 }
 
+/** The two answers to "does this client keep its conversation?", as the client row offers them. */
+const CONVERSATION_CHOICES: { key: 'kept' | 'alone'; label: string }[] = [
+  { key: 'kept', label: 'One per user' },
+  { key: 'alone', label: 'Each request alone' },
+]
+
 function ClientRow({
   client,
   busy,
   onToggleDisabled,
+  onChooseConversation,
   onRevoke,
 }: {
   client: ExternalAccessClient
   busy: string
   onToggleDisabled: (v: boolean) => void
+  onChooseConversation: (keep: boolean) => void
   onRevoke: () => void
 }) {
   const [confirming, setConfirming] = useState(false)
+  const name = client.label || client.client_id
+  // Only the OpenAI-compatible API carries a conversation, so a client it does not admit has no
+  // choice to make (the gateway refuses one).
+  const converses = client.surfaces.includes('openai')
+  const kept = client.persistent_sessions
   const expired = client.expires_at > 0 && client.expires_at * 1000 <= Date.now()
   const pins = [
     client.agent ? `agent ${client.agent}` : '',
@@ -526,7 +544,7 @@ function ClientRow({
           on={!client.disabled}
           onChange={(v) => onToggleDisabled(!v)}
           disabled={busy === client.client_id}
-          label={`${client.label || client.client_id} enabled`} />
+          label={`${name} enabled`} />
         {confirming ? (
           <>
             <Button
@@ -555,6 +573,31 @@ function ClientRow({
           </Button>
         )}
       </div>
+      {converses && (
+        <div className="flex basis-full flex-wrap items-center gap-x-m gap-y-xs">
+          <span data-type="caption" className="text-on-surface-low">Conversation</span>
+          {/* Painted from what the gateway stored, never ahead of it: a choice that failed to save
+              keeps showing the one in effect. */}
+          <SegPills
+            ariaLabel={`${name} conversation`}
+            value={kept ? 'kept' : 'alone'}
+            onChange={(v) => {
+              if (busy !== client.client_id && (v === 'kept') !== kept) onChooseConversation(v === 'kept')
+            }}
+            options={CONVERSATION_CHOICES} />
+          <p data-type="caption" className="basis-full text-on-surface-low">
+            {kept ? (
+              <>
+                Requests with the same <code>user</code> field (or{' '}
+                <code>X-PersonalClaw-Session</code> header) continue one conversation.
+              </>
+            ) : (
+              <>Each request is answered as if it were its first: nothing an earlier one said reaches it.</>
+            )}{' '}
+            Changing this starts its conversations over; the ones it had stay in your chat history.
+          </p>
+        </div>
+      )}
     </div>
   )
 }

@@ -296,6 +296,9 @@ export interface ExternalAccessClient {
   tools: string[]
   scope: Record<string, unknown>
   rate_overrides: Record<string, unknown>
+  /** Whether its requests to the OpenAI-compatible API continue one conversation per `user` value
+   *  (or `X-PersonalClaw-Session` header), or are each answered as if it were the first. */
+  persistent_sessions: boolean
   disabled: boolean
   created_at: string
   last_seen_at: string
@@ -7978,6 +7981,12 @@ export const api = {
     post<{ ok: boolean; client_id: string; disabled: boolean }>(
       `/api/external-access/clients/${encodeURIComponent(clientId)}/disabled`,
       { disabled },
+    ),
+  /** Whether the client keeps its conversation. A change starts its conversations over. */
+  externalAccessSetClientPersistentSessions: (clientId: string, persistentSessions: boolean) =>
+    post<{ ok: boolean; client_id: string; persistent_sessions: boolean }>(
+      `/api/external-access/clients/${encodeURIComponent(clientId)}/persistent-sessions`,
+      { persistent_sessions: persistentSessions },
     ),
   /** Your answer to a control-bridge action waiting in the Inbox (`refs.confirmation`):
    *  `confirm: true` runs it once, `false` drops it. Only you answer it; the agent that asked

@@ -591,6 +591,10 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
         "/api/external-access/clients/{client_id}/disabled",
         handlers.api_external_access_client_toggle,
     )
+    app.router.add_post(
+        "/api/external-access/clients/{client_id}/persistent-sessions",
+        handlers.api_external_access_client_persistent_sessions,
+    )
     # Your answer to a control-bridge action that waits for you (`inbound/bridge.py`).
     app.router.add_post(
         "/api/external-access/bridge/confirmations/{id}", handlers.api_bridge_confirmation

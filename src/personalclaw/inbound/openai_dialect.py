@@ -388,7 +388,7 @@ class _quiet:
 # ── Sessions ──────────────────────────────────────────────────────────────────
 
 
-def session_key_for(client_id: str, tag: str) -> str:
+def session_key_for(client_id: str, tag: str, *, conversation_round: int = 0) -> str:
     """``inbound:<client_id>:<sha8(tag)>`` — §2.1's key, hashed for a reason.
 
     ``tag`` is caller-supplied (`user`, or the `X-PersonalClaw-Session` header), so it
@@ -396,9 +396,17 @@ def session_key_for(client_id: str, tag: str) -> str:
     a session key that becomes a filename, a log field and a guardrail identity, and
     ``inbound:c1:../../etc`` should not be expressible. The hash also bounds the key's
     length, which the raw form does not.
+
+    ``conversation_round`` is the client's (``InboundClient.conversation_round``): from
+    the second round on it follows the digest (``…:<sha8>.<round>``), so each round's
+    sessions are named apart from every other round's by construction, never by a hash
+    the caller could aim at; the first round's are named by the tag alone. The middle
+    segment stays the client id, which is its spend scope.
     """
     tag = (tag or DEFAULT_SESSION_TAG).strip() or DEFAULT_SESSION_TAG
     digest = hashlib.sha256(tag.encode("utf-8")).hexdigest()[:8]
+    if conversation_round > 0:
+        digest = f"{digest}.{conversation_round}"
     return f"{SESSION_PREFIX}{client_id}:{digest}"
 
 
@@ -411,8 +419,9 @@ def session_tag_from(body: dict, request: web.Request, client: Any) -> tuple[str
 
     Both are ignored unless the client record sets ``persistent_sessions``. That is
     the declared-choice gate, and it is why a non-persistent client's `user` value
-    cannot be used to accumulate context: continuity is a standing grant, reviewed
-    when the client is created, not something a request field can mint.
+    cannot be used to accumulate context: continuity is a standing grant the owner
+    makes for the client (when registering it, or later in Settings → External
+    Access), not something a request field can mint.
     """
     persistent = getattr(client, "persistent_sessions", False) is True
     if not persistent:
@@ -631,7 +640,11 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
         )
 
     tag, persistent = session_tag_from(body, request, client)
-    key = session_key_for(client_id, tag)
+    # In the client's current round of conversations: a change of its choice started a new one,
+    # so nothing from before the change is continued (`clients.set_persistent_sessions`).
+    key = session_key_for(
+        client_id, tag, conversation_round=getattr(client, "conversation_round", 0)
+    )
     stream = body.get("stream") is True
 
     state = request.app.get("state")

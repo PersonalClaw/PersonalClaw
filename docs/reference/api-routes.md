@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **919 registrations** over **745 distinct paths** — 912 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **920 registrations** over **746 distinct paths** — 913 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -62,6 +62,7 @@ The 128 families the surface divides into, largest first.
 | `/api/devices` | 7 | 7 |
 | `/api/config` | 6 | 3 |
 | `/api/doc-comments` | 6 | 3 |
+| `/api/external-access` | 6 | 6 |
 | `/api/legibility` | 6 | 4 |
 | `/api/prompt-snippets` | 6 | 3 |
 | `/api/spawn` | 6 | 3 |
@@ -71,7 +72,6 @@ The 128 families the surface divides into, largest first.
 | `/api/uploads` | 6 | 5 |
 | `/api/autonudge` | 5 | 3 |
 | `/api/desktop` | 5 | 4 |
-| `/api/external-access` | 5 | 5 |
 | `/api/feedback` | 5 | 5 |
 | `/api/push` | 5 | 5 |
 | `/api/themes` | 5 | 2 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 912 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 913 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -449,6 +449,7 @@ The 912 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/external-access/clients` | create; DELETE …/{client_id} — revoke. |
 | `DELETE` | `/api/external-access/clients/{client_id}` | create; DELETE …/{client_id} — revoke. |
 | `POST` | `/api/external-access/clients/{client_id}/disabled` | kill-switch layer (c). |
+| `POST` | `/api/external-access/clients/{client_id}/persistent-sessions` | keep its conversation. |
 | `POST` | `/api/feedback` | record one verdict. |
 | `GET` | `/api/feedback/producers` | per-producer accuracy. |
 | `POST` | `/api/feedback/producers/clear` | un-suppress after an artifact edit. |

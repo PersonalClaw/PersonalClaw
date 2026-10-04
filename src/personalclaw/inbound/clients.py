@@ -91,8 +91,18 @@ class InboundClient:
     #: context per request unless it has declared otherwise, the same
     #: declared-choice gate crons' ``persistent_session`` uses. Continuity is a
     #: standing grant — an external client that could accumulate context by
-    #: accident could also accumulate standing instructions by accident.
+    #: accident could also accumulate standing instructions by accident. The owner
+    #: sets it when registering the client and changes it later
+    #: (:func:`set_persistent_sessions`); the OpenAI-compatible endpoint is the one
+    #: surface that reads it.
     persistent_sessions: bool = False
+    #: Which round of conversations this client's requests continue. Every change of
+    #: ``persistent_sessions`` starts the next round, and a round's sessions are named
+    #: apart from every other round's (``openai_dialect.session_key_for``), so no
+    #: request after a change continues a conversation from before it: not one the
+    #: client kept, and not the last request it had answered alone. Those
+    #: conversations stay in the chat history as they were. 0 until the first change.
+    conversation_round: int = 0
     disabled: bool = False
     created_at: str = ""
     last_seen_at: str = ""
@@ -135,6 +145,18 @@ def _read_raw() -> dict[str, dict]:
     return {str(k): v for k, v in data.items() if isinstance(v, dict)}
 
 
+def _round_of(stored: Any) -> int:
+    """A stored ``conversation_round``: the count the registry wrote, or 0 for anything else.
+
+    ``bool`` is refused by name because it is an ``int`` here, and ``True`` is no count. A value
+    that is not one reads as the first round rather than failing the row, which would hide the
+    client from its owner and refuse its token.
+    """
+    if isinstance(stored, bool) or not isinstance(stored, int) or stored < 0:
+        return 0
+    return stored
+
+
 def load_clients() -> dict[str, InboundClient]:
     """Every registered client, keyed by ``client_id``."""
     out: dict[str, InboundClient] = {}
@@ -157,6 +179,7 @@ def load_clients() -> dict[str, InboundClient]:
                 # exact inverse of the `disabled` reasoning two lines down, and the
                 # reason the two flags deliberately do not share a parse.
                 persistent_sessions=row.get("persistent_sessions") is True,
+                conversation_round=_round_of(row.get("conversation_round")),
                 # `disabled` is read with plain `bool`, NOT `_expose_flag`: this flag's
                 # True is the CLOSED position, so an unparseable value must read as
                 # disabled-ish, not as enabled. `bool("false")` is True — which here
@@ -204,6 +227,7 @@ def create_client(
     scope: dict[str, Any] | None = None,
     upstream: str = "",
     rate_overrides: dict[str, Any] | None = None,
+    persistent_sessions: bool = False,
     ttl_secs: int = INTEGRATION_TTL_SECS,
     actor: str = "owner",
 ) -> tuple[InboundClient, str]:
@@ -220,7 +244,8 @@ def create_client(
     URL. It is stored verbatim and NOT validated here: this function is the persistence
     seam and a provider may legitimately be configured after the client is registered.
     Validation belongs to the operator-facing route, which refuses an unknown name up
-    front the same way it refuses an unknown surface.
+    front the same way it refuses an unknown surface — and refuses ``persistent_sessions``
+    for a client the OpenAI-compatible endpoint, its one reader, would not admit.
     """
     if int(ttl_secs) > MAX_LIFETIME_SECS:
         raise ValueError(integration_too_long(int(ttl_secs)))
@@ -235,6 +260,7 @@ def create_client(
         scope=dict(scope or {}),
         upstream=upstream,
         rate_overrides=dict(rate_overrides or {}),
+        persistent_sessions=persistent_sessions is True,
         disabled=False,
         created_at=_now(),
     )
@@ -275,6 +301,39 @@ def set_disabled(client_id: str, disabled: bool, *, reason: str = "") -> bool:
         reason or "operator action",
     )
     return True
+
+
+def set_persistent_sessions(
+    client_id: str, persistent: bool, *, actor: str = "owner"
+) -> InboundClient | None:
+    """Choose whether a client keeps its conversation. The record as it now stands, or None when
+    the client is unknown.
+
+    A change starts the client's next round of conversations (``conversation_round``): a turn
+    running now finishes in the session it began in, and every request after the change is
+    answered in a session of the new round, so none continues a conversation from before it,
+    whichever way the choice went. Setting the choice the client already has changes nothing,
+    and its conversations go on.
+    """
+    clients = load_clients()
+    client = clients.get(client_id)
+    if client is None:
+        return None
+    if client.persistent_sessions == persistent:
+        return client
+    client.persistent_sessions = persistent
+    client.conversation_round += 1
+    save_clients(clients)
+    _sel_event(
+        (
+            "inbound_client_keeps_conversation"
+            if persistent
+            else "inbound_client_keeps_no_conversation"
+        ),
+        client_id,
+        f"by {actor}; its conversations start over (round {client.conversation_round})",
+    )
+    return client
 
 
 def lookup_by_token(token: str, surface: str) -> tuple[InboundClient | None, str]:

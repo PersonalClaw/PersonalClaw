@@ -71,6 +71,16 @@ BODY_BOOLEANS: dict[tuple[str, str, str], object] = {
     ("dashboard/handlers/core.py", "api_sel_rotate", "archive"): True,
     (
         "dashboard/handlers/external_access.py",
+        "api_external_access_client",
+        "persistent_sessions",
+    ): False,
+    (
+        "dashboard/handlers/external_access.py",
+        "api_external_access_client_persistent_sessions",
+        "persistent_sessions",
+    ): "required",
+    (
+        "dashboard/handlers/external_access.py",
         "api_external_access_client_toggle",
         "disabled",
     ): "required",
@@ -174,6 +184,8 @@ _WIDENING = {
     "published",
     "trusted",
     "auto_apply",
+    # Keeping a conversation is a standing grant to an outside client.
+    "persistent_sessions",
 }
 
 #: Names that are booleans at the doors above and text at others (a status word, a binding's or a

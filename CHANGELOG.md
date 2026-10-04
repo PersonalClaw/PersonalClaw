@@ -122,6 +122,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An Invoke Agent automation can work in a folder you allowed in Settings → Agent defaults, so its agent reads the files there; the automation's save refuses any other folder, as a Run prompt automation's now does too.**
 - **Settings → Models → Background sets how long a background task may run (five minutes unless you change it), the most text it may write in one answer (4,096 tokens) and how long a reply waits for a busy local model before asking the next one (15 seconds); a change applies to the next call, and a task the time limit stopped says where to raise it (`AppConfig.background`, an SDK addition no app has to change for).**
 - **The gateway keeps answering while a recording's speakers are told apart: an app can run one call of an engine that holds Python's interpreter lock in a process of its own, `personalclaw.sdk.sidecar.run_once` (an SDK addition, used by `diarization-onnx`, whose diarization stopped every request for as long as it ran, and by `diarization-pyannote`, whose clustering stopped them for a second or more at a time on a long recording).**
+- **A client of the OpenAI-compatible endpoint can keep its conversation, one per `user` value: you choose it when you register the client (`persistent_sessions`) and change it on the client's row in Settings → External Access, where a client could only ever keep none; a change starts its conversations over.**
 
 ### Changed
 

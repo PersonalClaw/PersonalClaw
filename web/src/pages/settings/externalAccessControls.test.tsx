@@ -20,6 +20,7 @@ import { ExternalAccessPanel } from './ExternalAccessPanel'
 const externalAccess = vi.fn()
 const patchConfig = vi.fn()
 const saveListEdits = vi.fn()
+const setPersistentSessions = vi.fn()
 vi.mock('../../lib/api', () => ({
   api: {
     externalAccess: (...a: unknown[]) => externalAccess(...a),
@@ -28,6 +29,7 @@ vi.mock('../../lib/api', () => ({
     externalAccessCreateClient: vi.fn(),
     externalAccessRevokeClient: vi.fn(),
     externalAccessSetClientDisabled: vi.fn(),
+    externalAccessSetClientPersistentSessions: (...a: unknown[]) => setPersistentSessions(...a),
   },
 }))
 
@@ -345,5 +347,93 @@ describe('a rate cap whose raise is declined or refused keeps the stored cap', (
     const box = await raise('5000')
     await waitFor(() => expect(box.value).toBe('1'))
     expect((await screen.findByRole('alert')).textContent).toContain('must be between 0.01 and 1000.0')
+  })
+})
+
+// ── Whether a client keeps its conversation is chosen on its row ─────────────────────────────────
+//
+// The record always held the choice and the OpenAI-compatible endpoint always read it, but nothing
+// showed or set it, so every client kept no conversation while the reference described one that
+// keeps it. The row now shows which way each client is set, in words that say what that means, and
+// changes it through the client's own route.
+
+describe('a client of the OpenAI-compatible API keeps its conversation as you choose', () => {
+  const NOTES = {
+    client_id: 'notes', label: 'notes app', surfaces: ['openai'], agent: '', tools: [], scope: {},
+    rate_overrides: {}, persistent_sessions: false, disabled: false, created_at: '',
+    last_seen_at: '', expires_at: 0, requests_seen: 0, refusals_seen: 0,
+  }
+  const KEPT = 'notes app conversation: One per user'
+  const ALONE = 'notes app conversation: Each request alone'
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+    patchConfig.mockResolvedValue({})
+    saveListEdits.mockResolvedValue([])
+    setPersistentSessions.mockResolvedValue({ ok: true })
+  })
+
+  it('shows the choice the client has, and says what it means', async () => {
+    externalAccess.mockResolvedValue({ ...STATE, clients: [NOTES] })
+    const view = render(<ExternalAccessPanel />)
+    const alone = await screen.findByRole('button', { name: ALONE })
+    expect(alone.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: KEPT }).getAttribute('aria-pressed')).toBe('false')
+    expect(
+      screen.getByText(/each request is answered as if it were its first/i).textContent,
+    ).toContain('nothing an earlier one said reaches it')
+    view.unmount()
+
+    externalAccess.mockResolvedValue({ ...STATE, clients: [{ ...NOTES, persistent_sessions: true }] })
+    render(<ExternalAccessPanel />)
+    const kept = await screen.findByRole('button', { name: KEPT })
+    expect(kept.getAttribute('aria-pressed')).toBe('true')
+    const said = screen.getByText(/continue one conversation/i).textContent ?? ''
+    expect(said).toContain('user field')
+    expect(said).toContain('X-PersonalClaw-Session header')
+  })
+
+  it('choosing the other one sends it for that client, and the row shows what the gateway stored', async () => {
+    externalAccess
+      .mockResolvedValueOnce({ ...STATE, clients: [NOTES] })
+      .mockResolvedValue({ ...STATE, clients: [{ ...NOTES, persistent_sessions: true }] })
+    render(<ExternalAccessPanel />)
+    await userEvent.click(await screen.findByRole('button', { name: KEPT }))
+    await waitFor(() => expect(setPersistentSessions).toHaveBeenCalledWith('notes', true))
+    expect(setPersistentSessions).toHaveBeenCalledTimes(1)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: KEPT }).getAttribute('aria-pressed')).toBe('true'),
+    )
+    // What a change does is said where it is made.
+    expect(screen.getByText(/changing this starts its conversations over/i)).toBeTruthy()
+    // VACUITY / cross-wiring floor: the choice is not a config key, and choosing again what is
+    // already chosen sends nothing.
+    expect(patchConfig).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: KEPT }))
+    expect(setPersistentSessions).toHaveBeenCalledTimes(1)
+  })
+
+  it('a refused change is named, and the row keeps showing the stored choice', async () => {
+    externalAccess.mockResolvedValue({ ...STATE, clients: [NOTES] })
+    setPersistentSessions.mockRejectedValue(
+      new Error('Only a client bound to the OpenAI-compatible surface has a conversation to keep; this one is not.'),
+    )
+    render(<ExternalAccessPanel />)
+    await userEvent.click(await screen.findByRole('button', { name: KEPT }))
+    expect((await screen.findByRole('alert')).textContent).toContain('has a conversation to keep')
+    expect(screen.getByRole('button', { name: ALONE }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('a client the OpenAI-compatible API does not admit has no conversation to choose', async () => {
+    externalAccess.mockResolvedValue({
+      ...STATE,
+      clients: [NOTES, { ...NOTES, client_id: 'ide', label: 'ide', surfaces: ['mcp'] }],
+    })
+    render(<ExternalAccessPanel />)
+    // The client the API admits has the choice, so its absence beside it is the row's own.
+    expect(await screen.findByRole('button', { name: ALONE })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^ide conversation:/ })).toBeNull()
+    expect(screen.getAllByRole('button', { name: /conversation:/ })).toHaveLength(2)
   })
 })

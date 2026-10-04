@@ -509,6 +509,19 @@ hands the session to that agent first, the way the dashboard's agent picker hand
 its turn runs on a runtime built for that agent, with its model and its instructions, and what
 the conversation records names it.
 
+Whether a registered client keeps its conversation is your choice, and it keeps none until you
+make it. Register the client with `"persistent_sessions": true` (`POST
+/api/external-access/clients`), or change it at any time: on the client's row under **Settings →
+External Access** (*Conversation*: **One per user** or **Each request alone**), or with `POST
+/api/external-access/clients/{client_id}/persistent-sessions` and `{"persistent_sessions": true}`
+or `false`. Only a client bound to the `openai` surface has a conversation to keep, so the choice
+is refused for any other; a caller signing in with the surface's own token is no registered
+client and keeps none. A change starts the client's conversations over, whichever way it goes: a
+turn running when you make it finishes and is answered as it began, and no request after it
+continues a conversation from before it, neither one the client kept nor the last request it had
+answered alone. Those conversations stay in your chat history as they were. Each change is a row
+in the security event log.
+
 A session answers one request at a time. A request that arrives while its session is still
 answering another, or while that answer is still being sent, is refused with `409` and the code
 `session_busy`, and the answer in progress is left as it is. Ask again once it has finished; a

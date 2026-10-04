@@ -280,6 +280,23 @@ _DOORS = [
         "POST",
     ),
     (
+        "personalclaw.dashboard.handlers.external_access:api_external_access_client",
+        "/api/external-access/clients",
+        "/api/external-access/clients",
+        {"label": "notes app", "surfaces": ["openai"], "persistent_sessions": "true"},
+        "persistent_sessions",
+        "POST",
+    ),
+    (
+        "personalclaw.dashboard.handlers.external_access:"
+        "api_external_access_client_persistent_sessions",
+        "/api/external-access/clients/{client_id}/persistent-sessions",
+        "/api/external-access/clients/desk-app/persistent-sessions",
+        {"persistent_sessions": "false"},
+        "persistent_sessions",
+        "POST",
+    ),
+    (
         "personalclaw.dashboard.handlers.views:api_dashboard_view_tile_resolve",
         "/api/dashboard/views/{view_id}/tiles/resolve",
         "/api/dashboard/views/overview/tiles/resolve",

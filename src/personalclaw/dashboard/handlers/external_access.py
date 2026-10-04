@@ -26,7 +26,7 @@ import logging
 from aiohttp import web
 
 from personalclaw.http_errors import json_error
-from personalclaw.request_validation import json_object_body, require_bool
+from personalclaw.request_validation import bool_field, json_object_body, require_bool
 from personalclaw.safety_flags import confirm_answer
 
 logger = logging.getLogger(__name__)
@@ -149,6 +149,9 @@ def _client_rows() -> list[dict]:
                 # the one that goes unnoticed when it is wrong.
                 "upstream": client.upstream,
                 "rate_overrides": dict(client.rate_overrides),
+                # Whether its requests to the OpenAI-compatible endpoint continue a conversation
+                # (one per `user` value) or are each answered as the first.
+                "persistent_sessions": client.persistent_sessions,
                 "disabled": bool(client.disabled),
                 "created_at": client.created_at,
                 "last_seen_at": client.last_seen_at,
@@ -221,6 +224,9 @@ async def api_external_access_client(request: web.Request) -> web.Response:
 
     A token works for ``ttl`` (``30m`` / ``20h`` / ``7d``; default and limit 90 days). A
     longer one is refused, never shortened: whoever asked would believe it lasts longer.
+
+    ``persistent_sessions: true`` registers a client that keeps its conversation (left out, it
+    keeps none); only a client bound to the OpenAI-compatible surface has one to keep.
     """
     from personalclaw.auth import lifetimes
     from personalclaw.inbound import auth
@@ -256,6 +262,10 @@ async def api_external_access_client(request: web.Request) -> web.Response:
             message=(f"unknown surfaces: {', '.join(unknown)} (known: {', '.join(sorted(known))})"),
             status=400,
         )
+    # A standing grant, so an omitted field is never one.
+    persistent_sessions = bool_field(body, "persistent_sessions", default=False)
+    if persistent_sessions and _CONVERSATION_SURFACE not in requested:
+        return _no_conversation_to_keep()
     ttl_text = str(body.get("ttl", "") or "").strip()
     ttl_secs = lifetimes.lifetime_seconds(ttl_text) if ttl_text else INTEGRATION_TTL_SECS
     if ttl_secs is None:
@@ -297,6 +307,7 @@ async def api_external_access_client(request: web.Request) -> web.Response:
         scope=scope if isinstance(scope, dict) else None,
         upstream=upstream,
         rate_overrides=rate_overrides if isinstance(rate_overrides, dict) else None,
+        persistent_sessions=persistent_sessions,
         ttl_secs=ttl_secs,
         actor=actor,
     )
@@ -306,6 +317,7 @@ async def api_external_access_client(request: web.Request) -> web.Response:
             "client_id": client.client_id,
             "label": client.label,
             "surfaces": list(client.surfaces),
+            "persistent_sessions": client.persistent_sessions,
             "expires_at": client.expires_at,
             # Shown ONCE. There is no endpoint that can return it again.
             "token": token,
@@ -332,6 +344,52 @@ async def api_external_access_client_toggle(request: web.Request) -> web.Respons
     if not clients_mod.set_disabled(client_id, disabled, reason="operator action"):
         return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
     return web.json_response({"ok": True, "client_id": client_id, "disabled": disabled})
+
+
+#: The one surface whose requests can keep a conversation: the OpenAI-compatible endpoint.
+_CONVERSATION_SURFACE = "openai"
+
+
+def _no_conversation_to_keep() -> web.Response:
+    """The refusal for keeping a conversation where none can be kept. Refused rather than stored,
+    for the reason an unknown surface is: the record would say the client keeps a conversation
+    it never has."""
+    return json_error(
+        "invalid_request",
+        message=(
+            "Only a client bound to the OpenAI-compatible surface has a conversation to keep; "
+            "this one is not."
+        ),
+        status=400,
+    )
+
+
+async def api_external_access_client_persistent_sessions(request: web.Request) -> web.Response:
+    """POST /api/external-access/clients/{client_id}/persistent-sessions — keep its conversation.
+
+    Body ``{persistent_sessions: bool}``. ``true``: the client's requests to the OpenAI-compatible
+    endpoint continue one conversation per ``user`` value (or ``X-PersonalClaw-Session`` header).
+    ``false``: each is answered as if it were its first. A change starts the client's
+    conversations over, either way: a turn running now finishes as it began, and no request after
+    the change continues a conversation from before it; those stay in the chat history.
+    """
+    from personalclaw.inbound import clients as clients_mod
+
+    client_id = str(request.match_info.get("client_id", "") or "")
+    persistent = require_bool(await json_object_body(request), "persistent_sessions")
+    current = clients_mod.load_clients().get(client_id)
+    if current is None:
+        return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
+    # Any client can be set to keep none, so only keeping one asks for the surface.
+    if persistent and not current.may_use(_CONVERSATION_SURFACE):
+        return _no_conversation_to_keep()
+    actor = str(request.get("user") or "owner")
+    client = clients_mod.set_persistent_sessions(client_id, persistent, actor=actor)
+    if client is None:
+        return json_error("not_found", message=f"unknown client {client_id!r}", status=404)
+    return web.json_response(
+        {"ok": True, "client_id": client_id, "persistent_sessions": client.persistent_sessions}
+    )
 
 
 async def api_bridge_confirmation(request: web.Request) -> web.Response:
