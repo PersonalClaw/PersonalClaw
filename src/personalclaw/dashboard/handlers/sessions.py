@@ -304,20 +304,22 @@ async def api_session_detail(request: web.Request) -> web.Response:
 
 
 async def api_session_delete(request: web.Request) -> web.Response:
-    """DELETE /api/sessions/{key} — permanently delete a history session."""
+    """DELETE /api/sessions/{key} — permanently delete a history session, as Delete does.
+
+    The one way a chat is deleted (``chat_forget.delete_chats``), what memory drew from it alone
+    included. A chat whose transcript could not be removed answers 500 (``session_not_deleted``):
+    it is still kept."""
     state: DashboardState = request.app["state"]
     key = request.match_info["key"]
     if not state.conversation_log:
         return web.json_response({"error": "no conversation log"}, status=400)
-    ok = state.conversation_log.delete_session(key)
-    if ok:
-        try:
-            await _remove_session_for_history_key(state, key)
-        except Exception:
-            logger.warning("cleanup failed for session %s", key, exc_info=True)
-        state.push_sessions_update()
-        state.push_refresh("history")
+    from personalclaw.dashboard.chat_forget import delete_chats
+
+    done = await delete_chats(state, [key], by=str(request.get("user") or "dashboard"))
+    if done.deleted:
         return web.json_response({"ok": True})
+    if done.failed:
+        return json_error("session_not_deleted", status=500)
     # A delete that deleted nothing must not answer 200 (#2941): the status would be
     # indistinguishable from a real delete to a status-code-only client (including the
     # `agent_callable` LLM path). Match the GET sibling twenty lines up, which 404s the
@@ -388,17 +390,18 @@ async def _remove_session_for_history_key(state: DashboardState, key: str) -> No
 
 
 async def api_sessions_clear(request: web.Request) -> web.Response:
-    """DELETE /api/sessions — permanently delete closed history sessions only.
+    """DELETE /api/sessions — permanently delete closed history sessions only, as Delete does.
 
-    Skips sessions currently open in the sidebar (any session in
+    Each goes the one way a chat is deleted (``chat_forget.delete_chats``), what memory drew from
+    it alone included. Skips sessions currently open in the sidebar (any session in
     ``state._sessions``) and sessions with ``pinned=True`` on disk.
-    Bulk-archiving open unpinned/idle sessions.
     """
     state: DashboardState = request.app["state"]
     if not state.conversation_log:
         return web.json_response({"error": "no conversation log"}, status=400)
 
     from personalclaw.dashboard.chat import _history_key_for  # noqa: F811
+    from personalclaw.dashboard.chat_forget import delete_chats
 
     protected: set[str] = set()
     for session in state._sessions.values():
@@ -407,10 +410,8 @@ async def api_sessions_clear(request: web.Request) -> web.Response:
         protected.add(hk.replace(":", "_", 1))
 
     sessions = state.conversation_log.list_sessions()
-    count = 0
+    closed: list[str] = []
     skipped = 0
-    failed = 0
-    cleanup_tasks = []
     for s in sessions:
         key = s["key"]
         if key in protected:
@@ -430,20 +431,11 @@ async def api_sessions_clear(request: web.Request) -> web.Response:
         if meta.get("pinned"):
             skipped += 1
             continue
-        try:
-            if state.conversation_log.delete_session(key):
-                cleanup_tasks.append(_remove_session_for_history_key(state, key))
-                count += 1
-            else:
-                failed += 1
-        except Exception:
-            failed += 1
-            logger.warning("api_sessions_clear: delete raised for %s", key, exc_info=True)
-    if cleanup_tasks:
-        await asyncio.gather(*cleanup_tasks, return_exceptions=True)
-    if count:
-        state.push_sessions_update()
-        state.push_refresh("history")
+        closed.append(key)
+    done = await delete_chats(state, closed, by=str(request.get("user") or "dashboard"))
+    # One listed but neither deleted nor found by then (removed meanwhile) is not cleared either.
+    count = len(done.deleted)
+    failed = len(closed) - count
     logger.info("api_sessions_clear: cleared=%d skipped=%d failed=%d", count, skipped, failed)
     return web.json_response(
         {"ok": failed == 0, "cleared": count, "skipped": skipped, "failed": failed}

@@ -1,7 +1,25 @@
-"""Forgetting a chat: the Delete button, and a Temporary chat's end.
+"""Forgetting a chat: deleting one, and a Temporary chat's end.
+
+:func:`delete_chats` is the one way a chat is deleted: the Delete button
+(``DELETE /api/chat/sessions/{session}``) and the history routes (``DELETE /api/sessions/{key}``,
+``DELETE /api/sessions``) all go through it. It stops the chat's turn, deletes what the chat keeps
+on disk (:func:`purge_chat`), then what memory drew from the chat alone
+(:func:`forget_what_memory_drew_from`), and lets its runtime go.
+
+**What memory drew from a chat alone** is what memory filed under it
+(``VectorMemoryStore.purge_records_from``): its episodes and its sealed summary, its running
+summary, and every fact, lesson, persona note, check-in or tool-outcome record its own work wrote
+(its consolidation, its turns' memory tools, its after-turn review, the subagents and runs working
+for it) that no other work has written or confirmed since. With them go the daily-history entries
+that repeat their words, the days' digests that quoted their episodes (built again from the rest),
+and their pages in a memory's vault. **What stays** cannot be traced to the chat alone: a record
+another chat also gave memory, or that you wrote or confirmed yourself (a lesson you taught again
+elsewhere, a fact you edited in Memory), what PersonalClaw's own passes drew from many chats
+together, and what you kept elsewhere (a download, a file saved to Knowledge, an artifact, a
+skill). The Delete dialog says so.
 
 :func:`purge_chat` deletes what a chat keeps on disk (``personalclaw.chat_traces`` says what that
-is): for the Delete button, which keeps a kept chat's attachments since Files › Uploads lists them
+is): for a deleted chat, which keeps a kept chat's attachments since Files › Uploads lists them
 as files in their own right, and for the end of a Temporary chat, which takes its attachments too.
 
 **A Temporary chat is forgotten when its session ends** — the product says so where the mode is
@@ -30,9 +48,11 @@ export copies it (``chat_traces.kept_by_temporary_chats``).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from personalclaw.chat_traces import (
@@ -45,6 +65,8 @@ from personalclaw.chat_traces import (
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from personalclaw.dashboard.state import DashboardState, _ChatSession
+    from personalclaw.history import ConversationLog
+    from personalclaw.memory import MemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -67,16 +89,26 @@ def temporary_attachments(
     return attached_files(messages) if temporary else []
 
 
+@dataclass(frozen=True)
+class Purge:
+    """What :func:`purge_chat` did."""
+
+    #: How many attached files it deleted.
+    attachments: int = 0
+    #: Whether the chat's transcript is still on disk, its removal having failed.
+    transcript_kept: bool = False
+
+
 def purge_chat(
     state: DashboardState,
     history_key: str,
     *,
     keys: Iterable[str],
     attachments: Iterable[str] = (),
-) -> int:
+) -> Purge:
     """Delete what the chat persisted under *history_key* keeps on disk, the skills it was taught
-    and not yet kept, and the links it was given (held in memory for web_fetch). Returns how many
-    attached files were deleted.
+    and not yet kept, and the links it was given (held in memory for web_fetch). Says how many
+    attached files were deleted, and whether the transcript stayed.
 
     ``keys`` are every form of the chat's key the per-session stores may have been written under
     (a turn's tool results and checkpoints are keyed by the canonical ``dashboard:`` key, some
@@ -84,11 +116,15 @@ def purge_chat(
     inside an attachment folder are touched. Best-effort, step by step: one store's failure never
     keeps the others' traces.
     """
-    try:
-        if state.conversation_log:
-            state.conversation_log.delete_session(history_key)
-    except Exception:
-        logger.warning("forget: transcript removal failed for %s", history_key, exc_info=True)
+    kept = False
+    if state.conversation_log:
+        try:
+            # True when it removed the file; False when no file was there to remove.
+            removed = state.conversation_log.delete_session(history_key)
+        except Exception:
+            logger.warning("forget: transcript removal failed for %s", history_key, exc_info=True)
+            removed = False
+        kept = not removed and _transcript_left(state.conversation_log, history_key)
     names = {k for k in keys if k}
     try:
         from personalclaw.tool_providers import result_store
@@ -135,7 +171,212 @@ def purge_chat(
             continue
         except OSError:
             logger.warning("forget: could not delete an attached file of %s", history_key)
-    return deleted
+    return Purge(attachments=deleted, transcript_kept=kept)
+
+
+def _transcript_left(log: ConversationLog, key: str) -> bool:
+    """Whether a transcript is still kept under *key*; one that cannot be checked is."""
+    try:
+        return bool(log.has_log(key))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+@dataclass(frozen=True)
+class Deletion:
+    """What :func:`delete_chats` did: the chats it deleted, and those it found but could not
+    delete, their transcript still on disk."""
+
+    deleted: tuple[str, ...] = ()
+    failed: tuple[str, ...] = ()
+
+
+async def delete_chats(state: DashboardState, chats: Iterable[str], *, by: str) -> Deletion:
+    """Delete each chat *chats* names, by its name or by the key its transcript is kept under,
+    and what memory drew from it alone. One neither running here nor kept on disk is not found,
+    and is neither deleted nor failed; one whose transcript could not be removed failed, and the
+    rest of what it kept goes all the same.
+
+    For each chat, in order: it leaves the gateway's chats and its turn is stopped; what it keeps
+    on disk goes (:func:`purge_chat`), its transcript first, so a pass of memory still answering
+    for it keeps nothing it would write after (``HistoryConsolidator._was_deleted``); then what
+    memory filed under it goes from every memory (:func:`forget_what_memory_drew_from`), once for
+    all of them; and its runtime is let go for good. One audit row per chat, naming it and who
+    deleted it (*by*), never what it held.
+    """
+    from personalclaw.cancellation import cancel_and_wait
+    from personalclaw.dashboard.chat_utils import persisted_history_key
+    from personalclaw.dashboard.handlers.sessions import _live_session_key
+
+    log = state.conversation_log
+    deleted: list[str] = []
+    failed: list[str] = []
+    keys: set[str] = set()
+    runtimes: list[tuple[str, bool]] = []
+    for chat in dict.fromkeys(c for c in chats if c):
+        live = _live_session_key(state, chat)
+        session = state._sessions.get(live) if live is not None else None
+        name = session.key if session is not None else chat
+        # The key the caller named, when a transcript is kept under it: a history listing names
+        # each transcript by its own file, which may carry no metadata to resolve it by.
+        try:
+            named = log is not None and bool(log.has_log(chat))
+        except Exception:  # noqa: BLE001 — the resolver answers instead
+            named = False
+        history_key = chat if named else persisted_history_key(log, name)
+        try:
+            on_disk = log is not None and (
+                bool(log.get_metadata(history_key)) or log.has_log(history_key)
+            )
+        except Exception:  # noqa: BLE001 — unreadable reads as not kept, as every existence check
+            on_disk = False
+        if session is None and not on_disk:
+            continue
+        files = temporary_attachments(state, history_key, session)
+        if live is not None:
+            state._sessions.pop(live, None)
+        if session is not None:
+            state._ephemeral_keys.discard(f"dashboard:{session.key}")
+        if session is not None and session.running and session.task is not None:
+            # `wait_for` on a task it cancelled is no bound: at its timeout it cancels the task
+            # again and waits for that, and a turn starting an agent's process may not leave.
+            await cancel_and_wait([session.task], what=f"chat {name}", grace=2.0)
+        spelled = {history_key, name, chat}
+        kept = purge_chat(state, history_key, keys=spelled, attachments=files).transcript_kept
+        keys |= spelled
+        runtimes.append((history_key, kept))
+        (failed if kept else deleted).append(name)
+    forgotten = await forget_what_memory_drew_from(state, keys) if keys else 0
+    for history_key, kept in runtimes:
+        # Best-effort: the chat's records are gone already, and a runtime that will not stop
+        # cannot bring them back. Destroyed, not removed: nothing may resume a deleted chat. One
+        # whose transcript stayed is still a chat, and may be resumed from it.
+        try:
+            await (state.sessions.remove if kept else state.sessions.destroy)(history_key)
+        except Exception:  # noqa: BLE001
+            logger.debug("delete: runtime teardown failed for %s", history_key, exc_info=True)
+    if deleted or failed:
+        state.push_sessions_update()
+        state.push_refresh("history")
+    if deleted:
+        logger.info(
+            "Deleted %d chat(s), and %d memory record(s) and history entries drawn from them alone",
+            len(deleted),
+            forgotten,
+        )
+    if failed:
+        logger.warning(
+            "Could not delete %d chat(s): their transcripts are still on disk", len(failed)
+        )
+    outcomes = [(n, "success") for n in deleted] + [(n, "failure") for n in failed]
+    try:
+        from personalclaw.sel import sel
+
+        for name, outcome in outcomes:
+            sel().log_api_access(
+                caller=by,
+                operation="chat.deleted",
+                outcome=outcome,
+                source="dashboard",
+                resources=name,
+            )
+    except Exception:  # noqa: BLE001 — an audit failure must never keep a chat's traces
+        logger.debug("delete: audit row failed", exc_info=True)
+    return Deletion(deleted=tuple(deleted), failed=tuple(failed))
+
+
+async def forget_what_memory_drew_from(state: DashboardState, keys: Iterable[str]) -> int:
+    """Remove from every memory this home holds what is filed under the chats *keys* name, in each
+    spelling a record may carry (``memory_writes.forget_what_sessions_left``): the global memory
+    every chat outside a folder of its own keeps, and each folder's that keeps records, through
+    the stores this gateway reads them with, so no recall still finds one. Returns how many records
+    and history entries went.
+
+    The stores are found here, on the gateway's loop, where every chat opens them; the purge runs
+    on a worker thread, since a digest built again may wait on the embedding model."""
+    gone = _spellings(keys)
+    if not gone:
+        return 0
+    memories = _every_memory(state)
+    forgotten = await asyncio.to_thread(_forget_in, memories, gone)
+    if forgotten:
+        state.push_refresh("lessons")
+    return forgotten
+
+
+def _forget_in(memories: list[MemoryStore], gone: frozenset[str]) -> int:
+    """Remove what is filed under the sessions *gone* from each of *memories*."""
+    from personalclaw.memory_writes import forget_what_sessions_left
+
+    forgotten = 0
+    for memory in memories:
+        store = memory.vector_store
+        if store is None:
+            continue
+        try:
+            removed = forget_what_sessions_left(store, memory, gone.__contains__)
+        except Exception:  # noqa: BLE001 — one memory's failure must not keep the others' records
+            logger.warning(
+                "forget: could not remove what a deleted chat left in %s",
+                store.db_path,
+                exc_info=True,
+            )
+            continue
+        if removed:
+            _write_vault_again(memory)
+        forgotten += removed
+    return forgotten
+
+
+def _write_vault_again(memory: MemoryStore) -> None:
+    """Write *memory*'s vault again when one is kept (``memory.vault_mode``), so no page of what
+    was forgotten stays in it: a sync removes the page of a record that is gone. Best-effort, as
+    every sync is: the next one removes it all the same."""
+    from personalclaw.memory_service import MemoryService
+    from personalclaw.memory_vault import vault_for
+
+    try:
+        vault = vault_for(MemoryService.over_vector_store(memory.vector_store))
+        if vault is not None:
+            vault.sync()
+    except Exception:  # noqa: BLE001
+        logger.warning("forget: the memory vault could not be written again", exc_info=True)
+
+
+def _spellings(keys: Iterable[str]) -> frozenset[str]:
+    """Every spelling of the chats *keys* a memory record may be filed under: each key as given,
+    and a dashboard chat's both as its bare name and in its ``dashboard:`` namespace."""
+    from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_history_key
+
+    out: set[str] = set()
+    for key in keys:
+        if not key:
+            continue
+        out |= {key, dashboard_history_key(key)}
+        out.add(dashboard_history_key(key).removeprefix(DASHBOARD_SESSION_PREFIX))
+    return frozenset(k for k in out if k)
+
+
+def _every_memory(state: DashboardState) -> list[MemoryStore]:
+    """Every memory this home holds with a record store: the global memory the gateway's chats
+    and its memory routes share (``handlers._shared._get_memory``), then each folder's that keeps
+    records, as this gateway has it open (``memory_locality.open_partition``)."""
+    from personalclaw import memory_locality
+    from personalclaw.dashboard.handlers._shared import _get_memory
+    from personalclaw.memory import INDEX_FILE
+
+    main = _get_memory(state)
+    memories: list[MemoryStore] = []
+    if main.vector_store is not None:
+        memories.append(main)
+    for part in memory_locality.partitions():
+        if part.is_global or not (part.path / INDEX_FILE).is_file():
+            continue
+        memory = memory_locality.open_partition(part)
+        store = memory.vector_store
+        if store is not None and all(store is not m.vector_store for m in memories):
+            memories.append(memory)
+    return memories
 
 
 def _said(name: str, attachments: int, why: str) -> None:
@@ -173,8 +414,8 @@ def forget_temporary_chat(state: DashboardState, session: _ChatSession, *, why: 
     state._ephemeral_keys.discard(f"dashboard:{name}")
     history_key = persisted_history_key(state.conversation_log, name)
     files = temporary_attachments(state, history_key, session)
-    deleted = purge_chat(state, history_key, keys={history_key, name}, attachments=files)
-    _said(name, deleted, why)
+    purged = purge_chat(state, history_key, keys={history_key, name}, attachments=files)
+    _said(name, purged.attachments, why)
 
 
 def _forget_transcript(state: DashboardState, key: str, *, why: str) -> None:
@@ -186,13 +427,13 @@ def _forget_transcript(state: DashboardState, key: str, *, why: str) -> None:
         messages = state.conversation_log.read_messages(key) if state.conversation_log else []
     except Exception:
         messages = []
-    deleted = purge_chat(
+    purged = purge_chat(
         state,
         key,
         keys={key, _history_key_for(name), name},
         attachments=attached_files(messages),
     )
-    _said(name, deleted, why)
+    _said(name, purged.attachments, why)
 
 
 def forget_ended_temporary_chats(state: DashboardState) -> int:

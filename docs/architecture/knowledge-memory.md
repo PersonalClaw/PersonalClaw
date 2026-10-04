@@ -964,7 +964,28 @@ item vector).
   beside the rule as it scans the rule. A lesson an earlier version left retired
   toward one that was never kept comes back when its store opens, with the
   sightings it had carried onto that key, or points at the lesson taught since that
-  says it in full (recorded in Memory → History under the source `repair`).
+  says it in full (recorded in Memory → History under the source `repair`). The
+  same repair brings back any row a purge left retired toward a row it removed.
+- **Deleting a chat forgets what memory drew from it alone**
+  (`chat_forget.delete_chats`, through `memory_writes.forget_what_sessions_left`,
+  the one purge the start-up sweep of Incognito and Temporary chats runs too). A
+  record is the chat's when it is filed under it (`source_session`): its episodes
+  and its sealed summary, its running summary, and every fact, lesson, persona
+  note, check-in or tool-outcome record its own work wrote (its consolidation, its
+  turns' memory tools, its after-turn review, the subagents and runs working for
+  it) that no other work wrote or confirmed since. They go from the global memory
+  and every folder's, with their history events, links, vectors and the names they
+  alone mentioned among the graph's proposals, the daily-history entries that
+  repeat any value they held, and the days' digests that quoted their episodes,
+  built again from the episodes left; a memory's vault, when one is kept, is written
+  again without their pages. What other work also stands behind is filed
+  under no one session (`vector_memory.SHARED`) and stays: a lesson said again in
+  another chat, a fact rewritten from the Memory page or the command line, a fact
+  the formation pass judged already kept, an episode told twice, and what
+  consolidation's maintenance writes over every chat (`memory_writes.as_maintenance`;
+  an earlier version filed that under the chat it followed, and the store's
+  migration v13 refiles it under none). The Delete dialog says what goes and what
+  stays.
 - Learning reads only what the person typed. Every per-turn capture (the
   correction lesson, preference facets and vetoes, the glossary slot, the
   self-model observer, stumble refinement and the skill ladder) is handed

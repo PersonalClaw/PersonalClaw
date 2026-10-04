@@ -345,21 +345,28 @@ def test_the_tick_wires_the_pruner():
     module's whole subject is a control that was described but not called.
     """
     tree = ast.parse(Path("src/personalclaw/history.py").read_text())
-    fn = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_consolidate_locked"
-    )
-    called = {
-        node.func.attr
-        for node in ast.walk(fn)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-    }
-    assert "prune" in called, "_consolidate_locked calls no prune()"
+
+    def calls_in(name: str) -> tuple[ast.AST, set[str]]:
+        fn = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == name
+        )
+        return fn, {
+            node.func.attr
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+
+    # The consolidation tick runs its maintenance in one method, outside the chat's own work.
+    _tick, ticked = calls_in("_consolidate_locked")
+    assert "_maintain" in ticked, "_consolidate_locked runs no maintenance"
+    fn, called = calls_in("_maintain")
+    assert "prune" in called, "the maintenance calls no prune()"
     imported = {
         alias.name
         for node in ast.walk(fn)
         if isinstance(node, ast.ImportFrom)
         for alias in node.names
     }
-    assert "capture_store" in imported, "_consolidate_locked never reaches the capture store"
+    assert "capture_store" in imported, "the maintenance never reaches the capture store"

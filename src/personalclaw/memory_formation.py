@@ -582,6 +582,11 @@ def apply_decisions(
                 report.superseded += 1
             continue
         if final.verdict == VERDICT_NOOP:
+            # Already held: the row that holds it (the one named, else the one under this key)
+            # now stands on this chat's word too, so it is no one chat's alone.
+            held = {o.key for o in cand.overlaps}
+            same = next((o.key for o in cand.overlaps if o.why == "same_key"), "")
+            vs.note_confirmed(final.target if final.target in held else same)
             report.noop += 1
             continue
         if final.verdict == VERDICT_SUPERSEDE and final.unsure:

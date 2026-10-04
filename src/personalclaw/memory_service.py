@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, cast
 
@@ -198,6 +199,9 @@ _CATEGORY_TTL_DAYS: dict[str, float] = {
 # The session working-memory summary is a bounded rolling digest, not the
 # transcript — cap it so always-injection stays cheap (memory-architecture §3.5).
 _WORKING_MEMORY_CAP = 2_000
+
+#: What a day's digest is filed under (an episode's ``conversation_id``): the day, after this.
+_DIGEST_OF = "daily-digest:"
 
 
 def _is_episodic(rec: "MemoryRecord") -> bool:
@@ -1756,63 +1760,98 @@ class MemoryService:
         by default."""
         from datetime import datetime, timezone
 
-        from personalclaw.memory_record import MemoryKind, MemoryRecord
-
-        vs = self._vs
-        if vs is None:
+        if self._vs is None:
             return 0
         ref = now or datetime.now(tz=timezone.utc)
-        today = ref.date().isoformat()
-
-        # Group real episodic fragments by their calendar day (excluding existing
-        # digests, so a digest never feeds the next day's digest).
-        by_day: dict[str, list[MemoryRecord]] = {}
-        for rec in vs.iter_records(kinds={MemoryKind.EPISODIC.value}):
-            if self._DIGEST_TAG in (rec.tags or []):
-                continue
-            stamp = rec.created_at
-            if not stamp:
-                continue
-            day = stamp[:10]  # ISO date prefix
-            if len(day) != 10 or day >= today:  # skip today (still open) + junk
-                continue
-            by_day.setdefault(day, []).append(rec)
+        by_day = self._episodes_by_day(before=ref.date().isoformat())
 
         created = 0
         # Newest completed days first; bound the per-run work.
         for day in sorted(by_day, reverse=True)[:max_days]:
             if self._digest_exists(day):
                 continue  # already digested — idempotent
-            frags = sorted(by_day[day], key=lambda r: r.created_at)
-            texts = [" ".join((r.text or "").split()) for r in frags if r.text.strip()]
-            if not texts:
-                continue
-            body = None
-            if summarizer is not None:
-                try:
-                    body = summarizer(day, texts)
-                except Exception:
-                    logger.debug("daily-digest summarizer failed for %s", day, exc_info=True)
-                    body = None
-            if not body:
-                # Extractive fallback: a bounded bullet list of the day's fragments.
-                shown = texts[:20]
-                body = f"Daily digest for {day} — {len(texts)} memory event(s):\n" + "\n".join(
-                    f"- {t[:200]}" for t in shown
-                )
-                if len(texts) > len(shown):
-                    body += f"\n- …and {len(texts) - len(shown)} more."
-            # Written as an episodic record (dated narrative); source marks it a
-            # digest, tags make it findable + idempotent.
-            self.write_episodic(
-                body,
-                conversation_id=f"daily-digest:{day}",
-                tags=[self._DIGEST_TAG, day],
-                importance=0.9,
-                source="daily_digest",
-            )
-            created += 1
+            created += self._write_digest(day, by_day[day], summarizer)
         return created
+
+    def _episodes_by_day(self, *, before: str | None = None) -> "dict[str, list[MemoryRecord]]":
+        """The real episodic fragments, grouped by their calendar day, for the days before
+        *before* (``YYYY-MM-DD``, every day when None): a digest is never one (a digest never
+        feeds the next day's digest)."""
+        from personalclaw.memory_record import MemoryKind
+
+        by_day: dict[str, list[MemoryRecord]] = {}
+        if self._vs is None:
+            return by_day
+        for rec in self._vs.iter_records(kinds={MemoryKind.EPISODIC.value}):
+            if self._DIGEST_TAG in (rec.tags or []):
+                continue
+            stamp = rec.created_at
+            if not stamp:
+                continue
+            day = stamp[:10]  # ISO date prefix
+            if len(day) != 10 or (before is not None and day >= before):  # an open day, junk
+                continue
+            by_day.setdefault(day, []).append(rec)
+        return by_day
+
+    def _write_digest(self, day: str, records: "list[MemoryRecord]", summarizer=None) -> int:
+        """Write *day*'s digest of its fragments *records*. Returns 1, or 0 when none holds text."""
+        frags = sorted(records, key=lambda r: r.created_at)
+        texts = [" ".join((r.text or "").split()) for r in frags if r.text.strip()]
+        if not texts:
+            return 0
+        body = None
+        if summarizer is not None:
+            try:
+                body = summarizer(day, texts)
+            except Exception:
+                logger.debug("daily-digest summarizer failed for %s", day, exc_info=True)
+                body = None
+        if not body:
+            # Extractive fallback: a bounded bullet list of the day's fragments.
+            shown = texts[:20]
+            body = f"Daily digest for {day} — {len(texts)} memory event(s):\n" + "\n".join(
+                f"- {t[:200]}" for t in shown
+            )
+            if len(texts) > len(shown):
+                body += f"\n- …and {len(texts) - len(shown)} more."
+        # Written as an episodic record (dated narrative), filed under its day; source marks it a
+        # digest, tags make it findable + idempotent.
+        self.write_episodic(
+            body,
+            conversation_id=f"{_DIGEST_OF}{day}",
+            tags=[self._DIGEST_TAG, day],
+            importance=0.9,
+            source="daily_digest",
+        )
+        return 1
+
+    def _rebuild_digests(self, days: "Iterable[str]") -> int:
+        """Build again the digest of each of *days* that has one, from the fragments it holds now.
+        Returns how many were built."""
+        vs = self._vs
+        filed = sorted({f"{_DIGEST_OF}{day}" for day in days})
+        if vs is None or not filed:
+            return 0
+        marks = ",".join("?" * len(filed))
+        held = {
+            str(row["conversation_id"])
+            for row in vs.db.execute(
+                "SELECT DISTINCT conversation_id FROM episodic_memories "
+                f"WHERE conversation_id IN ({marks})",
+                filed,
+            ).fetchall()
+        }
+        if not held:
+            return 0
+        # Each old digest goes outright, as the episodes it quoted did: it is filed under its day.
+        vs.purge_records_from(held.__contains__)
+        by_day = self._episodes_by_day()
+        return sum(
+            self._write_digest(key.removeprefix(_DIGEST_OF), by_day[key.removeprefix(_DIGEST_OF)])
+            for key in sorted(held)
+            if key.removeprefix(_DIGEST_OF) in by_day
+        )
 
     def daily_digests(self, *, limit: int = 30) -> list[dict]:
         """The daily-digest nodes, newest first — the 'what happened when' view."""
@@ -2327,3 +2366,11 @@ def service_for(provider: "MemoryProvider") -> MemoryService:
         svc = MemoryService(provider, fallback=fallback)
         _services[key] = svc
     return svc
+
+
+def rebuild_daily_digests(store: "VectorMemoryStore", days: Iterable[str]) -> int:
+    """Build again, from the episodes *store* holds now, the digest of each of *days* that has
+    one: a purge removed some of the episodes it quoted
+    (``memory_writes.forget_what_sessions_left``). A day left with no episode keeps no digest.
+    Returns how many were built."""
+    return MemoryService.over_vector_store(store)._rebuild_digests(days)

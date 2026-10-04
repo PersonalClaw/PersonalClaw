@@ -1100,6 +1100,22 @@ def filed_under() -> str:
     return _whose()[2] or source.keys[0]
 
 
+@contextmanager
+def as_maintenance() -> Iterator[None]:
+    """Run the enclosed work as PersonalClaw's own pass over the whole memory, outside the work
+    of whichever session started it: the maintenance a consolidation runs after a chat's pass
+    (promoting a pattern seen across chats, a day's digest, aging and pruning). What it writes is
+    filed under no session (:func:`filed_under`) and names no app (:func:`written_by`): it draws on
+    every chat, so it is no one chat's, and deleting a chat leaves it.
+
+    Only for work the session's own pass was allowed to start: inside it nothing is refused."""
+    token = _SCOPE.set(None)
+    try:
+        yield
+    finally:
+        _SCOPE.reset(token)
+
+
 # ── what an earlier version kept ────────────────────────────────────────────────────────────
 
 
@@ -1115,21 +1131,47 @@ def transcript_keeps_nothing(session_key: str) -> bool:
     return read_memory_mode(session_path(session_key)) in RESTRICTED_MODES
 
 
+def forget_what_sessions_left(
+    store: "VectorMemoryStore",
+    markdown: "MemoryStore | None",
+    keeps_nothing: "Callable[[str], bool]",
+) -> int:
+    """Remove from one memory what is filed under a session that keeps nothing: each record in
+    ``store`` (``VectorMemoryStore.purge_records_from``, which also brings back what one of them
+    had replaced), each daily history entry in ``markdown`` that repeats one of them word for word,
+    and each day's digest that quoted one of their episodes, built again from the episodes left.
+    ``keeps_nothing(key)`` names the sessions: an Incognito or Temporary chat, a chat deleted.
+    Returns how many records and history entries went.
+
+    It is no session's work, whichever work asks for it, so it runs outside any work's scope.
+    """
+
+    def forget() -> int:
+        purged = store.purge_records_from(keeps_nothing)
+        removed = purged.records
+        if markdown is not None and purged.texts:
+            removed += markdown.forget_history_entries(set(purged.texts))
+        if purged.days:
+            from personalclaw.memory_service import rebuild_daily_digests
+
+            rebuild_daily_digests(store, purged.days)
+        return removed
+
+    return contextvars.Context().run(forget)
+
+
 def forget_what_restricted_sessions_left(
     store: "VectorMemoryStore", markdown: "MemoryStore | None" = None
 ) -> int:
-    """Remove every record an Incognito or Temporary session left in ``store``, and the daily
-    history entries in ``markdown`` that repeat one of them word for word. Returns how many went.
+    """Remove what an Incognito or Temporary session left in ``store`` and ``markdown``
+    (:func:`forget_what_sessions_left`). Returns how many went.
 
     An earlier version consolidated such a session like any other when it idled out. Run when
     the gateway starts, before anything recalls; idempotent. A record that names no session (a
     persona note or a lesson an earlier version wrote) cannot be traced to one and is left.
     """
     try:
-        texts = store.purge_records_from(transcript_keeps_nothing)
-        removed = len(texts)
-        if markdown is not None and texts:
-            removed += markdown.forget_history_entries(set(texts))
+        removed = forget_what_sessions_left(store, markdown, transcript_keeps_nothing)
     except Exception:  # noqa: BLE001 - a failed sweep must not stop the gateway; it runs again
         logger.warning(
             "Could not remove what Incognito or Temporary chats left in memory", exc_info=True

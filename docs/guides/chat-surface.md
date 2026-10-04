@@ -227,6 +227,22 @@ A **Temporary** chat's workflow runs end with it: once the chat has ended, a run
 stopped, and the run, any run it started, and what they produced are deleted. An **Incognito**
 chat's runs are kept, as its transcript is.
 
+### Deleting a chat
+
+**Delete chat** removes the conversation for good, and with it what memory drew from that chat
+alone: its summary, its episodes, and the facts and lessons that came only from it. Other chats
+stop recalling them, and the daily history and the day's digest stop repeating them. If the chat
+had replaced something memory held from earlier, the earlier version comes back.
+
+What also came from elsewhere stays: a lesson you taught in another chat too, a fact you edited in
+**Settings → Memory**, and what PersonalClaw drew from many chats together. So do the files you
+attached to an ordinary chat (Files lists them), and the Knowledge entries, artifacts and skills you
+kept. You can remove any of those where it is listed: a lesson or a fact in **Settings → Memory**.
+
+Each deletion leaves one entry in **Settings → Audit log** (`chat.deleted`), naming the chat and
+never what it held. If the chat's history cannot be removed from disk, the page says so and the
+chat stays in the list; its entry then says `failure`.
+
 ## 5. Find in the conversation
 
 **Where:** `⌘F` (`Ctrl+F` on Windows/Linux) with a chat open.

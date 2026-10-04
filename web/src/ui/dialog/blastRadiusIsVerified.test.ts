@@ -319,15 +319,19 @@ describe('two more bodies: one corrected, one confirmed', () => {
   })
 
   it('the chat delete really does take the history it promises', () => {
-    expect(web('pages/ChatPage.tsx')).toContain('and its history will be permanently removed.')
+    expect(web('pages/ChatPage.tsx')).toContain('and its history will be permanently removed')
     const h = py('dashboard/chat_handlers.py')
     const del = h.slice(h.indexOf('async def api_chat_session_delete'))
-    // The handler hands the purge to the one owner of forgetting a chat (the end of a Temporary chat
-    // uses it too), so the claim is verified in the caller AND in what it calls.
-    expect(del.slice(0, 6000), 'the handler purges what the chat persisted').toMatch(
-      /purge_chat\(\s*state,\s*history_key,/,
+    // The handler hands the delete to the one way a chat is deleted, so the claim is verified in
+    // the caller AND in what it calls.
+    expect(del.slice(0, 3000), 'the handler deletes through the one path').toMatch(
+      /await delete_chats\(state, \[name\], by=by\)/,
     )
     const forget = py('dashboard/chat_forget.py')
+    const one = forget.slice(forget.indexOf('async def delete_chats('), forget.indexOf('def forget_what_memory_drew_from('))
+    expect(one, 'which purges what the chat persisted').toMatch(
+      /purge_chat\(state, history_key, keys=spelled, attachments=files\)/,
+    )
     const purge = forget.slice(forget.indexOf('def purge_chat('))
     expect(purge.slice(0, 3000), 'the on-disk artifacts are purged').toMatch(
       /conversation_log\.delete_session\(history_key\)/,
@@ -335,7 +339,45 @@ describe('two more bodies: one corrected, one confirmed', () => {
     // 🪤 And the reason the claim is worth pinning rather than assuming: the handler had to grow a
     // disk-purge fallback because "Delete" used to 404 for a non-resident session, leaving its JSONL on
     // disk and letting the chat RESURRECT on reopen — the exact opposite of what this sentence promises.
-    expect(del.slice(0, 6000)).toMatch(/letting it resurrect on reopen/)
+    expect(del.slice(0, 3000)).toMatch(/letting it resurrect on reopen/)
+  })
+
+  it('the chat delete takes what memory drew from it alone, and keeps what came from elsewhere too', () => {
+    // 🪤 The sentence this replaced promised the history was gone while every episode, fact and
+    // summary memory drew from the chat stayed and was recalled into other chats. Both halves of the
+    // new one are claims about the store's provenance rule, so both are read back from the Python.
+    const ui = web('pages/ChatPage.tsx')
+    expect(ui, 'what goes').toContain(
+      'and so will what memory drew from this chat alone: its summary, its episodes, and the facts and lessons that came only from it.',
+    )
+    expect(ui, 'what stays').toContain(
+      'What also came from elsewhere stays, such as a lesson you taught in another chat too or a fact you edited in Memory, as do the files, Knowledge, artifacts and skills you kept.',
+    )
+    const forget = py('dashboard/chat_forget.py')
+    const one = forget.slice(forget.indexOf('async def delete_chats('), forget.indexOf('def forget_what_memory_drew_from('))
+    expect(one, 'the delete forgets what memory filed under the chat').toMatch(
+      /forget_what_memory_drew_from\(state, keys\)/,
+    )
+    const writes = py('memory_writes.py')
+    const core = writes.slice(writes.indexOf('def forget_what_sessions_left('))
+    expect(core.slice(0, 2400), 'from the records, the daily history and the digests').toMatch(
+      /purge_records_from\(keeps_nothing\)[\s\S]*forget_history_entries[\s\S]*rebuild_daily_digests/,
+    )
+    const store = py('vector_memory.py')
+    const rule = store.slice(store.indexOf('def purge_records_from('), store.indexOf('def _values_in_history('))
+    // A stamped session is the whole answer: SHARED (filed under no one session) is never one that
+    // keeps nothing, so a record another chat or the owner also stands behind stays.
+    expect(rule, 'the stamp decides').toMatch(
+      /return gone\(session\) if session is not None else any\(gone\(key\) for key in named\)/,
+    )
+    // "a fact you edited in Memory": a live row other work writes again is filed under no one.
+    expect(store, 'a rewrite by other work shares the row').toMatch(
+      /source_session = CASE WHEN semantic_memory\.is_deleted = 1 OR semantic_memory\.source_session IS excluded\.source_session THEN excluded\.source_session ELSE \? END/,
+    )
+    // "a lesson you taught in another chat too": a lesson said again is a sighting that shares it.
+    expect(store, 'a lesson said again shares the row').toMatch(
+      /self\._observe_lesson\(says_it, source\)\s*\n\s*self\._confirmed\("semantic_memory", "key", says_it\)/,
+    )
   })
 })
 

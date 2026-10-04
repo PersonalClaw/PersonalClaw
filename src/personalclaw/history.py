@@ -1749,8 +1749,11 @@ class HistoryConsolidator:
         Everything the pass keeps goes to the memory the chat keeps (:meth:`_kept_in`), which
         the chat's own turns read, except a lesson, which joins the global lesson list with the
         chat's reach (:meth:`_save_lessons`), and a proactive check-in, which the heartbeat
-        delivers from the global memory (:meth:`_write_commitments`)."""
-        from personalclaw import memory_locality
+        delivers from the global memory (:meth:`_write_commitments`).
+
+        A chat deleted while a model answered for it keeps nothing more: its deletion forgot what
+        memory held of it, and nothing it would write now is (:meth:`_was_deleted`)."""
+        from personalclaw import memory_locality, memory_writes
 
         try:
             unconsolidated, total = self._log.get_unconsolidated(key)
@@ -1889,7 +1892,7 @@ class HistoryConsolidator:
             )
 
             result = await self._call_llm(prompt, key)
-            if not result:
+            if not result or self._was_deleted(key):
                 return
 
             if entry := result.get("history_entry"):
@@ -1913,6 +1916,8 @@ class HistoryConsolidator:
             # event do not contradict each other.
             if svc.has_vector:
                 await self._form_semantic_memory(result, key, vs)
+                if self._was_deleted(key):
+                    return
                 self._write_episodic_memory(result, key, svc)
 
             # Markdown writes (skipped when migrated to structured memory). The model read both
@@ -1961,133 +1966,149 @@ class HistoryConsolidator:
             # Prefs-only consolidation uses a separate in-memory offset.
             if include_history:
                 self._log.mark_consolidated(key, total)
-                # Autonomous self-learning: periodically promote repeated episodic
-                # memories to durable semantic facts. Piggybacks on consolidation
-                # (no new scheduler), guarded so a flood/stack can't happen.
-                try:
-                    self._maybe_promote_episodic(memory)
-                except Exception:
-                    logger.warning("Episodic promotion failed for %s", key, exc_info=True)
-                # The maintenance below runs over the memory this pass kept: the records it
-                # ages, promotes, collapses and digests are the ones the chat's turns read.
-                # Category-TTL sweep: age out short-lived categorized memories
-                # (debug/event/decision) on the same maintenance cadence. Durable
-                # facts/prefs + user_explicit globals are never touched.
-                try:
-                    expired = svc.expire_by_category()
-                    if expired:
-                        logger.info("Category-TTL expired %d memory record(s)", expired)
-                except Exception:
-                    logger.debug("Category-TTL sweep failed for %s", key, exc_info=True)
-                # Heat-gated promotion (M5c): the conservative GLOBAL gate — promote
-                # in-scope records that earned cross-session heat to scope=global.
-                # Runs HERE (maintenance cadence), never at session-end, so global
-                # never fills with one-off session noise.
-                try:
-                    promoted_scope = svc.promote_by_heat()
-                    if promoted_scope:
-                        logger.info("Heat-promoted %d record(s) to global scope", promoted_scope)
-                except Exception:
-                    logger.debug("Heat promotion failed for %s", key, exc_info=True)
-                # Failure-pattern synthesis (M5d): collapse clusters of same-root-
-                # cause procedural failures into one prior so the class never
-                # bloats into a tool-call log. The anti-noise mechanism.
-                try:
-                    synth = svc.synthesize_failures()
-                    if synth:
-                        logger.info("Synthesized %d procedural failure prior(s)", synth)
-                except Exception:
-                    logger.debug("Failure synthesis failed for %s", key, exc_info=True)
-                # Daily-digest nodes (mem-tree, descoped): roll up each completed
-                # day's episodic activity into one 'what happened on day D' record.
-                # Idempotent (keyed by date) + extractive by default, so it adds no
-                # LLM cost to the maintenance cadence.
-                try:
-                    digested = svc.build_daily_digest()
-                    if digested:
-                        logger.info("Built %d daily-digest node(s)", digested)
-                except Exception:
-                    logger.debug("Daily-digest build failed for %s", key, exc_info=True)
-                # Push-reflex volunteer log: 90-day
-                # retention on the same cadence. The log exists to compute a precision
-                # ratio, not to be a permanent record of every turn's entity matches.
-                try:
-                    pruned_vol = svc.prune_volunteer_events(keep_days=90)
-                    if pruned_vol:
-                        logger.info("Pruned %d volunteer event(s)", pruned_vol)
-                except Exception:
-                    logger.debug("Volunteer-log prune failed for %s", key, exc_info=True)
-                # External-agent capture retention: `capture/*.jsonl`
-                # age out at `external_access.capture.retention_days` on THIS tick — the
-                # "curator tick" `capture_store.prune`'s own docstring already named, while
-                # nothing called it, so a shipped and round-tripped retention control
-                # governed a function no schedule reached. Beside the volunteer prune
-                # because both are retention sweeps, and BEFORE the curator below so a
-                # later replay-mining pass sees an already-aged capture dir. Deliberately
-                # NOT inside the curator tick (`learning.curator_tick`): retention is a data-hygiene
-                # obligation the operator configured, not a learning feature, and gating it
-                # on `learning.enabled` would make "I turned learning off" silently mean
-                # "keep every captured transcript forever".
-                try:
-                    from personalclaw.inbound import capture_store
-
-                    pruned_captures = capture_store.prune()
-                    if pruned_captures:
-                        logger.info("Pruned %d expired capture file(s)", pruned_captures)
-                except Exception:
-                    logger.debug("Capture prune failed for %s", key, exc_info=True)
-                # Community topology: deterministic seeded
-                # Louvain over mem_links, writing `community` into mem_link_stats. HERE
-                # rather than in a loop of its own, and after the write paths above, so it
-                # sees this consolidation's new links. Runs regardless of the injection
-                # toggle: the column also feeds the graph visualization, and computing it
-                # only when a display flag is on is how a "topology is empty" bug gets
-                # blamed on Louvain instead of on the flag.
-                try:
-                    communities = svc.refresh_topology()
-                    if communities:
-                        logger.info("Topology: assigned %d entity communit(ies)", communities)
-                except Exception:
-                    logger.debug("Topology refresh failed for %s", key, exc_info=True)
-                # Learning curator: age the learned library
-                # on this same verified cadence. Deliberately NOT a new scheduler —
-                # `skills/curator.run_aging` had no scheduled caller at all, which is
-                # how a whole grooming pass came to exist and never run. Bounded batch,
-                # reversible, refuses a mass cut; pattern analysis runs LAST so it sees
-                # an already-cleaned set.
-                try:
-                    from personalclaw.learning.curator_tick import run_curator_tick
-
-                    curated = run_curator_tick(self._svc)
-                    if curated:
-                        logger.info("Learning curator: %s", curated)
-                except Exception:
-                    logger.debug("Learning curator failed for %s", key, exc_info=True)
-                # Local A/B replay evidence: mine a few real turns
-                # from the captured sessions and replay each one twice — baseline vs candidate
-                # — for the pending skill/template proposals, attaching the pair to the card
-                # the user decides from. AFTER the curator on purpose: the curator FILES
-                # proposals, so running first would replay a queue missing this tick's own
-                # additions and they would wait a whole cadence for evidence. `await`ed
-                # directly rather than fired as a task because this consolidation is already
-                # the bounded background pass, and a detached task would outlive the
-                # `_running` guard that stops two passes overlapping. Off unless the operator
-                # set BOTH `learning.replay_enabled` and a positive
-                # `learning.replay_max_dollars` — LLM spend on a maintenance tick is opt-in.
-                try:
-                    from personalclaw.learning import replay as replay_mod
-
-                    replay_note = replay_mod.summarize_pass(await replay_mod.run_pass())
-                    if replay_note:
-                        logger.info("Learning replay: %s", replay_note)
-                except Exception:
-                    logger.debug("Learning replay pass failed for %s", key, exc_info=True)
+                # What runs after the pass is PersonalClaw's own maintenance of the whole
+                # memory this chat keeps, not the chat's work (`memory_writes.as_maintenance`):
+                # what it writes draws on every chat, so it is filed under none of them.
+                with memory_writes.as_maintenance():
+                    await self._maintain(key, memory, svc)
 
         except Exception:
             logger.exception("Consolidation failed for %s", key)
             raise
         finally:
             self._running.discard(key)
+
+    def _was_deleted(self, key: str) -> bool:
+        """Whether chat *key*'s transcript is gone since its pass read it: the chat was deleted
+        while a model answered for it (``chat_forget.delete_chats`` deletes the transcript first,
+        then what memory holds of it)."""
+        return not self._log.has_log(key)
+
+    async def _maintain(self, key: str, memory: Any, svc: "MemoryService") -> None:
+        """The maintenance cadence a history consolidation of *key* runs, over *memory*, the memory
+        the chat keeps (:meth:`_kept_in`), and *svc*, its service: promotion, aging, digests,
+        retention sweeps, topology and the learning curator. Each step is best-effort."""
+        # Autonomous self-learning: periodically promote repeated episodic
+        # memories to durable semantic facts. Piggybacks on consolidation
+        # (no new scheduler), guarded so a flood/stack can't happen.
+        try:
+            self._maybe_promote_episodic(memory)
+        except Exception:
+            logger.warning("Episodic promotion failed for %s", key, exc_info=True)
+        # The maintenance below runs over the memory this pass kept: the records it
+        # ages, promotes, collapses and digests are the ones the chat's turns read.
+        # Category-TTL sweep: age out short-lived categorized memories
+        # (debug/event/decision) on the same maintenance cadence. Durable
+        # facts/prefs + user_explicit globals are never touched.
+        try:
+            expired = svc.expire_by_category()
+            if expired:
+                logger.info("Category-TTL expired %d memory record(s)", expired)
+        except Exception:
+            logger.debug("Category-TTL sweep failed for %s", key, exc_info=True)
+        # Heat-gated promotion (M5c): the conservative GLOBAL gate — promote
+        # in-scope records that earned cross-session heat to scope=global.
+        # Runs HERE (maintenance cadence), never at session-end, so global
+        # never fills with one-off session noise.
+        try:
+            promoted_scope = svc.promote_by_heat()
+            if promoted_scope:
+                logger.info("Heat-promoted %d record(s) to global scope", promoted_scope)
+        except Exception:
+            logger.debug("Heat promotion failed for %s", key, exc_info=True)
+        # Failure-pattern synthesis (M5d): collapse clusters of same-root-
+        # cause procedural failures into one prior so the class never
+        # bloats into a tool-call log. The anti-noise mechanism.
+        try:
+            synth = svc.synthesize_failures()
+            if synth:
+                logger.info("Synthesized %d procedural failure prior(s)", synth)
+        except Exception:
+            logger.debug("Failure synthesis failed for %s", key, exc_info=True)
+        # Daily-digest nodes (mem-tree, descoped): roll up each completed
+        # day's episodic activity into one 'what happened on day D' record.
+        # Idempotent (keyed by date) + extractive by default, so it adds no
+        # LLM cost to the maintenance cadence.
+        try:
+            digested = svc.build_daily_digest()
+            if digested:
+                logger.info("Built %d daily-digest node(s)", digested)
+        except Exception:
+            logger.debug("Daily-digest build failed for %s", key, exc_info=True)
+        # Push-reflex volunteer log: 90-day
+        # retention on the same cadence. The log exists to compute a precision
+        # ratio, not to be a permanent record of every turn's entity matches.
+        try:
+            pruned_vol = svc.prune_volunteer_events(keep_days=90)
+            if pruned_vol:
+                logger.info("Pruned %d volunteer event(s)", pruned_vol)
+        except Exception:
+            logger.debug("Volunteer-log prune failed for %s", key, exc_info=True)
+        # External-agent capture retention: `capture/*.jsonl`
+        # age out at `external_access.capture.retention_days` on THIS tick — the
+        # "curator tick" `capture_store.prune`'s own docstring already named, while
+        # nothing called it, so a shipped and round-tripped retention control
+        # governed a function no schedule reached. Beside the volunteer prune
+        # because both are retention sweeps, and BEFORE the curator below so a
+        # later replay-mining pass sees an already-aged capture dir. Deliberately
+        # NOT inside the curator tick (`learning.curator_tick`): retention is a data-hygiene
+        # obligation the operator configured, not a learning feature, and gating it
+        # on `learning.enabled` would make "I turned learning off" silently mean
+        # "keep every captured transcript forever".
+        try:
+            from personalclaw.inbound import capture_store
+
+            pruned_captures = capture_store.prune()
+            if pruned_captures:
+                logger.info("Pruned %d expired capture file(s)", pruned_captures)
+        except Exception:
+            logger.debug("Capture prune failed for %s", key, exc_info=True)
+        # Community topology: deterministic seeded
+        # Louvain over mem_links, writing `community` into mem_link_stats. HERE
+        # rather than in a loop of its own, and after the write paths above, so it
+        # sees this consolidation's new links. Runs regardless of the injection
+        # toggle: the column also feeds the graph visualization, and computing it
+        # only when a display flag is on is how a "topology is empty" bug gets
+        # blamed on Louvain instead of on the flag.
+        try:
+            communities = svc.refresh_topology()
+            if communities:
+                logger.info("Topology: assigned %d entity communit(ies)", communities)
+        except Exception:
+            logger.debug("Topology refresh failed for %s", key, exc_info=True)
+        # Learning curator: age the learned library
+        # on this same verified cadence. Deliberately NOT a new scheduler —
+        # `skills/curator.run_aging` had no scheduled caller at all, which is
+        # how a whole grooming pass came to exist and never run. Bounded batch,
+        # reversible, refuses a mass cut; pattern analysis runs LAST so it sees
+        # an already-cleaned set.
+        try:
+            from personalclaw.learning.curator_tick import run_curator_tick
+
+            curated = run_curator_tick(self._svc)
+            if curated:
+                logger.info("Learning curator: %s", curated)
+        except Exception:
+            logger.debug("Learning curator failed for %s", key, exc_info=True)
+        # Local A/B replay evidence: mine a few real turns
+        # from the captured sessions and replay each one twice — baseline vs candidate
+        # — for the pending skill/template proposals, attaching the pair to the card
+        # the user decides from. AFTER the curator on purpose: the curator FILES
+        # proposals, so running first would replay a queue missing this tick's own
+        # additions and they would wait a whole cadence for evidence. `await`ed
+        # directly rather than fired as a task because this consolidation is already
+        # the bounded background pass, and a detached task would outlive the
+        # `_running` guard that stops two passes overlapping. Off unless the operator
+        # set BOTH `learning.replay_enabled` and a positive
+        # `learning.replay_max_dollars` — LLM spend on a maintenance tick is opt-in.
+        try:
+            from personalclaw.learning import replay as replay_mod
+
+            replay_note = replay_mod.summarize_pass(await replay_mod.run_pass())
+            if replay_note:
+                logger.info("Learning replay: %s", replay_note)
+        except Exception:
+            logger.debug("Learning replay pass failed for %s", key, exc_info=True)
 
     def _maybe_promote_episodic(self, memory) -> None:
         """Run autonomous episodic→semantic promotion every Nth consolidation.
@@ -2212,6 +2233,8 @@ class HistoryConsolidator:
             prompt = memory_formation.build_decide_prompt(candidates)
             if prompt:
                 decide_result = await self._call_llm(prompt, key)
+                if self._was_deleted(key):
+                    return
                 decisions = memory_formation.parse_decisions(decide_result, candidates)
                 degraded = not decisions
         except Exception:

@@ -163,7 +163,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/templates` — save a chat setup as a reusable starter.
 - `DELETE /api/chat/sessions/templates/{template}` — remove a starter.
 - `PUT /api/chat/sessions/templates/{template}` — replace a starter's fields.
-- `DELETE /api/chat/sessions/{session}` — stop and remove a UI session.
+- `DELETE /api/chat/sessions/{session}` — delete a chat for good: the Delete button.
 - `GET /api/chat/sessions/{session}` — message history for a session.
 - `POST /api/chat/sessions/{session}/acp-agent` — bind a DISCOVERED ACP agent.
 - `POST /api/chat/sessions/{session}/agent` — set agent for a chat session.
@@ -739,7 +739,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/session-tool-policy` — return managedToolPolicy for the
 - `GET /api/session/archive` — list archive files for a session key.
 - `GET /api/session/archive/{name}` — read a single archive file as JSONL text.
-- `DELETE /api/sessions` — permanently delete closed history sessions only.
+- `DELETE /api/sessions` — permanently delete closed history sessions only, as Delete does.
 - `GET /api/sessions` — list conversation session files.
 - `GET /api/sessions/context` — context usage for all active sessions.
 - `GET /api/sessions/health` — sessions flagged as stalled from log scan.
@@ -752,7 +752,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/sessions/{id}/agents` — list sub-agent results for a session.
 - `GET /api/sessions/{id}/agents/{agent_id}` — read sub-agent result.
 - `GET /api/sessions/{id}/agents/{agent_id}/stream` — SSE stream of result file.
-- `DELETE /api/sessions/{key}` — permanently delete a history session.
+- `DELETE /api/sessions/{key}` — permanently delete a history session, as Delete does.
 - `GET /api/sessions/{key}` — return messages for a session.
 - `GET /api/skills` — every skill agents get, each row the copy they get.
 - `POST /api/skills` — create a new skill.

@@ -5278,9 +5278,11 @@ function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) 
   const roomsAvailable = Array.isArray(roomsData)
 
   async function del(s: ChatSessionSummary) {
+    // The memory half is the backend's rule (`chat_forget.delete_chats`): what memory filed under
+    // this chat alone goes, and a record other work also stands behind stays.
     if (!(await confirm({
       title: 'Delete chat?',
-      body: `"${sessionTitle(s)}" and its history will be permanently removed.`,
+      body: `"${sessionTitle(s)}" and its history will be permanently removed, and so will what memory drew from this chat alone: its summary, its episodes, and the facts and lessons that came only from it. What also came from elsewhere stays, such as a lesson you taught in another chat too or a fact you edited in Memory, as do the files, Knowledge, artifacts and skills you kept.`,
       danger: true, confirmLabel: 'Delete',
     }))) return
     // Surface a real failure instead of swallowing it — the dialog promised the

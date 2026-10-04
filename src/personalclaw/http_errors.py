@@ -150,6 +150,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # `collection_name_taken` is 409: the request is well-formed and would be valid at
     # another moment (once the session is closed).
     "session_live": "The session is live and has no history to delete; close it first.",
+    # A delete whose transcript could not be removed (a file the gateway may not unlink): the
+    # chat is still kept, so the route must not answer as if it were gone.
+    "session_not_deleted": "The chat's history could not be removed from disk, so the chat is "
+    "still kept; the gateway log says why.",
     # ── model resolution (first-run legibility) ──
     # A model-dependent route was driven before any model provider was bound. The wire
     # peer of the agent-session `ERR_MODEL_UNRESOLVED` (errors.py): an HTTP route answers

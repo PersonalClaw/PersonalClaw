@@ -1751,71 +1751,35 @@ async def api_chat_session_queue_cancel(request: web.Request) -> web.Response:
 
 
 async def api_chat_session_delete(request: web.Request) -> web.Response:
-    """DELETE /api/chat/sessions/{session} — stop and remove a UI session.
+    """DELETE /api/chat/sessions/{session} — delete a chat for good: the Delete button.
 
-    Kills the per-tab ACP agent session and saves history.  The session
-    will be recreated from the warm pool if the tab is resumed later.
+    HARD DELETE (product decision 2026-07-03): the explicit "Delete chat" button must actually
+    destroy the conversation, not soft-close it. A soft close left the raw tool-result store
+    (file contents, command output) on disk and let the chat RESURRECT when its URL was reopened
+    (the rehydrate path clears `closed`). So it goes through the one way a chat is deleted
+    (`chat_forget.delete_chats`): its transcript and every file it keeps, under every form of the
+    key they were written with, a Temporary chat's attached files, and what memory drew from it
+    alone. The soft-close/archive path lives ONLY in /cleanup (api_chat_sessions_cleanup).
+
+    A chat warm in the gateway or only kept on disk is deletable: after a restart only recent,
+    pinned and foldered chats are restored, and requiring a resident one made "Delete" a silent
+    404 for the common "delete an old chat from history" flow, leaving its JSONL and tool results
+    on disk and letting it resurrect on reopen. Only a chat in neither place answers 404, and one
+    whose transcript could not be removed answers 500 (``session_not_deleted``), so the page says
+    it is still there rather than that it is gone. An app reaches this only for a conversation it
+    started: the permission middleware checked the creator on its meta line before this ran.
     """
     state: DashboardState = request.app["state"]
     name = request.match_info["session"]
-    session = state._sessions.get(name)
-    # The key whose FILE this delete must unlink — resolved, not prefixed. A session
-    # persisted under its own bare key (a channel-provider thread) used to have
-    # `dashboard:<name>` unlinked instead: the button answered 200, the session left
-    # memory, and the transcript survived on disk as an orphan that `session_key_exists`
-    # still reports as present — so "delete" quietly degraded back into the resurrection
-    # this route's own hard-delete contract exists to prevent.
-    history_key = persisted_history_key(state.conversation_log, name)
-    # A chat is deletable if it's warm in memory OR only persisted on disk. After a
-    # gateway restart only recent/pinned/foldered sessions are restored to memory, so
-    # requiring an in-memory session here made "Delete" a silent 404 no-op for the
-    # common "delete an old chat from history" flow — leaving its JSONL + tool_results
-    # on disk AND letting it resurrect on reopen. So fall through to a disk purge when
-    # the session isn't resident; only 404 if it exists in neither place.
-    on_disk = False
-    if not session and state.conversation_log:
-        try:
-            on_disk = bool(
-                state.conversation_log.get_metadata(history_key)
-            ) or state.conversation_log.has_log(history_key)
-        except Exception:
-            on_disk = False
-    if not session and not on_disk:
+    from personalclaw.dashboard.chat_forget import delete_chats
+
+    app = request.get("app", "")
+    by = f"app:{app}" if app else str(request.get("user") or "dashboard")
+    done = await delete_chats(state, [name], by=by)
+    if done.failed:
+        return json_error("session_not_deleted", status=500)
+    if not done.deleted:
         return web.json_response({"error": "not found"}, status=404)
-
-    # An app reaches this only for a conversation it started, resident or on disk — the
-    # permission middleware checked the creator on its meta line before this ran.
-    # Remove from dict before async operations
-    state._sessions.pop(name, None)
-    if session is not None and session.running and session.task is not None:
-        session.task.cancel()
-        try:
-            await asyncio.wait_for(asyncio.shield(session.task), timeout=2.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-            pass
-    # HARD DELETE (product decision 2026-07-03): the explicit "Delete chat" button
-    # must actually destroy the conversation, not soft-close it. Previously this
-    # wrote the session to history with closed=True — which (a) left the raw
-    # tool-result store (file contents / command output) on disk, and (b) let the
-    # session RESURRECT if its URL was reopened (the rehydrate path clears `closed`).
-    # So every on-disk artifact is purged instead (`chat_forget.purge_chat`: the transcript,
-    # the per-session workspace, the turn checkpoints — under every form of the key they were
-    # written with), and a Temporary chat's attached files go with it, as at the end of its
-    # session. The soft-close/archive path lives ONLY in /cleanup (api_chat_sessions_cleanup),
-    # which is unchanged. (history_key was resolved at the top so the disk-only path could
-    # check existence.)
-    from personalclaw.dashboard.chat_forget import purge_chat, temporary_attachments
-
-    purge_chat(
-        state,
-        history_key,
-        keys={history_key, name, *([session.key] if session is not None else [])},
-        attachments=temporary_attachments(state, history_key, session),
-    )
-    # Kill the per-tab session to free resources.
-    await state.sessions.remove(history_key)
-    state.push_sessions_update()
-    state.push_refresh("history")
     return web.json_response({"ok": True})
 
 

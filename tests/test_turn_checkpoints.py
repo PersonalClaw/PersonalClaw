@@ -310,8 +310,9 @@ def test_prune_orphans_keeps_live_sessions_and_drops_the_rest(tmp_path):
 
 def test_the_hard_delete_handler_purges_the_checkpoint_tree(tmp_path):
     """The cap is per session, so a tree the delete path forgets is never reclaimed.
-    Asserts the CALL SITES, not just that prune_session works in isolation: the handler hands its
-    purge to the one owner of forgetting a chat, and that owner prunes the store."""
+    Asserts the CALL SITES, not just that prune_session works in isolation: the handler hands the
+    delete to the one way a chat is deleted, which hands its purge to the one owner of forgetting a
+    chat, and that owner prunes the store."""
     import ast
     import inspect
 
@@ -325,7 +326,8 @@ def test_the_hard_delete_handler_purges_the_checkpoint_tree(tmp_path):
             if isinstance(n, ast.Call)
         }
 
-    assert "purge_chat" in _calls(chat_handlers.api_chat_session_delete), "the delete must purge"
+    assert "delete_chats" in _calls(chat_handlers.api_chat_session_delete), "the one delete path"
+    assert "purge_chat" in _calls(chat_forget.delete_chats), "the delete must purge"
     assert "prune_session" in _calls(
         chat_forget.purge_chat
     ), "session hard-delete must prune the checkpoint store"

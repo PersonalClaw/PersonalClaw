@@ -278,15 +278,25 @@ chat, channel thread, loop worker, webhook, subagent).
     transcript is read or a model is called: the idle sweep's expiry, a
     channel's end of session, `personalclaw consolidate`, the consolidate
     request and the per-turn and idle passes all end in `_consolidate`.
-  - Every record the memory store writes is stamped with the session it came
+  - Every record the memory store writes is filed under the session it came
     from (`source_session`, `memory_writes.filed_under`: what a subagent's or a
-    step's request writes names the chat it works for), and at start the gateway
-    removes every record a restricted session left
-    (`forget_what_restricted_sessions_left`): by that
-    stamp, an episodic row's `conversation_id`, a `consolidation:<key>` source or
-    a session-scoped row's `scope_ref`, with its history events, links and
-    vectors. A record that names no session (a persona note or a lesson an
-    earlier version wrote) cannot be traced and is left for the owner to review.
+    step's request writes names the chat it works for). A live record other work
+    writes again, or finds it already holds (a lesson said again, a fact the
+    formation pass judges already kept, an episode told twice), is filed under no
+    one session (`vector_memory.SHARED`), and so is one your own edit outside any
+    chat touches; the maintenance a consolidation runs after a chat's pass is
+    PersonalClaw's own work over every chat and files what it writes under none
+    (`memory_writes.as_maintenance`). At start the gateway removes every record a
+    restricted session left (`forget_what_restricted_sessions_left`), and deleting
+    a chat removes what is filed under it alone (see `chat_forget.py` below), both
+    through one purge (`memory_writes.forget_what_sessions_left`): by that stamp,
+    or for a record written before the stamp, an episodic row's
+    `conversation_id`, a `consolidation:<key>` source or a session-scoped row's
+    `scope_ref`, with its history events, links, vectors and proposed names, the
+    daily-history entries that repeat it and the day's digest that quoted it
+    (built again from the rest). A row it had replaced is live again. A record
+    that names no session (a persona note or a lesson an earlier version wrote)
+    cannot be traced and is left for the owner to review.
   - Nothing of a restricted session is handed to a background model, a model
     its own turn did not ask for. `blocks_background_models(key, *aliases,
     memory_mode=)` is the same answer, and work inside a restricted scope hands
@@ -363,10 +373,27 @@ chat, channel thread, loop worker, webhook, subagent).
   (`sessions/<key>/`), its turn checkpoints, the files attached to it
   (`uploads/`, `screenshots/`) and the skills it was taught and not yet kept
   (`skills/.ephemeral/`); `chat_traces` reads that and `chat_forget` deletes it.
-  `purge_chat` deletes them for the Delete button (which keeps a kept chat's
+  `purge_chat` deletes them for a deleted chat (which keeps a kept chat's
   uploads, since Files lists them) and for a **temporary** chat's end, which
   takes its attachments too; a chat named again after a deleted one is not
-  handed the deleted chat's skill drafts. A temporary chat's session lives in the gateway
+  handed the deleted chat's skill drafts. A chat is deleted one way,
+  `delete_chats`, from the Delete button (`DELETE /api/chat/sessions/{session}`)
+  and both history routes (`DELETE /api/sessions/{key}`, `DELETE /api/sessions`):
+  it stops the chat's turn, runs `purge_chat` (the transcript first, so a
+  consolidation still waiting on a model keeps nothing more:
+  `HistoryConsolidator._was_deleted`), removes from every memory, the global one
+  and each folder's, what memory filed under the chat alone
+  (`forget_what_memory_drew_from`), destroys its runtime and writes one
+  `chat.deleted` audit row naming it. A chat whose transcript could not be
+  removed is not deleted: the rest of what it kept goes all the same, its audit
+  row says `failure`, and the routes answer that it is still kept
+  (`session_not_deleted`, or `failed` in the bulk route's count) rather than
+  that it is gone. What stays is what cannot be traced to the
+  chat alone: a record other work also stands behind (a lesson taught in another
+  chat too, a fact edited in Memory), what maintenance drew from every chat, and
+  what the owner kept elsewhere; the Delete dialog names both halves, and
+  `blastRadiusIsVerified.test.ts` reads them back from this code. A temporary
+  chat's session lives in the gateway
   running it, so it ends when that gateway stops or restarts, when the chat is
   deleted, and when cleanup evicts it as inactive: the last save before a stop
   forgets each one instead of saving it, the next start forgets any a crash or

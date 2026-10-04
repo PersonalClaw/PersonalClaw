@@ -167,6 +167,12 @@ _STORED_WITH_ROW = frozenset({"scope", "scope_ref", "embedding", "embedding_mode
 #: The source the history names for what the store repairs in itself when it opens.
 _REPAIR_SOURCE = "repair"
 
+#: The ``source_session`` of a record other work wrote or confirmed too: another session's, or
+#: work outside any session (yours, on the Memory page or the command line). Filed under no one
+#: session, so deleting one chat leaves it (:meth:`VectorMemoryStore.purge_records_from`). ``NULL``
+#: stays the mark of a record no session's work wrote.
+SHARED = ""
+
 _MAX_EVENTS = 10_000
 _DEFAULT_CONFIDENCE_THRESHOLD = 0.8
 _DEFAULT_DEDUP_THRESHOLD = 0.88
@@ -674,6 +680,25 @@ def _migrate_v12(db: sqlite3.Connection) -> None:
                 raise
 
 
+def _migrate_v13(db: sqlite3.Connection) -> None:
+    """File what PersonalClaw's own passes over the whole memory wrote under no session.
+
+    The maintenance a consolidation runs after a chat's pass (promoting a pattern seen across
+    chats, collapsing repeated tool failures into one note, a day's digest of every chat's
+    episodes) ran as that chat's work in an earlier version, so what it wrote was filed under that
+    chat (``source_session``), and deleting the chat would take it. It is no one chat's
+    (``memory_writes.as_maintenance``). Idempotent.
+    """
+    db.execute(
+        "UPDATE semantic_memory SET source_session = NULL "
+        "WHERE source IN ('promotion', 'failure_synthesis')"
+    )
+    db.execute(
+        "UPDATE episodic_memories SET source_session = NULL "
+        "WHERE conversation_id LIKE 'daily-digest:%'"
+    )
+
+
 _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]] = [
     (1, _SCHEMA_V1, None),
     (2, "", _migrate_v2),
@@ -687,6 +712,7 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], None] | None"]
     (10, "", _migrate_v10),
     (11, "", _migrate_v11),
     (12, "", _migrate_v12),
+    (13, "", _migrate_v13),
 ]
 
 #: The model predicate over a row, as SQL: its vector came from the model the parameter names.
@@ -1191,6 +1217,25 @@ class _StoredSimilarity:
         return float(np.dot(self._q, vec) / (self._q_norm * norm)) if self._q_norm and norm else 0.0
 
 
+@dataclass(frozen=True)
+class Purged:
+    """What :meth:`VectorMemoryStore.purge_records_from` removed: how many records, every text
+    they held (each value their history recorded too), and the days whose episodes went."""
+
+    records: int = 0
+    texts: frozenset[str] = frozenset()
+    days: frozenset[str] = frozenset()
+
+
+def _value_text(value_json: object) -> str:
+    """A semantic row's value, as the text it holds."""
+    try:
+        value = json.loads(value_json) if isinstance(value_json, str) else value_json
+    except (TypeError, ValueError):
+        return str(value_json or "")
+    return value if isinstance(value, str) else json.dumps(value)
+
+
 # ── Store ──
 
 
@@ -1297,9 +1342,9 @@ class VectorMemoryStore(MemoryProvider):
         # never stops the store opening: a repair that fails runs again when it next opens. It is
         # no session's work, whichever work opens the store, so it runs outside any work's scope.
         try:
-            contextvars.Context().run(self._restore_lessons_replaced_by_nothing)
+            contextvars.Context().run(self._restore_replaced_by_nothing)
         except Exception:  # noqa: BLE001
-            logger.warning("Could not restore lessons left replaced by nothing", exc_info=True)
+            logger.warning("Could not restore records left replaced by nothing", exc_info=True)
         # From here on every statement passes the one memory-write check: inside work that
         # derives from an Incognito or Temporary session, or an app's that was not given your
         # memory, anything that would change memory is refused. Set after the schema is in place
@@ -2126,8 +2171,10 @@ class VectorMemoryStore(MemoryProvider):
                 row_holder, weight if weight is not None else memory_holder.weight_cap(row_holder)
             )
         # Unlike the contributor, the session it is filed under IS in the ON CONFLICT update: a
-        # fact a later session restates now comes from that session too, and a value is only ever
-        # rewritten by work that may write (memory_writes refuses the statement otherwise).
+        # live row other work writes again (another session's, or yours outside any) is no one
+        # session's alone any more, so it is filed under none (`SHARED`), and a row written again
+        # after it was removed is the new writer's. A value is only ever rewritten by work that may
+        # write (memory_writes refuses the statement otherwise). The CASE reads the row as it was.
         # A row written is live and replaced by nothing, so a rewrite clears the supersession a
         # retired row carried: a lesson taught again after what replaced it was removed would
         # otherwise keep pointing at it, and read as replaced long ago to the sweep that removes
@@ -2135,7 +2182,8 @@ class VectorMemoryStore(MemoryProvider):
         self.db.execute(
             "INSERT INTO semantic_memory (key, value_json, confidence, source, created_at, updated_at, is_deleted, tier, contributor, holder, weight, source_session) "  # noqa: E501
             "VALUES (?, ?, ?, ?, ?, ?, 0, 'semantic', ?, ?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value_json=?, confidence=?, source=?, updated_at=?, is_deleted=0, holder=?, weight=?, source_session=?, superseded_by=NULL, invalidated_at=NULL",  # noqa: E501
+            "ON CONFLICT(key) DO UPDATE SET value_json=?, confidence=?, source=?, updated_at=?, is_deleted=0, holder=?, weight=?, superseded_by=NULL, invalidated_at=NULL, "  # noqa: E501
+            "source_session = CASE WHEN semantic_memory.is_deleted = 1 OR semantic_memory.source_session IS excluded.source_session THEN excluded.source_session ELSE ? END",  # noqa: E501
             (
                 key,
                 value_json,
@@ -2153,7 +2201,7 @@ class VectorMemoryStore(MemoryProvider):
                 now,
                 row_holder,
                 row_weight,
-                from_session,
+                SHARED,
             ),
         )
 
@@ -2862,19 +2910,27 @@ class VectorMemoryStore(MemoryProvider):
         logger.info("Undid link event %d (%s)", event_id, etype)
         return (True, f"undid {etype} on {edge['from_ref']}")
 
-    def purge_records_from(self, keeps_nothing: "Callable[[str], bool]") -> list[str]:
-        """Remove every record a session that keeps no memory left here; return each one's text.
+    def purge_records_from(self, keeps_nothing: "Callable[[str], bool]") -> Purged:
+        """Remove every record filed under a session that keeps nothing here, and bring back what
+        one of them had replaced. Returns what went.
 
-        A record belongs to the session it records: its ``source_session``, an episodic row's
-        ``conversation_id`` (consolidation and sealing set it), a ``consolidation:<key>`` source,
-        or a session-scoped record's ``scope_ref`` (working memory). ``keeps_nothing(key)`` says
-        whether that session keeps nothing. A record that records no session is left alone.
+        A record is filed under the session whose work wrote it, stamped as it is written
+        (``source_session``, :func:`memory_writes.filed_under`): the chat's consolidation and its
+        seal, its turns' memory tools, its after-turn review, the subagents and runs working for
+        it. A record other work wrote or confirmed too is filed under no one session
+        (:data:`SHARED`) and is left, and so is one no session's work wrote. A record written
+        before sessions were stamped is the session it names another way: an episode's
+        ``conversation_id`` (consolidation and sealing set it), a ``consolidation:<key>`` source, a
+        session-scoped record's ``scope_ref`` (its running summary). ``keeps_nothing(key)`` says
+        whether that session keeps nothing: an Incognito or Temporary chat, a chat deleted.
 
-        Removed outright, deleted records included, with every history event about it (they
-        carry its text, and undo would bring it back), its links and its reflex log rows, and
-        the vector index rebuilt without it. Idempotent: a second pass finds nothing. The texts
-        returned let a caller remove the same words from where else they were written (the
-        daily history holds a session's summary verbatim).
+        Removed outright, deleted records included, with every history event about it (they carry
+        its text, and undo would bring it back), its links, its reflex log rows and its mentions
+        among the names the graph proposes, and the vector index rebuilt without it. A row it had
+        replaced is live again (:meth:`_restore_replaced_by_nothing`). Idempotent: a second pass
+        finds nothing. What is returned lets a caller remove the same words where else they were
+        written: the daily history repeats a session's summary each time it was consolidated, and
+        a day's digest quotes its episodes.
         """
         verdicts: dict[str, bool] = {}
 
@@ -2885,31 +2941,102 @@ class VectorMemoryStore(MemoryProvider):
                 verdicts[key] = bool(keeps_nothing(key))
             return verdicts[key]
 
-        texts: list[str] = []
+        def filed_gone(session: object, *named: object) -> bool:
+            # A stamped session is the whole answer, SHARED included; only an unstamped row is
+            # read for the session it names another way.
+            return gone(session) if session is not None else any(gone(key) for key in named)
+
+        texts: set[str] = set()
+        days: set[str] = set()
         episodic: list[str] = []
         for r in self.db.execute(
-            "SELECT id, text, conversation_id, source_session FROM episodic_memories"
+            "SELECT id, text, conversation_id, source_session, created_at FROM episodic_memories"
         ).fetchall():
-            if gone(r["source_session"]) or gone(r["conversation_id"]):
+            if filed_gone(r["source_session"], r["conversation_id"]):
                 episodic.append(r["id"])
-                texts.append(str(r["text"] or ""))
+                texts.add(str(r["text"] or ""))
+                days.add(str(r["created_at"] or "")[:10])
         semantic: list[str] = []
         for r in self.db.execute(
             "SELECT key, value_json, source, source_session, scope, scope_ref FROM semantic_memory"
         ).fetchall():
-            if (
-                gone(r["source_session"])
-                or gone(str(r["source"] or "").partition("consolidation:")[2])
-                or (r["scope"] == "session" and gone(r["scope_ref"]))
-            ):
+            consolidated = str(r["source"] or "").partition("consolidation:")[2]
+            summary_of = r["scope_ref"] if r["scope"] == "session" else None
+            if filed_gone(r["source_session"], consolidated, summary_of):
                 semantic.append(r["key"])
-                try:
-                    value = json.loads(r["value_json"])
-                except (TypeError, ValueError):
-                    value = r["value_json"]
-                texts.append(value if isinstance(value, str) else json.dumps(value))
+                texts.add(_value_text(r["value_json"]))
+        texts |= self._values_in_history(semantic)
+        self._forget_mentions(episodic + semantic)
         self._drop_records(episodic, semantic)
-        return texts
+        if semantic:
+            self._restore_replaced_by_nothing()
+        return Purged(
+            records=len(episodic) + len(semantic),
+            texts=frozenset(t for t in texts if t.strip()),
+            days=frozenset(d for d in days if len(d) == 10),
+        )
+
+    def _values_in_history(self, keys: list[str]) -> set[str]:
+        """Every value the history recorded for the semantic rows *keys*, as text: each one a
+        rewrite replaced, which is also where the rest of what the row said was written."""
+        values: set[str] = set()
+        for start in range(0, len(keys), 400):
+            batch = keys[start : start + 400]
+            marks = ",".join("?" * len(batch))
+            for row in self.db.execute(
+                "SELECT old_value, new_value FROM memory_events WHERE memory_type = 'semantic' "
+                f"AND memory_key IN ({marks})",
+                batch,
+            ).fetchall():
+                values.update(_value_text(v) for v in (row["old_value"], row["new_value"]) if v)
+        return values
+
+    def _forget_mentions(self, refs: list[str]) -> None:
+        """Take the records *refs* out of the names the graph proposes (each counts the records
+        that mention it), and drop a name nothing else mentioned."""
+        if not refs:
+            return
+        removed = set(refs)
+        changed = False
+        for row in self.db.execute(
+            "SELECT name, mention_count, refs FROM mem_entity_proposals"
+        ).fetchall():
+            try:
+                held = [str(ref) for ref in json.loads(row["refs"] or "[]")]
+            except (TypeError, ValueError):
+                continue
+            left = [ref for ref in held if ref not in removed]
+            if len(left) == len(held):
+                continue
+            count = max(0, int(row["mention_count"] or 0) - (len(held) - len(left)))
+            if count and left:
+                self.db.execute(
+                    "UPDATE mem_entity_proposals SET mention_count = ?, refs = ? WHERE name = ?",
+                    (count, json.dumps(left), row["name"]),
+                )
+            else:
+                self.db.execute("DELETE FROM mem_entity_proposals WHERE name = ?", (row["name"],))
+            changed = True
+        if changed:
+            self.db.commit()
+
+    def note_confirmed(self, key: str) -> None:
+        """The semantic row *key* is one the current work found it already holds (a fact it was
+        about to keep again): it is no one session's alone any more (:meth:`_confirmed`)."""
+        self._confirmed("semantic_memory", "key", key)
+
+    def _confirmed(self, table: str, id_col: str, ref: str) -> None:
+        """The live row *ref* of *table* is what the current work would have written: filed under
+        no one session (:data:`SHARED`) when other work stands behind it now. Work that may change
+        nothing of your memory leaves no mark (``memory_writes.changes_no_memory``)."""
+        if not ref or memory_writes.changes_no_memory():
+            return
+        self.db.execute(
+            f"UPDATE {table} SET source_session = ? WHERE {id_col} = ? AND is_deleted = 0 "
+            "AND source_session IS NOT ?",
+            (SHARED, ref, memory_writes.filed_under() or None),
+        )
+        self.db.commit()
 
     def chats_with_records(self) -> set[str]:
         """The sessions this store holds live records of their own for, each named by the key the
@@ -3621,6 +3748,7 @@ class VectorMemoryStore(MemoryProvider):
         ).fetchone()
         if existing:
             logger.debug("Episodic text-hash dedup: prefix matches id=%s", existing["id"])
+            self._confirmed("episodic_memories", "id", existing["id"])
             return False
 
         # Embedded with the model this store embeds with now, and stamped with it. A caller's own
@@ -3693,6 +3821,8 @@ class VectorMemoryStore(MemoryProvider):
                                 text[:200],
                                 source,
                             )
+                            if existing:
+                                self._confirmed("episodic_memories", "id", existing_id)
                             return False
 
         # Enforce cap
@@ -4314,6 +4444,7 @@ class VectorMemoryStore(MemoryProvider):
             # the repeat vanished, and a rule observed ten times stayed indistinguishable from one
             # observed once. A lesson the pass would have retired before it reached this one stays.
             self._observe_lesson(says_it, source)
+            self._confirmed("semantic_memory", "key", says_it)
             self._store_lesson_vectors(pending_backfills, lesson_model)
             return False
 
@@ -4409,25 +4540,28 @@ class VectorMemoryStore(MemoryProvider):
             )
         self.db.commit()
 
-    def _restore_lessons_replaced_by_nothing(self) -> int:
-        """Bring back each lesson an earlier version left retired toward a key that holds nothing.
+    def _restore_replaced_by_nothing(self) -> int:
+        """Bring back each row left retired toward a key that holds nothing.
 
-        That version retired the lessons a new one replaced before it asked whether the new one
-        could be kept, so a refused update left the lesson it would have replaced pointing at a
-        lesson never stored: out of recall and out of every prompt. Each is live again, with the
-        sightings it carried onto that key, unless a lesson kept since says it in full (in its own
-        reach): it then points at that one, as the update taught again would have retired it.
+        A row a purge removed (:meth:`purge_records_from`: a chat deleted, an Incognito or
+        Temporary chat an earlier version kept) may have replaced others: a fact it superseded, a
+        lesson it said better. What replaced them is gone, so each is live again, as it was before.
+        An earlier version also retired the lessons a new one replaced before it asked whether the
+        new one could be kept, so a refused update left the lesson it would have replaced pointing
+        at a lesson never stored: out of recall and out of every prompt. A lesson comes back with
+        the sightings it carried onto that key, unless a lesson kept since says it in full (in its
+        own reach): it then points at that one, as the update taught again would have retired it.
         Recorded in the history under the source ``repair``, heard by no trigger.
 
-        Run when the store opens, before any work reads it, and idempotent: what it repairs no
-        longer points at nothing. Returns how many it repaired.
+        Run when the store opens, before any work reads it, and after a purge; idempotent: what it
+        repairs no longer points at nothing. Returns how many it repaired.
         """
         from personalclaw.memory_record import MemoryScope
 
         orphans = self.db.execute(
             "SELECT s.key, s.value_json, s.superseded_by, s.scope_ref, "
             "COALESCE(s.scope, 'global') AS reach FROM semantic_memory s "
-            "WHERE s.key LIKE 'lesson.%' AND s.is_deleted = 1 AND s.superseded_by IS NOT NULL "
+            "WHERE s.is_deleted = 1 AND s.superseded_by IS NOT NULL "
             "AND NOT EXISTS (SELECT 1 FROM semantic_memory t WHERE t.key = s.superseded_by) "
             "ORDER BY s.invalidated_at, s.key"
         ).fetchall()
@@ -4437,20 +4571,22 @@ class VectorMemoryStore(MemoryProvider):
         with self.db.transaction():
             now = _now_iso()
             for row in orphans:
-                try:
-                    text = str(json.loads(row["value_json"])).lower()
-                    reach = MemoryScope(row["reach"])
-                except (TypeError, ValueError):
-                    continue
-                kept_since = next(
-                    (
-                        str(live["key"])
-                        for live in self._lessons_in_bucket(reach, row["scope_ref"])
-                        if live["key"] != row["key"]
-                        and text in str(json.loads(live["value_json"])).lower()
-                    ),
-                    "",
-                )
+                kept_since = ""
+                if str(row["key"]).startswith("lesson."):
+                    try:
+                        text = str(json.loads(row["value_json"])).lower()
+                        reach = MemoryScope(row["reach"])
+                    except (TypeError, ValueError):
+                        continue
+                    kept_since = next(
+                        (
+                            str(live["key"])
+                            for live in self._lessons_in_bucket(reach, row["scope_ref"])
+                            if live["key"] != row["key"]
+                            and text in str(json.loads(live["value_json"])).lower()
+                        ),
+                        "",
+                    )
                 if kept_since:
                     self.db.execute(
                         "UPDATE semantic_memory SET superseded_by = ?, updated_at = ? "
@@ -4471,11 +4607,11 @@ class VectorMemoryStore(MemoryProvider):
                 self._record_event("supersede", "semantic", key, value, kept_since, _REPAIR_SOURCE)
             else:
                 self._record_event("restore", "semantic", key, pointed_at, value, _REPAIR_SOURCE)
-            self._carry_lesson_evidence(pointed_at, kept_since or key)
+            if key.startswith("lesson."):
+                self._carry_lesson_evidence(pointed_at, kept_since or key)
         if repaired:
             logger.warning(
-                "Restored %d lesson(s) an earlier version left replaced by a lesson never kept",
-                len(repaired),
+                "Restored %d memory record(s) left replaced by one that is not kept", len(repaired)
             )
         return len(repaired)
 

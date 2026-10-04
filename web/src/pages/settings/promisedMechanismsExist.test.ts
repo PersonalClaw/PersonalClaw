@@ -117,11 +117,13 @@ describe('the daily-digest promise', () => {
     // of a property.
     expect(web('pages/settings/MemoryPanel.tsx'), 'the button it points at').toMatch(/Build \/ refresh/)
     // The cadence half: reached from session consolidation, not a timer — which is what the code calls
-    // its maintenance cadence.
+    // its maintenance cadence, run in its own method once the chat's pass is done.
     const consolidate = pyMethod(py('history.py'), '    async def _consolidate_locked')
     expect(consolidate, 'the method body must be found').toMatch(/single_flight|include_history/)
+    expect(consolidate, 'the pass runs the maintenance').toMatch(/await self\._maintain\(key, memory, svc\)/)
     // The partition's own memory service builds them: `svc` is the one the chat's folder resolves to.
-    expect(consolidate, 'the cadence builds digests').toMatch(/\bsvc\.build_daily_digest\(\)/)
+    const maintain = pyMethod(py('history.py'), '    async def _maintain')
+    expect(maintain, 'the cadence builds digests').toMatch(/\bsvc\.build_daily_digest\(\)/)
     // The button half: the endpoint forces a synchronous build.
     const h = py('dashboard/handlers/memory.py')
     expect(h, 'the rebuild query param drives the same builder').toMatch(
@@ -137,7 +139,10 @@ describe('the daily-digest promise', () => {
     const svc = py('memory_service.py')
     const fn = pyMethod(svc, '    def build_daily_digest')
     expect(fn, 'it synthesises per completed day').toMatch(/Only \*completed\* days are digested/)
-    expect(fn, 'and writes an episodic record').toMatch(/MemoryKind|MemoryRecord/)
+    expect(fn, 'one digest per day').toMatch(/self\._write_digest\(day, by_day\[day\], summarizer\)/)
+    expect(pyMethod(svc, '    def _write_digest'), 'and writes an episodic record').toMatch(
+      /self\.write_episodic\(/,
+    )
   })
 })
 
