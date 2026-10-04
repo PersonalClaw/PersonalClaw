@@ -327,6 +327,47 @@ def ensure_loaded() -> None:
     from personalclaw.loop.kinds import sdlc as _code
 
 
+@dataclass(frozen=True)
+class WorkerTurn:
+    """What a loop's worker is given on its upcoming turn, by its loop's kind: the loop's own
+    skills and workflows (``turn_capabilities``: the active phase's or stage's, with the always-on
+    baseline), and the directive put ahead of the turn's nudge (``turn_directive``)."""
+
+    skill_ids: tuple[str, ...] = ()
+    workflow_ids: tuple[str, ...] = ()
+    directive: str = ""
+
+
+def worker_turn(session_key: str) -> WorkerTurn:
+    """What the worker whose session is *session_key* (``loop-<id>``, or ``loop-<id>-<task>`` for
+    one of its parallel task workers) is given on its upcoming turn. Nothing for a session that is
+    no loop's worker, a loop that is gone, or a kind with no strategy registered.
+
+    The one reading of it: the chat runner loads the skills and workflows on the turn and puts the
+    directive ahead of its nudge, and the skill tools let the turn use those skills, which are the
+    loop's own whatever its agent's skill list holds (``agents.skill_list``).
+    """
+    from personalclaw.loop import store
+    from personalclaw.loop.manager import worker_ids
+
+    loop_id, _task_id = worker_ids(session_key or "")
+    loop = store.get(loop_id) if loop_id else None
+    if loop is None:
+        return WorkerTurn()
+    ensure_loaded()
+    strategy = get_or_none(loop.kind)
+    if strategy is None:
+        return WorkerTurn()
+    capabilities = getattr(strategy, "turn_capabilities", None)
+    skills, workflows = capabilities(loop) if capabilities is not None else ([], [])
+    directive = getattr(strategy, "turn_directive", None)
+    return WorkerTurn(
+        skill_ids=tuple(skills),
+        workflow_ids=tuple(workflows),
+        directive=(directive(loop) if directive is not None else "") or "",
+    )
+
+
 # A late-binding hook so a bundled/extension kind can register without the engine
 # importing it directly (mirrors the provider-registry self-registration pattern).
 _DEFERRED: list[Callable[[], None]] = []

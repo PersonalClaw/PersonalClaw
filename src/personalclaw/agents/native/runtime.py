@@ -2195,15 +2195,15 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # and the subagent's tool calls escalate to interactive approval —
         # breaking unattended goal loops.
         from personalclaw import mcp_core, mcp_shared
+        from personalclaw.agents import skill_list
         from personalclaw.agents.native import builtin_tools as _bt
 
         token = mcp_core.set_current_session_key(self._session_key)
+        # The agent's skill list, which its skill tools are held to (`agents.skill_list`).
+        skills_token = skill_list.hold(self._definition.skills)
         # The leaf this session is (none for a chat), for the in-process tools' leaf readers —
         # the depth limit, the posture and `resume_run_id: "self"` (`mcp_shared.leaf_value`).
         lineage_token = mcp_shared.bind_leaf_lineage(self._leaf_lineage)
-        # Also publish the resolved agent id so workflow_create can auto-bind an
-        # agent-scoped SOP to THIS agent (EVOLVE-WORKFLOWS, #28).
-        agent_token = mcp_core.set_current_agent_id(self._agent_id)
         # Bind this turn's workspace for the native category providers (UT1): the
         # session-coupled app providers (knowledge/tasks/loops/inbox) are registry
         # singletons now, so cwd/agent flow via contextvars rather than a per-session
@@ -2225,7 +2225,7 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
             cancellation.reset_scope(cancel_token)
             mcp_shared.reset_leaf_lineage(lineage_token)
             mcp_core.reset_current_session_key(token)
-            mcp_core.reset_current_agent_id(agent_token)
+            skill_list.let_go(skills_token)
             _bt.reset_tool_context(ctx_tokens)
 
     # Synthetic runtime meta-tools (not in _tool_defs): pure, side-effect-free

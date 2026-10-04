@@ -1,12 +1,13 @@
 """Skills loader — markdown skill files for agent capabilities."""
 
+import copy
 import fcntl
 import hashlib
 import logging
 import os
 import re
 import shutil
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -602,19 +603,30 @@ class SkillsLoader:
             _ensure_builtin_skills(self._dir)
         # Cache: path → (mtime, parsed_frontmatter)
         self._fm_cache: dict[str, tuple[float, dict[str, str]]] = {}
+        # The skills this loader sees of the shared library, when it is one agent's view of it
+        # (:func:`narrowed`): every listing, match and load below asks it. None sees them all.
+        self._allows: Callable[[str], bool] | None = None
+
+    def _sees(self, name: str) -> bool:
+        """Whether this loader sees the shared-library skill *name* (:func:`narrowed`)."""
+        return self._allows is None or self._allows(name)
 
     def _iter(self) -> list[tuple[str, Path]]:
         """Return all ``(name, skill_file)`` pairs from this loader's directories.
 
         The default loader aggregates the global discovery paths; a loader
-        constructed with an explicit ``skills_path`` stays confined to it.
+        constructed with an explicit ``skills_path`` stays confined to it. An agent's
+        view (:func:`narrowed`) lists only the shared skills its list allows, and every
+        skill of the agent's own tier.
         """
         # Agent-local tier first, so its slugs win the first-match-wins dedup
         # below (an agent-local skill overrides a same-named global/bundled one).
         results: list[tuple[str, Path]] = []
         if self._agent_dir is not None and self._agent_dir.is_dir():
             results.extend(iter_skill_files(self._agent_dir))
-        results.extend(iter_skill_files(self._dir))
+        results.extend(
+            (name, path) for name, path in iter_skill_files(self._dir) if self._sees(name)
+        )
         if self._scoped:
             return results
         from personalclaw.skills.marketplace import skill_discovery_paths
@@ -623,7 +635,7 @@ class SkillsLoader:
         for extra_dir in skill_discovery_paths():
             if extra_dir.is_dir() and extra_dir != self._dir:
                 for name, path in iter_skill_files(extra_dir):
-                    if name not in seen:
+                    if name not in seen and self._sees(name):
                         results.append((name, path))
                         seen.add(name)
         return results
@@ -718,10 +730,14 @@ class SkillsLoader:
         One resolution order for the body and its resources: a resource must come
         from the SAME directory as the SKILL.md that declared it, or a lower-
         precedence tier could lend files to a higher-precedence skill's allowlist.
+        An agent's view (:func:`narrowed`) resolves a shared skill its list does not
+        allow to nothing, and a skill of the agent's own tier as ever.
         """
         if not self._safe_name(name):
             return None
         for search_dir in self._search_dirs():
+            if search_dir != self._agent_dir and not self._sees(name):
+                return None
             skill_file = search_dir / name / "SKILL.md"
             if skill_file.exists():
                 return skill_file
@@ -1296,8 +1312,10 @@ class SkillsLoader:
         if agent is not None and not self._scoped and not self._agent_dir:
             adir = agent_skills_dir(agent)
             if adir.is_dir() and any(adir.iterdir()):
-                # Transient agent-scoped view; shares nothing mutable with self.
+                # Transient agent-scoped view; shares nothing mutable with self. It sees what
+                # this loader sees of the shared library (an agent's view, `narrowed`).
                 scoped = SkillsLoader(install_builtins=False, agent=agent)
+                scoped._allows = self._allows
                 return scoped.get_context()
         always = self.get_always_skills()
         all_skills = self.list_skills()
@@ -1435,3 +1453,13 @@ class SkillsLoader:
             if match:
                 return content[match.end() :].strip()
         return content
+
+
+def narrowed(loader: SkillsLoader, allows: Callable[[str], bool]) -> SkillsLoader:
+    """*loader* as one agent sees the shared library: only the skills *allows* names, in every
+    listing, match and load the view makes (an agent's skill list, ``agents.skill_list``), while a
+    skill of the agent's own tier stays its own. A view, not a second library: it reads the same
+    directories, and shares *loader*'s frontmatter cache."""
+    view = copy.copy(loader)
+    view._allows = allows
+    return view

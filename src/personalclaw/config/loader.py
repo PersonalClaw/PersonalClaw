@@ -2781,11 +2781,13 @@ class ResolvedBindings:
     """Resolved bindings for a session, from the selected Agent Definition.
 
     Carries the working dir, memory store, provider agent, AND the agent's
-    behavioral fields (skills/approval_mode) so the runtime honors what the
+    behavioral fields (approval_mode/triggers) so the runtime honors what the
     Agents UI edits. Its instructions and voice are read by the one reader of them,
     ``agents.instructions.agent_instructions``, which does not answer one agent's
-    words for another's name, and its tool list by the one reader of that,
-    ``agents.tool_list.agent_tools``, which the runtime holds every turn to.
+    words for another's name, its tool list by the one reader of that,
+    ``agents.tool_list.agent_tools``, which the runtime holds every turn to, and its
+    skill list by ``agents.skill_list.agent_skills``, which every turn's context and
+    the runtime's skill tools are held to.
     """
 
     workspace_dir: Path
@@ -2796,7 +2798,6 @@ class ResolvedBindings:
     # approval_mode (the host gate). Empty = adapter default; ignored by runtimes
     # with no separate mode axis (the default dialect). Threaded to the acp factory as acp_mode.
     acp_mode: str = ""
-    skills: list = field(default_factory=list)
     approval_mode: str = ""
     # Referenced lifecycle-trigger IDs: the ONLY triggers that fire for this
     # agent's lifecycle. Empty = nothing fires (the seeded default ships triggers=[]).
@@ -5363,7 +5364,6 @@ def resolve_agent_bindings(
         effective_memory_config=effective_memory,
         provider_agent=provider_agent,
         acp_mode=acp_mode,
-        skills=list(agent_cfg.skills or []),
         approval_mode=agent_cfg.approval_mode,
         triggers=list(getattr(agent_cfg, "triggers", []) or []),
         provider=provider,

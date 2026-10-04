@@ -85,10 +85,10 @@ class AgentTools:
             return cls.cannot_read(
                 agent, "it is not a list of tool names", type(value).__name__, fixed=fixed
             )
-        names = tuple(str(v).strip() for v in value if isinstance(v, str) and str(v).strip())
+        names = _names(value)
         if not names:
             return cls.cannot_read(agent, "none of its entries is a tool name", fixed=fixed)
-        return cls(agent=agent, patterns=tuple(dict.fromkeys(names)), listed=True, fixed=fixed)
+        return cls(agent=agent, patterns=names, listed=True, fixed=fixed)
 
     @classmethod
     def cannot_read(
@@ -191,6 +191,55 @@ class AgentTools:
 
         offered = list(names)
         return [p for p in self.patterns if not any(name_glob(n, p) for n in offered)]
+
+
+def _names(value: list | tuple) -> tuple[str, ...]:
+    """A list's entries that are names, stripped, each once in the order written."""
+    return tuple(
+        dict.fromkeys(str(v).strip() for v in value if isinstance(v, str) and str(v).strip())
+    )
+
+
+def _allowed(value: Any) -> tuple[str, ...] | None:
+    """What the tool list *value* allows, as :meth:`AgentTools.of` reads it: ``None`` for every tool
+    (no list), else its names and patterns, which are none for a list that cannot be read and
+    allows only :data:`ALWAYS_KEPT`."""
+    if value is None or value == [] or value == ():
+        return None
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return _names(value)
+
+
+def _covers(patterns: tuple[str, ...], entry: str) -> bool:
+    """Whether a list of *patterns* already allows everything *entry* would: it names *entry*, or
+    *entry* is a tool's name one of them matches, or a tool every list keeps. A pattern the list
+    does not name is not covered, since what it matches cannot be told from the list alone."""
+    if entry in ALWAYS_KEPT or entry in patterns:
+        return True
+    if any(ch in entry for ch in "*?["):
+        return False
+    from personalclaw.guardrails.registries import name_glob
+
+    return any(name_glob(entry, pattern) for pattern in patterns)
+
+
+def widens(current: Any, new: Any) -> bool:
+    """Whether the tool list *new*, written over *current*, lets the agent use a tool *current*
+    does not: no list (every tool) in place of one, or an entry *current* does not cover.
+
+    The direction of an edit of the setting, for the write paths that ask the owner before a
+    wider list is stored (``SecurityControl``), read by this module's own matcher so it means what
+    the runtime does: ticking the first tool of an empty list narrows it, emptying a list widens
+    it, and a name a pattern on the list already matches adds nothing. A *current* that cannot be
+    read allows only :data:`ALWAYS_KEPT`, so every other entry written over it widens.
+    """
+    before, after = _allowed(current), _allowed(new)
+    if before is None:
+        return False
+    if after is None:
+        return True
+    return any(not _covers(before, entry) for entry in after)
 
 
 def agent_tools(agent: str | None, cfg: "AppConfig | None") -> AgentTools:

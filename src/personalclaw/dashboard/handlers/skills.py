@@ -47,7 +47,9 @@ def _loaded_by_agents(skill_keys: list[str]) -> dict[str, list[str]]:
 
     Two sources, unioned:
       (a) ``AgentProfile.skills`` lists — the native per-agent skill list
-          (config ``agents`` section). Primary, cheap, no filesystem walk.
+          (config ``agents`` section), read by its one reader
+          (``agents.skill_list.agent_skills``): an agent on an agent CLI, which no
+          list holds, is not named. Primary, cheap, no filesystem walk.
       (b) ``resources`` ``skill://`` globs on agent JSON files (the ACP-agent
           layout) — fnmatched against each known skill key, guarding each
           agent-file read with ``is_sensitive_path``.
@@ -62,15 +64,15 @@ def _loaded_by_agents(skill_keys: list[str]) -> dict[str, list[str]]:
         if bucket is not None and agent_name not in bucket:
             bucket.append(agent_name)
 
-    # (a) AgentProfile.skills — the native primary path.
+    # (a) AgentProfile.skills — the native primary path, as the turns read it.
     try:
+        from personalclaw.agents.skill_list import agent_skills
         from personalclaw.config import AppConfig
 
         cfg = AppConfig.load()
-        for agent_name, profile in (cfg.agents or {}).items():
-            for skill_key in getattr(profile, "skills", None) or []:
-                if isinstance(skill_key, str) and skill_key:
-                    _add(skill_key, agent_name)
+        for agent_name in cfg.agents or {}:
+            for skill_key in agent_skills(agent_name, cfg).names:
+                _add(skill_key, agent_name)
     except Exception:
         logger.debug("loaded_by_agents: AppConfig scan failed", exc_info=True)
 

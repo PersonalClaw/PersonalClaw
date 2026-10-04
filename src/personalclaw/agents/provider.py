@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from personalclaw.agents.skill_list import AgentSkills
 from personalclaw.agents.tool_list import AgentTools
 from personalclaw.turn_streams import closing_stream
 
@@ -35,7 +36,10 @@ class AgentRuntimeDefinition:
     The runtime-facing shape carrying the per-agent ``provider`` selection,
     distinct from ``agents.marketplace.AgentDefinition`` (the user-authored,
     persisted config). It carries no system prompt: the prompt reaches the model in
-    the turn's assembled context, resolved in one place (``ContextBuilder.build_message``).
+    the turn's assembled context, resolved in one place (``ContextBuilder.build_message``),
+    and none of the settings the runtime is handed elsewhere: its working directory, its
+    approval floor and its triggers' callable come with the session the runtime is built
+    for, and its memory with each turn's context.
     """
 
     name: str
@@ -44,11 +48,10 @@ class AgentRuntimeDefinition:
     #: The tools the agent may use (its tool list, ``agents.tool_list``): every tool by default.
     #: The native runtime shows its model only these and refuses a call to any other.
     tools: AgentTools = field(default_factory=AgentTools)
-    skills: list[str] = field(default_factory=list)
-    memory_store: str = ""
-    workspace_dir: str = ""
-    approval_mode: str = ""  # "" inherits global
-    triggers: list[str] = field(default_factory=list)  # referenced lifecycle-trigger IDs
+    #: The skills the agent may use (its skill list, ``agents.skill_list``): every skill by
+    #: default. The native runtime holds them while it dispatches a call, so its skill tools
+    #: (``skill_search``, ``skill_invoke``, ``skill_resource``) reach no other.
+    skills: AgentSkills = field(default_factory=AgentSkills)
 
 
 @dataclass

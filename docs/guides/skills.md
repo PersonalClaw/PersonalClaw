@@ -238,10 +238,15 @@ won that argument: a control that can never fire is worse than one whose default
 revisit. Raise the threshold (or `max_triggered`) if your skills are short enough
 that inlining is cheaper than the round-trip.
 
-**One exception to all of it:** surfacing is for the built-in agent only.
-`context.py` skips both the always-on block and trigger surfacing when the turn
-belongs to a custom agent, which carries its own instructions — though a loop's
-confirmed skills, which load actively every cycle, still do.
+**Which skills a turn draws on is its agent's.** An agent's Skills list on the
+Agents page is the whole of what its turns are offered, by every path above, and
+of what `skill_search`, `skill_invoke` and `skill_resource` reach for it (see
+[An agent's skill list](../reference/configuration.md#an-agents-skill-list-agentsskills)).
+With no list, surfacing is for the default agent only: `context.py` skips both the
+always-on block and trigger surfacing when the turn belongs to a custom agent with
+no list, which carries its own instructions. A loop's confirmed skills load actively
+every cycle whatever its agent's list holds, and the skill tools reach them on the
+loop's turns.
 
 ## Files beside `SKILL.md`
 

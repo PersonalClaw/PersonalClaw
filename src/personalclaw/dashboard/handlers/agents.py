@@ -11,6 +11,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.agents.tool_list import widens
 from personalclaw.atomic_write import atomic_json_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.edit_spec import (
@@ -19,6 +20,8 @@ from personalclaw.config.edit_spec import (
     SecurityControl,
     coerce_edit_value,
     loosens_toward,
+    loosens_when_added,
+    loosens_when_widened,
     named,
     unconsented_loosening,
 )
@@ -670,6 +673,7 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                             patch_staged,
                             {**_PROFILE_DEFAULTS, **data},
                             patch_body,
+                            _AGENT_DETAIL_PATCH_SPECS,
                         )
                         if unconsented is not None:
                             return unconsented
@@ -781,6 +785,14 @@ def _resolve_agent_name(name: str, cfg) -> str | None:
 _AGENT_TEXT_MAX_LEN = 4_000_000
 _AGENT_LIST_MAX_ITEMS = 1_000_000
 
+#: What the owner agrees to when an agent's tool list gets wider: true of both stores the list is
+#: written to, the profile (`_AGENT_FIELD_SPECS`) and the agent CLI's runtime file
+#: (`_AGENT_DETAIL_PATCH_SPECS`).
+_WIDER_TOOLS = (
+    "A wider tool list lets this agent call tools it could not call before, in every chat and "
+    "run of it."
+)
+
 #: The write-side allowlist for an agent profile: every field of
 #: :class:`~personalclaw.config.loader.AgentProfile`, spelled in the ``_EDITABLE_CONFIG``
 #: spec shape so it is checked by the SAME
@@ -838,7 +850,19 @@ _AGENT_FIELD_SPECS: dict[str, dict] = {
         ),
     },
     "skills": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
-    "tools": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
+    # The tools PersonalClaw's own runtime lets the agent call (`agents.tool_list`), held on every
+    # turn it runs: a write that lets it call more is asked about, as a looser approval mode is,
+    # and one that only takes tools away is not. Empty is every tool, so emptying a list widens it
+    # and ticking the first tool of an empty one narrows it; the list's own matcher decides
+    # (`tool_list.widens`), so a name a pattern on the list already matches adds nothing.
+    "tools": {
+        "type": "str_list",
+        "max_items": _AGENT_LIST_MAX_ITEMS,
+        "security": SecurityControl(
+            loosens_when_widened(widens, every_reads="Every tool"),
+            _WIDER_TOOLS,
+        ),
+    },
     "triggers": {"type": "str_list", "max_items": _AGENT_LIST_MAX_ITEMS},
     "source": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
     "specialty": {"type": "str", "max_len": _AGENT_TEXT_MAX_LEN},
@@ -861,6 +885,17 @@ _AGENT_DETAIL_PATCH_KEYS = (
     "tools",
     "triggers",
 )
+
+#: :data:`_AGENT_FIELD_SPECS` for those keys, but for what a per-file runtime config's ``tools``
+#: is: the tool servers the agent CLI may call (``@personalclaw-core``), where no entry is none.
+#: So there a list widens only by gaining an entry, and emptying it narrows it.
+_AGENT_DETAIL_PATCH_SPECS: dict[str, dict] = {
+    **{key: _AGENT_FIELD_SPECS[key] for key in _AGENT_DETAIL_PATCH_KEYS},
+    "tools": {
+        **_AGENT_FIELD_SPECS["tools"],
+        "security": SecurityControl(loosens_when_added(), _WIDER_TOOLS),
+    },
+}
 
 #: How deep a value in an agent write body may nest. Every field above is a scalar or a
 #: list of strings — depth 2 — so nothing legitimate comes close. The bound exists because
@@ -938,15 +973,21 @@ def _agent_write_refusal(exc: ConfigValueError) -> web.Response:
 
 
 def _unconsented_agent_loosening(
-    name: str, staged: dict[str, Any], current: dict[str, Any], body: dict
+    name: str,
+    staged: dict[str, Any],
+    current: dict[str, Any],
+    body: dict,
+    specs: dict[str, dict] = _AGENT_FIELD_SPECS,
 ) -> web.Response | None:
     """``400 confirmation_required`` when a staged field loosens agent *name*'s security
     setting without ``confirm: true``, or ``None``. *current* maps each field to its value in
-    effect before the write — the stored value, or the profile default for a new agent."""
+    effect before the write — the stored value, or the profile default for a new agent. *specs*
+    says which way each field loosens in the store written (:data:`_AGENT_DETAIL_PATCH_SPECS` for
+    a per-file runtime config)."""
     for key, new in staged.items():
         field = f"agents.{name}.{key}"
         loosening = unconsented_loosening(
-            field, _AGENT_FIELD_SPECS[key], current=current.get(key), new=new, body=body
+            field, specs[key], current=current.get(key), new=new, body=body
         )
         if loosening is not None:
             _sel().log_api_access(

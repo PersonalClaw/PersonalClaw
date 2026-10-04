@@ -21,8 +21,8 @@ Two roles:
   while the native loop calls each provider's handlers in-process.
 
 The shared session/HTTP plumbing (``_resolve_session_key`` / ``_get`` / ``_post`` /
-``_delete`` / ``_CURRENT_AGENT_ID``) is owned here and imported by the category
-modules. Tool names are entity-prefixed and PClaw-native.
+``_delete``) is owned here and imported by the category modules. Tool names are
+entity-prefixed and PClaw-native.
 """
 
 import contextvars
@@ -35,7 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from personalclaw import gateway_base
 from personalclaw.config import loader as config_loader
@@ -48,6 +48,10 @@ from personalclaw.tool_providers.base import (
     ToolFailure,
     tool_failure,
 )
+
+if TYPE_CHECKING:
+    from personalclaw.agents.skill_list import AgentSkills
+    from personalclaw.skills.loader import SkillsLoader
 
 #: What a `notify` call may carry and still tell the owner and no one else: no channel id, no
 #: user id, no thread, no rich blocks, no injection into a chat.
@@ -99,29 +103,6 @@ def get_current_session_key() -> str:
     Lets the external-MCP adapter route a call to the per-session connection of a
     stateful server, so each session's browser/shell state stays isolated."""
     return _CURRENT_SESSION_KEY.get()
-
-
-# The turn's resolved agent binding id (native profile name | acp:<cli>/<modeId>) —
-# see `agents.identity.resolve_agent_id` for the canonical form. Published by the
-# native loop so a tool can attribute or scope work to the agent that is running.
-# Kept here (not in the workflow package) because it is not workflow-specific: the
-# old `workflow_create` was its first consumer, not its owner.
-_CURRENT_AGENT_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "personalclaw_current_agent_id", default=""
-)
-
-
-def set_current_agent_id(agent_id: str):
-    """Bind the in-process tool caller's resolved agent id. Returns a reset token."""
-    return _CURRENT_AGENT_ID.set(agent_id or "")
-
-
-def reset_current_agent_id(token) -> None:
-    """Restore the prior agent-id binding (pass the token from set_…)."""
-    try:
-        _CURRENT_AGENT_ID.reset(token)
-    except (ValueError, LookupError):
-        pass
 
 
 #: Whether this process is the tool server an agent CLI runs (``personalclaw mcp-core``), set by
@@ -1124,6 +1105,38 @@ def _render_skill_folder(skill_name: str, loader: Any) -> str:
     return f"[This skill's folder: {from_home(folder)}. The files it names are there.]\n"
 
 
+def _skill_library() -> tuple["AgentSkills | None", "SkillsLoader"]:
+    """The skills this call's agent may use: ``(held, loader)``, the skill list PersonalClaw's own
+    runtime holds for the agent whose call it dispatches (``agents.skill_list.held``), with the
+    skills of the loop whose worker makes the call beside it (they load on its turn whatever the
+    list holds, ``loop.kinds.worker_turn``), and a loader narrowed to those. ``held`` is ``None``
+    where no runtime holds one, an agent CLI's tool server among them, which no list of
+    PersonalClaw's holds: the loader then sees every skill."""
+    from personalclaw.agents import skill_list
+    from personalclaw.skills.loader import SkillsLoader
+
+    held = skill_list.held()
+    if held is not None and held.listed:
+        held = held.beside(_loop_skills(_CURRENT_SESSION_KEY.get()))
+    loader = SkillsLoader()
+    return held, (held.library(loader) if held is not None else loader)
+
+
+def _loop_skills(session_key: str) -> tuple[str, ...]:
+    """The skills the loop whose worker session is *session_key* loads on its turn, or none for a
+    session that is no loop's worker. *session_key* is the one the runtime holds, the chat's key
+    in its ``dashboard:`` namespace (``dashboard:loop-<id>``). Read only for an agent with a skill
+    list, when it calls a skill tool. A lookup that fails adds none."""
+    try:
+        from personalclaw.constants import DASHBOARD_SESSION_PREFIX
+        from personalclaw.loop.kinds import worker_turn
+
+        return worker_turn(session_key.removeprefix(DASHBOARD_SESSION_PREFIX)).skill_ids
+    except Exception:  # noqa: BLE001 — the list alone then holds the call
+        logger.debug("skill list: the loop's own skills could not be read", exc_info=True)
+        return ()
+
+
 def _load_skill_resource(args: dict[str, Any]) -> str:
     """``skill_resource(skill, path)`` — read ONE declared resource of one skill.
 
@@ -1132,19 +1145,18 @@ def _load_skill_resource(args: dict[str, Any]) -> str:
     third-party-authored text arriving from outside the user↔agent trust boundary,
     so it is FENCED as data — a resource that says "ignore your instructions" is
     quoted, not obeyed. The truncation notice sits OUTSIDE the fence so it reads as
-    harness text rather than as part of the resource.
+    harness text rather than as part of the resource. A skill the calling agent's
+    skill list does not allow is refused first, naming the skill and the agent.
     """
-    from personalclaw.skills.loader import (
-        RESOURCE_MAX_BYTES,
-        SkillResourceRefused,
-        SkillsLoader,
-    )
+    from personalclaw.skills.loader import RESOURCE_MAX_BYTES, SkillResourceRefused
 
     skill_name = (args.get("skill") or "").strip()
     rel_path = (args.get("path") or "").strip()
     if not skill_name or not rel_path:
         return tool_failure("both skill and path are required.")
-    loader = SkillsLoader()
+    held, loader = _skill_library()
+    if held is not None and not held.allows(skill_name):
+        return tool_failure(f"{held.refusal(skill_name)}.")
     try:
         read = loader.read_resource(skill_name, rel_path)
     except SkillResourceRefused as exc:
@@ -1311,9 +1323,11 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         skill_name = (args.get("name") or "").strip()
         if not skill_name:
             return tool_failure("name is required.")
-        from personalclaw.skills.loader import SkillsLoader
-
-        loader = SkillsLoader()
+        # The calling agent's skills only: one its skill list does not allow is refused by name,
+        # rather than answered as a skill that does not exist.
+        held, loader = _skill_library()
+        if held is not None and not held.allows(skill_name):
+            return tool_failure(f"{held.refusal(skill_name)}.")
         content = loader.load_skill(skill_name)
         if content is None:
             return tool_failure(
@@ -1369,10 +1383,11 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             limit = int(args.get("limit") or 20)
         except (ValueError, TypeError):
             limit = 20
-        from personalclaw.skills.loader import SkillsLoader
         from personalclaw.skills.surfacing import search_skills
 
-        skills = SkillsLoader().list_skills(with_usage=True)
+        # Across the calling agent's own library: the skills its skill list allows.
+        _held, loader = _skill_library()
+        skills = loader.list_skills(with_usage=True)
         hits = search_skills(query, skills, limit=max(1, limit))
         if not hits:
             return "No skills matched. Try broader terms; or proceed without a skill."

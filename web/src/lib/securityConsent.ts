@@ -3,8 +3,9 @@
  *
  *  🔑 THE GATEWAY DECIDES WHICH WRITES NEED IT, NOT THIS FILE. A field on its list
  *  (`config/edit_spec.py`: a `SecurityControl` on the `_EDITABLE_CONFIG` spec, or an agent's
- *  `approval_mode`), or an action a trigger is not allowed to run (`triggers/grants.py`), answers
- *  the write with `confirmation_required`, carrying `{field, consent, title}` in `error.detail`:
+ *  `approval_mode` or tool list), or an action a trigger is not allowed to run
+ *  (`triggers/grants.py`), answers the write with `confirmation_required`, carrying
+ *  `{field, consent, title}` in `error.detail`:
  *  a 200 marked `X-PersonalClaw-Consent-Asked` to this page, whose writes say they ask
  *  (`api.ts`), so no failed request is logged for a question, and a 400 to any other client. So a
  *  surface never predicts the direction — raising a budget, removing a denied

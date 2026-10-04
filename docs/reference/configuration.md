@@ -380,8 +380,8 @@ agent name. Every field is optional — empty inherits the global default.
 | `agents.*.voice` | string | `""` | WHO the agent is — tone, opinions, persona — kept separate from the operating rules and injected high-priority so personality survives long prompts. |
 | `agents.*.model` | string | `""` | Default model for this agent. Overridable per-chat. |
 | `agents.*.approval_mode` | string | `""` | `auto`, `interactive`, or empty (inherit global). |
-| `agents.*.skills` | list | `[]` | Skill names loaded for this agent. |
-| `agents.*.tools` | list | `[]` | The tools this agent may use: tool names, or patterns over them. Empty is every tool. Held on PersonalClaw's own agent, not on an agent CLI — see [An agent's tool list](#an-agents-tool-list-agentstools). |
+| `agents.*.skills` | list | `[]` | The skills this agent may use: skill names. Empty is every skill. Held on PersonalClaw's own agent, not on an agent CLI — see [An agent's skill list](#an-agents-skill-list-agentsskills). |
+| `agents.*.tools` | list | `[]` | The tools this agent may use: tool names, or patterns over them. Empty is every tool. A save that widens it asks you first. Held on PersonalClaw's own agent, not on an agent CLI — see [An agent's tool list](#an-agents-tool-list-agentstools). |
 | `agents.*.triggers` | list | `[]` | Referenced lifecycle-trigger IDs. A lifecycle trigger fires ONLY for agents that list it. |
 | `agents.*.source` | string | `personalclaw` | Agent origin: `personalclaw`, `marketplace`, or `builtin`. |
 
@@ -423,6 +423,15 @@ every tool PersonalClaw offers it. A list is the whole of what the agent may use
 - **A list only narrows.** A tool switched off on the Tools page stays off for every agent, and a
   run held to fewer tools (a read-only subagent, an app's agent tier, the operator ceiling's
   `tools` scope) is held to both.
+- **A wider list asks you first.** A save that lets the agent call a tool it could not call before
+  (a tool or a pattern added, or the list emptied, which is every tool) asks you to confirm, in the
+  dialog a looser approval mode asks in, "Loosen a security setting?", naming the change: "Adds
+  “bash”", "“read_file”, “grep” → Every tool". A save that only takes tools away asks nothing, and
+  neither does the first tool ticked on an empty list, which narrows the agent to that one tool, nor
+  a new agent's list, since a new agent starts from every tool. The direction is the list's own
+  matcher's: a tool's name that a pattern on the list already matches adds nothing. A request that
+  answers the question carries `"confirm": true`; without it the save is refused with
+  `400 confirmation_required` and nothing is stored.
 - **Work an agent starts runs as the agent it names.** A tool that starts other work
   (`subagent_run`, a workflow, a loop) starts it held to the list of the agent the work runs as: a
   spawn that names no agent runs as the agent of the chat that started it. Leave those tools off
@@ -430,6 +439,39 @@ every tool PersonalClaw offers it. A list is the whole of what the agent may use
 - **An agent CLI (`acp:<cli>`) is not held to it.** The CLI runs its own tools in its own process,
   where no list of PersonalClaw's tool names can hold them, so the Agents page says the list is not
   applied to an agent that runs on one.
+
+### An agent's skill list (`agents.*.skills`)
+
+The Skills list on the Agents page. Empty, the default and the default agent's, lets the agent use
+every skill. A list is the whole of what the agent may use:
+
+- **An entry is a skill's name** as the Skills page lists it (`tiny-url`, `auto/release`). An entry
+  that names no skill here holds the agent all the same, and the Agents page shows it as a ticked
+  row saying so.
+- **PersonalClaw's own agent (`native`) is held to it in both places a skill reaches the model.**
+  Its turns are offered its skills: the always-on ones in full and an index of the rest when the
+  session starts, and the ones that fit the message on every turn (see
+  [How a skill reaches the model](../guides/skills.md#how-a-skill-reaches-the-model)). And its skill
+  tools reach no other: `skill_search` finds only its skills, and `skill_invoke` or `skill_resource`
+  for any other is refused, naming the skill and the agent. A chat that names no agent runs as the
+  default agent, held to the default agent's list, and an edit of the list holds an open chat from
+  its next turn.
+- **With no list, an agent is offered what it always was.** The default agent's turns are offered
+  every skill; another agent's, which carry their own instructions, none up front, though the agent
+  can look any skill up with `skill_search`. The built-in loop worker (`personalclaw-loop`) is one:
+  its own instructions carry a loop's protocol.
+- **Two kinds of skill a list does not narrow**: a skill in the agent's own folder
+  (`<home>/agents/<agent>/skills`), which only it sees, and the skills a loop's plan gives the phase
+  the agent works, which you confirm when you review the plan: they load on the loop's turns, and
+  the agent's skill tools reach them there.
+- **A list that cannot be read** (a hand-edited value that is not a list of names) limits nothing:
+  the agent is offered skills as an agent with no list is, and the gateway log says so. A skill is
+  instructions, not a capability; what an agent can do is held by its tool list.
+- **The Skills page says which agents a list holds.** A skill's Used by names each agent whose list
+  names it, as its turns read the list.
+- **An agent CLI (`acp:<cli>`) is not held to it.** The CLI loads its own skills, where no list of
+  PersonalClaw's can hold them, so the Agents page says the list is not applied to an agent that
+  runs on one, and the Skills page names no such agent.
 
 ---
 

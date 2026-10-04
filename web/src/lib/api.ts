@@ -7710,8 +7710,9 @@ export const api = {
   savedAgents: () => get<{ agents: Array<{ name: string; description?: string; model?: string }> }>('/api/agents').then((d) => d.agents),
   // full native-agent CRUD (the Agents builder): returns the complete profiles + default
   agents: () => get<{ agents: SavedAgent[]; default_agent: string }>('/api/agents'),
-  // An agent's `approval_mode` is the approval policy stored per agent: a looser one is asked for
-  // exactly like a looser config field (`securityConsent.ts`).
+  // An agent's `approval_mode` is the approval policy stored per agent, and its tool list what it may
+  // call: a looser mode or a wider list is asked for exactly like a looser config field
+  // (`securityConsent.ts`).
   createAgent: (body: Record<string, unknown>) =>
     withSecurityConsent((c) => post<{ ok: boolean }>('/api/agents', c ? { ...body, confirm: true } : body)),
   // The editor saves the WHOLE profile it painted, so the save names the revision the list reported

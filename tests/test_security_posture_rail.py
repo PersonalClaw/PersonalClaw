@@ -147,7 +147,18 @@ def test_an_agent_profiles_approval_mode_is_the_same_control() -> None:
     assert per_agent.loosens("", "auto") and per_agent.loosens("interactive", "trust_reads")
     assert not per_agent.loosens("auto", "interactive")
     assert not per_agent.loosens("", "")
-    others = [k for k, s in _AGENT_FIELD_SPECS.items() if k != "approval_mode" and "security" in s]
+    # The other agent-profile control, the tool list, driven through its refusals in
+    # `test_widening_an_agents_tool_list_asks_first.py`. Empty is every tool.
+    tools = security_control(_AGENT_FIELD_SPECS["tools"])
+    assert tools is not None
+    assert tools.loosens(["read_file"], ["read_file", "bash"]) and tools.loosens(["read_file"], [])
+    assert not tools.loosens([], ["bash"]) and not tools.loosens(["read_file", "bash"], ["bash"])
+    assert not tools.loosens([], [])
+    others = [
+        k
+        for k, s in _AGENT_FIELD_SPECS.items()
+        if k not in ("approval_mode", "tools") and "security" in s
+    ]
     assert not others, f"a new agent-profile security field needs refusal tests: {others}"
 
 

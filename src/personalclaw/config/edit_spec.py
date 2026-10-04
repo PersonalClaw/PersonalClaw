@@ -105,6 +105,7 @@ __all__ = [
     "loosens_when_raised",
     "loosens_when_removed",
     "loosens_when_shorter",
+    "loosens_when_widened",
     "named",
     "security_control",
     "shown",
@@ -335,6 +336,33 @@ def loosens_when_removed() -> Callable[[Any, Any], bool]:
 
 
 @dataclass(frozen=True)
+class _OpenAllowlist:
+    widens: Callable[[Any, Any], bool]
+    every_reads: str
+
+    def __call__(self, current: Any, new: Any) -> bool:
+        return bool(self.widens(current, new))
+
+    def change(self, current: Any, new: Any, show: Callable[[Any], str]) -> tuple[str, str]:
+        if _is_str_list(new) and not new:
+            return f"{_entries_read(current, show)} → {self.every_reads}", ""
+        return _list_change(current, new, show), ""
+
+
+def loosens_when_widened(
+    widens: Callable[[Any, Any], bool], *, every_reads: str
+) -> Callable[[Any, Any], bool]:
+    """An allowlist whose EMPTY value allows every entry there is (an agent's tool list).
+
+    *widens* says whether writing the new list over the stored one lets through what the stored
+    one did not, by the list's own matcher (an entry can be a pattern that already covers a name).
+    So the first entry written to an empty list narrows it, and emptying a list widens it, which
+    the consent's change line reads as *every_reads*.
+    """
+    return _OpenAllowlist(widens, every_reads)
+
+
+@dataclass(frozen=True)
 class _Ordered:
     strict_to_loose: tuple[str, ...]
 
@@ -445,15 +473,22 @@ def _list_edits(current: Any, new: Any, show: Callable[[Any], str]) -> list[str]
         ("removes", [v for v in before if v not in after]),
     ):
         if entries:
-            named_ = ", ".join(f"“{show(v)}”" for v in entries[:_NAMED_ENTRIES])
-            rest = len(entries) - _NAMED_ENTRIES
-            edits.append(f"{verb} {named_}" + (f" and {rest:,} more" if rest > 0 else ""))
+            edits.append(f"{verb} {_entries_read(entries, show)}")
     return edits
 
 
 def _list_change(current: Any, new: Any, show: Callable[[Any], str]) -> str:
     text = "; ".join(_list_edits(current, new, show)) or "empties the list"
     return text[:1].upper() + text[1:]
+
+
+def _entries_read(value: Any, show: Callable[[Any], str]) -> str:
+    """``“a”, “b” and 3 more`` — a list's entries as a change line names them."""
+    if not _is_str_list(value) or not value:
+        return show(value)
+    named_ = ", ".join(f"“{show(v)}”" for v in value[:_NAMED_ENTRIES])
+    rest = len(value) - _NAMED_ENTRIES
+    return named_ + (f" and {rest:,} more" if rest > 0 else "")
 
 
 _DURATION_UNIT = {"m": "minute", "h": "hour", "d": "day"}

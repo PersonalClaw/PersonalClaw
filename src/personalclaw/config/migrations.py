@@ -132,6 +132,23 @@ def apply_config_migrations(cfg: "AppConfig") -> bool:
         cfg.agents[LOOP_WORKER_AGENT_NAME] = make_loop_worker_profile(AgentProfile)
         needs_migration = True
 
+    # Clear the loop worker's SEEDED skill list. Every install seeded before an agent's skill
+    # list decided which skills it may use carries it in config.json, where nothing read it;
+    # read now, it would hold every loop's worker to the one skill that repeats its own prompt.
+    # Only the exact seed is cleared: any other list is someone's own edit.
+    from personalclaw.agents.defaults import RETIRED_SEEDED_LOOP_WORKER_SKILLS
+
+    _loop_worker = cfg.agents.get(LOOP_WORKER_AGENT_NAME)
+    if _loop_worker is not None and tuple(_loop_worker.skills or ()) == (
+        RETIRED_SEEDED_LOOP_WORKER_SKILLS
+    ):
+        _loop_worker.skills = []
+        logger.info(
+            "Config migration: cleared the retired seeded skill list from agent %r",
+            LOOP_WORKER_AGENT_NAME,
+        )
+        needs_migration = True
+
     # Seed the built-in Code worker (the SDLC engine) if absent. Same
     # idempotent add-if-missing contract — ships with the package, inert
     # until a code project invokes it.

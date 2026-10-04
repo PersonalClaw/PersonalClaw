@@ -3103,28 +3103,19 @@ async def run_chat(
             _force_workflow_ids: list[str] = []
             if getattr(session, "_app", "") == "loop":
                 # The unified Loop engine: ALL kinds are app="loop", keyed loop-<id>
-                # (or loop-<id>-<taskid> for a parallel code task-worker). The active
+                # (or loop-<id>-<taskid> for a parallel code task-worker, whose caps are
+                # its parent loop's active stage's, same as the main worker). The active
                 # phase/stage's per-cycle capabilities (∪ the always-on baseline) +
-                # directive come from the kind strategy — no per-engine branch.
+                # directive come from the kind strategy (`kinds.worker_turn`, which the
+                # skill tools read too) — no per-engine branch.
                 try:
-                    from personalclaw.loop import kinds as _kinds
-                    from personalclaw.loop import store as _loop_store
-                    from personalclaw.loop.manager import worker_ids
+                    from personalclaw.loop.kinds import worker_turn
 
-                    # A parallel task-worker (loop-<id>-<taskid>) resolves its parent
-                    # loop — its caps = the active stage's, same as the main worker.
-                    _lid, _task_id = worker_ids(session.key)
-                    _loop = _loop_store.get(_lid) if _lid else None
-                    if _loop is not None:
-                        _kinds.ensure_loaded()
-                        _strat = _kinds.get_or_none(_loop.kind)
-                        _caps = getattr(_strat, "turn_capabilities", None) if _strat else None
-                        if _caps is not None:
-                            _force_skill_ids, _force_workflow_ids = _caps(_loop)
-                        _dir = getattr(_strat, "turn_directive", None) if _strat else None
-                        _pd = _dir(_loop) if _dir else ""
-                        if _pd:
-                            message = _ahead_of_the_request(_pd, message)
+                    _worker_turn = worker_turn(session.key)
+                    _force_skill_ids = list(_worker_turn.skill_ids)
+                    _force_workflow_ids = list(_worker_turn.workflow_ids)
+                    if _worker_turn.directive:
+                        message = _ahead_of_the_request(_worker_turn.directive, message)
                 except Exception:
                     logger.debug("loop capability lookup skipped", exc_info=True)
             # ── The resumed session's recorded state, checked BEFORE assembly ──

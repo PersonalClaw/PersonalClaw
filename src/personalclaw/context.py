@@ -14,6 +14,7 @@ from personalclaw import home_paths, memory_writes
 from personalclaw.agent import _shipped_prompt
 from personalclaw.agents.defaults import is_default_agent
 from personalclaw.agents.instructions import AgentInstructions, agent_instructions
+from personalclaw.agents.skill_list import agent_skills
 from personalclaw.config.loader import AppConfig, _compose_voice, memory_dir_for_cwd
 from personalclaw.context_headroom import Component, Window
 from personalclaw.hooks import HOOK_INJECT_CONTEXT, HOOK_MODIFY, HookManager, HookResult
@@ -1358,6 +1359,26 @@ class ContextBuilder:
             logger.debug("slots block render failed", exc_info=True)
             return ""
 
+    def _skill_library(self, agent: str | None, *, is_custom: bool) -> SkillsLoader | None:
+        """The skills a turn of *agent* is offered, as a loader of them, or ``None`` for none.
+
+        The agent's skill list decides (``agents.skill_list``): a list is the whole of what its
+        turns are offered. With no list a turn is offered what it always was: every skill for the
+        default agent, and none for a custom agent (*is_custom*), which carries its own
+        instructions. An agent on an agent CLI is held to no list. A configuration that cannot be
+        read holds no list either (the reader's fail-open), so nothing is taken from a turn by a
+        broken file.
+        """
+        try:
+            cfg: AppConfig | None = AppConfig.load()
+        except Exception:  # noqa: BLE001 — an unreadable config limits no turn's skills
+            logger.debug("skill list: config unreadable; offering as with no list", exc_info=True)
+            cfg = None
+        held = agent_skills(agent, cfg)
+        if held.listed:
+            return held.library(self.skills)
+        return None if is_custom else self.skills
+
     def build_session_context(
         self,
         session_key: str | None = None,
@@ -1402,8 +1423,8 @@ class ContextBuilder:
         History is only ever THIS session's own: *prior_transcript* or this key's log.
         No other session's text is read into it.
 
-        For custom agents (non-personalclaw), skills and workspace identity
-        are skipped — the agent loads its own. Memory,
+        For custom agents (non-personalclaw), workspace identity is skipped, and the
+        skills are only those on the agent's skill list (:meth:`_skill_library`). Memory,
         lessons, critical rules, and hooks are injected for all agents.
 
         Returned as stored, UNMASKED: memory, lessons and history all hold what someone wrote,
@@ -1416,7 +1437,7 @@ class ContextBuilder:
 
         if is_custom:
             logger.info(
-                "Custom agent %r: injecting memory/lessons/rules, skipping skills",
+                "Custom agent %r: injecting memory/lessons/rules, and the skills on its skill list",
                 agent,
             )
         else:
@@ -1673,11 +1694,12 @@ class ContextBuilder:
             except Exception:
                 logger.debug("procedural prior block render failed", exc_info=True)
 
-        # Skills: personalclaw-only (custom agents load their own). Pass the agent
-        # so its agent-local skill tier (skill-agent-local-tier) overrides global
-        # for this turn when present.
-        if not is_custom:
-            _skill_index = self.skills.get_context(agent=agent) or ""
+        # Skills: the ones the agent's skill list gives its turns (`_skill_library`). Pass the
+        # agent so its agent-local skill tier (skill-agent-local-tier) overrides global for this
+        # turn when present.
+        _skills = self._skill_library(agent, is_custom=is_custom)
+        if _skills is not None:
+            _skill_index = _skills.get_context(agent=agent) or ""
         # Ephemeral session skills (skill-ephemeral-promotion): drafts the user
         # taught THIS session are live immediately, for every agent, until the
         # user promotes or forgets them at session end.
@@ -2150,9 +2172,9 @@ class ContextBuilder:
         # budget, and each one comes back admitted / reduced / refused.
         #
         # Force-loaded skills (goal-loop planner/quorum): a loop's confirmed skill_ids load
-        # ACTIVELY every cycle, bypassing both the is_custom skip (the loop worker is a
-        # custom agent) and passive trigger-matching. The user picked these in Plan Review
-        # precisely so they're always present — which is why they enter at the higher
+        # ACTIVELY every cycle, whatever the agent's skill list offers (the loop worker is a
+        # custom agent) and bypassing passive trigger-matching. The user picked these in Plan
+        # Review precisely so they're always present — which is why they enter at the higher
         # score, not why they get unmetered room.
         # Imported here, not at module scope: `skills.allocation` reaches into
         # `personalclaw.learning`, whose package __init__ pulls the whole learning graph —
@@ -2173,10 +2195,11 @@ class ContextBuilder:
             if forced_skills:
                 logger.info("Force-loaded loop skills: %s", ", ".join(forced_skills))
 
-        # Surfaced skills (on-demand, any message) — semantic ∪ keyword (#26),
-        # skip for custom agents
-        if not is_custom:
-            triggered = [s for s in self.skills.get_surfaced_skills(text) if s not in forced_skills]
+        # Surfaced skills (on-demand, any message) — semantic ∪ keyword (#26), from the
+        # skills the agent's skill list gives its turns (`_skill_library`)
+        _skills = self._skill_library(agent, is_custom=is_custom)
+        if _skills is not None:
+            triggered = [s for s in _skills.get_surfaced_skills(text) if s not in forced_skills]
             if triggered:
                 logger.info("Surfaced skills: %s", ", ".join(triggered))
             # Progressive disclosure (#29): above the threshold, inject only a
@@ -2204,7 +2227,7 @@ class ContextBuilder:
                     "skill's full steps before using it. These are the matches for this "
                     "turn; call skill_search(query) to find others in the full library.]"
                 ]
-                by_key = {s["key"]: s for s in self.skills.list_skills()}
+                by_key = {s["key"]: s for s in _skills.list_skills()}
                 for name in triggered:
                     desc = by_key.get(name, {}).get("description") or name
                     index_lines.append(f"- {name}: {desc}")
@@ -2214,7 +2237,7 @@ class ContextBuilder:
                 # records the use when the agent actually pulls a body).
             else:
                 for name in triggered:
-                    content = self.skills.load_skill(name)
+                    content = _skills.load_skill(name)
                     if content:
                         skill_requests.append(SkillRequest(name=name, content=content))
 

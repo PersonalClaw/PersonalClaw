@@ -711,6 +711,14 @@ does not apply to one, and the Agents page says so on such an agent. The rules a
 [configuration](../reference/configuration.md#an-agents-tool-list-agentstools);
 `tests/test_every_turn_path_holds_an_agent_to_its_tool_list.py` drives each path.
 
+The list is also a security control on the write path (`SecurityControl` in the agent write table,
+`dashboard/handlers/agents.py`): a save that widens it, by an entry the stored list does not cover or
+by emptying it, which is every tool, needs the owner's `confirm: true`, asked in the consent dialog
+(`400 confirmation_required` otherwise), and a save that only narrows it needs none. The direction
+is the list's own matcher's (`tool_list.widens`), so the first tool written to an empty list
+narrows it. The agent CLI's runtime file lists tool servers, where no entry is none, so there a list
+widens only by gaining one. `tests/test_widening_an_agents_tool_list_asks_first.py` drives both.
+
 ## Governance ceiling (`guardrails/ceiling.py`)
 
 Two levels, one rule — **tightest wins**. Level 1 is the operator's `Ceiling`,

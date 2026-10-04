@@ -7,7 +7,6 @@ import { useActiveChatModelOptions } from '../../lib/agents'
 import { Combobox } from '../../ui/Combobox'
 import { Field, TextInput, TextArea, Segmented, FieldError } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
-import { confirm } from '../../ui/dialog'
 import { APPROVAL_MODES, isBuiltinDefaultAgent } from './agentMeta'
 import { ModelUnavailableNote, unavailableModelOption, type ModelUnavailable } from './agentModelStatus'
 
@@ -107,8 +106,9 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, r
   draft: AgentDraft; onChange: (d: AgentDraft) => void; nameLocked?: boolean; compact?: boolean
   /** The saved pin that cannot run, and why — so the editor names it instead of showing "Auto". */
   unavailable?: { model: string; reason: ModelUnavailable }
-  /** The agent CLI this agent runs on, when it runs on one: such a CLI runs its own tools, where
-   *  no tool list can hold it, so the Tools list says it does not apply rather than promise it. */
+  /** The agent CLI this agent runs on, when it runs on one: such a CLI runs its own tools and
+   *  loads its own skills, where no list of PersonalClaw's can hold it, so the Tools and Skills
+   *  lists say they do not apply rather than promise it. */
   runsOn?: string
 }) {
   const set = <K extends keyof AgentDraft>(k: K, v: AgentDraft[K]) => onChange({ ...draft, [k]: v })
@@ -119,12 +119,18 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, r
   // capability catalogs
   const [skills, setSkills] = useState<CheckOption[]>([])
   const [tools, setTools] = useState<CheckOption[]>([])
-  // Whether the tool catalog has loaded: until it has, an entry it would offer cannot be told from
+  // Whether each catalog has loaded: until it has, an entry it would offer cannot be told from
   // one that names nothing here.
+  const [skillsLoaded, setSkillsLoaded] = useState(false)
   const [toolsLoaded, setToolsLoaded] = useState(false)
   const [lifecycleTriggers, setLifecycleTriggers] = useState<CheckOption[]>([])
   useEffect(() => {
-    api.skills().then((s) => setSkills(s.map((x) => ({ value: x.key ?? x.name, label: x.name, hint: x.description })))).catch(() => {})
+    // A skill in an agent's own folder (`agent-local`) is that agent's whatever its list says, so
+    // it is not a choice here: offered, it would read as one this list grants or withholds.
+    api.skills().then((s) => {
+      setSkills(s.filter((x) => x.source !== 'agent-local').map((x) => ({ value: x.key ?? x.name, label: x.name, hint: x.description })))
+      setSkillsLoaded(true)
+    }).catch(() => {})
     api.tools().then((t) => { setTools(t.map((x) => ({ value: x.name, label: x.name, hint: x.provider, risk: x.risk_level }))); setToolsLoaded(true) }).catch(() => {})
     api.hooks().then((h) => setLifecycleTriggers(h.map((x) => ({ value: x.id, label: x.name, hint: x.event })))).catch(() => {})
   }, [])
@@ -183,7 +189,10 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, r
         <Segmented options={APPROVAL_MODES.map((m) => ({ key: m.key || 'default', label: m.label }))} value={draft.approval_mode || 'default'} onChange={(v) => set('approval_mode', v === 'default' ? '' : v)} />
       </Field>
 
-      <CheckList label="Skills" hint="Skills surfaced to this agent." options={skills} value={draft.skills} onChange={(v) => set('skills', v)} />
+      <CheckList label="Skills" hint={runsOn
+        ? `Not applied: ${runsOn} loads its own skills, and a skill list holds only on PersonalClaw's own agent.`
+        : 'Skills this agent may use. None selected = all available skills.'} options={skills} value={draft.skills} onChange={(v) => set('skills', v)}
+        unlisted={() => (skillsLoaded ? 'No skill of this name is here now' : '')} />
       <CheckList label="Tools" hint={runsOn
         ? `Not applied: ${runsOn} runs its own tools, and a tool list holds only on PersonalClaw's own agent.`
         : 'Tools this agent may call. None selected = all available tools.'} options={tools} value={draft.tools} onChange={(v) => set('tools', v)}
@@ -226,33 +235,14 @@ function CheckList({ label, hint, options: offered, value, onChange, unlisted }:
   const n = q.trim().toLowerCase()
   const filtered = n ? options.filter((o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(n)) : options
 
-  /** Toggle one binding, asking first when the option being ADDED is destructive (#506).
-   *
-   *  A tick here is a STANDING capability grant: every future run of this agent may invoke the
-   *  tool, with no per-call prompt beyond the agent's own approval mode. That makes it the
-   *  longest-lived of the three grants in this cluster, and it cost exactly one click — the same
-   *  click as `artifact_list` — while `risk` was rendered beside it as a tag and read by nothing.
-   *
-   *  ONE direction only. Adding a destructive capability asks; removing one does not. A
-   *  confirmation on the withdrawal of a permission protects nothing and discourages the edit
-   *  that shrinks the blast radius.
-   *
-   *  Keyed on the OPTION's declared risk rather than on this list's label, so the Skills and
-   *  Triggers pickers (whose options carry no risk) are untouched, and a future risk-carrying
-   *  catalogue inherits the gate instead of needing a second copy of it. Destructive only,
-   *  matching `POST /api/tools/invoke` — 26 caution tools are ordinary agent equipment. */
-  async function toggle(o: CheckOption) {
-    if (selected.has(o.value)) { onChange(value.filter((x) => x !== o.value)); return }
-    if (o.risk === 'destructive') {
-      const ok = await confirm({
-        title: `Let this agent call ${o.label}?`,
-        body: `${o.label} is classified destructive — it can delete data or run arbitrary commands. This grant applies to every run of this agent, not just one call.`,
-        danger: true,
-        confirmLabel: `Grant ${o.label}`,
-      })
-      if (!ok) return
-    }
-    onChange([...value, o.value])
+  /** Toggle one binding. A tick asks nothing here, because a tick alone cannot say which way it
+   *  moves the grant: an empty Tools list is every tool, so its first tick NARROWS the agent to that
+   *  one tool, while a tick on a list that has entries widens it. The gateway decides it, from the
+   *  stored list, when the agent is saved: a save that lets the agent call more is answered
+   *  `confirmation_required` and the owner is asked in its words (`lib/securityConsent.ts`), and a
+   *  save that only takes tools away is not. */
+  function toggle(o: CheckOption) {
+    onChange(selected.has(o.value) ? value.filter((x) => x !== o.value) : [...value, o.value])
   }
 
   return (
@@ -274,7 +264,7 @@ function CheckList({ label, hint, options: offered, value, onChange, unlisted }:
               {filtered.length === 0 ? <div className="px-2 py-2 text-on-surface-low text-[0.8125rem]">No matches.</div> : filtered.map((o) => {
                 const on = selected.has(o.value)
                 return (
-                  <button key={o.value} type="button" aria-pressed={on} onClick={() => { void toggle(o) }}
+                  <button key={o.value} type="button" aria-pressed={on} onClick={() => toggle(o)}
                     className="flex w-full items-center gap-s rounded-md px-2 py-1.5 text-left hover:bg-surface-high transition-colors">
                     <span className="shrink-0 inline-flex size-4 items-center justify-center rounded-sm border transition-colors" style={{ borderColor: on ? 'var(--color-primary)' : 'var(--color-outline-variant)', background: on ? 'var(--color-primary)' : 'transparent' }}>
                       {on && <Check size={12} className="text-on-primary" />}

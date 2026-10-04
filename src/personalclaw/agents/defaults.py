@@ -71,11 +71,20 @@ def make_default_native_profile(profile_cls: type) -> Any:
 # A dedicated built-in agent the goal loop drives one cycle per nudge. It derives
 # from the native runtime + safe tool surface; its system prompt carries the full
 # per-cycle protocol so the autonudge nudge stays a bare trigger. The methodology
-# also ships as the ``loop-worker`` skill (loaded via skills), so the prompt here
-# is the authoritative, always-present copy.
+# also ships as the ``loop-worker`` skill, for an agent the loop worker is not; the
+# prompt here is the worker's own, always-present copy, so the worker carries no
+# skill list (a list is the whole of what an agent may use, ``agents.skill_list``):
+# it is offered no skill up front, its skill tools reach every skill, and a loop's
+# own skills load on its turns.
 # ---------------------------------------------------------------------------
 
 LOOP_WORKER_AGENT_NAME = "personalclaw-loop"
+
+# The skill list the loop worker was seeded with before an agent's list decided which skills
+# it may use. Nothing read it then; read now, it would hold every loop to the one skill that
+# repeats the worker's own prompt. The config migration clears exactly this seed from a
+# config.json that carries it.
+RETIRED_SEEDED_LOOP_WORKER_SKILLS = ("loop-worker",)
 
 LOOP_WORKER_SYSTEM_PROMPT = (
     "You are personalclaw-loop, the worker for an autonomous goal loop — a "
@@ -133,7 +142,7 @@ def make_loop_worker_profile(profile_cls: type) -> Any:
         description="Built-in worker for autonomous goal loops.",
         system_prompt=LOOP_WORKER_SYSTEM_PROMPT,
         model="",  # inherit the chat use-case binding
-        skills=["loop-worker"],
+        skills=[],  # no list: see the note above LOOP_WORKER_AGENT_NAME
         tools=list(DEFAULT_NATIVE_TOOLS),
         source="builtin",
     )
