@@ -41,7 +41,8 @@ const CODE = SRC.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//
 // failed write would otherwise leave it off with nothing said. Its Allow button is the same call.
 //
 // The read-only-label trust beside it is the same shape again (`trustMcpReadOnly` /
-// `distrustMcpReadOnly`, one call site, one data-driven switch per server row).
+// `distrustMcpReadOnly`, one data-driven switch per server row). Its write has a second call site,
+// Review, which seals the tools a trusted server changed since: the same write, reported the same way.
 const TOGGLE_WRITES = [
   'toggleMcpServer', 'toggleMcpTool', 'toggleTool', 'toggleToolProvider', 'revokeMcpElicitation', 'grantMcpElicitation',
   'allowMcpServer', 'distrustMcpReadOnly', 'trustMcpReadOnly',
@@ -104,13 +105,14 @@ describe('a tool toggle that fails tells the user', () => {
   // `signOutMcp` when a signed-in server's card gained Sign out.
   const ALSO_ROUTED = ['probeMcp', 'importMcpServer', 'signOutMcp']
 
-  it('all seven toggles go through the one reporter, and nothing unexpected does', () => {
+  it('every toggle write goes through the one reporter, and nothing unexpected does', () => {
     let toggles = 0
     for (const m of CODE.matchAll(/reportingWrite\([\s\S]{0,140}?api\.(\w+)\(/g)) {
       if ((TOGGLE_WRITES as readonly string[]).includes(m[1])) { toggles++; continue }
       expect(ALSO_ROUTED, `unexpected call routed: ${m[1]}`).toContain(m[1])
     }
-    expect(toggles, 'every toggle write routed through reportingWrite').toBe(7)
+    // Seven toggles, and the trust write's second call site (Review).
+    expect(toggles, 'every toggle write routed through reportingWrite').toBe(8)
   })
 
   it('the allowlist is not a dumping ground', () => {
@@ -125,7 +127,8 @@ describe('a tool toggle that fails tells the user', () => {
     // Refetching after a failure re-renders the same state and reads as "nothing happened twice".
     // Every caller must gate its `load` on the result.
     const gated = [...CODE.matchAll(/if \(ok\) setTimeout\(load, \d+\)/g)]
-    expect(gated.length, 'callers gating the refetch on success').toBe(5)
+    // Five, and Review's: a review that did not land leaves the card saying what changed.
+    expect(gated.length, 'callers gating the refetch on success').toBe(6)
     // …and none of them refetch unconditionally right after a reportingWrite.
     expect(CODE).not.toMatch(/await reportingWrite\([\s\S]{0,160}?\)\s*\n\s*setTimeout\(load/)
   })

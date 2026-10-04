@@ -31,3 +31,16 @@ def allow(server: Any) -> None:
 def confirmed(body: dict[str, Any]) -> dict[str, Any]:
     """*body* as the page resends it once the owner agreed in the consent dialog."""
     return {**body, "confirm": True}
+
+
+def trust_labels(name: str, tools: list[Any]) -> None:
+    """The owner's trust in server *name*'s read-only labels, given for *tools* as they are
+    listed now, the way the Tools page's Trust gives it (`mcp_read_only_trust.seal`). The tests of
+    the trust itself are ``test_trusting_an_mcp_servers_labels_covers_the_tools_she_saw.py``."""
+    from personalclaw import mcp_read_only_trust
+
+    mcp_read_only_trust.seal(
+        name,
+        tools,
+        {mcp_read_only_trust.definition(t).name: mcp_read_only_trust.digest(t) for t in tools},
+    )

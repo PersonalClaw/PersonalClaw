@@ -1005,7 +1005,10 @@ const SWALLOW_BUDGET: Record<string, number> = {
   // 6 → 4: the MCP server list and the import list left. Both substituted `[]`, so a failed read drew
   // no servers and "nothing to import"; both keep the failure now and the page says which read
   // failed (`failedMcpReadsAreSaid.test.tsx`).
-  'pages/tools/ToolsPage.tsx': 4,
+  // 4 → 3: the read of whose read-only labels the owner trusts left. The trust is sealed to each tool
+  // she saw, and each server's row carries it (`readOnlyTrust`), so there is no second read to stand
+  // in for when it fails.
+  'pages/tools/ToolsPage.tsx': 3,
   'pages/triggers/TriggersListPage.tsx': 1,
   // TWO swallows fixed here, and the second is the reason a line citation is a poor spec: the ledger
   // read (`:150`, the line #532 and #2940 both name) said "No runs recorded yet", and the VERSION read

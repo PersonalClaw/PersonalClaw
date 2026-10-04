@@ -95,38 +95,22 @@ class McpToolSpec:
     annotations: dict[str, Any] = field(default_factory=dict)
 
 
-def read_only_labels_trusted(server: str) -> bool:
-    """Whether the owner trusts *server*'s read-only labels (``security.mcp_read_only_servers``).
+def declared_risk(server: str, tool: McpToolSpec) -> "RiskLevel":
+    """What an external server's tool is taken to do, as a ``RiskLevel``. The approval gate's one
+    read of the owner's trust, and every surface that shows a tool's risk reads it here too.
 
-    Default no, per server, and set only on the Tools page. A config that cannot be read trusts
-    nobody.
+    The server's ``readOnlyHint`` counts only when the owner trusts that server's labels, and only
+    for the tool exactly as the owner saw it then (`mcp_read_only_trust.believes`, which compares
+    the digest of its definition): a server can call anything read-only, and believing it would let
+    its tool run without a card and in Ask mode. So an untrusted server's tools are CAUTION — they
+    ask — whatever they say, and so is a trusted server's tool that is new or changed since the
+    owner trusted it; an explicit ``destructiveHint`` is believed from anyone, since it only adds a
+    question.
     """
-    try:
-        from personalclaw.config import AppConfig
-
-        return server in set(AppConfig.load().security.mcp_read_only_servers)
-    except Exception:  # noqa: BLE001 - an unreadable grant grants nothing
-        logger.warning("MCP read-only trust unreadable; trusting no server's labels", exc_info=True)
-        return False
-
-
-def declared_risk(server: str, tool: McpToolSpec, *, trusted: bool | None = None) -> "RiskLevel":
-    """What an external server's tool is taken to do, as a ``RiskLevel``.
-
-    The server's ``readOnlyHint`` counts only when the owner trusts that server's labels
-    (:func:`read_only_labels_trusted`): a server can call anything read-only, and believing it
-    would let its tool run without a card and in Ask mode. So an untrusted
-    server's tools are CAUTION — they ask — whatever they say; an explicit ``destructiveHint``
-    is believed from anyone, since it only adds a question.
-
-    *trusted* is that answer when the caller already has it — one read of the config for a
-    whole server's listing rather than one per tool.
-    """
+    from personalclaw.mcp_read_only_trust import believes
     from personalclaw.tool_providers.base import risk_from_annotations
 
-    if trusted is None:
-        trusted = read_only_labels_trusted(server)
-    return risk_from_annotations(getattr(tool, "annotations", None), trusted=trusted)
+    return risk_from_annotations(getattr(tool, "annotations", None), trusted=believes(server, tool))
 
 
 # Strict numeric-literal guards for schema-driven arg coercion. A model (notably
@@ -1014,7 +998,13 @@ class McpClientRegistry:
         self._conns.clear()
         await stop_finishing(lambda _name: True)
 
-    def _close(self, match: Callable[[str], bool], *, timeout: float = _CLOSE_TIMEOUT_SECS) -> None:
+    def _close(
+        self,
+        match: Callable[[str], bool],
+        *,
+        timeout: float = _CLOSE_TIMEOUT_SECS,
+        serving_only: bool = False,
+    ) -> None:
         """Close every connection to the servers *match* names — shared and per-session.
 
         Callable from any thread. :meth:`load_from_specs` keeps a connection whose spec did not
@@ -1023,10 +1013,20 @@ class McpClientRegistry:
         app's unload closes its servers here; the next read starts them from the files on
         disk. Each connection is shut down on the loop its task runs on: awaited from any other
         thread, scheduled when called on that loop itself (which cannot block on it).
+
+        With *serving_only* nothing about what the servers run changed (:func:`close_connections`):
+        their specs are kept, and only the connections that listed their tools are closed. One
+        whose start is still under way lists them as they are once it has started, and closing
+        it could cut off an install part-way (`mcp_stdio`), so it is left to start.
         """
-        for name in [n for n in self._specs if match(n)]:
-            del self._specs[name]
+        if not serving_only:
+            for name in [n for n in self._specs if match(n)]:
+                del self._specs[name]
         for key in [k for k in self._conns if match(k[0])]:
+            held = self._conns[key]
+            # Serving: started, and its start has listed the tools (one that failed has ended).
+            if serving_only and not (held.started and held._ready.is_set()):
+                continue
             conn = self._conns.pop(key)
             task = conn._task
             if task is None or task.done():
@@ -1112,6 +1112,16 @@ def _personalclaw_mcp_specs() -> dict[str, dict[str, Any]]:
         except (ForeignSecretReference, MissingSecretValue) as exc:
             logger.warning("MCP server %r not started: %s", name, exc)
     return specs
+
+
+def close_connections(match: Callable[[str], bool]) -> None:
+    """Close every connection to the servers *match* names that listed their tools, shared and
+    per-session (:meth:`McpClientRegistry._close`): a connection lists a server's tools when it
+    starts, so each one's next use starts the server again and lists them as they are then. A
+    start still under way, or left to finish (`mcp_stdio`), is left to: it lists them as they are
+    once it has started."""
+    if _registry is not None:
+        _registry._close(match, serving_only=True)  # noqa: SLF001 — the module's own registry
 
 
 def close_servers(match: Callable[[str], bool]) -> None:

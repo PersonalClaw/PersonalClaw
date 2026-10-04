@@ -458,21 +458,37 @@ def declared_tool_grant_denial(
     return tool_grant_denial(profile, tool_name, write_class=not within_read, detail=detail)
 
 
-def _server_not_believed(tool_name: str) -> str:
-    """The external MCP server *tool_name* (``mcp/<server>/<tool>``) is a tool of, when the owner
-    has not trusted that server's read-only labels (``security.mcp_read_only_servers``); ``""``
-    otherwise. Such a server's tools all count as changes whatever they say they do, so a read
-    grant refusing one is refusing it for that, not for what the tool does."""
+def _mcp_server_of(tool_name: str) -> str:
+    """The external MCP server *tool_name* (``mcp/<server>/<tool>``) is a tool of, or ``""``."""
     from personalclaw.tool_providers.registry import MCP_NAMESPACE
 
     if not tool_name.startswith(MCP_NAMESPACE):
         return ""
-    server = tool_name[len(MCP_NAMESPACE) :].partition("/")[0]
-    if not server:
-        return ""
-    from personalclaw.mcp_client import read_only_labels_trusted
+    return tool_name[len(MCP_NAMESPACE) :].partition("/")[0]
 
-    return "" if read_only_labels_trusted(server) else server
+
+def _server_not_believed(tool_name: str) -> str:
+    """The external MCP server *tool_name* is a tool of, when the owner has not trusted that
+    server's read-only labels (`mcp_read_only_trust`); ``""`` otherwise. Such a server's tools all
+    count as changes whatever they say they do, so a read grant refusing one is refusing it for
+    that, not for what the tool does."""
+    from personalclaw.mcp_read_only_trust import holds_trust
+
+    server = _mcp_server_of(tool_name)
+    return server if server and not holds_trust(server) else ""
+
+
+def _server_not_reviewed(tool: Any) -> str:
+    """The external MCP server *tool* (a tool definition) is a tool of, when the owner trusts that
+    server's read-only labels and this tool's is not believed: the tool is new or changed since the
+    owner trusted them, or last reviewed them. ``""`` otherwise."""
+    from personalclaw.mcp_read_only_trust import holds_trust
+    from personalclaw.tool_providers.base import RiskLevel
+
+    server = _mcp_server_of(str(getattr(tool, "name", "") or ""))
+    if not server or getattr(tool, "risk_level", RiskLevel.CAUTION) == RiskLevel.SAFE:
+        return ""
+    return server if holds_trust(server) else ""
 
 
 #: Why a ``read`` tier refuses a tool, in the words the tier is shown by ("Read-only tools"). Never
@@ -502,11 +518,20 @@ UNSHOWN_READS_NOTE = (
     "the server."
 )
 
+#: The same for a server whose labels the owner trusts: the trust covers its tools as the owner saw
+#: them, so a tool it added or changed since says it reads and is not believed until she reviews it.
+UNREVIEWED_READS_NOTE = (
+    "[tools not shown] {servers} {have} tools that say they only read and are new or changed "
+    "since the owner trusted {its} read-only labels, and you were not shown them: such a tool "
+    "counts as a read only once the owner reviews it, on the Tools page. If your task needs them, "
+    "say so in your answer, naming the server."
+)
+
 
 def shown_of(pool: Iterable[Any], offered: Callable[[str], bool]) -> tuple[list[Any], str]:
     """The tool definitions of *pool* a run held to a narrower tier is shown, those *offered*
     admits by name, and the note naming what it was not shown only because an MCP server's
-    read-only labels are not trusted, with where the owner trusts them (:func:`unshown_reads_note`).
+    read-only labels are not believed, with where the owner changes it (:func:`unshown_reads_note`).
     """
     shown: list[Any] = []
     hidden: list[Any] = []
@@ -517,24 +542,42 @@ def shown_of(pool: Iterable[Any], offered: Callable[[str], bool]) -> tuple[list[
 
 def unshown_reads_note(hidden: Iterable[Any]) -> str:
     """The note for the tools a run held to a narrower tier was not shown (*hidden*, tool
-    definitions read by their ``name`` and ``annotations``): each MCP server one of whose hidden
-    tools says it only reads (``readOnlyHint``), while the owner has not trusted the server's
-    labels. ``""`` when there is none."""
-    servers = sorted(
+    definitions read by their ``name``, ``annotations`` and ``risk_level``): each MCP server one of
+    whose hidden tools says it only reads (``readOnlyHint``) while its label is not believed,
+    because the owner has not trusted the server's labels, or because the tool is new or changed
+    since she did. ``""`` when there is none."""
+    says_it_reads = [
+        tool
+        for tool in hidden
+        if (getattr(tool, "annotations", None) or {}).get("readOnlyHint") is True
+    ]
+    untrusted = sorted(
         {
             server
-            for tool in hidden
-            if (getattr(tool, "annotations", None) or {}).get("readOnlyHint") is True
-            and (server := _server_not_believed(str(getattr(tool, "name", "") or "")))
+            for tool in says_it_reads
+            if (server := _server_not_believed(str(getattr(tool, "name", "") or "")))
         }
     )
-    if not servers:
-        return ""
-    named = ", ".join(servers)
-    return UNSHOWN_READS_NOTE.format(
-        servers=f"The MCP server {named}" if len(servers) == 1 else f"The MCP servers {named}",
-        have="has" if len(servers) == 1 else "have",
+    unreviewed = sorted(
+        {server for tool in says_it_reads if (server := _server_not_reviewed(tool))}
     )
+    notes = []
+    if untrusted:
+        notes.append(UNSHOWN_READS_NOTE.format(**_named(untrusted)))
+    if unreviewed:
+        notes.append(UNREVIEWED_READS_NOTE.format(**_named(unreviewed)))
+    return "\n".join(notes)
+
+
+def _named(servers: list[str]) -> dict[str, str]:
+    """The words a note names *servers* in."""
+    named = ", ".join(servers)
+    one = len(servers) == 1
+    return {
+        "servers": f"The MCP server {named}" if one else f"The MCP servers {named}",
+        "have": "has" if one else "have",
+        "its": "its" if one else "their",
+    }
 
 
 def _reads_at_most(profile: SafetyProfile) -> bool:

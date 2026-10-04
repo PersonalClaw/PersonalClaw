@@ -158,7 +158,9 @@ def _with_allow(row: dict[str, Any], server: Any) -> dict[str, Any]:
 def _server_row(server: Any, specs: dict[str, Any]) -> dict[str, Any]:
     """One server as every route the Tools page reads hands it out: what the last probe found for
     it as it is defined now (`mcp_discovery`), its sign-in, whether its owner allowed it, its
-    switch (``specs`` is ``mcp.json``'s servers), and whether an agent can call it."""
+    switch (``specs`` is ``mcp.json``'s servers), whether an agent can call it, and her trust in
+    its read-only labels (`mcp_trust.read_only_trust_of`)."""
+    from personalclaw.dashboard.handlers.mcp_trust import read_only_trust_of
     from personalclaw.mcp_discovery import as_agents_see_it
 
     row = server.to_dict()
@@ -167,6 +169,9 @@ def _server_row(server: Any, specs: dict[str, Any]) -> dict[str, Any]:
     row["enabled"] = not disabled
     if disabled:
         row["status"] = "disabled"
+    trust = read_only_trust_of(server)
+    if trust is not None:
+        row["readOnlyTrust"] = trust
     return as_agents_see_it(_with_allow(_with_sign_in(row, server), server))
 
 
@@ -459,13 +464,18 @@ async def api_mcp_probe_one(request: web.Request) -> web.Response:
     Lets the user recover one timed-out/errored provider without re-probing the
     whole fleet (a slow server shouldn't force an all-provider re-probe). It is the owner asking,
     so a server stopped after failing to start again and again is started once more
-    (`mcp_discovery.forget_probe`). Answers this server's row as every read shows it from now on.
-    404 if no server by that name."""
+    (`mcp_discovery.forget_probe`), and each connection to it that listed its tools is closed
+    (`mcp_client.close_connections`): a connection lists the server's tools when it starts, so
+    one that started before the server changed them would go on offering agents the old ones while
+    the card shows the new. A start still under way, or left to finish, is left to. Answers this
+    server's row as every read shows it from now on. 404 if no server by that name."""
     name = request.match_info["name"].strip()
     if not name:
         return web.json_response({"error": "server name is required"}, status=400)
+    from personalclaw.mcp_client import close_connections
     from personalclaw.mcp_discovery import forget_probe, probe_one  # noqa: F811
 
+    close_connections(lambda n: n == name)
     forget_probe(name)
     info = await probe_one(name)
     if info is None:

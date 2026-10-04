@@ -304,9 +304,9 @@ async def api_tools_list(request: web.Request) -> web.Response:
         logger.warning("Failed to read the tool providers' status", exc_info=True)
 
     # An external MCP tool's risk is what `mcp_client.declared_risk` makes of its server's
-    # annotations — the same answer the MCP adapter feeds the approval gate, so the Tools page
-    # never shows a tool as a read that the gates treat as a change.
-    from personalclaw.mcp_client import declared_risk, read_only_labels_trusted
+    # annotations and the owner's trust in them — the same answer the MCP adapter feeds the
+    # approval gate, so the Tools page never shows a tool as a read the gates treat as a change.
+    from personalclaw.mcp_client import declared_risk
 
     # Source 3: External MCP servers from the LIVE in-process client registry — the tools
     # each connected server offers, over the connection an agent's call uses. An agent
@@ -336,14 +336,17 @@ async def api_tools_list(request: web.Request) -> web.Response:
 
         results = await asyncio.gather(*(_list_one(n, c) for n, c in conns))
         for server_name, tools in results:
-            trusted = read_only_labels_trusted(server_name) if tools else False
             for tool in tools:
+                risk = declared_risk(server_name, tool)
                 _add(
                     f"mcp/{server_name}/{tool.name}",
                     tool.description,
                     server_name,
                     tool.input_schema,
-                    risk_level=declared_risk(server_name, tool, trusted=trusted).value,
+                    # Whether it asks is what its risk makes it at the gate (the MCP adapter's
+                    # `requires_approval`): a believed read asks nobody, and every other tool asks.
+                    requires_approval=risk.value != "safe",
+                    risk_level=risk.value,
                     # An external MCP server has no supply-chain tier — see the `tier`
                     # note in `_add`. "" is the honest answer, `builtin` would be a lie.
                     default_tier="",

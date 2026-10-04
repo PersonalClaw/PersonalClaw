@@ -258,6 +258,12 @@ def _normalize_retired(data: dict) -> None:
         # native/filesystem fallback chain in inbox_providers is the mechanism.
         data["inbox"].pop("quick_reactions", None)
         data["inbox"].pop("message_provider", None)
+    if isinstance(data.get("security"), dict):
+        # mcp_read_only_servers: the owner's trust in an MCP server's read-only labels is kept
+        # with a digest of each tool she saw (`mcp_read_only_trust`). A name in this list says
+        # nothing of which tools those were, so it is not carried over: the server's tools ask
+        # until she trusts its labels again on the Tools page.
+        data["security"].pop("mcp_read_only_servers", None)
     # Retired fields that still carry USER INTENT — consumed, not merely dropped.
     _fold_legacy_update_flags(data)
 

@@ -29,7 +29,6 @@ function mockApi(over: Record<string, unknown>) {
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([] as string[]),
-      mcpReadOnlyServers: () => Promise.resolve([] as string[]),
       ...over,
     },
   }))

@@ -693,13 +693,16 @@ def surface_stamp() -> tuple[object, ...]:
     Three things decide which tools an agent turn is offered: which providers are registered (an
     app's tools arrive when it is installed or switched on and leave when it is removed or
     switched off), which tools the user switched off, and which MCP servers ``mcp.json`` names.
-    A runtime keeps the surface it was built from for as long as its chat is open, so it reads
-    this at each turn and rebuilds its catalog when it differs from the one it was built at.
-    Cheap: a counter and two file stats, never a provider's tool list.
+    A fourth decides whether an MCP server's tool asks: the owner's trust in its read-only labels,
+    sealed to each tool's definition, against what the server lists now
+    (`mcp_read_only_trust.stamp`). A runtime keeps the surface it was built from for as long as
+    its chat is open, so it reads this at each turn and rebuilds its catalog when it differs from
+    the one it was built at. Cheap: two counters and three file stats, never a provider's tool list.
     """
+    from personalclaw import mcp_read_only_trust
     from personalclaw.tool_providers import tool_prefs
 
-    return (_generation, tool_prefs.stamp())
+    return (_generation, tool_prefs.stamp(), mcp_read_only_trust.stamp())
 
 
 def still_serves(provider: ToolProvider) -> bool:

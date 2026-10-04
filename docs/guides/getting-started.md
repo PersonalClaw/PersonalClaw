@@ -465,6 +465,12 @@ defaults flipped, and some routes refuse input they used to accept. Run
   Settings → Secrets, or, if Move to keychain put them there, Roll back and move them again. The
   old copies stay under the default home's name, where the default home's Settings → Secrets
   lists them: remove them there if that home should not have them.
+- **Trusting an MCP server's read-only labels covers the tools it listed when you trusted it.**
+  A tool it adds later, or one whose description, inputs or labels change, asks until you review
+  it on the Tools page, where the server's card says what changed. A trust given on a build from
+  before this (only builds of the development branch had one) is not carried over, since nothing
+  recorded which tools you saw: the server's tools ask, and Trust on the Tools page gives it again
+  for the tools it lists now.
 
 ## Where to go next
 

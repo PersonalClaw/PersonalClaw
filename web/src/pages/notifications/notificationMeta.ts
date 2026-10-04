@@ -1,4 +1,4 @@
-import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, PauseCircle, ShieldQuestion, ShieldOff, ShieldX, RefreshCw, Receipt, UserRound, StickyNote, CalendarClock } from 'lucide-react'
+import { Bell, BellRing, CheckCircle2, Clock, Webhook, Bot, Server, HeartPulse, Info, AlertTriangle, Target, XCircle, Newspaper, MessageSquare, MessageCircle, Activity, Lightbulb, Archive, Route, HelpCircle, PauseCircle, ShieldQuestion, ShieldOff, ShieldX, RefreshCw, Receipt, UserRound, StickyNote, CalendarClock } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { NotificationItem } from '../../lib/api'
 import { epochSeconds } from '../../lib/epoch'
@@ -81,6 +81,10 @@ const KINDS: Record<string, KindMeta> = {
   // tasks/due — a task's due date is coming. Its wire string is `task_due`. Info tone: a
   // reminder, not a warning; nothing has failed yet.
   task_due: { label: 'Task due', icon: CalendarClock, tone: 'var(--color-info)' },
+  // mcp/description_changed — a server whose read-only labels she does not trust changed what one
+  // of its tools says. Info tone: nothing ran and nothing failed; a description is text the model
+  // reads, and the note opens the Tools page on that server.
+  mcp_description_changed: { label: 'MCP tool description changed', icon: Server, tone: 'var(--color-info)' },
   // knowledge/research_finding. Newspaper like the digest — both are written
   // output — but the primary tone, not the low one: a finding is a thing to read, whereas
   // the digest is the wrapper it may arrive in.

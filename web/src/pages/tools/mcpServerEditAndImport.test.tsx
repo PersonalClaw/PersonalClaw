@@ -138,7 +138,6 @@ function mockApi(definition: unknown, rows: unknown[] = importable) {
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([]),
-      mcpReadOnlyServers: () => Promise.resolve([]),
       // The definition with the revision the same read reported — what an edit is saved over.
       mcpServerDefinition: () => Promise.resolve({ ...(definition as object), revision: 'r1' }),
       saveMcpServer: (...a: unknown[]) => { saveMcpServer(...a); return Promise.resolve({ ok: true, name: 'gh', revision: 'r2' }) },

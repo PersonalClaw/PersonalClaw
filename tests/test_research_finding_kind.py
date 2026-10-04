@@ -307,9 +307,10 @@ def test_the_kind_keeps_the_immediate_default_the_registry_ships():
     # the assertion above from being the only thing standing between a future kind and a quiet
     # default. Widened for `user/note` — a note the USER wrote defaults to `badge`,
     # because a toast tells you something you did not know and you cannot be informed of your
-    # own keystrokes.
+    # own keystrokes. And for `mcp/description_changed`, a quiet notice that a server whose labels
+    # the owner does not trust changed what a tool says: nothing waits on her and nothing ran.
     quiet = sorted(k.key for k in nk.all_kinds() if k.default_mode != "immediate")
-    assert quiet == ["system/usage_recap", "user/note"]
+    assert quiet == ["mcp/description_changed", "system/usage_recap", "user/note"]
 
 
 def test_the_semantics_module_is_the_canonical_home_of_the_string():

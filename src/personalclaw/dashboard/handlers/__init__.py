@@ -248,6 +248,9 @@ from personalclaw.dashboard.handlers.mcp import (  # noqa: E402, F401
     api_mcp_toggle_all,
     api_mcp_toggle_tool,
 )
+from personalclaw.dashboard.handlers.mcp_trust import (  # noqa: E402, F401
+    api_mcp_server_read_only_trust,
+)
 from personalclaw.dashboard.handlers.memory import (  # noqa: E402, F401
     _redact_memory_field,
     _set_migrated,

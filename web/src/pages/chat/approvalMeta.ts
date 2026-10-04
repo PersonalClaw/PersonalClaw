@@ -95,7 +95,7 @@ const FACET_COPY: Record<keyof BlastRadius, { label: string; detail: string }> =
   writes: { label: 'Writes files', detail: 'Can create or change files on this machine.' },
   shell: { label: 'Runs a command', detail: 'Can execute a command on this machine.' },
   network: { label: 'Uses the network', detail: 'Can reach the network from this machine.' },
-  saysReadOnly: { label: 'Server says it only reads', detail: 'The server that offers this tool labels it read-only. PersonalClaw takes that label only from a server you trust on the Tools page.' },
+  saysReadOnly: { label: 'Server says it only reads', detail: 'The server that offers this tool labels it read-only. PersonalClaw takes that label only from a server you trust on the Tools page, and only for its tools as they were when you trusted it: one it adds or changes asks until you review it there.' },
   readOnly: { label: 'Reads only', detail: 'Established as a read: no change was established.' },
 }
 

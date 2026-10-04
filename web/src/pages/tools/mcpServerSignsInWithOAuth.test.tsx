@@ -39,7 +39,6 @@ function mockModules() {
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([]),
-      mcpReadOnlyServers: () => Promise.resolve([]),
       startMcpSignIn,
       signOutMcp,
     },

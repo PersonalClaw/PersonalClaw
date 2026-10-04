@@ -676,6 +676,14 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_delete("/api/mcp/servers/{name}", handlers.api_mcp_server_detail)
     # The owner's yes to a server that waits for it (`mcp_grants`).
     app.router.add_post("/api/mcp/servers/{name}/allow", handlers.api_mcp_server_allow)
+    # The owner's trust in a server's read-only labels, sealed to each tool (`mcp_read_only_trust`):
+    # Trust or Review (POST), and Stop trusting (DELETE).
+    app.router.add_post(
+        "/api/mcp/servers/{name}/read-only-trust", handlers.api_mcp_server_read_only_trust
+    )
+    app.router.add_delete(
+        "/api/mcp/servers/{name}/read-only-trust", handlers.api_mcp_server_read_only_trust
+    )
     # Signing in to a server at a URL with OAuth: start (POST), sign out (DELETE), and the page
     # the authorization server sends the browser back to.
     app.router.add_post("/api/mcp/servers/{name}/sign-in", handlers.api_mcp_server_sign_in)

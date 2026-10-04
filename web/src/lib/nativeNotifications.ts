@@ -59,6 +59,10 @@ export const NOTIFICATION_SOURCE_ROUTES: Record<string, string> = {
   knowledge: 'knowledge',
   learning: 'learning',
   loop: 'loops',
+  // `mcp/description_changed` — a server whose read-only labels she does not trust changed what a
+  // tool says. Its card is on the Tools page, where she reads what the tool says now. Defaults to
+  // `badge`, which raises nothing native; this row is for a rule she switches to Notify.
+  mcp: 'tools',
   planning: 'tasks',
   skills: 'skills',
   system: 'notifications',

@@ -1100,6 +1100,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "mcp_server_not_editable": (
         "PersonalClaw or an app provides this MCP server, so it cannot be saved from here."
     ),
+    # ── trusting an MCP server's read-only labels (dashboard/handlers/mcp_trust.py —
+    #    POST /api/mcp/servers/{name}/read-only-trust) ──
+    # 409: no listing of the server as it is defined now is known, so no tool the owner reviewed
+    # can be sealed. The message says to reconnect it first.
+    "mcp_tools_not_listed": (
+        "PersonalClaw has not listed this MCP server's tools as it is defined now, so there is "
+        "nothing to trust yet; reconnect it first."
+    ),
     # ── looking for MCP servers to import (dashboard/handlers/mcp.py — GET /api/mcp/importable) ──
     # 500: the other tools' settings could not be looked through — answered in place of an empty
     # list, which would read as "nothing to import". The message says why.

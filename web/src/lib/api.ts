@@ -2985,8 +2985,11 @@ export type McpTransport = 'stdio' | 'http' | 'sse'
  *  owner has not allowed as it is defined now reads `waiting`: nothing started it, and it starts
  *  only once they allow it (`allowMcpServer`). */
 export interface McpServer {
-  name: string; transport?: McpTransport; status: string; tools: Array<string | { name: string; description?: string }>
+  name: string; transport?: McpTransport; status: string; tools: Array<string | McpListedTool>
   error?: string; source?: string; enabled?: boolean
+  /** The owner's trust in the server's read-only labels, sealed to each tool she saw. Absent for
+   *  PersonalClaw's own server, whose tools say what they do themselves. */
+  readOnlyTrust?: McpReadOnlyTrust
   /** When its last start failed: the tail of what it wrote to its error output, which the card shows
    *  behind Details. `error` is the one-line reason (`mcp_status`). */
   detail?: string
@@ -2997,6 +3000,28 @@ export interface McpServer {
   /** On a server that waits: the revision of what its Allow is a yes to. The gateway refuses an
    *  Allow for a definition that changed after the page read it. */
   allowRevision?: string
+}
+/** One tool as the server's last start listed it, and the labels its server gave it (`readOnlyHint`
+ *  and the rest: the server's word, believed only as `McpReadOnlyTrust` says). */
+export interface McpListedTool {
+  name: string; description?: string; inputSchema?: Record<string, unknown>; annotations?: Record<string, unknown>
+}
+/** Which part of a tool's definition changed since the owner trusted the server's labels. */
+export type McpToolPart = 'description' | 'inputSchema' | 'annotations'
+/** `GET /api/mcp`'s `readOnlyTrust` (`mcp_read_only_trust`): whether the owner trusts the server's
+ *  read-only labels, and what its tools are now against what she trusted. `listed` is every tool the
+ *  server lists now with the digest of its definition — what Trust and Review send back — and `null`
+ *  while no listing of the server as it is defined now is known (nothing can be trusted yet, and
+ *  nothing is said about what changed). While she trusts it: when she trusted or last reviewed it,
+ *  and the tools added, changed (with which parts) and removed since. A new or changed tool asks
+ *  until she reviews it. */
+export interface McpReadOnlyTrust {
+  trusted: boolean
+  listed: Record<string, string> | null
+  at?: string
+  added?: string[]
+  changed?: Array<{ name: string; parts: McpToolPart[] }>
+  removed?: string[]
 }
 /** A server's OAuth sign-in as `GET /api/mcp` says it (`mcp_oauth.sign_in_state`, presence only — no
  *  token reaches the page): `signed_in`; `signed_out` — it was signed in, and the sign-in ended or its
@@ -10309,16 +10334,16 @@ export const api = {
     api.patchConfigItem('security.mcp_elicitation_servers', 'add', server, confirmed),
   revokeMcpElicitation: (server: string) =>
     api.patchConfigItem('security.mcp_elicitation_servers', 'remove', server),
-  // Which MCP servers' READ-ONLY labels you trust (`readOnlyHint`). Per server, like the
-  // elicitation grant: an absent server's tools are all treated as changes, so they ask. Read
-  // from the config blob for the same reason; `confirmed` is the Tools page's own dialog.
-  mcpReadOnlyServers: () =>
-    get<Record<string, any>>('/api/config/personalclaw').then(
-      (c) => (c?.security?.mcp_read_only_servers ?? []) as string[]),
-  trustMcpReadOnly: (server: string, confirmed = false) =>
-    api.patchConfigItem('security.mcp_read_only_servers', 'add', server, confirmed),
+  // Trust a server's READ-ONLY labels (`readOnlyHint`), or review them once it lists changed tools:
+  // the trust covers exactly the tools the page showed, each named with the digest of its
+  // definition the card carried (`McpReadOnlyTrust.listed`). A tool the server changed after the
+  // page read it is left out and still asks (`changedSince`). The page asks first, in its own
+  // dialog, so the write carries the yes; stopping needs no question.
+  trustMcpReadOnly: (server: string, tools: Record<string, string>) =>
+    post<{ ok: boolean; name: string; sealed: string[]; changedSince: string[] }>(
+      `/api/mcp/servers/${encodeURIComponent(server)}/read-only-trust`, { tools, confirm: true }),
   distrustMcpReadOnly: (server: string) =>
-    api.patchConfigItem('security.mcp_read_only_servers', 'remove', server),
+    del(`/api/mcp/servers/${encodeURIComponent(server)}/read-only-trust`),
   // Trust a project folder (`guardrails/project_trust.py`): an automation working in it then gets
   // the write access its own step asks for, where Preview held it to reading. `dir` is the folder as
   // the gateway resolved it (`HeldBack.folder`, an Inbox request's `refs.dir`).

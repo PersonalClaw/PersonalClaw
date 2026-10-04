@@ -184,9 +184,15 @@ def test_the_kinds_defaulting_to_something_other_than_immediate_are_EXACTLY_thes
     channel that also carries a loop's question. `badge` still persists the note and still
     counts it (`unread_count` counts open inbox items), so nothing is declined: delivery is one
     click away in this very matrix.
+
+    `mcp/description_changed` tells the owner that a server whose read-only labels she does not
+    trust changed what one of its tools says. Nothing is waiting on her and nothing ran (the
+    server's tools ask whatever they say), and a server that rewrites its descriptions with each
+    release would otherwise toast at every update. The quiet notice the change calls for: it
+    persists and is counted unread, and one click here makes it a toast.
     """
     quiet = sorted(k.key for k in nk.all_kinds() if k.default_mode != "immediate")
-    assert quiet == ["system/usage_recap", "user/note"], (
+    assert quiet == ["mcp/description_changed", "system/usage_recap", "user/note"], (
         f"the non-immediate default population changed to {quiet} — every addition needs the "
         "same justification usage_recap carries, so widen this list deliberately"
     )

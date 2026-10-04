@@ -89,11 +89,12 @@ def risk_from_annotations(annotations: Any, *, trusted: bool) -> RiskLevel:
     """What an MCP tool's ``annotations`` declare, as a :class:`RiskLevel`.
 
     ``readOnlyHint: true`` is the read-only declaration, and it counts only when *trusted*:
-    PersonalClaw's own tool modules always are, an external server only when the owner said so
-    (``security.mcp_read_only_servers``). The MCP spec says the same thing — annotations from a
-    server you do not trust are hints, not facts. ``destructiveHint: true`` counts from anyone,
-    because believing it can only add a question. Anything else, including no annotations at
-    all, is CAUTION.
+    PersonalClaw's own tool modules always are, an external server's tool only when the owner
+    trusts that server's labels and the tool is as she saw it then (`mcp_client.declared_risk`,
+    the one caller that passes anything but ``True``). The MCP spec says the same thing —
+    annotations from a server you do not trust are hints, not facts. ``destructiveHint: true``
+    counts from anyone, because believing it can only add a question. Anything else, including no
+    annotations at all, is CAUTION.
     """
     hints = annotations if isinstance(annotations, dict) else {}
     read_only = hints.get("readOnlyHint") is True

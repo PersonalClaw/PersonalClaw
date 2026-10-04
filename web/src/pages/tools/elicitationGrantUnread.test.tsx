@@ -39,7 +39,6 @@ function mockApi(grants: () => Promise<string[]>) {
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: grants,
-      mcpReadOnlyServers: () => Promise.resolve([]),
       grantMcpElicitation: (...a: unknown[]) => { grantMcpElicitation(...a); return Promise.resolve({ ok: true }) },
       revokeMcpElicitation: (...a: unknown[]) => { revokeMcpElicitation(...a); return Promise.resolve({ ok: true }) },
     },

@@ -29,7 +29,6 @@ function mockApi() {
       mcpPoolStats: () => Promise.resolve({ available: false }),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([]),
-      mcpReadOnlyServers: () => Promise.resolve([]),
       toggleMcpTool: (...a: unknown[]) => { toggleMcpTool(...a); return Promise.resolve({ ok: true }) },
       toggleTool: (...a: unknown[]) => { toggleTool(...a); return Promise.resolve({ ok: true }) },
     },

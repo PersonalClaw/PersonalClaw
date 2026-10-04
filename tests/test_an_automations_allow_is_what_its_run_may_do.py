@@ -275,10 +275,15 @@ def notes_server(home, tmp_path, monkeypatch):
 
     module = load_bundle_module(NATIVE_DIR / "mcp-tools", "mcp-tools", "provider")
 
-    def trust(trusted: bool):
-        config = json.loads((home.pc / "config.json").read_text(encoding="utf-8"))
-        config["security"] = {"mcp_read_only_servers": ["notes"] if trusted else []}
-        (home.pc / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    async def trust(trusted: bool):
+        """The provider an agent's run reaches the server through, once the owner trusted the
+        server's read-only labels for the tools it lists (the Tools page's Trust), or not."""
+        if trusted:
+            from mcp_owner_allowed import trust_labels
+
+            listed = await mcp_client.get_mcp_client_registry().get("notes").list_tools()
+            assert listed, "the server listed no tools to trust"
+            trust_labels("notes", listed)
         return module.create_mcp_provider({})
 
     async def stop() -> None:
@@ -301,7 +306,10 @@ async def test_a_read_only_run_reads_her_folders_and_a_trusted_servers_reads(hom
     )
     try:
         info, audit = await _fire(
-            home, {"message": "Compare the kitchen quotes."}, script, [notes_server.trust(True)]
+            home,
+            {"message": "Compare the kitchen quotes."},
+            script,
+            [await notes_server.trust(True)],
         )
     finally:
         await notes_server.stop()
@@ -320,7 +328,10 @@ async def test_a_read_only_run_says_why_an_untrusted_servers_tool_is_refused(hom
     script = _Script([("mcp/notes/read_text_file", {"path": "kitchen-reno.md"})])
     try:
         info, audit = await _fire(
-            home, {"message": "Compare the kitchen quotes."}, script, [notes_server.trust(False)]
+            home,
+            {"message": "Compare the kitchen quotes."},
+            script,
+            [await notes_server.trust(False)],
         )
     finally:
         await notes_server.stop()

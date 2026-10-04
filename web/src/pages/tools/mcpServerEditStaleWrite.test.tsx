@@ -35,7 +35,6 @@ async function mount() {
       mcpPoolStats: () => Promise.resolve({ available: false }),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([]),
-      mcpReadOnlyServers: () => Promise.resolve([]),
       mcpServerDefinition: () => {
         reads += 1
         return Promise.resolve(reads === 1 ? { ...PAINTED, revision: 'r1' } : { ...STORED, revision: 'r2' })

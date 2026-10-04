@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **923 registrations** over **749 distinct paths** — 916 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **925 registrations** over **750 distinct paths** — 918 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -33,8 +33,8 @@ The 128 families the surface divides into, largest first.
 | `/api/artifacts` | 26 | 17 |
 | `/api/inbox` | 24 | 23 |
 | `/api/apps` | 23 | 15 |
+| `/api/mcp` | 21 | 16 |
 | `/api/triggers` | 20 | 17 |
-| `/api/mcp` | 19 | 15 |
 | `/api/skills` | 19 | 15 |
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 916 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 918 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -654,6 +654,8 @@ The 916 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `PUT` | `/api/mcp/servers/{name}` | read, add or edit, or remove one MCP server. |
 | `POST` | `/api/mcp/servers/{name}/allow` | the owner's yes to a server that waits for it. |
+| `DELETE` | `/api/mcp/servers/{name}/read-only-trust` | the owner's trust in its labels. |
+| `POST` | `/api/mcp/servers/{name}/read-only-trust` | the owner's trust in its labels. |
 | `DELETE` | `/api/mcp/servers/{name}/sign-in` | sign in to a remote server, or sign out. |
 | `POST` | `/api/mcp/servers/{name}/sign-in` | sign in to a remote server, or sign out. |
 | `POST` | `/api/mcp/sync` | apply MCP config changes and restart sessions. |

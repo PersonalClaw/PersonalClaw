@@ -1056,12 +1056,14 @@ def remove_mcp_servers(names: Iterable[str], *, keep_allowed: bool = False) -> l
     delete-when-unreferenced then drops its credential-store keys: the first write keeps them
     (the other document still references them), the second deletes them. Another tool's own
     config (Claude Code's) is never touched. The owner's yes to each one it removed goes with it
-    (`mcp_grants`), so a server added again under the name is asked about again — unless
-    *keep_allowed*, for an app that is switched off or updated rather than removed: its servers
-    come back under the same names, and one that still runs what the owner allowed needs no
-    second yes. Returns the names either document held.
+    (`mcp_grants`), and so does her trust in its read-only labels (`mcp_read_only_trust`), so a
+    server added again under the name is asked about again — unless *keep_allowed*, for an app
+    that is switched off or updated rather than removed: its servers come back under the same
+    names, and one that still runs what the owner allowed needs no second yes (a tool it lists
+    differently is still asked about, since the trust is sealed to each tool). Returns the names
+    either document held.
     """
-    from personalclaw import mcp_grants
+    from personalclaw import mcp_grants, mcp_read_only_trust
 
     wanted = {str(n) for n in names}
     tool_refs = {f"@{n}" for n in wanted}
@@ -1087,6 +1089,7 @@ def remove_mcp_servers(names: Iterable[str], *, keep_allowed: bool = False) -> l
     if not keep_allowed:
         for name in removed:
             mcp_grants.revoke(name)
+            mcp_read_only_trust.forget(name)
     return sorted(removed)
 
 

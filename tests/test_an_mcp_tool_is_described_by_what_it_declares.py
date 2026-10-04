@@ -130,11 +130,14 @@ def test_a_trusted_read_label_makes_the_call_a_read():
 
 
 def test_a_read_label_is_believed_only_from_a_trusted_server():
+    from mcp_owner_allowed import trust_labels
+
     from personalclaw.mcp_client import McpToolSpec, declared_risk
 
     tool = McpToolSpec(name="list_commits", description="d", annotations={"readOnlyHint": True})
-    assert declared_risk("github", tool, trusted=True).value == "safe"
-    assert declared_risk("github", tool, trusted=False).value == "caution"
+    assert declared_risk("github", tool).value == "caution"
+    trust_labels("github", [tool])
+    assert declared_risk("github", tool).value == "safe"
 
 
 @pytest.mark.parametrize(

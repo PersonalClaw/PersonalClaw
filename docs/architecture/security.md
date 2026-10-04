@@ -735,9 +735,20 @@ from nothing else except a shell command's own text:
   may be.
 - **A tool that declares nothing is a change**, so it asks: an ACP CLI's own tools, and an
   external MCP server's tools unless the owner trusts that server's labels. An MCP server may label
-  anything read-only, so `readOnlyHint` counts only for a server listed in
-  `security.mcp_read_only_servers` — per server, set on the Tools page, which asks first, and
-  refused to an app. Its `destructiveHint` counts from anyone, because it only adds a question.
+  anything read-only, so `readOnlyHint` counts only for a server whose labels the owner trusts, and
+  only for its tools as they were when she trusted them (`mcp_read_only_trust`). The trust keeps a
+  digest of each tool's name, description, input schema and labels (the canonical form is in the
+  module), and the approval gate's one read of it, `mcp_client.declared_risk` through `believes`,
+  compares the tool's digest: a tool the server adds or redefines later asks like an untrusted
+  server's until she reviews it on the Tools page, whose card says what was added, changed and
+  removed, and whose Review seals the tools again as shown. A running chat judges its tools again at
+  its next turn when the trust is written or a server lists its tools differently. The trust is per
+  server, given only on the Tools page (which asks first, naming the tools it lets run unasked), and
+  kept in the owner-only `grants/mcp_read_only.json`;
+  `tests/test_mcp_read_only_trust_has_one_read.py` fails on any read of it that skips the digest.
+  A server whose labels she does not trust that changes a tool's description raises a quiet
+  notice, since a description is text the model reads. Its `destructiveHint` counts from anyone,
+  because it only adds a question.
   Every approval shows a server's labels as its word (`ToolDefinition.annotations`): an untrusted
   read-only label reads "Server says it only reads" and still asks, a destructive label "Writes
   files", an open-world label "Uses the network". A tool's name is read word by word
@@ -783,7 +794,8 @@ from nothing else except a shell command's own text:
   (`mcp_shared.offered_tools`) and refuses a call to any other in the same words
   (`tier_call_denial`). Before, such a subagent was listed every core tool. A read-only run is
   told which servers' reads it was not shown and why: a server whose read-only labels the owner
-  has not trusted, named, with where to trust them (`policy.unshown_reads_note`).
+  has not trusted, named, with where to trust them, and a trusted server's tools that are new or
+  changed since, with where she reviews them (`policy.unshown_reads_note`).
 - **A call an ACP CLI ran without asking is said on its own card** (`dashboard/ungated_calls.py`).
   The CLI decides which of its calls ask first, so one its own settings allow runs with no approval
   request and the host learns of it when its result lands. Its card says so, live and after a reload

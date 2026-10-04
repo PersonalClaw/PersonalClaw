@@ -301,7 +301,7 @@ class _ProbeResult:
     """What the last start of one server found, and what it started."""
 
     status: str
-    tools: list[dict[str, Any]]  # each entry: {"name", "description", "inputSchema"}
+    tools: list[dict[str, Any]]  # each entry: `listed_rows`'s
     error: str
     #: The definition the result is of (:func:`_probed_as`).
     probed_as: str
@@ -406,6 +406,22 @@ def _current_seal(name: str) -> str | None:
     return _probed_as(server) if server is not None else None
 
 
+def listed_rows(tools: Iterable[Any]) -> list[dict[str, Any]]:
+    """Each tool a start listed (an ``McpToolSpec``), as a server's card and the owner's trust read
+    it: its name, description and input schema, and the labels its server gave it. The trust in a
+    server's read-only labels is sealed to the four (`mcp_read_only_trust`), so a row without the
+    labels could not be compared with it."""
+    return [
+        {
+            "name": t.name,
+            "description": t.description,
+            "inputSchema": t.input_schema,
+            "annotations": dict(t.annotations or {}),
+        }
+        for t in tools
+    ]
+
+
 def note_start(
     name: str,
     seal: str,
@@ -420,20 +436,22 @@ def note_start(
     A failure that counts adds one to the failed starts in a row; a start that connected resets
     them. A start still going (`mcp_status.still_starting`) is no failure yet: the server reads
     ``probing`` until it is looked at again (:func:`look_again`). A start of a definition the
-    server no longer has is not its result, and is dropped.
+    server no longer has is not its result, and is dropped. What a start that connected listed is
+    also what the owner's trust in the server's labels is checked against
+    (`mcp_read_only_trust.observe`), for every server but PersonalClaw's own, whose tools are its
+    own and say what they do themselves: an update that rewords them is not a server changing
+    what it told her.
     """
-    from personalclaw import mcp_status
+    from personalclaw import mcp_read_only_trust, mcp_status
 
     if _current_seal(name) != seal:
         return
     prev = _probe_cache.get(name)
     same = prev is not None and prev.probed_as == seal
     if failure is None:
-        listed = [
-            {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
-            for t in tools or []
-        ]
-        _keep(name, _ProbeResult("ok", listed, "", seal))
+        _keep(name, _ProbeResult("ok", listed_rows(tools or []), "", seal))
+        if name not in _MANAGED_SERVER_NAMES:
+            mcp_read_only_trust.observe(name, tools or [])
         return
     failures = (prev.failures if same and prev is not None else 0) + int(failure.counts)
     status = PROBING if failure.pending else "error"
@@ -554,9 +572,9 @@ class McpServerInfo:
     # only one that offers a sign-in (`_probe_remote`). ``probing``: a probe of it is running, and
     # there is no result yet for it as it is defined now.
     status: str = "unknown"
-    # Each tool entry is a dict with at least "name"; optionally "description"
-    # and "inputSchema" populated by tools/list responses. Plain strings are
-    # also accepted on input and normalized to dicts at probe.
+    # Each tool entry is a dict with at least "name"; a start that listed it gives the
+    # "description", "inputSchema" and "annotations" of its tools/list answer too (`listed_rows`).
+    # Plain strings are also accepted on input and normalized to dicts at probe.
     tools: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
     source: str = "agent"  # agent | mcp.json | discovered
@@ -880,10 +898,7 @@ async def _probe_remote(server: McpServerInfo) -> McpServerInfo:
                     server.error = why_not
         else:
             server.status = "ok"
-            server.tools = [
-                {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
-                for t in started.tools
-            ]
+            server.tools = listed_rows(started.tools)
     if server.status in ("error", "signin"):
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
     return server
@@ -1096,10 +1111,7 @@ async def _probe(server: McpServerInfo) -> None:
         logger.warning("MCP probe failed [%s]: %s", server.name, server.error)
         return
     server.status = "ok"
-    server.tools = [
-        {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
-        for t in started.tools
-    ]
+    server.tools = listed_rows(started.tools)
 
 
 async def probe_one(name: str) -> McpServerInfo | None:

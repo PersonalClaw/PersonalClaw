@@ -6502,8 +6502,7 @@
   "kind": "function",
   "params": [
    {"annotation": "str", "kind": "positional_or_keyword", "name": "server"},
-   {"annotation": "McpToolSpec", "kind": "positional_or_keyword", "name": "tool"},
-   {"annotation": "bool | None", "default": "None", "kind": "keyword_only", "name": "trusted"}
+   {"annotation": "McpToolSpec", "kind": "positional_or_keyword", "name": "tool"}
   ],
   "returns": "RiskLevel"
  },

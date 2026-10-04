@@ -154,29 +154,29 @@ async def test_with_no_server_configured_it_serves_no_tool(provider_module, tmp_
     assert result.success is False and "not found" in (result.error or "")
 
 
-async def _asks(provider_module, monkeypatch, *, trusted):
-    from personalclaw import mcp_client
+async def _asks(provider_module, *, trusted):
+    from mcp_owner_allowed import trust_labels
 
-    monkeypatch.setattr(mcp_client, "read_only_labels_trusted", lambda server: trusted)
-    listing = _Listing({"acme": [_spec("search_docs", {"readOnlyHint": True}), _spec("wipe")]})
+    specs = [_spec("search_docs", {"readOnlyHint": True}), _spec("wipe")]
+    if trusted:
+        trust_labels("acme", specs)
+    listing = _Listing({"acme": specs})
     tools = await provider_module.McpToolProvider(lambda: listing).list_tools()
     assert [t.name for t in tools] == ["mcp/acme/search_docs", "mcp/acme/wipe"]
     return {t.name: t.requires_approval for t in tools}
 
 
 @pytest.mark.asyncio
-async def test_every_tool_of_a_server_whose_labels_you_have_not_trusted_asks(
-    provider_module, monkeypatch
-):
-    asks = await _asks(provider_module, monkeypatch, trusted=False)
+async def test_every_tool_of_a_server_whose_labels_you_have_not_trusted_asks(provider_module):
+    asks = await _asks(provider_module, trusted=False)
     assert asks == {"mcp/acme/search_docs": True, "mcp/acme/wipe": True}
 
 
 @pytest.mark.asyncio
-async def test_a_read_from_a_server_you_trust_asks_nobody(provider_module, monkeypatch):
+async def test_a_read_from_a_server_you_trust_asks_nobody(provider_module):
     """🔴 Before: every tool asked, so a trusted server's read raised a card in a chat that runs
     every other read, and was declined wherever nobody could be asked. Its change still asks."""
-    asks = await _asks(provider_module, monkeypatch, trusted=True)
+    asks = await _asks(provider_module, trusted=True)
     assert asks == {"mcp/acme/search_docs": False, "mcp/acme/wipe": True}
 
 
@@ -264,47 +264,37 @@ async def test_a_huge_result_is_projected_and_retained_not_dumped_raw(
     assert res.metadata.get("raw_ref") and "tool_result_get(result_id=" in res.output
 
 
-async def _risks(provider_module, monkeypatch, *, trusted):
-    from personalclaw import mcp_client
+async def _risks(provider_module, *, trusted):
+    from mcp_owner_allowed import trust_labels
 
-    monkeypatch.setattr(mcp_client, "read_only_labels_trusted", lambda server: trusted)
-    listing = _Listing(
-        {
-            "acme": [
-                _spec("list_and_archive"),
-                _spec("search_docs", {"readOnlyHint": True}),
-                _spec("wipe", {"readOnlyHint": False, "destructiveHint": True}),
-            ]
-        }
-    )
+    specs = [
+        _spec("list_and_archive"),
+        _spec("search_docs", {"readOnlyHint": True}),
+        _spec("wipe", {"readOnlyHint": False, "destructiveHint": True}),
+    ]
+    if trusted:
+        trust_labels("acme", specs)
+    listing = _Listing({"acme": specs})
     tools = await provider_module.McpToolProvider(lambda: listing).list_tools()
     return {t.name: t.risk_level.value for t in tools}
 
 
 @pytest.mark.asyncio
-async def test_a_tool_is_not_a_read_because_of_its_name(provider_module, monkeypatch):
+async def test_a_tool_is_not_a_read_because_of_its_name(provider_module):
     """A tool that says nothing is a change, and asks: a name like ``list_…`` earns nothing."""
-    risks = await _risks(provider_module, monkeypatch, trusted=False)
+    risks = await _risks(provider_module, trusted=False)
     assert risks["mcp/acme/list_and_archive"] == "caution"
 
 
 @pytest.mark.asyncio
-async def test_a_read_only_label_counts_only_from_a_server_the_owner_trusts(
-    provider_module, monkeypatch
-):
-    assert (await _risks(provider_module, monkeypatch, trusted=False))[
-        "mcp/acme/search_docs"
-    ] == "caution"
-    assert (await _risks(provider_module, monkeypatch, trusted=True))[
-        "mcp/acme/search_docs"
-    ] == "safe"
+async def test_a_read_only_label_counts_only_from_a_server_the_owner_trusts(provider_module):
+    assert (await _risks(provider_module, trusted=False))["mcp/acme/search_docs"] == "caution"
+    assert (await _risks(provider_module, trusted=True))["mcp/acme/search_docs"] == "safe"
 
 
 @pytest.mark.asyncio
-async def test_a_destructive_label_counts_from_any_server(provider_module, monkeypatch):
-    assert (await _risks(provider_module, monkeypatch, trusted=False))["mcp/acme/wipe"] == (
-        "destructive"
-    )
+async def test_a_destructive_label_counts_from_any_server(provider_module):
+    assert (await _risks(provider_module, trusted=False))["mcp/acme/wipe"] == ("destructive")
 
 
 def test_an_invalid_tool_name_is_refused_without_a_lookup(provider_module):

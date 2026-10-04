@@ -681,6 +681,21 @@ _KINDS: tuple[NotificationKind, ...] = (
         verifiable=False,
         owner="personalclaw.inbox",
     ),
+    # mcp — a server whose read-only labels the owner does not trust changed what one of its tools
+    # says (`mcp_read_only_trust.observe`). A description is text the model reads, so she is told,
+    # once per change. `badge` by DEFAULT, the third kind here to decline `immediate`: nothing is
+    # waiting on her and nothing ran (the server's tools ask whatever they say), and a server
+    # that rewrites its descriptions with each release would otherwise toast at every update,
+    # which teaches her to mute the channel that also carries a loop's question. The note persists
+    # and is counted unread; one click in the rules matrix makes it a toast.
+    NotificationKind(
+        "mcp",
+        "description_changed",
+        "MCP tool description changed",
+        "badge",
+        SEV_INFO,
+        owner="personalclaw.dashboard.lifecycle_hooks",
+    ),
     # The synthetic fallback, registered so the rules UI can show a row for it.
     NotificationKind(
         GENERIC_SOURCE,
@@ -810,6 +825,9 @@ _ATTENTION_FLAT: dict[str, tuple[str, str]] = {
     # A paused Agent Room. Its bare kind is its wire string, and without this row the rule for it
     # was system/generic's.
     "room_paused": ("agent", "room_paused"),
+    # Its own wire string, not the bare `description_changed`: the digest groups by it and the SPA
+    # keys its label on it, and the bare kind says nothing of whose description it was.
+    "mcp_description_changed": ("mcp", "description_changed"),
 }
 
 #: Every wire string this build understands, for resolution. Legacy entries win a collision:
@@ -860,6 +878,8 @@ TASK_DUE = "task_due"
 AUTO_DENIED = "auto_denied"
 #: The runs a restart or a stop left undone, waiting on the Triggers page's review.
 RUN_REVIEW = "run_review"
+#: A server whose read-only labels the owner does not trust changed a tool's description.
+MCP_DESCRIPTION_CHANGED = "mcp_description_changed"
 GENERIC = GENERIC_KIND
 
 #: Every constant above, for the import-time consistency check and the drift test.
@@ -887,6 +907,7 @@ WIRE_CONSTANTS: tuple[str, ...] = (
     TASK_DUE,
     AUTO_DENIED,
     RUN_REVIEW,
+    MCP_DESCRIPTION_CHANGED,
     GENERIC,
 )
 

@@ -349,9 +349,11 @@ class SecurityConfig:
     :mod:`personalclaw.security` (always enforced, read-only). ``denied_commands``
     here holds USER-added regexes, appended to the built-ins at screening time.
 
-    ``mcp_elicitation_servers`` and ``mcp_read_only_servers`` are the odd ones out: not
-    denylists but ALLOWLISTS, and they live beside the others because they are the same kind
-    of decision — what a party other than the user is permitted to do on this machine.
+    ``mcp_elicitation_servers`` is the odd one out: not a denylist but an ALLOWLIST, and it lives
+    beside the others because it is the same kind of decision — what a party other than the user
+    is permitted to do on this machine. (Which MCP servers' read-only labels the owner trusts is
+    that kind of decision too, and is kept with each tool's definition, which a config field cannot
+    hold: `personalclaw.mcp_read_only_trust`.)
     """
 
     denied_commands: list[str] = field(
@@ -416,24 +418,6 @@ class SecurityConfig:
             "capability to it, and refuses the request if it asks anyway. A granted "
             "question is surfaced on the same approval card that gates tool calls, so "
             "it is answered by you and by nothing else. Set per server on the Tools "
-            "page.",
-        ),
-    )
-    # Whose READ-ONLY labels are believed. An MCP server marks a tool `readOnlyHint: true` to say
-    # it only reads, and a server can say that about anything — believed, the tool would run
-    # without a card and in Ask and Plan mode. So it is default-DENY and granted
-    # PER SERVER, like the elicitation grant above: an absent server's tools all ask. The read
-    # side is `personalclaw.mcp_client.declared_risk`.
-    mcp_read_only_servers: list[str] = field(
-        default_factory=list,
-        metadata=_meta(
-            "MCP Servers Whose Read-Only Labels You Trust",
-            "Names of configured MCP servers whose tools you trust to say when they only "
-            "read (the MCP `readOnlyHint` annotation). Empty by default: every tool of a "
-            "server absent from this list is treated as one that changes something, so it "
-            "asks, is refused in Ask and Plan mode, and is never approved by Trust reads. A "
-            "trusted server's read-only tools run as reads do — which a server that mislabels "
-            "a tool turns into a change nobody was asked about. Set per server on the Tools "
             "page.",
         ),
     )

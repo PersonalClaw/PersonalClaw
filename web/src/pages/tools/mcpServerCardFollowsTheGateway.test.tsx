@@ -55,7 +55,6 @@ function mockApi() {
         mcpPoolStats: () => Promise.resolve({}),
         toolGroups: () => Promise.resolve(null),
         mcpElicitationServers: () => Promise.resolve([]),
-        mcpReadOnlyServers: () => Promise.resolve([]),
         allowMcpServer: () => Promise.resolve({ ok: true, name: 'notes', allowed: true }),
         reconnectMcp: (name: string) => { reconnect(name); return Promise.resolve({}) },
       },

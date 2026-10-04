@@ -42,9 +42,11 @@ def isolated(tmp_path, monkeypatch):
         "personalclaw.subagent_persistence._subagents_dir", lambda: tmp_path / "agents"
     )
     # The owner trusts one server's read-only labels, and not the other's.
-    monkeypatch.setattr(
-        "personalclaw.mcp_client.read_only_labels_trusted", lambda server: server == "wiki"
-    )
+    from mcp_owner_allowed import trust_labels
+
+    from personalclaw.mcp_client import McpToolSpec
+
+    trust_labels("wiki", [McpToolSpec("search", "The mcp/wiki/search tool.")])
     reset_ceiling()
     reset_meter()
     yield tmp_path
@@ -189,6 +191,26 @@ def test_it_is_told_which_servers_reads_it_was_not_shown_and_where_to_trust_them
     assert "notes-vault" in told, told
     assert "Tools page" in told and "read-only labels" in told, told
     assert "wiki" not in told.replace("mcp_wiki_search", ""), "a trusted server was named"
+
+
+def test_a_trusted_servers_read_that_is_new_since_is_named_with_where_she_reviews_it(tmp_path):
+    """The owner trusts the wiki's labels for the tools she saw: one it added since says it reads
+    and is not believed, so the run is told that, and that she reviews it on the Tools page."""
+    model = _drive(
+        tmp_path,
+        [
+            _tool("mcp/wiki/search", says_it_reads=True, believed=True),
+            _tool("mcp/wiki/export_all", says_it_reads=True, believed=False),
+        ],
+    )
+
+    assert "mcp_wiki_export_all" not in model.tools_seen[0]
+    told = _what_it_was_told(model)
+    assert "The MCP server wiki has tools that say they only read and are new or changed" in told
+    assert "reviews it, on the Tools page" in told, told
+    assert (
+        "once the owner trusts that server's read-only labels" not in told
+    ), "she does trust them: the untrusted server's sentence would be false"
 
 
 def test_a_server_whose_tools_do_not_say_they_read_is_not_named(tmp_path):

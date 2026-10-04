@@ -410,6 +410,43 @@ def register_lifecycle_hooks(app: web.Application) -> None:
 
     app.on_cleanup.append(_mcp_status_relay_shutdown)
 
+    def _notify_mcp_descriptions(server: str, tools: tuple[str, ...]) -> None:
+        """A server whose read-only labels the owner does not trust changed what some of its tools
+        say (`mcp_read_only_trust.observe`): she is told quietly, once per change, since a
+        description is text the model reads. Its kind delivers as a badge unless her rule says
+        otherwise, and opens the Tools page on that server."""
+        from urllib.parse import quote
+
+        from personalclaw import notification_kinds
+        from personalclaw.mcp_read_only_trust import description_notice
+
+        title, body = description_notice(server, tools)
+        app["state"].notify(
+            notification_kinds.MCP_DESCRIPTION_CHANGED,
+            title,
+            body,
+            meta={
+                "statusUrl": f"#/tools?q={quote(server)}",
+                "server": server,
+                "tools": list(tools),
+            },
+        )
+
+    async def _mcp_descriptions_relay_startup(app_: web.Application) -> None:
+        from personalclaw import mcp_read_only_trust
+
+        mcp_read_only_trust.subscribe(_notify_mcp_descriptions)
+
+    app.on_startup.append(_mcp_descriptions_relay_startup)
+
+    async def _mcp_descriptions_relay_shutdown(app_: web.Application) -> None:
+        """Stop telling when this gateway stops, so a later one in this process tells instead."""
+        from personalclaw import mcp_read_only_trust
+
+        mcp_read_only_trust.unsubscribe(_notify_mcp_descriptions)
+
+    app.on_cleanup.append(_mcp_descriptions_relay_shutdown)
+
     async def _mcp_client_shutdown(app_: web.Application) -> None:
         """Stop the idle sweeper + drain all live MCP connections on gateway stop
         (rel-mcp-server-pooling #46)."""

@@ -55,7 +55,6 @@ function mockApi(tools: unknown[]) {
       // `api` wholesale, so an omitted member is `undefined` and throws before its own
       // `.catch` runs, failing the fetcher instead of rendering the badges under test.
       mcpElicitationServers: () => Promise.resolve([] as string[]),
-      mcpReadOnlyServers: () => Promise.resolve([] as string[]),
     },
   }))
 }

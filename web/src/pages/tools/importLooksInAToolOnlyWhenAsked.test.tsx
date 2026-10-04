@@ -55,7 +55,6 @@ function mockApi() {
       mcpPoolStats: () => Promise.resolve({}),
       toolGroups: () => Promise.resolve(null),
       mcpElicitationServers: () => Promise.resolve([]),
-      mcpReadOnlyServers: () => Promise.resolve([]),
       probeMcp: () => probeMcp(),
       importMcpServer: (...a: unknown[]) => importMcpServer(...a),
     },

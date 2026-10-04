@@ -456,20 +456,18 @@ def _spec(name: str, annotations: dict | None = None):
     return spec
 
 
-async def _catalog_risk(monkeypatch) -> dict[str, str]:
+def _acme_tools() -> list:
+    return [
+        _spec("frobnicate"),
+        _spec("search_docs", {"readOnlyHint": True}),
+        _spec("wipe", {"readOnlyHint": False, "destructiveHint": True}),
+    ]
+
+
+async def _catalog_rows(monkeypatch) -> dict[str, dict]:
     from personalclaw.dashboard.handlers import tools as tools_mod
 
-    registry = _Registry(
-        {
-            "acme": _Server(
-                [
-                    _spec("frobnicate"),
-                    _spec("search_docs", {"readOnlyHint": True}),
-                    _spec("wipe", {"readOnlyHint": False, "destructiveHint": True}),
-                ]
-            )
-        }
-    )
+    registry = _Registry({"acme": _Server(_acme_tools())})
     monkeypatch.setattr("personalclaw.mcp_client.get_mcp_client_registry", lambda: registry)
 
     async def _no_registry_tools(*_a, **_kw):
@@ -483,7 +481,7 @@ async def _catalog_risk(monkeypatch) -> dict[str, str]:
 
     resp = await asyncio.wait_for(tools_mod.api_tools_list(SimpleNamespace()), timeout=30)
     rows = json.loads(resp.body.decode())["tools"]
-    return {r["name"]: r["risk_level"] for r in rows if r["name"].startswith("mcp/acme/")}
+    return {r["name"]: r for r in rows if r["name"].startswith("mcp/acme/")}
 
 
 @pytest.mark.asyncio
@@ -491,61 +489,24 @@ async def test_the_tools_page_takes_no_mcp_tool_for_a_read_on_its_name_or_its_wo
     """🔴 Red on main: `frobnicate` (no label) and `search_docs` were both shown as reads, from
     their names. A server may label anything read-only, so its label counts only once the owner
     trusts that server; a destructive label counts from anyone."""
-    from personalclaw import mcp_client
+    rows = await _catalog_rows(monkeypatch)
 
-    monkeypatch.setattr(mcp_client, "read_only_labels_trusted", lambda server: False)
-    risk = await _catalog_risk(monkeypatch)
-
-    assert risk["mcp/acme/frobnicate"] != "safe"
-    assert risk["mcp/acme/search_docs"] != "safe"
-    assert risk["mcp/acme/wipe"] == "destructive"
+    assert rows["mcp/acme/frobnicate"]["risk_level"] != "safe"
+    assert rows["mcp/acme/search_docs"]["risk_level"] != "safe"
+    assert rows["mcp/acme/wipe"]["risk_level"] == "destructive"
+    assert all(row["requires_approval"] for row in rows.values()), "each one asks"
 
 
 @pytest.mark.asyncio
 async def test_a_trusted_servers_read_label_is_believed(monkeypatch):
-    from personalclaw import mcp_client
+    """And the row says what the gate does with it: a believed read asks nobody, so the page does
+    not mark it as asking first."""
+    from mcp_owner_allowed import trust_labels
 
-    monkeypatch.setattr(mcp_client, "read_only_labels_trusted", lambda server: server == "acme")
-    risk = await _catalog_risk(monkeypatch)
+    trust_labels("acme", _acme_tools())
+    rows = await _catalog_rows(monkeypatch)
 
-    assert risk["mcp/acme/search_docs"] == "safe"
-    assert risk["mcp/acme/frobnicate"] == "caution", "trust believes a label; it invents none"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("op", ["add", "remove"])
-async def test_a_change_to_the_trust_reaches_the_running_sessions(tmp_path, monkeypatch, op):
-    """A session lists its tools when it starts, so it keeps the answer it started with. The
-    revoking direction is the one that matters: a server the owner stopped trusting because it
-    lied must not keep running its "reads" unasked in the chats already open. Every session is
-    reset, as an MCP server change already does."""
-    import json
-
-    from aiohttp import web
-    from aiohttp.test_utils import TestClient, TestServer
-
-    from personalclaw.dashboard.handlers import api_personalclaw_config_patch
-
-    monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
-    (tmp_path / "config.json").write_text(
-        json.dumps({"security": {"mcp_read_only_servers": ["acme"] if op == "remove" else []}})
-    )
-    resets: list[str] = []
-
-    async def _reset(_request):
-        resets.append("reset")
-        return 0
-
-    monkeypatch.setattr("personalclaw.dashboard.handlers.sessions._reset_all_sessions", _reset)
-    app = web.Application()
-    app["state"] = SimpleNamespace()
-    app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
-    async with TestClient(TestServer(app)) as client:
-        resp = await client.patch(
-            "/api/config/personalclaw",
-            json={"path": "security.mcp_read_only_servers", op: "acme", "confirm": True},
-        )
-        assert resp.status == 200, await resp.text()
-    stored = json.loads((tmp_path / "config.json").read_text())["security"]
-    assert stored["mcp_read_only_servers"] == (["acme"] if op == "add" else [])
-    assert resets == ["reset"]
+    assert rows["mcp/acme/search_docs"]["risk_level"] == "safe"
+    assert rows["mcp/acme/search_docs"]["requires_approval"] is False
+    assert rows["mcp/acme/frobnicate"]["risk_level"] == "caution", "trust believes a label only"
+    assert rows["mcp/acme/frobnicate"]["requires_approval"] is True
