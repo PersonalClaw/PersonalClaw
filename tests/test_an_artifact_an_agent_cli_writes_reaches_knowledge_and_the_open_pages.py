@@ -11,10 +11,10 @@ of it until it was reloaded.
 
 A process that writes the store now tells the gateway which artifact it wrote
 (``artifacts.changes``), and the gateway reads that artifact from its own store and tells both, as
-the work of the chat that made the call: an Incognito chat's artifact is shown on the open page and
-kept out of Knowledge, as it is when the gateway's own agent saves it. The gateway's own writes are
-heard once and handed to no one. The content scan reads an artifact's text once, at the tool that
-writes it.
+the work of the chat that made the call. An Incognito chat's agent writes nothing there at either
+door: its artifact tools change nothing in the library, as the gateway's own agent's do not. The
+gateway's own writes are heard once and handed to no one. The content scan reads an artifact's text
+once, at the tool that writes it.
 
 Driven as an agent CLI drives it: the real gateway asking for a sign-in, a page open on its event
 stream, and the real ``personalclaw mcp-core`` started with the server the gateway declares to the
@@ -349,19 +349,19 @@ async def test_an_artifact_the_agent_cli_deletes_leaves_knowledge_and_the_page(
 
 
 @pytest.mark.asyncio
-async def test_an_incognito_chats_artifact_is_shown_on_the_page_and_kept_out_of_knowledge(
+async def test_an_incognito_chats_agent_saves_nothing_whichever_agent_writes_for_it(
     tmp_path, monkeypatch
 ):
-    """🔴 Red on integration, where the open page was not told. An Incognito chat keeps nothing in
-    Knowledge, whichever agent writes for it: its artifact is in the Artifacts library and on the
-    open page, and Knowledge's search does not find it, as when the gateway's own agent saves it."""
+    """An Incognito chat changes nothing in the library, whichever agent writes for it: the
+    gateway's own agent and an agent CLI's tool server are refused alike, saying why, so nothing is
+    stored, the open page has nothing to be told and Knowledge's search finds nothing."""
     from personalclaw import memory_writes
     from personalclaw.tool_providers.registry import create_artifacts_provider
 
     async with _gateway(tmp_path, monkeypatch) as gw:
-        # The control: the gateway's own agent, saving for the Incognito chat in its turn's scope,
-        # under the mode the chat holds (`memory_writes.runs_as_its_session`).
-        since = len(gw.frames)
+        # The gateway's own agent, saving for the Incognito chat in its turn's scope, under the
+        # mode the chat holds (`memory_writes.runs_as_its_session`).
+        since, heard = len(gw.frames), len(gw.heard)
         token = mcp_core.set_current_session_key(INCOGNITO)
         try:
             with memory_writes.derived_from(INCOGNITO, memory_mode="incognito"):
@@ -375,12 +375,10 @@ async def test_an_incognito_chats_artifact_is_shown_on_the_page_and_kept_out_of_
                 )
         finally:
             mcp_core.reset_current_session_key(token)
-        assert result.success, result.error
-        assert await _until(lambda: gw.told(since) >= 1)
-        assert await gw.found("sextant") == []
+        assert not result.success
+        assert "This session cannot change your artifact library" in result.error, result.error
 
         async with _tool_server(gw, INCOGNITO) as tools:
-            since = len(gw.frames)
             ok, said = await tools.call(
                 "artifact_save",
                 {
@@ -389,10 +387,13 @@ async def test_an_incognito_chats_artifact_is_shown_on_the_page_and_kept_out_of_
                     "content": "Lanterns along the quay at dusk.",
                 },
             )
-            assert ok, said
-            assert gw.stored(_slug(said)) is not None
-            assert await _until(lambda: gw.told(since) >= 1), "the open page was not told"
-            assert await gw.found("lanterns") == []
+            assert not ok, said
+            assert "it keeps nothing, as an Incognito chat does" in said, said
+
+        await asyncio.sleep(SETTLE_SECS)
+        assert gw.told(since) == 0 and gw.heard[heard:] == [], "nothing was written to tell of"
+        assert registry.get_provider("native").list() == []
+        assert await gw.found("sextant") == [] and await gw.found("lanterns") == []
 
 
 @pytest.mark.asyncio

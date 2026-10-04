@@ -533,13 +533,16 @@ def _read_artifact_content(args: dict[str, Any]) -> tuple[str | None, str | None
     """Resolve artifact content from inline ``content`` or a ``content_file``.
 
     Returns ``(content, error)``. A ``content_file`` is gated by
-    ``is_sensitive_path`` before reading (mirrors notify_attachment). ``content`` is None
+    ``is_sensitive_path`` before reading (mirrors notify_attachment), and is never a file the
+    file tools hold back for what it is (``file_scope.held_from_reads``: PersonalClaw's own
+    stores, and your memory in work that may read none of it). ``content`` is None
     when neither was supplied (a metadata-only update). A ``content: null`` is not supplied
     either: read as ``str(None)`` it saved the four characters ``None`` as the body, and wrote
     them into the file a file-backed artifact points at.
     """
     from pathlib import Path
 
+    from personalclaw.file_scope import held_from_reads
     from personalclaw.hooks import FileTooLargeError, safe_read_file_bytes
     from personalclaw.security import is_sensitive_path
 
@@ -547,6 +550,8 @@ def _read_artifact_content(args: dict[str, Any]) -> tuple[str | None, str | None
     if cfile:
         if is_sensitive_path(cfile):
             return None, "content_file resolves to a sensitive path"
+        if (held := held_from_reads(str(cfile))) is not None:
+            return None, f"content_file {held} {held.hint}"
         try:
             raw = safe_read_file_bytes(str(Path(cfile)))
         except FileTooLargeError as e:
@@ -837,6 +842,86 @@ def iterate_instruction(kind: str, slug: str, image_edits: bool | None) -> str:
     )
 
 
+# ── work that keeps nothing changes nothing in the library ─────────────────────────────────
+
+#: The tools that write the library: each makes a new artifact, or changes the one its ``slug``
+#: names (:data:`_CHANGE_BY_SLUG`).
+_WRITERS = frozenset(
+    {
+        "artifact_save",
+        "artifact_update",
+        "artifact_delete",
+        "image_generate",
+        "video_generate",
+        "document_create",
+        "sheet_create",
+        "deck_create",
+    }
+)
+_CHANGE_BY_SLUG = frozenset(
+    {
+        "artifact_update",
+        "artifact_delete",
+        "image_generate",
+        "document_create",
+        "sheet_create",
+        "deck_create",
+    }
+)
+
+#: The code such a refusal carries, the one the library's routes and the workflow rule refuse work
+#: that keeps nothing under.
+_KEEPS_NOTHING = "restricted_session"
+
+
+def _private_chat_refusal(name: str, args: dict[str, Any], session_key: str) -> Any:
+    """The refusal of a call to the library's writer *name* made for *session_key* in work that
+    keeps nothing (``memory_reads.keeps_nothing``: an Incognito or Temporary chat's, the work such
+    a chat starts, work whose chat's memory setting cannot be read), or ``None``. Such work changes
+    nothing in your library, which outlives it: no new artifact, no new version, no removal, as
+    the library's routes refuse every change a request made for it asks
+    (``dashboard.handlers._shared._is_restricted_session``, which asks the same check)."""
+    if name not in _WRITERS:
+        return None
+    from personalclaw import memory_reads
+    from personalclaw.action_providers.services import get_action_services
+
+    services = get_action_services()
+    mode = memory_reads.keeps_nothing(services.state if services else None, session_key)
+    if not mode:
+        return None
+    changing = name in _CHANGE_BY_SLUG and bool(str(args.get("slug") or "").strip())
+    nothing = "Nothing was changed." if changing else "Nothing was saved."
+    return tool_failure(
+        "This session cannot change your artifact library: "
+        f"{memory_reads.why_it_keeps_nothing(mode)}. {nothing} Tell the user so, and why; do not "
+        "try it another way.",
+        code=_KEEPS_NOTHING,
+    )
+
+
+def _live_view_refusal(art: Any, *, change: bool) -> Any:
+    """Why the agent's tool may not read (with *change*: write) the file the file-backed artifact
+    *art* is a live view of, or ``None``: every read of such an artifact reads its file, and a save
+    of its text writes it (``artifacts.native``), so it reaches what the file tools hold back for
+    what it is (``file_scope.held_from_reads``: PersonalClaw's own stores, your memory in work that
+    may read none of it) and, for a change, a memory document the work may change none of
+    (``file_scope.memory_kept_from_work``). A binary artifact is a copy of the file it was saved
+    from, never a view of it."""
+    import os
+
+    from personalclaw.artifacts.models import is_binary_kind
+    from personalclaw.file_scope import held_from_reads, memory_kept_from_work
+
+    if not art.source_path or is_binary_kind(art.kind):
+        return None
+    if change:
+        kept = memory_kept_from_work(f"path {art.source_path!r}", os.path.realpath(art.source_path))
+        if kept is not None:
+            return kept
+    return held_from_reads(art.source_path)
+
+
 def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
     """Dispatch artifact_* tools directly against the native provider entity.
 
@@ -869,6 +954,11 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         )
 
     try:
+        # Work that keeps nothing changes nothing in the library (`_private_chat_refusal`),
+        # refused before anything is read, made or sent.
+        if (held := _private_chat_refusal(name, args, sk)) is not None:
+            _audit("denied", str(args.get("slug") or ""), _KEEPS_NOTHING)
+            return held
         if name == "artifact_save":
             content, err = _read_artifact_content(args)
             if err:
@@ -955,6 +1045,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             if got is None:
                 _audit("not_found", args["slug"])
                 return tool_failure(f"Artifact not found: {args['slug']}")
+            if (held := _live_view_refusal(got, change=False)) is not None:
+                _audit("denied", got.slug, held.control)
+                return tool_failure(f"Artifact {got.slug!r} shows a file: {held} {held.hint}")
             _audit("success", got.slug)
             return redacted(got.content)
 
@@ -965,6 +1058,12 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
                 return tool_failure(f"{err}")
             # Read as the kind it is stored as; one that does not exist is answered below.
             target = prov.get(args["slug"])
+            if target is not None and content is not None:
+                if (held := _live_view_refusal(target, change=True)) is not None:
+                    _audit("denied", target.slug, held.control)
+                    return tool_failure(
+                        f"Artifact {target.slug!r} shows a file: {held} {held.hint}"
+                    )
             if target is not None:
                 refused = _text_refusal(
                     target.kind, description=args.get("description") or "", content=content
@@ -1627,8 +1726,9 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
     """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
-    call, arguments the tool's schema refuses (``mcp_shared.admitted_arguments``), and an image
-    ``image_generate`` will refuse to make (:func:`_image_request_refusal`).
+    call, arguments the tool's schema refuses (``mcp_shared.admitted_arguments``), a change to the
+    library that the work the call is made for may not make (:func:`_private_chat_refusal`), and
+    an image ``image_generate`` will refuse to make (:func:`_image_request_refusal`).
 
     A call with no image model bound is left to the call, which says so itself."""
     from personalclaw.artifacts import registry
@@ -1638,6 +1738,8 @@ def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
     args = admitted_arguments(name, raw_args, _validate_args)
     if isinstance(args, ToolFailure):
         return args
+    if (held := _private_chat_refusal(name, args, _resolve_session_key())) is not None:
+        return held
     if name != "image_generate":
         return None
     prov = registry.get_provider("native")

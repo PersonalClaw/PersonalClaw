@@ -130,9 +130,10 @@ TOOL_META_REFUSED_BY = "refused_by"
 #: The ``tool_meta`` key a TOOL_RESULT carries when a control the TOOL enforces refused the call,
 #: before or as it ran, with :data:`TOOL_META_REFUSED_BY` naming the control: ``shell_denylist``,
 #: ``sensitive_path``, ``own_store``, ``owner_only`` or ``scheduler`` (the bash tool's),
-#: ``file_scope`` (the file tools'), and for a change to long-term memory the work may not make
+#: ``file_scope`` (the file tools'), for a change to long-term memory the work may not make
 #: (both) the memory-write refusal's code, ``restricted_session_block`` or
-#: ``app_memory_not_granted``. Its value is the rule the control applied, in words fit for
+#: ``app_memory_not_granted``, and for a read of it the work may not make (both)
+#: ``memory_withheld``. Its value is the rule the control applied, in words fit for
 #: the audit log: the pattern, or the sentence naming the place it guards, never a value the call
 #: was handed. Such a call is audited ``refused`` by that control, whatever policy waived its ask.
 TOOL_META_REFUSED_RULE = "refused_rule"

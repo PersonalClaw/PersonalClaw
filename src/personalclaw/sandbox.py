@@ -11,7 +11,9 @@ other SSH files (keys, config, etc.), using platform-native isolation:
 
 Both also keep what runs as the owner (``owner_only``) unwritable at every level, and, for a
 command started for work that may change none of your memory (an Incognito or Temporary chat's,
-an app's not given your memory), the memory folders too (:func:`_memory_fence`).
+an app's not given your memory), the memory folders too (:func:`_memory_fence`), which a command
+started for work that may read none of your memory (a Temporary chat's, an app's not given your
+memory) cannot read either (:func:`_memory_hidden`).
 
 A command a run starts is also held to the run's egress tier here (:func:`wrap_argv`): when the
 tier takes its network away, the Linux child gets a network namespace of its own with nothing in
@@ -837,6 +839,7 @@ def _build_launcher_script(sandbox_level: str = "strict", *, network: bool = Tru
     owner_only_names_json = json.dumps(owner_only_names)
     pinned_json = json.dumps(_pinned_dirs(realpath_only=True, include_home=False))
     memory_json = json.dumps(_memory_fence(realpath_only=True))
+    memory_hidden_json = json.dumps(_memory_hidden(realpath_only=True))
     strict_host_key_opt = (
         " -o StrictHostKeyChecking=accept-new" if _ssh_supports_accept_new() else ""
     )
@@ -859,6 +862,9 @@ _MS_BIND       = 4096
 _MS_REC        = 16384
 _MS_PRIVATE    = 1 << 18
 _MS_RDONLY     = 1
+_MS_NOSUID     = 2
+_MS_NODEV      = 4
+_MS_NOEXEC     = 8
 _MS_REMOUNT    = 32
 
 REAL_UID = {uid}
@@ -874,6 +880,7 @@ OWNER_HOME = {owner_home_json}
 OWNER_ONLY_NAMES = {owner_only_names_json}
 PINNED = {pinned_json}
 MEMORY_FOLDERS = {memory_json}
+MEMORY_HIDDEN = {memory_hidden_json}
 NO_NETWORK = {not network}
 
 # The tmpfs the empty bind sources come from, first usable one wins. Same-fs binds (e.g. /tmp
@@ -907,6 +914,17 @@ def _home_device():
         return os.stat(os.path.expanduser("~")).st_dev
     except OSError:
         return None
+
+
+def _kept_flags(path):
+    """The flags a read-only remount of the mount at *path* keeps from it: its nosuid, nodev and
+    noexec. In a user namespace the kernel locks each of them on a mount that came from outside
+    it, and a remount that would clear one is refused (EPERM): a scratch tmpfs is mounted
+    nosuid,nodev, and so is many a home. statvfs reports them in the bits mount takes."""
+    try:
+        return os.statvfs(path).f_flag & (_MS_NOSUID | _MS_NODEV | _MS_NOEXEC)
+    except OSError:
+        return 0
 
 
 def _remove_stale_scratch(parent):
@@ -1134,25 +1152,31 @@ def main():
                     continue
                 p = path.encode()
                 libc.mount(p, p, None, _MS_BIND | _MS_REC, None)
-            if libc.mount(None, h, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None) != 0:
+            readonly = _MS_BIND | _MS_REMOUNT | _MS_RDONLY | _kept_flags(OWNER_HOME)
+            if libc.mount(None, h, None, readonly, None) != 0:
                 sys.exit(f"sandbox: could not fence the home: errno {{ctypes.get_errno()}}")
 
         # Long-term memory, for a command started for work that may change none of it: each
         # memory folder, made when it is missing, is bound onto itself read-only, so nothing in it
         # is written, added or removed from in here, and as a mount point it stays where it is (the
-        # folder holding it is an entry at the top of the home, fixed above). One that cannot be
-        # fenced stops the command.
-        for target in MEMORY_FOLDERS:
+        # folder holding it is an entry at the top of the home, fixed above). For work that may
+        # read none of it, an empty folder of this launch's is bound over it read-only instead, so
+        # nothing in it is read either. One that cannot be fenced stops the command.
+        for target in dict.fromkeys(MEMORY_FOLDERS + MEMORY_HIDDEN):
             try:
                 os.makedirs(target, mode=0o700, exist_ok=True)
             except OSError:
                 pass
             t = target.encode()
+            source = tempfile.mkdtemp(dir=scratch).encode() if target in MEMORY_HIDDEN else t
             if (
                 not os.path.isdir(target)
                 or os.path.islink(target)
-                or libc.mount(t, t, None, _MS_BIND | _MS_REC, None) != 0
-                or libc.mount(None, t, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY, None) != 0
+                or libc.mount(source, t, None, _MS_BIND | _MS_REC, None) != 0
+                or libc.mount(
+                    None, t, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY | _kept_flags(target), None
+                )
+                != 0
             ):
                 sys.exit(f"sandbox: could not fence memory: errno {{ctypes.get_errno()}}")
 
@@ -1304,9 +1328,14 @@ def _build_seatbelt_profile(sandbox_level: str = "strict", *, network: bool = Tr
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-write* ({"subpath" if is_dir else "literal"} "{escaped}"))')
     # Long-term memory, never written from in here by a command started for work that may change
-    # none of it (`_memory_fence`), at any level. The folder that holds the memory folders keeps
-    # its own entry too, as the home does below, so they stay at the paths these rules name.
-    memory = _memory_fence(realpath_only=False)
+    # none of it (`_memory_fence`), nor read by one started for work that may read none of it
+    # (`_memory_hidden`), at any level. The folder that holds the memory folders keeps its own
+    # entry too, as the home does below, so they stay at the paths these rules name.
+    hidden = _memory_hidden(realpath_only=False)
+    memory = list(dict.fromkeys(_memory_fence(realpath_only=False) + hidden))
+    for target in hidden:
+        escaped = target.replace('"', '\\"')
+        rules.append(f'(deny file-read* (subpath "{escaped}"))')
     for target in memory:
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-write* (subpath "{escaped}"))')
@@ -1380,10 +1409,30 @@ def _memory_fence(*, realpath_only: bool) -> list[str]:
     unless *realpath_only*: all of them when the work the command is started for may change none of
     your memory (``memory_writes.changes_no_memory``: an Incognito or Temporary chat's, an app's
     not given your memory), none for any other. Asked when the command is wrapped, in its work."""
-    from personalclaw import memory, memory_writes
+    from personalclaw import memory_writes
 
     if not memory_writes.changes_no_memory():
         return []
+    return _memory_folders(realpath_only=realpath_only)
+
+
+def _memory_hidden(*, realpath_only: bool) -> list[str]:
+    """The memory folders a command started now may not read either (:func:`_memory_fence`'s
+    folders, spelled as it spells them): all of them when the work the command is started for may
+    read none of your memory (``memory_reads.memory_read_refusal``: a Temporary chat's, an app's
+    not given your memory), none for any other. Asked when the command is wrapped, in its work."""
+    from personalclaw import memory_reads
+
+    if not memory_reads.memory_read_refusal():
+        return []
+    return _memory_folders(realpath_only=realpath_only)
+
+
+def _memory_folders(*, realpath_only: bool) -> list[str]:
+    """The memory folders (``memory.memory_folders``), each in both of its spellings unless
+    *realpath_only*."""
+    from personalclaw import memory
+
     out: list[str] = []
     for folder in memory.memory_folders():
         real = os.path.realpath(folder)

@@ -18,7 +18,8 @@ mode is read (`ownership.inherit_mode`): the session it names, judged up the cha
 the chat at the top (``memory_reads.reach_of``: a subagent's or a workflow step's call is its
 chat's), each session read over the gateway's live chats, and the work it runs inside
 (``memory_writes.restricted_mode``), so a native agent's call is held to its chat's turn whichever
-session it names. A call made for no chat (yours, from your own pages, a scheduled job's, an
+session it names: ``memory_reads.keeps_nothing``, the answer the gateway's routes and the agent's
+artifact tools ask too. A call made for no chat (yours, from your own pages, a scheduled job's, an
 app's) keeps what it does and is not held to this rule.
 """
 
@@ -58,26 +59,18 @@ CONTROLS_ITS_RUN = frozenset(
 _DASHBOARD_UI = "dashboard:ui"
 _DASHBOARD = "dashboard:"
 
-#: Why such a call is refused, by the mode it is made under; any other mode is one nothing can say.
-_WHY = {
-    "temporary": "it keeps nothing, as a Temporary chat does",
-    "incognito": "it keeps nothing, as an Incognito chat does",
-}
-_UNREADABLE_WHY = "the memory setting of the chat it is for cannot be read"
-
-#: The modes that keep nothing, the strictest first.
-_BY_STRICTNESS = ("temporary", memory_writes.UNREADABLE, "incognito")
-
 
 def refusal(session_key: str, operation: str, *, run_id: str = "", state: Any = None) -> str:
     """Why a call made for the session *session_key* may not make *operation* (on the run
     *run_id*, when the call is for one), or ``""`` when it may. *state* is the gateway's dashboard
     state, whose live chats the one reader of a session's mode reads first. A refusal is audited
     here."""
-    mode = _mode_of(session_key, state)
-    if mode is None:
+    from personalclaw import memory_reads
+
+    mode = memory_reads.keeps_nothing(state, session_key)
+    if not mode:
         return ""
-    why = _WHY.get(mode, _UNREADABLE_WHY)
+    why = memory_reads.why_it_keeps_nothing(mode)
     if mode in memory_writes.RESTRICTED_MODES:
         if run_id and operation in CONTROLS_ITS_RUN:
             if its_own_run(session_key, run_id):
@@ -92,20 +85,6 @@ def refusal(session_key: str, operation: str, *, run_id: str = "", state: Any = 
 def sentence(why: str) -> str:
     """What a refused call is told, *why* being :func:`refusal`'s answer."""
     return f"this session cannot mutate: {why}"
-
-
-def _mode_of(session_key: str, state: Any) -> str | None:
-    """The mode a call made for *session_key* runs under when it keeps nothing (``"temporary"``,
-    ``"incognito"``, or ``memory_writes.UNREADABLE``): the strictest of the session's own, judged
-    up the chain it works for (``memory_reads.reach_of``, so a subagent's or a step's call is its
-    chat's), and the work the call runs inside; ``None`` for a call that keeps what it does."""
-    from personalclaw import memory_reads
-
-    modes = {
-        memory_writes.restricted_mode(),
-        memory_reads.reach_of(state, session_key).restricted_mode,
-    }
-    return next((mode for mode in _BY_STRICTNESS if mode in modes), None)
 
 
 def its_own_run(session_key: str, run_id: str) -> bool:

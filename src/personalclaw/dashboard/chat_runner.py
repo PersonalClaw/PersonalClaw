@@ -1673,7 +1673,10 @@ def _inject_artifact_content(state: "DashboardState", session: _ChatSession, mes
     Also records a ``referenced`` event carrying the session id, so an artifact's
     timeline shows where it was used. That recorder is idempotent per session, so a
     long conversation about one artifact leaves one impression rather than a turn-by-
-    turn flood.
+    turn flood. A chat that keeps nothing (``memory_reads.keeps_nothing``: an Incognito or
+    Temporary chat's) leaves no such trace in the library, which outlives it, as the library's
+    own route refuses one for it, and its agent is not invited to change what it was shown: its
+    artifact tools change nothing in the library (``mcp_artifacts``).
     """
     slugs: list[str] = []
     for m in reversed(session.messages):
@@ -1696,7 +1699,9 @@ def _inject_artifact_content(state: "DashboardState", session: _ChatSession, mes
         prov = None
     if prov is None:
         return message
+    from personalclaw import memory_reads
 
+    keeps_nothing = bool(memory_reads.keeps_nothing(state, session.key))
     blocks: list[str] = []
     for slug in slugs:
         try:
@@ -1714,6 +1719,8 @@ def _inject_artifact_content(state: "DashboardState", session: _ChatSession, mes
             body, _ = redact_credentials(body)
             body, _ = redact_exfiltration_urls(body)
             blocks.append(f"{label}\n\n{body}" if body.strip() else f"{label}\n\n(Empty.)")
+        if keeps_nothing:
+            continue
         try:
             prov.record_impression(slug, by="user", session_id=session.key)
         except Exception:  # noqa: BLE001 — a timeline entry must never break a turn
@@ -1721,10 +1728,15 @@ def _inject_artifact_content(state: "DashboardState", session: _ChatSession, mes
 
     if not blocks:
         return message
+    use = (
+        "use it to answer. This chat keeps nothing, so it changes none of them"
+        if keeps_nothing
+        else "use it to answer, and if you change one, call artifact_update on that same slug so "
+        "the change lands as a new version"
+    )
     header = (
         "The user referenced the following artifact(s). The CURRENT content of each is "
-        "included below — use it to answer, and if you change one, call artifact_update "
-        "on that same slug so the change lands as a new version.\n\n"
+        f"included below — {use}.\n\n"
     )
     return f"{header}{chr(10).join(blocks)}\n\n---\n\n{message}"
 

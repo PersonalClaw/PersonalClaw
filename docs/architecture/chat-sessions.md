@@ -58,7 +58,22 @@ chat, channel thread, loop worker, webhook, subagent).
   server and a batch `subagent_run` call, or a native agent's workflow tools in
   the gateway), such a chat's call starts a run or a batch and changes only a run
   it started; anything else it asks is refused, saying why, by the one rule both
-  ask (`workflows/restricted_calls.py`).
+  ask (`workflows/restricted_calls.py`). Such a chat changes nothing in the
+  artifact library, which outlives it: the library's routes refuse every change a
+  request made for it asks (`_is_restricted_session`), and the agent's artifact
+  tools, in the gateway and in an agent CLI's tool server, refuse every save,
+  new version and removal (`artifact_save`, `artifact_update`, `artifact_delete`,
+  the document, sheet and deck tools, `image_generate`, `video_generate`:
+  `mcp_artifacts._private_chat_refusal`) before anyone is asked, under the code
+  `restricted_session`, an artifact the chat's own agent made included. Both ask
+  one check, `memory_reads.keeps_nothing`, and so does the chat's turn, which
+  reads an artifact the person mentions in it without stamping the artifact with
+  the chat (`chat_runner._inject_artifact_content`, as the route that records a
+  mention refuses one for it). A run it starts writes nothing to the library
+  either, under the mode the run inherited (`memory_reads.why_work_keeps_nothing`):
+  a stage's `publish:` is a no-op whose result says why
+  (`publish_seam.apply_publish`), and an `artifact-update` or `render-report`
+  step fails saying why, while a `render_only` report still renders.
 - **`memory_reads.py` — whose work may read your memory.** `reach_of(state,
   key)` is the one answer every memory read asks, for the work a session key
   names: it follows a subagent to the session it works for, an app's agent run to
@@ -79,7 +94,24 @@ chat, channel thread, loop worker, webhook, subagent).
   `triage_rules_list`, `get_context`'s memory tier and the Learning page's facts
   all ask it, and a refused read says why (`Reach.refusal`). A turn that read none
   says so in its details: its context line is `context_without_memory`
-  (`memory_reads.fed`), kept on its answer for a reload.
+  (`memory_reads.fed`), kept on its answer for a reload. The memory documents
+  are files too, which the agent's file tools and shell reach with no session key
+  to hand, so they ask it for the work running now
+  (`memory_reads.memory_read_refusal`: the session the call is bound to and the
+  session the work derives from, the first refusal of either): for such work
+  `read_file`, `list_dir`, `glob`, `grep` and `repo_map` refuse a path in the
+  memory folders in those words, before anyone is asked, and leave the folders
+  out of every listing and search (`file_scope`, under the control
+  `memory_withheld`); the shell refuses a command that names a path there
+  (`file_scope.memory_named_in`); the OS sandbox keeps the folders unreadable to
+  every command started for it (`sandbox._memory_hidden`); and the tools that
+  read a file past the file tools read nothing there (`file_scope.held_from_reads`):
+  an artifact's `content_file`, the file `notify_attachment` sends, and an
+  artifact that shows a file (a file-backed artifact reads and writes its file at
+  every call, so `artifact_get` and `artifact_update` hold it as the file tools
+  hold the file, and change a memory document only for work that may change it:
+  `mcp_artifacts._live_view_refusal`). An Incognito chat reads them as any chat
+  does.
 
   The same grant is what lets an app's work change your memory. The write scope
   (`memory_writes.derived_from`) names the app whose work it is: the turn's
@@ -96,7 +128,8 @@ chat, channel thread, loop worker, webhook, subagent).
   judged the same way, as the work it does for the chat at the top. The routes'
   guard of a memory change (`_is_restricted_session`, and the lesson route's own
   check) refuses it when any session up the chain keeps nothing
-  (`Reach.restricted_mode`), whatever the caller's own key is marked, and what it
+  (`memory_reads.keeps_nothing`, over `Reach.restricted_mode`), whatever the
+  caller's own key is marked, and what it
   writes is filed under that chat (`memory_writes.filed_under`, found by the same
   walk the middleware asks for the app). So a subagent's `memory_remember` saves
   its lesson where its chat keeps memory, filed under the chat, and is refused in
@@ -160,7 +193,9 @@ chat, channel thread, loop worker, webhook, subagent).
     and tell the agent nothing was written. The shell refuses a command that
     names a path there and does more than read it (`file_scope.memory_named_in`),
     and the OS sandbox keeps the folders read-only to every command started for
-    such work (`sandbox._memory_fence`), whatever the command says. An ordinary
+    such work (`sandbox._memory_fence`), whatever the command says; for work that
+    may read none of your memory either, nothing there is read (see
+    `memory_reads.py` above). An ordinary
     chat's write of a memory document, and the owner's save of one in Files,
     is the document's store's own write (`memory.write_document`), under the
     documents' lock and indexed. What this does not hold is in

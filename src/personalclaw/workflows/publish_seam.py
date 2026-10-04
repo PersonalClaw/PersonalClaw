@@ -84,6 +84,10 @@ async def apply_publish(
     the content scan before anything is written (``knowledge.artifact_ingest.text_refusal``); what
     the scan refuses, or could not check, is not published, and the result says why in the scan's
     words, as it says why a registry write failed.
+
+    A run started for work that keeps nothing (an Incognito or Temporary chat's) publishes nothing:
+    the result says why, and the node's output stays the run's, as every change to the library such
+    work asks for is refused (``mcp_artifacts``).
     """
     from personalclaw.workflows.engine import NodeResult
     from personalclaw.workflows.publish import (
@@ -112,6 +116,16 @@ async def apply_publish(
         )
     if spec is None or result.state not in (InstanceState.DONE, InstanceState.DEGRADED):
         return result
+    # A run an Incognito or Temporary chat started runs under the mode its record inherited
+    # (`run_start.run_context`), and work that keeps nothing changes nothing in the library, which
+    # outlives it, as the agent's artifact tools and the library's routes hold it.
+    from personalclaw import memory_reads
+
+    if why := memory_reads.why_work_keeps_nothing():
+        return _with_publish(
+            result,
+            {"action": "noop", "reason": f"{why}, so nothing was published to your library"},
+        )
 
     content = result.output if isinstance(result.output, str) else ""
     if not content and isinstance(result.output, dict):

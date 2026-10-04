@@ -531,8 +531,11 @@ wrote, `owner_grants.py`). An agent writes none of them, at three layers that ea
 - **The fence**: the sandbox around the agent's shell denies the write. On macOS a Seatbelt
   `deny file-write*` names each path at every level. On Linux the fence is the home's own entries,
   not whichever files are there when the shell starts: the home is bound onto itself read-only, and
-  every entry already in it except these is bound back writable. A bind on one file holds that
-  inode — it cannot hold a name that does not exist yet, and the kernel dissolves it when the file
+  every entry already in it except these is bound back writable. Each read-only remount keeps the
+  nosuid, nodev and noexec its mount has, which a user namespace does not let it drop, so a home
+  mounted with them is fenced like any other (`_kept_flags` in the namespace launcher). A bind on
+  one file holds that inode — it cannot hold a name that does not exist yet, and the kernel
+  dissolves it when the file
   is replaced, which every config save does — so an owner-only name is refused whether it exists or
   not, and however often it is replaced. The price, on Linux only: the shell cannot add, remove or
   rename an entry at the top of the home, and a top-level file PersonalClaw replaces while the shell
@@ -654,11 +657,14 @@ its home. A mention that names a note by its file alone resolves to the one watc
 with that file (`dir_source.note_file`); a name two notes share resolves to neither.
 
 PersonalClaw's own stores inside the workspace (every state-inventory entry inside its `workspace`
-entry: the knowledge library's database and stored documents, the lexicon) are not files to the
-agent. The file tools refuse them and leave them out of every listing, and the tool-call screen
-(`hooks.HookManager.on_tool_call`) refuses a shell command that names one before any approval, with
-the tool to use instead (`file_scope.store_named_in`): a raw read hands the model pages of a
-database past the masking its own tools apply, and a write breaks the store.
+entry, and every partition an entry declares there: the knowledge library's database and stored
+documents, the lexicon, and each working folder's memory database and learning log under `_ext`)
+are not files to the agent. The file tools refuse them and leave them out of every listing, the
+tools that read a file past them read none of them (`file_scope.held_from_reads`: an artifact's
+`content_file`, the file `notify_attachment` sends, an artifact that shows a file), and the
+tool-call screen (`hooks.HookManager.on_tool_call`) refuses a shell command that names one before
+any approval, with the tool to use instead (`file_scope.store_named_in`): a raw read hands the model
+pages of a database past the masking its own tools apply, and a write breaks the store.
 
 ### A tool reads only when it declares so (`task_modes.py`)
 
@@ -1426,9 +1432,14 @@ capture — enforced in the after-turn path, session listing/search, and the
 recall API — and keep nothing in long-term memory by any path: the stores
 refuse every write made for one (`memory_writes.py`, failing closed on a mode it
 cannot read), the agent's file tools and shell change nothing in the memory
-folders for one (refused before anyone is asked, and kept read-only to its
-commands by the OS sandbox; what that does not cover is
+folders for one, and for a temporary one read nothing there either (refused
+before anyone is asked, and kept read-only, or unreadable, to its commands by the
+OS sandbox; what that does not cover is
 [limitations §19](../security/limitations.md#19-a-private-chat-is-kept-out-of-the-memory-folders-not-out-of-every-store)),
+nothing in the artifact library changes for one: its artifact tools save,
+change and remove nothing there, an artifact mentioned in it is not stamped with
+it, and a run it starts publishes nothing there (`memory_reads.keeps_nothing`,
+the check the library's routes make),
 no background model is given anything of one
 (`blocks_background_models`), and nothing of one reaches any model but the one
 its turn runs on: not the embedding model (its memory is searched by keyword and

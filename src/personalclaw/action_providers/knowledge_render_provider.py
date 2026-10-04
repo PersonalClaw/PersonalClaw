@@ -132,6 +132,17 @@ class KnowledgeRenderReportActionProvider(ActionProvider):
                     "digits and hyphens (it becomes a directory name)"
                 ),
             )
+        # A run an Incognito or Temporary chat started changes nothing in the library, which
+        # outlives the chat, as the agent's artifact tools and the library's routes hold it; a
+        # render that writes nothing (`render_only`, above) still runs.
+        from personalclaw import memory_reads
+
+        if why := memory_reads.why_work_keeps_nothing():
+            return ActionResult(
+                success=False,
+                error=f"render-report: {why}, so nothing was written to your library",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
 
         try:
             from personalclaw.artifacts.registry import get_provider

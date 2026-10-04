@@ -157,11 +157,11 @@ async def _list_marketplace_skills() -> list[dict[str, Any]]:
 def _is_restricted_session(state: DashboardState, request: "Any") -> bool:
     """Check if request comes from work that keeps nothing: an Incognito or Temporary chat's, the
     work such a chat started, or work for a chat whose mode nothing can say. Judged as the work it
-    does for the chat at the top (``memory_reads.reach_of``, :attr:`Reach.restricted_mode`): a
-    subagent's or a workflow step's request keeps nothing when anything it works for keeps
-    nothing, whatever its own key is marked. Each session's mode is read by the one reader of a
-    session's mode, over the gateway's live chats: the live chat first, then the registry, the
-    transcript and a step's run.
+    does for the chat at the top (``memory_reads.keeps_nothing``, the check the agent's artifact
+    and workflow tools make too): a subagent's or a workflow step's request keeps nothing when
+    anything it works for keeps nothing, whatever its own key is marked. Each session's mode is
+    read by the one reader of a session's mode, over the gateway's live chats: the live chat first,
+    then the registry, the transcript and a step's run.
 
     Reads X-Session-Key header (set by browser and MCP subprocesses).
     Returns True if the session should be blocked from memory operations.
@@ -171,7 +171,7 @@ def _is_restricted_session(state: DashboardState, request: "Any") -> bool:
         return False
     from personalclaw import memory_reads
 
-    return bool(memory_reads.reach_of(state, sk).restricted_mode)
+    return bool(memory_reads.keeps_nothing(state, sk))
 
 
 def _memory_refusal(state: DashboardState, request: "Any") -> str:

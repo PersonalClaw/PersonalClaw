@@ -1065,14 +1065,20 @@ be installed where its code runs as you (§7).
 In an Incognito or Temporary chat, and in the work of an app you did not give your memory, the agent
 changes nothing in the memory folders: `workspace/memory` in the home (preferences.md, projects.md
 and the daily history) and `workspace/_ext` (each working folder's memory, its documents and its
-database).
+database). In a Temporary chat, and in the work of such an app, it reads nothing there either: a
+Temporary chat starts blank. An Incognito chat reads its memory, as its notice says.
 
 - `write_file` and `edit_file` refuse the change before you are asked to approve it, and tell the
-  agent nothing was written and why.
+  agent nothing was written and why, and an artifact that shows a memory document (one you saved
+  from Files) changes nothing in it either. Where the work reads no memory, `read_file`,
+  `list_dir`, `glob`, `grep` and `repo_map` refuse a path there and leave the folders out of what
+  they list and find, saying why, and nothing there is read through an artifact's `content_file`,
+  a file `notify_attachment` sends, or an artifact that shows the file.
 - The agent's shell refuses a command that names a path there and does more than read it, before
-  you are asked.
+  you are asked; where the work reads no memory, it refuses any command that names a path there.
 - The OS sandbox keeps those folders read-only to every command started for such work, whatever its
-  text says: the native agent's shell, and an agent CLI started for that chat.
+  text says, and unreadable to every command started for work that reads no memory: the native
+  agent's shell, and an agent CLI started for that chat.
 
 What this does not hold:
 
@@ -1083,15 +1089,18 @@ What this does not hold:
   chat is not fenced. In a private chat on such a process, the CLI's own file and shell tools are
   not held, and a tool it runs without asking first is screened by nothing (§1, §11).
 - **PersonalClaw's databases.** A command that opens one itself is not fenced: `memory.db` at the
-  top of the home is not refused either, and the knowledge library's and the vocabulary's are
+  top of the home is not refused either, and the databases in the workspace (the knowledge
+  library's, the vocabulary's, and each working folder's memory database and learning log) are
   refused only by their names in the command's text (§13 explains why a text screen is not a
   fence). The stores refuse a change only when it is made through PersonalClaw.
 - **A two-way vault.** With the memory or knowledge vault set to two-way, a page a command edits is
-  read back into memory or knowledge by the next sync, as your edit.
+  read back into memory or knowledge by the next sync, as your edit. A vault, or any other copy of
+  your memory, kept in a folder the agent's tools reach is read as any file there is.
 
-**What this means for you:** a private chat's agent cannot save to your memory by writing its files.
-Keep the sandbox on, run private chats on the native agent or on an agent CLI that runs one chat per
-process, and keep the vaults one-way if a private chat's commands could reach them.
+**What this means for you:** a private chat's agent cannot save to your memory by writing its files,
+and a Temporary chat's cannot read your memory from them. Keep the sandbox on, run private chats on
+the native agent or on an agent CLI that runs one chat per process, and keep the vaults one-way, and
+out of the folders the agent's tools reach, if a private chat's commands could reach them.
 
 ## Why these are listed, not fixed
 

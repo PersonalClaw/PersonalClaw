@@ -604,8 +604,11 @@ Data leaving the running system:
   and vocabulary stores refuse every write made for one, by any path; the
   agent's file tools and shell change nothing in the memory folders for one,
   refused before anyone is asked and fenced read-only by the OS sandbox around
-  its commands (what that leaves open:
-  [limitations §19](limitations.md#19-a-private-chat-is-kept-out-of-the-memory-folders-not-out-of-every-store)); no
+  its commands, and for a temporary one read nothing there either, fenced
+  unreadable (what that leaves open:
+  [limitations §19](limitations.md#19-a-private-chat-is-kept-out-of-the-memory-folders-not-out-of-every-store));
+  nothing in the artifact library changes for one, through its agent's artifact
+  tools, a mention or a run it starts, as the library's routes hold it; no
   background model (titles, tags, follow-ups, a condensed history, suggestions)
   is given anything of one; and nothing of one reaches any model but the one its
   turn runs on (the embedding model, so its tools are ranked by their words, a

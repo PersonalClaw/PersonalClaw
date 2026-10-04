@@ -497,6 +497,13 @@ def app_change_refusal() -> str:
     return _whose()[1]
 
 
+def work_app() -> str:
+    """The app whose work the current work is (:class:`_Whose`), ``""`` for yours and for work
+    that derives from no session: what may read your memory for it asks the app's grant
+    (``memory_reads.memory_read_refusal``)."""
+    return _whose()[0]
+
+
 def changes_no_memory() -> bool:
     """Whether the current work may change none of your memory: it derives from a session that
     keeps nothing (:func:`writes_refused`), or it is an app's not given your memory. Asked where a

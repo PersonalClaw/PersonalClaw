@@ -36,14 +36,15 @@ one either (``DirSourceProvider.validate_spec``).
 
 **PersonalClaw's own stores are not files to the agent.** The workspace in the home holds stores
 of PersonalClaw's own beside the agent's files: the knowledge library's database and its stored
-documents, the lexicon. Each is declared in the state inventory (``durability.inventory``, every
-entry inside its ``workspace`` entry), and each is read and changed only through its own tools: a
-raw read hands the model pages of a database, past the masking its tools apply, and a write breaks
-the store. So the file tools refuse them and their listings leave them out
-(:meth:`FileScope.own_store`), and a shell command that names one is refused before it is approved
-(:func:`store_named_in`), with the tool to use instead.
+documents, the lexicon, and each working folder's memory database and learning log. Each is
+declared in the state inventory (``durability.inventory``: every entry inside its ``workspace``
+entry, and every partition an entry declares there, one per working folder), and each is read and
+changed only through its own tools: a raw read hands the model pages of a database, past the
+masking its tools apply, and a write breaks the store. So the file tools refuse them and their
+listings leave them out (:meth:`FileScope.own_store`), and a shell command that names one is
+refused before it is approved (:func:`store_named_in`), with the tool to use instead.
 
-**Long-term memory is changed only by work that may change it.** The memory folders in the
+**Long-term memory is read and changed only by work that may.** The memory folders in the
 workspace (the home's preferences.md, projects.md and daily history, and every working folder's
 memory: ``memory.memory_folders``) are files the tools read and, with approval, change, and a
 change to a memory document is its store's own write (``memory.write_document``). Work that may
@@ -51,6 +52,10 @@ change none of your memory, an Incognito or Temporary chat's or an app's not giv
 changes nothing there: the file tools refuse it with the memory-write refusal, before anyone is
 asked (:func:`memory_kept_from_work`), and so does the shell for a command that names a path there
 and does more than read it (:func:`memory_named_in`), whose sandbox keeps the folders read-only.
+Work that may read none of your memory, a Temporary chat's or an app's not given your memory, reads
+nothing there either: the file tools refuse a path there in the words every memory read is refused
+in (``memory_reads.memory_read_refusal``) and leave the folders out of their listings, the shell
+refuses a command that names a path there, and its sandbox keeps the folders unreadable.
 
 Inside every place the checks the Files view makes still hold (``file_roots.Admission``):
 symlinks and ``..`` are resolved first, so a link or a climb out of a place reaches nothing it
@@ -64,6 +69,7 @@ in the home is written from ``~`` (:mod:`personalclaw.home_paths`), and either f
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 from collections.abc import Iterable, Mapping
@@ -109,8 +115,9 @@ _REACH_HINT = (
 
 class OutOfScope(ValueError):
     """A path the file tools do not reach: the sentence saying why, a hint saying what would, and
-    the control that refused it, as the call's audit row names it: ``file_scope``, or the code of
-    the memory-write refusal for a change to long-term memory (:func:`memory_kept_from_work`)."""
+    the control that refused it, as the call's audit row names it: ``file_scope``, the code of the
+    memory-write refusal for a change to long-term memory (:func:`memory_kept_from_work`), or
+    :data:`MEMORY_WITHHELD` for a read of it that the work may not make."""
 
     def __init__(self, message: str, hint: str = "", *, control: str = "file_scope") -> None:
         super().__init__(message)
@@ -285,10 +292,28 @@ class FileScope:
         self.places: tuple[Place, ...] = tuple(places)
         self._stores = own_stores(self._home)
         self._admissions: dict[bool, Any] = {}
+        from personalclaw import memory
+
+        self._memory = tuple(os.path.realpath(folder) for folder in memory.memory_folders())
+        # Why this call's work may read none of your memory, asked once, when a path in the
+        # memory folders is first met (most calls never meet one).
+        self._withheld: str | None = None
 
     def own_store(self, real: str) -> Any:
         """The inventory entry of PersonalClaw's own store that *real* is part of, or ``None``."""
-        return next((entry for path, entry in self._stores if _inside(real, path)), None)
+        return next((store.entry for store in self._stores if store.holds(real)), None)
+
+    def memory_withheld(self, real: str) -> str:
+        """Why *real*, a real path in the memory folders, is not read for the work this call is
+        made for (``memory_reads.memory_read_refusal``: a Temporary chat's, an app's not given your
+        memory); ``""`` when the work may read it, and for a path outside the memory folders."""
+        if not any(_inside(real, folder) for folder in self._memory):
+            return ""
+        if self._withheld is None:
+            from personalclaw import memory_reads
+
+            self._withheld = memory_reads.memory_read_refusal()
+        return self._withheld
 
     def _admission(self, change: bool):
         if change not in self._admissions:
@@ -343,6 +368,8 @@ class FileScope:
             raise OutOfScope(*_store_refusal(f"path {raw!r}", store))
         if change and (kept := memory_kept_from_work(f"path {raw!r}", real)) is not None:
             raise kept
+        if not change and (why := self.memory_withheld(real)):
+            raise _memory_withheld(f"path {raw!r}", why)
         if not any(p.takes(real) for p in places):
             raise _not_shared(raw, real, places[0])
         return real
@@ -390,7 +417,7 @@ class FileScope:
         real = self._admission(False)(raw)
         if real is None:
             return None
-        if self.own_store(real) is not None:
+        if self.own_store(real) is not None or self.memory_withheld(real):
             return None
         places = self._reaching(real, self._containing(real, False))
         return real if any(p.takes(real) for p in places) else None
@@ -413,10 +440,38 @@ class FileScope:
 _SQLITE_SIBLINGS = ("", "-wal", "-shm", "-journal")
 
 
-def own_stores(home: str) -> list[tuple[str, Any]]:
-    """PersonalClaw's own stores inside the agent workspace in *home*, as ``(real path, inventory
-    entry)``: every entry the state inventory declares inside its ``workspace`` entry, a database
-    with the files SQLite keeps beside it."""
+@dataclass(frozen=True)
+class OwnStore:
+    """One of PersonalClaw's own stores in the workspace (:func:`own_stores`): the real folder or
+    file its path names up to its first wildcard, the parts of the path below that (``*`` standing
+    for any one folder, as a partition's ``_ext/*/learning.db`` names each working folder's), and
+    its inventory entry."""
+
+    root: str
+    rest: tuple[str, ...]
+    entry: Any
+
+    @property
+    def name(self) -> str:
+        """The last part of its path, the file name a database is opened by."""
+        return self.rest[-1] if self.rest else os.path.basename(self.root)
+
+    def holds(self, real: str) -> bool:
+        """Whether *real*, a real path, is this store or inside it."""
+        if not _inside(real, self.root):
+            return False
+        parts = os.path.relpath(real, self.root).split(os.sep) if real != self.root else []
+        return len(parts) >= len(self.rest) and all(
+            fnmatch.fnmatchcase(part, want) for part, want in zip(parts, self.rest)
+        )
+
+
+def own_stores(home: str) -> list[OwnStore]:
+    """PersonalClaw's own stores inside the agent workspace in *home*: every path the state
+    inventory declares inside its ``workspace`` entry, an entry's own and each of its partitions
+    (``StateEntry.partitions``: the memory database and the learning log every working folder
+    keeps), a database with the files SQLite keeps beside it."""
+    from personalclaw.command_paths import is_glob
     from personalclaw.durability.inventory import KIND_SQLITE, all_entries, by_id
 
     workspace = by_id("workspace")
@@ -424,24 +479,34 @@ def own_stores(home: str) -> list[tuple[str, Any]]:
         return []
     stores = []
     for entry in all_entries():
-        if not entry.path.startswith(workspace.path + "/"):
-            continue
         suffixes = _SQLITE_SIBLINGS if entry.kind == KIND_SQLITE else ("",)
-        for suffix in suffixes:
-            stores.append((os.path.realpath(os.path.join(home, entry.path + suffix)), entry))
+        for path in (entry.path, *entry.partitions):
+            if not path.startswith(workspace.path + "/"):
+                continue
+            parts = path.split("/")
+            # Up to its first wildcard the path names a real place; the rest is matched by part.
+            fixed = next((i for i, part in enumerate(parts) if is_glob(part)), len(parts))
+            for suffix in suffixes:
+                named = [*parts[:-1], parts[-1] + suffix]
+                root = os.path.realpath(os.path.join(home, *named[:fixed]))
+                stores.append(OwnStore(root, tuple(named[fixed:]), entry))
     return stores
 
 
 def _store_refusal(subject: str, entry: Any) -> tuple[str, str]:
     """The sentence and the hint for a call whose *subject* is part of PersonalClaw's own store
     *entry*."""
-    from personalclaw.durability.inventory import DOMAIN_KNOWLEDGE
+    from personalclaw.durability.inventory import DOMAIN_KNOWLEDGE, DOMAIN_MEMORY
 
-    hint = (
-        "Search the knowledge library with knowledge_search, and open an item with knowledge_get."
-        if entry.domain == DOMAIN_KNOWLEDGE
-        else "Use the tool made for it, or tell the user what you need from it."
-    )
+    if entry.domain == DOMAIN_KNOWLEDGE:
+        hint = (
+            "Search the knowledge library with knowledge_search, and open an item with "
+            "knowledge_get."
+        )
+    elif entry.domain == DOMAIN_MEMORY:
+        hint = "Recall what memory holds with memory_recall."
+    else:
+        hint = "Use the tool made for it, or tell the user what you need from it."
     return (
         f"{subject} is part of PersonalClaw's own {entry.domain} store ({entry.help}), which "
         "only its own tools read and change",
@@ -491,10 +556,10 @@ def store_named_in(command: str, *, cwd: str | os.PathLike | None = None) -> str
     home = os.path.realpath(str(resolve_config_dir()))
     stores = own_stores(home)
     # A database's own file names count bare (`grep -a x knowledge.db`); a folder needs a path.
-    names = {os.path.basename(path) for path, entry in stores if entry.kind == KIND_SQLITE}
+    names = {store.name for store in stores if store.entry.kind == KIND_SQLITE}
     for word, path in named_paths(command, cwd=cwd, home=home, names=names):
         real = os.path.realpath(path)
-        entry = next((e for root, e in stores if _inside(real, root)), None)
+        entry = next((store.entry for store in stores if store.holds(real)), None)
         if entry is not None:
             sentence, hint = _store_refusal(repr(word), entry)
             return f"Blocked: {sentence}. {hint}"
@@ -535,25 +600,72 @@ def _memory_kept(subject: str) -> OutOfScope | None:
     )
 
 
+#: The control a read of long-term memory the work may not make is refused by, as the call's audit
+#: row names it.
+MEMORY_WITHHELD = "memory_withheld"
+
+#: What the agent is told to do about long-term memory its work may not read.
+_MEMORY_WITHHELD_HINT = (
+    "Nothing was read from it. Answer without it, and do not try to read it another way."
+)
+
+
+def _memory_withheld(subject: str, why: str) -> OutOfScope:
+    """The refusal of a read of long-term memory, which *subject* names, in work that may read none
+    of it, *why* being the reason the memory read path gives (``memory_reads.Reach.refusal``)."""
+    return OutOfScope(
+        f"{subject} is part of long-term memory. {why}",
+        _MEMORY_WITHHELD_HINT,
+        control=MEMORY_WITHHELD,
+    )
+
+
+def held_from_reads(raw: str) -> OutOfScope | None:
+    """Why a read of the file *raw* names is refused for what the file is, wherever it is: part
+    of one of PersonalClaw's own stores (:func:`own_stores`), or of long-term memory in work that
+    may read none of it (``memory_reads.memory_read_refusal``). ``None`` when neither holds.
+
+    For a tool that reads a file the agent names past the file tools (an artifact's
+    ``content_file``): whatever else that tool allows, it hands the model nothing the file tools
+    hold back for what it is."""
+    from personalclaw import memory, memory_reads
+    from personalclaw.config.loader import resolve_config_dir
+
+    real = os.path.realpath(os.path.expanduser(raw))
+    home = os.path.realpath(str(resolve_config_dir()))
+    entry = next((store.entry for store in own_stores(home) if store.holds(real)), None)
+    if entry is not None:
+        return OutOfScope(*_store_refusal(f"path {raw!r}", entry))
+    if memory.in_memory_folders(real) and (why := memory_reads.memory_read_refusal()):
+        return _memory_withheld(f"path {raw!r}", why)
+    return None
+
+
 def memory_named_in(
     command: str, *, cwd: str | os.PathLike[str] | None = None
 ) -> OutOfScope | None:
-    """Why a shell *command* that would change long-term memory is refused in work that may change
-    none of it (:func:`memory_kept_from_work`), or ``None``. A command that only reads
-    (``task_modes.is_read_only_bash``) runs: an Incognito chat reads its memory.
+    """Why a shell *command* that names a path in long-term memory is refused, or ``None``: one
+    that does more than read it (``task_modes.is_read_only_bash``) in work that may change none of
+    it (:func:`memory_kept_from_work`), and any one in work that may read none of it
+    (``memory_reads.memory_read_refusal``). A command that only reads runs where the work reads
+    your memory: an Incognito chat reads its memory.
 
     Every path the command names is read as its shell would find it (``command_paths.named_paths``,
     from *cwd*). Defence in depth, which says why before anyone is asked: the sandbox keeps the
-    memory folders read-only to such work's commands whatever their text says (``sandbox``)."""
-    from personalclaw import memory, memory_writes
+    memory folders read-only to such work's commands, and unreadable to the commands of work that
+    may read none of them, whatever their text says (``sandbox``)."""
+    from personalclaw import memory, memory_reads, memory_writes
     from personalclaw.command_paths import named_paths
     from personalclaw.task_modes import is_read_only_bash
 
-    if memory_writes.memory_write_refusal() is None or is_read_only_bash(command):
+    changes = not is_read_only_bash(command) and memory_writes.memory_write_refusal() is not None
+    why = "" if changes else memory_reads.memory_read_refusal()
+    if not changes and not why:
         return None
     for word, path in named_paths(command, cwd=cwd):
         if memory.in_memory_folders(path):
-            return _memory_kept(f"Blocked: {word!r}")
+            subject = f"Blocked: {word!r}"
+            return _memory_kept(subject) if changes else _memory_withheld(subject, why)
     return None
 
 

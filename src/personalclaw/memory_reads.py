@@ -44,10 +44,18 @@ saved exactly where the chat it works for may keep one.
 
 A refusal is said in words (:attr:`Reach.refusal`), so a tool asked for a memory answers why there
 is none rather than "nothing found".
+
+The memory documents are files as well (the home's preferences.md, projects.md and daily history,
+and every working folder's memory, ``memory.memory_folders``), which the agent's file tools and
+shell reach with no session key to hand. They ask :func:`memory_read_refusal`, this answer for the
+work running now: such work's file tools leave the memory folders out (``file_scope``), its shell
+refuses a command that names a path there, and the sandbox keeps the folders unreadable to the
+commands it starts (``sandbox``).
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -135,6 +143,80 @@ def reach_of(state: Any, caller: str, *, app: str = "") -> Reach:
         restricted_mode=_strictest_keeping_nothing(modes),
         job=job,
     )
+
+
+def memory_read_refusal() -> str:
+    """Why the work running now may read none of your memory (:attr:`Reach.refusal`), ``""`` when
+    it may: :func:`reach_of` for the session the call being made is for (the one a tool call binds,
+    ``mcp_core.set_current_session_key``) and for the session the work derives from, as the app
+    whose work it is (``memory_writes``), each read over the gateway's live chats in the gateway's
+    own process (``action_providers.services``), as the memory routes read them. The first refusal
+    of either is the answer, so no record opens what another closed.
+
+    For a reader with no session key to hand: the agent's file tools and shell, which reach the
+    memory documents as files, and the sandbox around the commands such work starts."""
+    from personalclaw import memory_writes
+    from personalclaw.action_providers.services import get_action_services
+
+    services = get_action_services()
+    state = services.state if services is not None else None
+    # Read through `sys.modules` rather than imported: a process that never loaded the tool layer
+    # has bound no call (`net.policy._session_of_this_call` reads it the same way).
+    mcp_core = sys.modules.get("personalclaw.mcp_core")
+    bound = mcp_core.get_current_session_key() if mcp_core is not None else ""
+    app = memory_writes.work_app()
+    keys = [key for key in (bound, memory_writes.source_session()) if key]
+    for key in dict.fromkeys(keys or [""]):
+        refused = reach_of(state, key, app=app).refusal
+        if refused:
+            return refused
+    return ""
+
+
+def keeps_nothing(state: Any, session_key: str) -> str:
+    """The mode a call made for *session_key* runs under when its work keeps nothing:
+    ``"temporary"``, ``"incognito"``, or ``memory_writes.UNREADABLE``, the strictest of the
+    session's own judged up the chain it works for (:attr:`Reach.restricted_mode`) and the work the
+    call runs inside (``memory_writes.restricted_mode``). ``""`` for a call whose work keeps what
+    it does. *state* is the gateway's dashboard state, whose live chats are read first.
+
+    The one answer every door that holds such a call asks: the gateway's routes
+    (``dashboard.handlers._shared._is_restricted_session``), what such a call may change in your
+    workflows (``workflows.restricted_calls``) and in your artifact library (the agent's artifact
+    tools, ``mcp_artifacts``, and a turn that reads an artifact the person mentions,
+    ``dashboard.chat_runner``). A run's own steps ask :func:`why_work_keeps_nothing`."""
+    from personalclaw import memory_writes
+
+    modes = {memory_writes.restricted_mode(), reach_of(state, session_key).restricted_mode}
+    return next(
+        (mode for mode in ("temporary", memory_writes.UNREADABLE, "incognito") if mode in modes),
+        "",
+    )
+
+
+#: Why work under each mode that keeps nothing keeps nothing, as a clause about the call.
+_KEEPS_NOTHING = {
+    "temporary": "it keeps nothing, as a Temporary chat does",
+    "incognito": "it keeps nothing, as an Incognito chat does",
+}
+
+
+def why_it_keeps_nothing(mode: str) -> str:
+    """Why a call under *mode* (:func:`keeps_nothing`) keeps nothing, as a clause: "it keeps
+    nothing, as a Temporary chat does", or, for a mode nothing can say, that the memory setting of
+    the chat it is for cannot be read."""
+    return _KEEPS_NOTHING.get(mode, "the memory setting of the chat it is for cannot be read")
+
+
+def why_work_keeps_nothing() -> str:
+    """Why the work running now keeps nothing (:func:`why_it_keeps_nothing` for the mode it runs
+    under, ``memory_writes.restricted_mode``), ``""`` for work that keeps what it does. For a door
+    with no session key to hand: a workflow run's own steps and its publishing, which run under the
+    mode the run inherited from the chat that started it."""
+    from personalclaw import memory_writes
+
+    mode = memory_writes.restricted_mode()
+    return why_it_keeps_nothing(mode) if mode else ""
 
 
 def fed(chars: int, reach: Reach) -> dict[str, str]:

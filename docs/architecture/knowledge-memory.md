@@ -181,8 +181,9 @@ observers what the store holds now: written when it holds the artifact, removed 
 The gateway never tells itself, so each write is heard once, wherever it was made. The call carries
 no text, so the content scan reads an artifact's text once, at the door that writes it, in the
 process that writes it. The gateway tells its observers as the work of the chat the call names
-(`dashboard/memory_write_gate`), so an Incognito or Temporary chat's artifact is shown on the open
-pages and kept out of Knowledge, as when the gateway's own agent writes it. A process with no live
+(`dashboard/memory_write_gate`), so what Knowledge keeps follows that chat's mode, as when the
+gateway's own agent writes. An Incognito or Temporary chat's agent writes nothing there at either
+door: its artifact tools change nothing in the library (`mcp_artifacts`). A process with no live
 gateway of its home tells no one, and a gateway that cannot be told leaves the write as it is and
 is named, with the artifact, in `gateway.log`.
 

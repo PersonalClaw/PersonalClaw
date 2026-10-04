@@ -108,6 +108,16 @@ class ArtifactUpdateActionProvider(ActionProvider):
                 error=f"artifact-update kind {kind!r} must be one of: {', '.join(_KINDS)}",
             )
 
+        # A run an Incognito or Temporary chat started changes nothing in the library, which
+        # outlives the chat, as the agent's artifact tools and the library's routes hold it.
+        from personalclaw import memory_reads
+
+        if why := memory_reads.why_work_keeps_nothing():
+            return ActionResult(
+                success=False,
+                error=f"artifact-update: {why}, so nothing was written to your library",
+            )
+
         try:
             from personalclaw.artifacts.registry import get_provider
 

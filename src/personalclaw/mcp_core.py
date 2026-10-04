@@ -1254,10 +1254,13 @@ def _message_refusal(args: dict[str, Any]) -> ToolFailure | None:
 
 def _read_attachment(args: dict[str, Any]) -> bytes | tuple[str, ToolFailure]:
     """The bytes ``notify_attachment`` sends, read once and checked; or why it refuses the file, as
-    the audit's code and the tool's answer: a control character in its path, a path no file
-    surface may read or a file too large, a name or a text that carries a secret, a file that is
-    not UTF-8 text. The handler sends exactly the bytes this checked."""
+    the audit's code and the tool's answer: a control character in its path, a file the file tools
+    hold back for what it is (``file_scope.held_from_reads``: PersonalClaw's own stores, your
+    memory in work that may read none of it), a path no file surface may read or a file too large,
+    a name or a text that carries a secret, a file that is not UTF-8 text. The handler sends
+    exactly the bytes this checked."""
     from personalclaw.file_roots import control_character_in
+    from personalclaw.file_scope import held_from_reads
     from personalclaw.hooks import FileTooLargeError, safe_read_file_bytes
     from personalclaw.security import redact
 
@@ -1269,6 +1272,8 @@ def _read_attachment(args: dict[str, Any]) -> bytes | tuple[str, ToolFailure]:
         return f"control_character: {bad}", tool_failure(
             f"the path has a control character ({bad}) in it; rename the file without it first"
         )
+    if (held := held_from_reads(str(src))) is not None:
+        return f"{held.control}: {src}", tool_failure(f"{held} {held.hint}")
     try:
         raw = safe_read_file_bytes(str(src))
     except FileTooLargeError as e:
