@@ -82,8 +82,9 @@ red *after* you have already pushed the tag, which is the annoying way to find o
 reports `0.3.0rc1`, because the build normalizes the spelling. That is one release: every
 check that compares versions — the consistency test, `scripts/verify_wheel.py`, the image
 smoke and the notes lookup — compares them as versions, through
-`scripts/release_version.py`, which asks the updater's own parse. Tag after the bump: the
-`build` job refuses a wheel that is not the tagged version before anything is published.
+`scripts/release_version.py`, which asks the product's own comparison (`personalclaw.versions`,
+the one the updater uses). Tag after the bump: the `build` job refuses a wheel that is not the
+tagged version before anything is published.
 
 All six are enforced by `tests/test_version_consistency.py`. The last two were added
 to it on 2026-07-31 after both had silently drifted — `CLIENT_VERSION` sat at `0.1.2`

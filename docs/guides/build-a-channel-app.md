@@ -572,8 +572,8 @@ Without `press`, the approvals clause is not asserted: the kit cannot press your
 ## Packaging
 
 A channel app is an ordinary app bundle. Required manifest fields are the usual four —
-`name` (kebab-case), `version` (semver), `displayName`, `description` — plus the provider
-registrations. The full manifest contract is
+`name` (kebab-case), `version` (`MAJOR.MINOR.PATCH`), `displayName`, `description` — plus the
+provider registrations. The full manifest contract is
 [the app-platform architecture doc](../architecture/app-platform.md) and the
 app-creation guide in the apps repository; the channel-specific parts are:
 

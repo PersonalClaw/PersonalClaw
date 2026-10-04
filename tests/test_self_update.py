@@ -22,6 +22,7 @@ import pytest
 
 from personalclaw import container_host
 from personalclaw import self_update as uk
+from personalclaw import versions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.net.git import talks_to_remote
 from personalclaw.self_update import detect_install_kind
@@ -101,12 +102,12 @@ def test_normalize_version_strips_leading_v() -> None:
 
 
 def test_versions_order_numerically_not_as_text() -> None:
-    assert uk.is_newer("v0.2.0", "0.1.9")
-    assert uk.is_newer("0.1.10", "0.1.9")  # 10 > 9, which text order gets wrong
-    assert uk.parse_version("garbage") is None
+    assert versions.is_newer("v0.2.0", "0.1.9")
+    assert versions.is_newer("0.1.10", "0.1.9")  # 10 > 9, which text order gets wrong
+    assert versions.parse_version("garbage") is None
     # A side that is not a version is never newer, in either position.
-    assert not uk.is_newer("garbage", "0.1.0")
-    assert not uk.is_newer("0.1.0", "garbage")
+    assert not versions.is_newer("garbage", "0.1.0")
+    assert not versions.is_newer("0.1.0", "garbage")
 
 
 def test_releases_cache_round_trip(monkeypatch, tmp_path) -> None:
@@ -1597,17 +1598,24 @@ def test_set_version_pin_normalizes_and_refuses_junk(monkeypatch, tmp_path) -> N
 
 @pytest.mark.parametrize(
     "pin, stored",
-    [("0.1.3", "0.1.3"), ("v0.1.3", "0.1.3"), (" 0.3.0-rc.1 ", "0.3.0-rc.1"), ("", ""), ("  ", "")],
+    [
+        ("0.1.3", "0.1.3"),
+        ("v0.1.3", "0.1.3"),
+        (" 0.3.0-rc.1 ", "0.3.0-rc.1"),
+        ("0.3.0rc1", "0.3.0rc1"),  # how the candidate reports itself: one release, found by version
+        ("", ""),
+        ("  ", ""),
+    ],
 )
 def test_normalize_pin_accepts_release_versions_and_clearing(pin, stored) -> None:
     assert uk.normalize_pin(pin) == stored
 
 
 @pytest.mark.parametrize(
-    "pin", ["not-a-version!!", "0.2", "0.2.x", ">=0.2,<0.3", "latest", "0.3.0rc1", "v", "1.2.3.4"]
+    "pin", ["not-a-version!!", "0.2", "0.2.x", ">=0.2,<0.3", "latest", "v", "1.2.3.4", "vv0.1.3"]
 )
 def test_normalize_pin_refuses_what_can_never_name_a_release(pin) -> None:
-    """A pin is matched EXACTLY against release tags (`select_target`), so these never resolve —
+    """A pin names one release, found by version (`select_target`), so these never resolve —
     and a stored one used to stop every update without a word."""
     with pytest.raises(ValueError, match="not a release version"):
         uk.normalize_pin(pin)

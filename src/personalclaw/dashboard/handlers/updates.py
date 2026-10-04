@@ -15,7 +15,7 @@ from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
 from personalclaw import __version__ as _local_version
-from personalclaw import checkout_update, log_sinks, self_update, shutdown_event
+from personalclaw import checkout_update, log_sinks, self_update, shutdown_event, versions
 from personalclaw.cancellation import kill_timed_out
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
@@ -364,11 +364,34 @@ async def _do_update_check(*, asked: bool) -> bool:
             )
             if m:
                 remote_version = m.group(1)
-            available = self_update.is_newer(remote_version, _local_version)
+            available = versions.is_newer(remote_version, _local_version)
 
         changes = ""
-        if available:
-            diff_base = f"v{_local_version}" if local_sha == remote_sha else local_sha
+        diff_base = local_sha
+        if available and local_sha == remote_sha:
+            # Already at its upstream, and running an older version (pulled, not restarted): the
+            # change list starts at the running version's release tag, found by VERSION, since a
+            # candidate's tag (v0.3.0-rc.1) is not spelled the way it reports itself (0.3.0rc1).
+            # A version no tag carries has no range to show.
+            tags = await asyncio.create_subprocess_exec(
+                *git_argv(["tag", "--list", "v*"]),
+                cwd=proj,
+                env=git_env(site="update-check-git"),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                tags_out, _ = await asyncio.wait_for(tags.communicate(), timeout=10)
+            except asyncio.TimeoutError:
+                try:
+                    tags.kill()
+                except ProcessLookupError:
+                    pass
+                await tags.communicate()
+                return False
+            listed = tags_out.decode(errors="replace").splitlines()
+            diff_base = next((t for t in listed if versions.same_version(t, _local_version)), "")
+        if available and diff_base:
             diff = await asyncio.create_subprocess_exec(
                 *git_argv(["diff", f"{diff_base}..{target_sha}", "--", "CHANGELOG.md"]),
                 cwd=proj,

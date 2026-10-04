@@ -18,7 +18,11 @@ from typing import Any
 
 from personalclaw.apps.agent_tiers import AGENT_TEXT, AGENT_TIERS, declared_agent
 from personalclaw.apps.core_features import FEATURE_NAME_RE
-from personalclaw.apps.core_version import SEMVER_RE, CoreCompatibility, check_core_compatibility
+from personalclaw.apps.core_version import (
+    CoreCompatibility,
+    app_version_problem,
+    check_core_compatibility,
+)
 from personalclaw.safety_flags import strict_bool, yes_or_no
 
 # ---------------------------------------------------------------------------
@@ -1911,7 +1915,7 @@ class AppManifest:
 
     # --- Required ---
     name: str = ""  # unique identifier, kebab-case
-    version: str = ""  # semver string
+    version: str = ""  # MAJOR.MINOR.PATCH (``app_version_problem``)
     displayName: str = ""  # human-readable name  # noqa: N815
     description: str = ""  # short summary
 
@@ -2077,8 +2081,8 @@ class AppManifest:
 
         if not self.version:
             errors.append("missing required field: version")
-        elif not SEMVER_RE.match(self.version):
-            errors.append(f"version must be semver (e.g. 1.0.0), got: {self.version!r}")
+        elif problem := app_version_problem(self.version):
+            errors.append(problem)
 
         if not self.displayName:
             errors.append("missing required field: displayName")

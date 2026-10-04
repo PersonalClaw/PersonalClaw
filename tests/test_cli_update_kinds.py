@@ -23,6 +23,7 @@ import pytest
 
 from personalclaw import checkout_update, cli_server, container_host
 from personalclaw import self_update as su
+from personalclaw import versions
 
 #: What git answers when the update reads where a checkout is (``self_update.git_position``):
 #: the commit HEAD names, and HEAD detached on it (the release tag the checkout is on).
@@ -548,8 +549,8 @@ def test_pip_installs_the_channel_pin_resolved_spec(
     # the version running, and the channel branch when the release is not newer than it.
     want = expected.split("==", 1)[1]
     running = cli_server.__version__
-    assert not su.same_version(want, running)
-    assert su.is_newer(want, running)
+    assert not versions.same_version(want, running)
+    assert versions.is_newer(want, running)
 
     cli_server._update()
 

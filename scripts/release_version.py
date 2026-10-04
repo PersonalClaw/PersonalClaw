@@ -1,4 +1,4 @@
-"""The release pipeline's version comparisons, made with the updater's own parse.
+"""The release pipeline's version comparisons, made with PersonalClaw's own.
 
 One version reaches a release spelled more than one way. The tag spells a release candidate
 ``v0.3.0-rc.1``; the package built from it reports ``0.3.0rc1``, because the build normalizes
@@ -8,10 +8,11 @@ smoke expected ``personalclaw 0.3.0-rc.1`` from a binary that prints ``personalc
 — and read a heading spelled differently from the tag as no heading at all.
 
 So every check here that asks "is this the version being released?" compares VERSIONS, through
-``personalclaw.self_update``: the parse the updater uses to decide what is newer, which keeps
-the pipeline and the product from disagreeing about which release a string names.
+``personalclaw.versions``: the one comparison the product uses wherever it compares two versions
+(the updater deciding what is newer among them), which keeps the pipeline and the product from
+disagreeing about which release a string names.
 
-Run it with an interpreter that can import the updater: the image's own, a scratch venv the
+Run it with an interpreter that can import that comparison: the image's own, a scratch venv the
 wheel was installed into, or any Python with ``packaging`` beside a checkout, whose ``src/``
 stands in when the package is not installed (the release notes are resolved that way, under
 ``uv run --with packaging``)::
@@ -27,7 +28,7 @@ covered by the tree beside it.
 ``same`` and ``reports`` exit 0 when the versions match and 1, with the reason on stderr, when
 they do not. ``notes`` prints the CHANGELOG section of that version, or ``Release <version>.``
 when the CHANGELOG has none. Exit 2 means the comparison could not run at all — no version
-parse to load (no package, or one older than the parse), or bad arguments — which a caller must
+comparison to load (no package, or one older than it), or bad arguments — which a caller must
 never read as a mismatch or a match.
 """
 
@@ -44,18 +45,18 @@ from types import ModuleType
 _INSTALLED_ONLY = False
 
 
-def _updater() -> ModuleType:
-    """``personalclaw.self_update`` — installed, or from the checkout this script sits in."""
+def _versions() -> ModuleType:
+    """``personalclaw.versions`` — installed, or from the checkout this script sits in."""
     try:
-        from personalclaw import self_update
+        from personalclaw import versions
     except ImportError:
         # Piped in on stdin (`python - …`) there is no file to find a checkout from.
         here = globals().get("__file__")
         if _INSTALLED_ONLY or not here:
             raise
         sys.path.insert(0, str(Path(here).resolve().parents[1] / "src"))
-        from personalclaw import self_update
-    return self_update
+        from personalclaw import versions
+    return versions
 
 
 def reported_version(output: str, program: str = "personalclaw") -> str:
@@ -118,11 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     global _INSTALLED_ONLY
     _INSTALLED_ONLY = args.installed
     try:
-        same_version = _updater().same_version
+        same_version = _versions().same_version
     except Exception as exc:
-        # A package that imports but predates the parse, or fails as it loads, is a comparison
-        # that did not run. Letting it traceback would exit 1, which reads as a mismatch.
-        print(f"cannot load the updater's version parse: {exc}", file=sys.stderr)
+        # A package that predates the comparison, or fails as it loads, is a comparison that
+        # did not run. Letting it traceback would exit 1, which reads as a mismatch.
+        print(f"cannot load PersonalClaw's version comparison: {exc}", file=sys.stderr)
         return 2
     if args.command == "same":
         if same_version(args.a, args.b):

@@ -10,9 +10,9 @@ Covered here: the four-state verdict itself (``ok`` / ``invalid`` /
 effect — install, update, enable (the core-DOWNGRADE case, where the app is already
 on disk), the gateway boot backend launcher, and the Store's install-consent card.
 
-Two directions matter equally, so both are asserted throughout: ``incompatible``
-refuses, and every other state — absent floor, satisfiable floor, malformed floor,
-unmeasurable host — still installs. ``TestVacuityFloor`` is the explicit guard that a
+Two directions matter equally, so both are asserted throughout: only ``ok`` admits — a floor
+above the core refuses, and so does a floor or a core version that cannot be read — and an
+absent or satisfied floor still installs. ``TestVacuityFloor`` is the explicit guard that a
 gate which simply refused everything would fail this file.
 """
 
@@ -33,7 +33,6 @@ from personalclaw.apps.core_version import (
     CORE_COMPAT_UNKNOWN_HOST,
     check_core_compatibility,
     host_core_version,
-    strict_version_tuple,
 )
 from personalclaw.apps.manifest import AppManifest
 
@@ -102,27 +101,29 @@ class TestFourStateVerdict:
         assert v.admits is False
         assert "99.0.0" in v.reason and HOST in v.reason
 
-    @pytest.mark.parametrize(
-        "floor",
-        ["latest", "1", "1.2", "1.2.3.4", "one.two.three", "~1.2.0", ">=1.2.0", "1.2.x"],
-    )
-    def test_malformed_floor_is_invalid_but_admits(self, floor):
-        """Fails OPEN: a typo in one advisory field must not brick an app whose code is
-        fine. Not silently permissive either — the state is distinct and the reason
-        names both the bad value and the host."""
+    @pytest.mark.parametrize("floor", ["latest", "one.two.three", "~1.2.0", ">=1.2.0", "1.2.x"])
+    def test_malformed_floor_is_invalid_and_refuses(self, floor):
+        """Fails CLOSED: a floor that is not a version is a gate with no answer, and the
+        reason names both the bad value and the host."""
         v = check_core_compatibility(floor, host=HOST)
         assert v.state == CORE_COMPAT_INVALID
-        assert v.admits is True
+        assert v.admits is False
         assert floor in v.reason and HOST in v.reason
 
-    @pytest.mark.parametrize("host", ["0.2.0.dev3+g9a1c", "unknown", "", "main"])
-    def test_unmeasurable_host_admits(self, host):
-        """An unmeasurable host is not a reason to refuse an otherwise-fine install —
-        this is the normal state of an editable/source-checkout dev tree."""
+    @pytest.mark.parametrize("host", ["unknown", "", "main"])
+    def test_unmeasurable_host_refuses(self, host):
+        """A core whose own version cannot be read cannot tell whether it is new enough."""
         v = check_core_compatibility("99.0.0", host=host)
         assert v.state == CORE_COMPAT_UNKNOWN_HOST
-        assert v.admits is True
-        assert "99.0.0" in v.reason
+        assert v.admits is False
+        assert "99.0.0" in v.reason and repr(host) in v.reason
+
+    def test_a_source_checkouts_dev_version_is_compared(self):
+        """A dev build is a version, older than its release: it is held to the floor."""
+        assert check_core_compatibility("99.0.0", host="0.2.0.dev3+g9a1c").state == (
+            CORE_COMPAT_INCOMPATIBLE
+        )
+        assert check_core_compatibility("0.1.0", host="0.2.0.dev3+g9a1c").state == CORE_COMPAT_OK
 
     def test_versions_compare_numerically_not_lexically(self):
         """The classic trap: ``"10.0.0" < "9.0.0"`` as strings."""
@@ -130,19 +131,20 @@ class TestFourStateVerdict:
         assert check_core_compatibility("0.10.0", host="0.9.0").state == CORE_COMPAT_INCOMPATIBLE
         assert check_core_compatibility("1.0.10", host="1.0.9").state == CORE_COMPAT_INCOMPATIBLE
 
-    def test_prerelease_and_build_suffixes_are_dropped(self):
-        """Same semantics as the module's existing ``version_tuple``: pre-release
-        ordering is out of scope, so ``1.4.2-rc1`` compares as ``1.4.2``."""
+    def test_a_prerelease_sorts_below_its_release(self):
+        """``1.4.2-rc1`` is older than ``1.4.2``: a candidate floor is met by the release, and a
+        release floor is not met by its candidate."""
         assert check_core_compatibility("1.4.2-rc1", host=HOST).state == CORE_COMPAT_OK
-        assert check_core_compatibility("1.4.2", host="1.4.2-rc1").state == CORE_COMPAT_OK
+        assert check_core_compatibility("1.4.2", host="1.4.2-rc1").state == (
+            CORE_COMPAT_INCOMPATIBLE
+        )
         assert check_core_compatibility("v1.4.2", host=HOST).state == CORE_COMPAT_OK
 
-    def test_strict_parse_separates_unmeasurable_from_zero(self):
-        """``version_tuple`` collapses junk to ``(0,)``, which as a FLOOR would be
-        satisfied by every core — the strict variant returns ``None`` instead."""
-        assert strict_version_tuple("1.2.3") == (1, 2, 3)
-        assert strict_version_tuple("garbage") is None
-        assert strict_version_tuple("0.0.0") == (0, 0, 0)
+    def test_an_unreadable_floor_is_not_read_as_zero(self):
+        """A floor read as ``0`` would be met by every core, so junk refuses even on the newest
+        core instead of passing as the lowest version."""
+        assert check_core_compatibility("garbage", host="999.0.0").admits is False
+        assert check_core_compatibility("0.0.0", host=HOST).state == CORE_COMPAT_OK
 
     def test_host_core_version_reads_the_running_core(self):
         assert host_core_version() == HOST
@@ -187,20 +189,23 @@ class TestInstallPath:
         src = _make_app_source(tmp_path, name="declares-nothing")
         assert app_manager.install(src, confirm=True).ok is True
 
-    def test_malformed_declaration_installs_with_a_warning(self, tmp_path, caplog):
+    def test_malformed_declaration_is_refused_naming_it(self, tmp_path, caplog):
         src = _make_app_source(tmp_path, name="floor-typo", floor="latest")
         with caplog.at_level(logging.WARNING, logger="personalclaw.apps.app_manager"):
             res = app_manager.install(src, confirm=True)
-        assert res.ok is True, res.error
+        assert res.ok is False
+        assert "'latest', which is not a version" in res.error and HOST in res.error
         assert any("latest" in r.getMessage() for r in caplog.records)
+        assert manager._read_installed("floor-typo") is None
 
-    def test_unmeasurable_host_installs_with_a_warning(self, tmp_path, caplog, monkeypatch):
-        monkeypatch.setattr(personalclaw, "__version__", "0.2.0.dev3+g9a1c")
-        src = _make_app_source(tmp_path, name="dev-tree-ok", floor="99.0.0")
+    def test_unmeasurable_host_is_refused_naming_it(self, tmp_path, caplog, monkeypatch):
+        monkeypatch.setattr(personalclaw, "__version__", "unknown")
+        src = _make_app_source(tmp_path, name="dev-tree", floor="0.1.0")
         with caplog.at_level(logging.WARNING, logger="personalclaw.apps.app_manager"):
             res = app_manager.install(src, confirm=True)
-        assert res.ok is True, res.error
-        assert any("99.0.0" in r.getMessage() for r in caplog.records)
+        assert res.ok is False
+        assert "0.1.0 or newer" in res.error and "'unknown'" in res.error
+        assert any("0.1.0" in r.getMessage() for r in caplog.records)
 
     def test_refusal_is_audited(self, tmp_path, monkeypatch):
         seen: list[tuple] = []
@@ -426,8 +431,7 @@ class TestVacuityFloor:
             "0.0.1",  # far below the host
             "1.0.0",  # below the host
             HOST,  # exactly the host
-            "latest",  # malformed → invalid, fails open
-            "1.2",  # malformed → invalid, fails open
+            "1.2",  # read as 1.2.0, below the host
             "",  # explicitly empty
         ],
     )
@@ -439,7 +443,7 @@ class TestVacuityFloor:
         assert app_manager.disable(name) is True
         assert app_manager.enable(name) is True
 
-    def test_only_incompatible_fails_to_admit(self):
+    def test_only_ok_admits(self):
         states = {
             check_core_compatibility(f, host=h).state: check_core_compatibility(f, host=h).admits
             for f, h in [
@@ -452,7 +456,7 @@ class TestVacuityFloor:
         }
         assert states == {
             CORE_COMPAT_OK: True,
-            CORE_COMPAT_INVALID: True,
-            CORE_COMPAT_UNKNOWN_HOST: True,
+            CORE_COMPAT_INVALID: False,
+            CORE_COMPAT_UNKNOWN_HOST: False,
             CORE_COMPAT_INCOMPATIBLE: False,
         }

@@ -33,12 +33,12 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from personalclaw import python_children
-from personalclaw.apps.core_version import version_tuple
 from personalclaw.apps.disclosure import describe
 from personalclaw.apps.manifest import AppManifest
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.security import mask_child_output
+from personalclaw.versions import is_newer, order_key
 
 logger = logging.getLogger(__name__)
 
@@ -1740,7 +1740,7 @@ def _latest_local_versions() -> dict[str, tuple[str, str]]:
             if not m.name or not m.version:
                 continue
             current = latest.get(m.name)
-            if current is None or version_tuple(m.version) > version_tuple(current[0]):
+            if current is None or order_key(m.version) > order_key(current[0]):
                 latest[m.name] = (m.version, str(entry))
     return latest
 
@@ -1766,7 +1766,7 @@ def _offered_versions() -> dict[tuple[str, str], str]:
         if parts is None or not version:
             return
         key = _pointer_key(*parts)
-        if key not in offered or version_tuple(version) > version_tuple(offered[key]):
+        if key not in offered or order_key(version) > order_key(offered[key]):
             offered[key] = version
 
     for source, (_at, pointers) in list(_registry_cache.items()):
@@ -1802,7 +1802,7 @@ def updates_available() -> list[dict[str, Any]]:
     """Installed apps whose source now offers a NEWER version.
 
     Compares each installed app's on-disk version against the highest version offered for it,
-    using the single app-version comparator (``core_version.version_tuple``): what the configured
+    using the one version comparison (:mod:`personalclaw.versions`): what the configured
     local sources declare under its name, and what the Store source it was installed from
     offers now (:func:`_offered_versions`, matched by its recorded install pointer). Returns
     one entry per out-of-date app::
@@ -1839,8 +1839,8 @@ def updates_available() -> list[dict[str, Any]]:
             candidates.append((offered[_pointer_key(*pointer)], source))
         if not candidates:
             continue
-        latest_version, latest_source = max(candidates, key=lambda c: version_tuple(c[0]))
-        if version_tuple(latest_version) > version_tuple(installed_version):
+        latest_version, latest_source = max(candidates, key=lambda c: order_key(c[0]))
+        if is_newer(latest_version, installed_version):
             manifest = app.get("manifest") or {}
             out.append(
                 {
@@ -1904,7 +1904,7 @@ def surface_app_updates(state: Any) -> list[dict[str, Any]]:
         name = u["name"]
         latest_version = u["latestVersion"]
         already = notified.get(name, "")
-        if version_tuple(latest_version) > version_tuple(already):
+        if order_key(latest_version) > order_key(already):
             _emit_app_update(state, u)
             notified[name] = latest_version
             changed = True

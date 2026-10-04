@@ -5,7 +5,8 @@ text ``personalclaw 0.3.0-rc.1`` from a binary that prints ``personalclaw 0.3.0r
 normalizes a candidate's spelling), ``verify_wheel`` compared the wheel's ``0.3.0rc1`` with
 ``pyproject.toml``'s ``0.3.0-rc.1`` as text, and the notes lookup read a heading spelled
 differently from the tag as no heading at all. Every one of those now goes through
-``scripts/release_version.py``, which asks ``personalclaw.self_update`` — the updater's parse.
+``scripts/release_version.py``, which asks ``personalclaw.versions`` — the one comparison the
+updater and every other version check use.
 
 Nothing here triggers a release. The steps' own ``run:`` scripts are read out of
 ``release.yml`` and executed with ``docker`` and ``uv`` replaced by stand-ins on ``PATH``, and
@@ -26,7 +27,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from personalclaw.self_update import same_version
+from personalclaw.versions import same_version
 
 REPO = Path(__file__).resolve().parents[1]
 RELEASE_YML = REPO / ".github" / "workflows" / "release.yml"
@@ -253,7 +254,7 @@ def test_an_artifact_that_cannot_answer_fails_instead_of_borrowing_the_tree(
         text=True,
     )
     assert proc.returncode == 2, (proc.returncode, proc.stderr)
-    assert "cannot load the updater's version parse" in proc.stderr
+    assert "cannot load PersonalClaw's version comparison" in proc.stderr
 
     bare = tmp_path / "bare-python"
     bare.write_text(f'#!/bin/sh\nexec "{sys.executable}" -S "$@"\n', encoding="utf-8")
@@ -267,7 +268,7 @@ def test_a_package_older_than_the_parse_cannot_answer_either(
     verify_wheel, tmp_path, capsys
 ) -> None:
     """A stale build — the previous release's code under this release's metadata — imports fine
-    and has no `same_version`. That is a comparison that did not run, not a version mismatch.
+    and has no version comparison. That is a comparison that did not run, not a mismatch.
     """
     older = tmp_path / "older" / "personalclaw"
     older.mkdir(parents=True)
@@ -288,7 +289,8 @@ def test_a_package_older_than_the_parse_cannot_answer_either(
         text=True,
     )
     assert proc.returncode == 2, (proc.returncode, proc.stderr)
-    assert "has no attribute 'same_version'" in proc.stderr
+    assert "cannot load PersonalClaw's version comparison" in proc.stderr
+    assert "versions" in proc.stderr
 
     # `verify_wheel` passes `-I`, which would drop that PYTHONPATH, so the stand-in for the
     # stale wheel's interpreter ignores its arguments' flags and keeps the stale package.
@@ -313,10 +315,10 @@ def _notes(tmp_path: Path, ref: str, changelog: str):
     """Run the build job's notes step for *ref* over *changelog*, with uv standing in.
 
     uv hands the step an interpreter with `packaging` and nothing else, PersonalClaw not
-    installed, so the script reads the updater's parse from the checkout's `src/`. The stand-in
-    gives it exactly that: this Python without its site-packages (`-S`), `packaging` alone on
-    its path, and a checkout whose `src/` is this repository's. A third-party import added to
-    the updater would fail here, not in the release.
+    installed, so the script reads the version comparison from the checkout's `src/`. The
+    stand-in gives it exactly that: this Python without its site-packages (`-S`), `packaging`
+    alone on its path, and a checkout whose `src/` is this repository's. A third-party import
+    added to the comparison would fail here, not in the release.
     """
     import packaging
 

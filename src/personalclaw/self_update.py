@@ -72,8 +72,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
-from packaging.version import InvalidVersion, Version
-
+from personalclaw import versions
 from personalclaw.cancellation import kill_timed_out
 
 logger = logging.getLogger(__name__)
@@ -263,48 +262,14 @@ def package_root(proj: str) -> str:
 
 
 def normalize_version(v: str) -> str:
-    """Strip a leading ``v`` from a release tag so ``v0.1.3`` == ``0.1.3``."""
+    """Strip a leading ``v`` from a release tag so ``v0.1.3`` == ``0.1.3``.
+
+    A spelling for display and for an image tag. Whether two versions are one, or which is
+    newer, is :mod:`personalclaw.versions`' to say: a candidate's tag ``v0.3.0-rc.1`` and its
+    installed ``0.3.0rc1`` are one version that no stripping makes the same text.
+    """
     v = (v or "").strip()
     return v[1:] if v[:1] == "v" else v
-
-
-def parse_version(v: str) -> Version | None:
-    """*v* as an orderable version, or ``None`` when it is not a version.
-
-    One version reaches this module spelled two ways, and both have to read as it: a release
-    TAG spells a pre-release ``v0.3.0-rc.1``, while the installed package reports the same
-    version as ``0.3.0rc1`` (the build normalizes it). PEP 440 reads both, and orders a
-    pre-release before its release — ``0.3.0-rc.1 < 0.3.0-rc.2 < 0.3.0`` — the order the release
-    lines ship in.
-
-    Dropping the suffix instead, which is what this replaced, made every candidate of a line
-    equal to the others and to its own release, and read the installed spelling as no version
-    at all: a running candidate compared lower than everything, so every release, older ones
-    included, was offered to it as an update.
-    """
-    try:
-        return Version(normalize_version(v))
-    except InvalidVersion:
-        return None
-
-
-def is_newer(candidate: str, current: str) -> bool:
-    """True only when *candidate* is a later version than *current*.
-
-    An empty or unreadable side is never newer: a release this cannot order against the running
-    one is not a release to offer.
-    """
-    new, now = parse_version(candidate), parse_version(current)
-    return new is not None and now is not None and new > now
-
-
-def same_version(a: str, b: str) -> bool:
-    """True when *a* and *b* are one version, however each is spelled.
-
-    ``v0.3.0-rc.1`` (a tag) and ``0.3.0rc1`` (what that release reports once installed) are one.
-    """
-    version = parse_version(a)
-    return version is not None and version == parse_version(b)
 
 
 def moves_to(target: str, current: str, pin: str = "") -> bool:
@@ -320,8 +285,8 @@ def moves_to(target: str, current: str, pin: str = "") -> bool:
     if not normalize_version(target):
         return False
     if (pin or "").strip():
-        return not same_version(target, current)
-    return is_newer(target, current)
+        return not versions.same_version(target, current)
+    return versions.is_newer(target, current)
 
 
 def up_to_date_sentence(target: str, current: str, pin: str = "") -> str:
@@ -334,7 +299,7 @@ def up_to_date_sentence(target: str, current: str, pin: str = "") -> str:
     target, current = normalize_version(target), normalize_version(current)
     if (pin or "").strip():
         return f"Already on the pinned release (v{target})"
-    if same_version(target, current):
+    if versions.same_version(target, current):
         return f"You're on the newest release (v{target})"
     return f"You're on v{current}, newer than the newest release (v{target})"
 
@@ -469,7 +434,7 @@ def record_running_version(current: str) -> str:
     if not current:
         return ""
     previous = normalize_version(str(read_run_state().get("version") or ""))
-    if previous == current:
+    if previous == current or versions.same_version(previous, current):
         return ""
     if not previous:
         write_run_state(current)
@@ -483,14 +448,6 @@ def record_running_version(current: str) -> str:
         "recorded rollback point: updates.last_version=%s (now running %s)", previous, current
     )
     return previous
-
-
-#: The shape of a version a pin can name: ``X.Y.Z`` or ``X.Y.Z-<prerelease>`` (``0.3.0-rc.1``),
-#: the release-TAG convention with its leading ``v`` already stripped. A pin is matched
-#: EXACTLY against the tags (:func:`select_target`), so nothing else can ever name a release:
-#: not a version line (``0.2``, ``0.2.x``), not a PEP 440 range (``>=0.2``), not the PyPI
-#: spelling of a prerelease (``0.3.0rc1``, whose tag is ``v0.3.0-rc.1``).
-_PIN_SHAPE = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?")
 
 
 def normalize_pin(pin: str) -> str:
@@ -507,15 +464,28 @@ def normalize_pin(pin: str) -> str:
     pin that matches no release (``0.2.1`` before 0.2.1 exists) cannot be refused here without
     the network, so :func:`build_update_status` reports it as ``pin_miss`` instead.
 
-    ``""`` (after trimming) clears the pin; a leading ``v`` is stripped, the spelling the
-    resolvers compare. Emptiness is judged BEFORE that strip, so a bare ``v`` is refused as
-    the malformed version it is rather than quietly clearing the pin.
+    A pin names one exact release, and :func:`select_target` finds it by VERSION
+    (:mod:`personalclaw.versions`), so a candidate is pinned in either of its spellings: its tag's
+    ``0.3.0-rc.1``, or the ``0.3.0rc1`` ``personalclaw --version`` prints. Nothing that is not
+    one release can be pinned: not a version line (``0.2``, ``0.2.x``), not a range
+    (``>=0.2``), and not a version no release tag carries (a ``+local`` label, an epoch).
+
+    ``""`` (after trimming) clears the pin; a leading ``v`` is stripped, as the pin is shown
+    after one. Emptiness is judged BEFORE that strip, so a bare ``v`` is refused as the
+    malformed version it is rather than quietly clearing the pin.
     """
     raw = (pin or "").strip()
     if not raw:
         return ""
     value = normalize_version(raw)
-    if len(value) > 64 or not _PIN_SHAPE.fullmatch(value):
+    release = versions.parse_version(value) if value[:1].isdigit() else None
+    if (
+        len(value) > 64
+        or release is None
+        or len(release.release) != 3
+        or release.local is not None
+        or release.epoch
+    ):
         raise ValueError(
             f"{raw!r} is not a release version — pin an exact release such as 0.1.3 "
             "(or 0.3.0-rc.1 for a release candidate), or leave it empty to follow the channel"
@@ -574,7 +544,8 @@ async def build_update_status(current: str, *, fetch: bool) -> dict[str, object]
     passes ``personalclaw.__version__``). ``latest`` names the release this
     install's channel/pin RESOLVES to, and ``release_name``/``release_notes``
     describe that same release; ``update_available`` says whether it is newer than
-    ``current`` (:func:`is_newer`, pre-releases in order). The git kind additionally
+    ``current`` (:func:`personalclaw.versions.is_newer`, pre-releases in order). The git kind
+    additionally
     surfaces ``commits_behind`` as secondary info; the container kind carries
     ``instructions``, the commands that pull that same release.
 
@@ -633,8 +604,8 @@ async def build_update_status(current: str, *, fetch: bool) -> dict[str, object]
     pin_miss = pinned and not resolved_tag and checked
     latest = normalize_version(str(release.get("tag") or ""))
 
-    update_available = is_newer(latest, current)
-    pin_older = pinned and is_newer(current, latest)
+    update_available = versions.is_newer(latest, current)
+    pin_older = pinned and versions.is_newer(current, latest)
 
     commits_behind: int | None = None
     if kind == "git":
@@ -750,15 +721,16 @@ def _releases_from_cache(cache: dict[str, object]) -> list[dict[str, object]]:
 def _is_prerelease(release: dict[str, object]) -> bool:
     """A release the ``stable`` channel must skip and ``beta`` must include.
 
-    Two independent signals, either sufficient: GitHub's own ``prerelease`` flag,
-    and a PEP 440 pre-release suffix on the tag (``v0.3.0-rc.1`` / ``-beta.N``) —
-    the tag convention §3.6 names. Taking both means a release flagged prerelease
-    with a plain tag, and a plainly-flagged release with a ``-rc``/``-beta`` tag,
-    are each kept out of stable and offered to beta.
+    Two independent signals, either sufficient: GitHub's own ``prerelease`` flag, and a tag
+    whose version is a pre-release (:mod:`personalclaw.versions`): a candidate in either
+    spelling (``v0.3.0-rc.1``, ``v0.3.0rc1``), an alpha, a beta or a dev build. Taking both
+    means a release flagged prerelease with a plain tag, and a plainly-flagged release with a
+    candidate's tag, are each kept out of stable and offered to beta.
     """
     if bool(release.get("prerelease")):
         return True
-    return "-" in normalize_version(str(release.get("tag") or ""))
+    version = versions.parse_version(str(release.get("tag") or ""))
+    return version is not None and version.is_prerelease
 
 
 def select_target(releases: list[dict[str, object]], channel: str, pin: str = "") -> str:
@@ -773,20 +745,21 @@ def select_target(releases: list[dict[str, object]], channel: str, pin: str = ""
     * ``nightly`` — ``""``: nightly tracks the checked-out branch, not a release
       tag (the git kind follows the branch — RUM-4), so there is no tag to name.
 
-    "Newest" is the highest version in pre-release order (:func:`parse_version`), so the
-    answer does not depend on the order of the list: ``v0.3.0-rc.2`` beats ``v0.3.0-rc.1``,
-    and a published ``v0.3.0`` beats both on ``beta``. A tag that is not a version is never
-    selected, because it cannot be ordered against the others or the running version.
+    Versions are compared as :mod:`personalclaw.versions` reads them. A pin finds its release
+    by version, so either spelling of a candidate (``0.3.0-rc.1``, ``0.3.0rc1``) finds the tag
+    ``v0.3.0-rc.1``. "Newest" is the highest version in pre-release order, so the answer does
+    not depend on the order of the list: ``v0.3.0-rc.2`` beats ``v0.3.0-rc.1``, and a published
+    ``v0.3.0`` beats both on ``beta``. A tag that is not a version is never selected, because it
+    cannot be ordered against the others or the running version.
     Returns ``""`` when no candidate matches. Never raises — every field access is
     defensive, so a malformed cache degrades to ``""`` rather than an exception on
     the update path. An unrecognized channel falls to the ``stable`` arm (safest).
     """
     pin = (pin or "").strip()
     if pin:
-        want = normalize_version(pin)
         for rel in releases:
             tag = str(rel.get("tag") or "")
-            if tag and normalize_version(tag) == want:
+            if tag and versions.same_version(tag, pin):
                 return tag
         return ""
 
@@ -797,16 +770,9 @@ def select_target(releases: list[dict[str, object]], channel: str, pin: str = ""
     else:  # "stable" and any unrecognized channel -> the safe, non-prerelease line
         candidates = [r for r in releases if not _is_prerelease(r)]
 
-    best_tag = ""
-    best: Version | None = None
-    for rel in candidates:
-        tag = str(rel.get("tag") or "")
-        version = parse_version(tag)
-        if version is None:
-            continue
-        if best is None or version > best:
-            best, best_tag = version, tag
-    return best_tag
+    tags = [str(rel.get("tag") or "") for rel in candidates]
+    readable = [tag for tag in tags if versions.parse_version(tag) is not None]
+    return max(readable, key=versions.order_key, default="")
 
 
 def _release_line(channel: str) -> str:
@@ -909,7 +875,7 @@ async def resolve_wheel_target(channel: str, pin: str = "") -> str:
 
 def _moving_minor(tag: str) -> str:
     """The ``X.Y`` moving-minor image tag for a release *tag*, or "" if unparseable."""
-    version = parse_version(tag)
+    version = versions.parse_version(tag)
     if version is None or len(version.release) < 2:
         return ""
     return f"{version.major}.{version.minor}"

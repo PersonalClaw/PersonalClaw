@@ -105,13 +105,13 @@ class TestTheVerdict:
         assert before.admits is False
         assert before.missing == (APPROVAL_ANSWERS,)
 
-    def test_a_missing_feature_refuses_where_the_version_cannot_be_read(self):
-        """A source checkout's version does not parse, so its floor fails open, and a feature is
-        then the only check that still holds."""
-        assert check_core_compatibility("99.0.0", host="0.2.0.dev3+g9a1c").state == (
+    def test_a_missing_feature_is_named_where_the_version_cannot_be_read(self):
+        """A feature needs no reading of the core's version, so a core whose version cannot be
+        read still names the feature it lacks, rather than only that it cannot read itself."""
+        assert check_core_compatibility("99.0.0", host="unknown").state == (
             CORE_COMPAT_UNKNOWN_HOST
         )
-        v = check_core_compatibility("99.0.0", [NEWER], host="0.2.0.dev3+g9a1c")
+        v = check_core_compatibility("99.0.0", [NEWER], host="unknown")
         assert v.state == CORE_COMPAT_INCOMPATIBLE
         assert NEWER in v.reason
 

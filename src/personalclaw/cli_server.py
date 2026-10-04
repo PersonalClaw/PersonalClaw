@@ -21,6 +21,7 @@ from personalclaw import (
     home_gateway,
     process_facts,
     self_update,
+    versions,
 )
 from personalclaw.atomic_write import open_streamed
 from personalclaw.auth import lifetimes
@@ -813,7 +814,7 @@ def _already_there(target: str, pin: str) -> bool:
 
 def _move_line(target: str) -> str:
     """``v<running> → v<target>``, with an arrow for the way the move goes (a pin can go back)."""
-    arrow = "⬆️ " if self_update.is_newer(target, __version__) else "⏪"
+    arrow = "⬆️ " if versions.is_newer(target, __version__) else "⏪"
     return f"  {arrow} v{__version__} → v{self_update.normalize_version(target)}"
 
 
@@ -878,7 +879,7 @@ def _pin_before_update(to: str) -> None:
         print("   Give a release version, e.g. `personalclaw update --to 0.1.3`.", file=sys.stderr)
         sys.exit(1)
     print(f"  📌 Pinned updates.pin = {target} (clear it to follow the channel again)")
-    if self_update.is_newer(__version__, target):
+    if versions.is_newer(__version__, target):
         # A downgrade can meet state written by the newer build. Pre-1.0 there is no
         # migration machinery either way, so the honest advice is a snapshot.
         print(f"  ⏪ Rolling BACK: v{__version__} → v{target}")

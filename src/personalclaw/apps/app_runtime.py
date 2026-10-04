@@ -107,8 +107,6 @@ def start_installed(*, gateway: bool = True) -> list[str]:
         if refused:
             _refuse(manifest, refused)
             continue
-        if compat.reason:
-            logger.warning("app %s: %s", manifest.name, compat.reason)
         ready.append(manifest)
     if gateway:
         load(*ready)

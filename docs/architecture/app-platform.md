@@ -104,9 +104,12 @@ backend**.
   refuses an app whose `minPersonalClawVersion` is above this core, and one that names a
   core feature in `requiresCoreFeatures` this core does not offer (`apps/core_features`,
   published as `personalclaw.sdk.features`). Every core built between two releases reads the
-  same version, so a floor cannot tell such cores apart and a feature can; a feature also
-  holds in a source checkout, whose version does not parse. The refusal names the version
-  and each feature this core lacks, and says to update PersonalClaw.
+  same version, so a floor cannot tell such cores apart and a feature can. Versions are read
+  by the one comparison every version check uses (`personalclaw.versions`, the packaging
+  standard), so a release candidate or a dev build is older than its release: an app that
+  needs `0.3.0` is refused by `0.3.0rc1`. A floor, or a core version, that is not a version
+  refuses the app too, naming both. The refusal names the version and each feature this core
+  lacks, and says to update PersonalClaw.
 - **Update** is atomic with rollback: the previous install is preserved at
   `~/.personalclaw/apps/.{name}.rollback` for the duration. An update that changes
   what the app gets (compared with the installed copy's disclosure), or scans with

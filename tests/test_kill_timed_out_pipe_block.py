@@ -220,6 +220,7 @@ _UPDATES_LEAF = {
     "local",  # git rev-parse HEAD
     "remote",  # git rev-parse @{u}
     "show",  # git show <sha>:./pyproject.toml
+    "tags",  # git tag --list v*
     "diff",  # git diff <range> -- CHANGELOG.md
 }
 
@@ -245,7 +246,7 @@ def _spawns_by_target(source: str, callee: str) -> dict[str, set[str]]:
 
 
 def test_only_the_censused_spawns_lead_their_own_group():
-    """Both directions: the two forking spawns opt in, the four leaves stay out."""
+    """Both directions: the two forking spawns opt in, the five leaves stay out."""
     src = (_SRC / "dashboard" / "handlers" / "updates.py").read_text()
     spawns = _spawns_by_target(src, "create_subprocess_exec")
 
@@ -288,7 +289,7 @@ def _timeout_kill_style(source: str) -> dict[str, str]:
 
 
 def test_updates_timeout_handlers_match_the_census_exactly():
-    """The two forking spawns kill their GROUP; the four leaves still kill by pid.
+    """The two forking spawns kill their GROUP; the five leaves still kill by pid.
 
     Bidirectional on purpose. A leaf drifting to ``group`` means someone blanket-swept
     and gave a non-forking child a session it doesn't need; a forking spawn drifting to
@@ -484,12 +485,13 @@ _NOT_ROUTED_TO_THE_OWNER: dict[str, str] = {
     "dashboard/handlers/files.py::api_upload::proc": "leaf picker: killed+reaped, no bound",
     # ── censused leaf git plumbing in updates.py ──
     # Deliberately pid-killed, and pinned that way BOTH ways by
-    # `test_updates_timeout_handlers_match_the_census_exactly` above: these four never
+    # `test_updates_timeout_handlers_match_the_census_exactly` above: these five never
     # fork, so a group signal would only widen the blast radius. Routing them through the
     # owner would red that rail, so the two rails are kept consistent here on purpose.
     "dashboard/handlers/updates.py::_do_update_check::local": "censused leaf (git rev-parse)",
     "dashboard/handlers/updates.py::_do_update_check::remote": "censused leaf (git rev-parse @{u})",
     "dashboard/handlers/updates.py::_do_update_check::show": "censused leaf (git show)",
+    "dashboard/handlers/updates.py::_do_update_check::tags": "censused leaf (git tag)",
     "dashboard/handlers/updates.py::_do_update_check::diff": "censused leaf (git diff)",
     # ── still outstanding: pid-killed and reaped, so no hang; the grandchild leaks ──
     "dashboard/handlers/_shared.py::_list_marketplace_skills::proc": (

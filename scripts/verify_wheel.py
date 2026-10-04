@@ -116,9 +116,9 @@ _BUNDLED_MODEL_PROBE = Path(__file__).resolve().with_name("installed_bundled_mod
 _PROBE_TIMEOUT_S = 120.0
 
 #: The pipeline's version comparisons (``scripts/release_version.py``), run by the INSTALLED
-#: artifact's interpreter so the parse is the updater's own. A version is compared as a version,
-#: never as text: setuptools writes a release candidate pinned as ``0.3.0-rc.1`` into the
-#: metadata as ``0.3.0rc1``, and the two are one release.
+#: artifact's interpreter so the comparison is the artifact's own. A version is compared as a
+#: version, never as text: setuptools writes a release candidate pinned as ``0.3.0-rc.1`` into
+#: the metadata as ``0.3.0rc1``, and the two are one release.
 _RELEASE_VERSION = Path(__file__).resolve().with_name("release_version.py")
 
 

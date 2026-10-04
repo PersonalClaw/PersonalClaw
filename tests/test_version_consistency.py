@@ -20,11 +20,11 @@ If any of them drift, this test goes red — that is the guardrail that keeps
 `pip show`, `personalclaw --version`, the in-app "what's new" panel, and the names
 of the desktop artifacts a release publishes honest.
 
-They are compared as VERSIONS, with the updater's own parse (``self_update``), never as
-text. A release candidate is written ``0.3.0-rc.1`` everywhere a release cut writes it —
-the tag's spelling — and the installed package reports it as ``0.3.0rc1``, because the build
-normalizes it: one release, which a text comparison read as two, so every check here failed
-the first candidate.
+They are compared as VERSIONS, with the one comparison the product uses
+(``personalclaw.versions``), never as text. A release candidate is written ``0.3.0-rc.1``
+everywhere a release cut writes it — the tag's spelling — and the installed package reports
+it as ``0.3.0rc1``, because the build normalizes it: one release, which a text comparison
+read as two, so every check here failed the first candidate.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from pathlib import Path
 import pytest
 
 import personalclaw
-from personalclaw.self_update import parse_version, same_version
+from personalclaw.versions import parse_version, same_version
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"

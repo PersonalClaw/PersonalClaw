@@ -8,7 +8,6 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from personalclaw.apps.agent_tiers import AGENT_TIERS
-from personalclaw.apps.core_version import version_tuple
 from personalclaw.apps.manifest import (
     PERMISSION_KEYS,
     AppManifest,
@@ -19,9 +18,10 @@ from personalclaw.apps.manifest import (
     SetupConfig,
     permission_key,
 )
+from personalclaw.versions import order_key
 
 # ---------------------------------------------------------------------------
-# version_tuple — the single app-version comparator
+# App versions, as the Store orders them (the one comparison, ``personalclaw.versions``)
 # ---------------------------------------------------------------------------
 
 
@@ -32,27 +32,22 @@ from personalclaw.apps.manifest import (
         ("2.0.0", "1.9.9"),
         ("1.0.10", "1.0.9"),  # numeric, not lexical
         ("1.1.0", "1.0.5"),
+        ("1.2.3", "1.2.3-rc1"),  # a release is newer than its own candidate
     ],
 )
-def test_version_tuple_orders_newer_greater(a, b):
-    assert version_tuple(a) > version_tuple(b)
+def test_app_versions_order_newer_greater(a, b):
+    assert order_key(a) > order_key(b)
 
 
-def test_version_tuple_equal_versions_compare_equal():
-    assert version_tuple("1.2.3") == version_tuple("1.2.3")
+def test_app_versions_equal_and_v_prefixed_compare_equal():
+    assert order_key("1.2.3") == order_key("1.2.3")
+    assert order_key("v1.2.3") == order_key("1.2.3")
 
 
-def test_version_tuple_tolerates_v_prefix_and_suffix():
-    assert version_tuple("v1.2.3") == version_tuple("1.2.3")
-    assert version_tuple("1.2.3+build.5") == version_tuple("1.2.3")
-    assert version_tuple("1.2.3-rc1") == version_tuple("1.2.3")
-
-
-def test_version_tuple_bad_value_sorts_lowest():
+def test_an_app_version_that_is_not_a_version_sorts_lowest():
     # A malformed version must never read as a newer release.
-    assert version_tuple("not-a-version") == (0,)
-    assert version_tuple("") == (0,)
-    assert version_tuple("1.2.0") > version_tuple("garbage")
+    assert order_key("not-a-version") == order_key("")
+    assert order_key("0.0.0") > order_key("garbage")
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +128,7 @@ class TestValidation:
     def test_invalid_version_format(self):
         m = AppManifest.from_dict(_valid_manifest(version="not-semver"))
         errors = m.validate()
-        assert any("semver" in e for e in errors)
+        assert any("version must be MAJOR.MINOR.PATCH" in e for e in errors)
 
     def test_legacy_agents_skills_sops_silently_ignored(self):
         m = AppManifest.from_dict(

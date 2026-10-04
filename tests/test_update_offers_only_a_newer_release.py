@@ -25,6 +25,7 @@ import pytest
 
 from personalclaw import checkout_update, cli_server, container_host
 from personalclaw import self_update as su
+from personalclaw import versions
 
 
 def _view(tag: str, prerelease: bool = False) -> dict[str, object]:
@@ -505,18 +506,18 @@ async def test_the_staged_apply_leaves_a_pinned_candidate_where_it_is(
     ],
 )
 def test_pre_releases_order_before_their_release(older: str, newer: str) -> None:
-    assert su.is_newer(newer, older)
-    assert not su.is_newer(older, newer)
-    assert not su.same_version(older, newer)
+    assert versions.is_newer(newer, older)
+    assert not versions.is_newer(older, newer)
+    assert not versions.same_version(older, newer)
 
 
 def test_a_version_is_one_version_however_it_is_spelled() -> None:
-    assert su.same_version("v0.3.0-rc.1", "0.3.0rc1")
-    assert not su.is_newer("v0.3.0-rc.1", "0.3.0rc1")
-    assert not su.is_newer("0.3.0rc1", "v0.3.0-rc.1")
+    assert versions.same_version("v0.3.0-rc.1", "0.3.0rc1")
+    assert not versions.is_newer("v0.3.0-rc.1", "0.3.0rc1")
+    assert not versions.is_newer("0.3.0rc1", "v0.3.0-rc.1")
     # Not a version: never the same as anything, never newer than anything.
-    assert not su.same_version("nightly", "nightly")
-    assert not su.is_newer("nightly", "0.1.0")
+    assert not versions.same_version("nightly", "nightly")
+    assert not versions.is_newer("nightly", "0.1.0")
 
 
 @pytest.mark.parametrize(

@@ -538,15 +538,13 @@ def _core_compatibility_gate(manifest: AppManifest, *, action: str) -> None:
     same version, so ``requiresCoreFeatures`` is what tells those apart: an update built for a
     newer core installed on an older one and lost a feature without a word.
 
-    Only ``incompatible`` refuses. A malformed floor or an unmeasurable host fails OPEN
-    with a warning — see the four-state note in :mod:`personalclaw.apps.core_version`, which
-    owns the decision itself so no path re-derives the comparison."""
+    A floor or a core version that cannot be read refuses too, naming both — see the four-state
+    note in :mod:`personalclaw.apps.core_version`, which owns the decision itself so no path
+    re-derives the comparison."""
     compat = manifest.core_compatibility()
     if not compat.admits:
         logger.warning("app %s: %s refused — %s", manifest.name, action, compat.reason)
         raise AppLifecycleError(f"{action} refused: {manifest.name!r} {compat.reason}")
-    if compat.reason:
-        logger.warning("app %s: %s", manifest.name, compat.reason)
 
 
 def _survey(src: Path, *, action: str) -> app_staging.Survey:
@@ -2170,9 +2168,6 @@ def enable(name: str, *, caller: str = "app_manager") -> bool:
             logger.warning("app %s: enable refused — %s", name, refused)
             _audit("enable", outcome, name, caller=caller, error=refused)
             return False
-        compat = manifest.core_compatibility()
-        if compat.reason:
-            logger.warning("app %s: %s", name, compat.reason)
         try:
             _run_hook(
                 manifest.setup.onEnable,
