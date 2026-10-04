@@ -62,6 +62,7 @@ from personalclaw.inbound import auth, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
 from personalclaw.providers.failure_copy import sentence_with_detail
+from personalclaw.turn_source import arrived_on
 
 logger = logging.getLogger(__name__)
 
@@ -703,7 +704,8 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
                 status=503,
             )
 
-        session.append("user", prompt, "msg msg-u")
+        # The program that sent it, not the dashboard: this conversation and the client's id.
+        session.append("user", prompt, "msg msg-u", source=arrived_on(key, client_id))
         task = asyncio.create_task(runner(state, session, prompt))
         session.task = task
         with _quiet():

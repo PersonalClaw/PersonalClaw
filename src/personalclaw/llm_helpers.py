@@ -546,8 +546,9 @@ def save_conversation_turn(
 
     A channel that runs a conversation itself records its turns here. The dashboard's chat for
     that conversation rewrites the whole file from what it holds, so it is given the turn too
-    (``DashboardState.take_channel_turn``): left out, the chat showed the conversation as it was
-    when it was opened, and its next save wrote that over every turn since.
+    (``DashboardState.take_channel_turn``), with the same provenance: left out, the chat showed
+    the conversation as it was when it was opened, and its next save wrote that over every turn
+    since.
     """
     log.append(
         key,
@@ -565,12 +566,15 @@ def save_conversation_turn(
             source_user=source_user,
         )
     from personalclaw.inbox_providers.native_source import get_dashboard_state
+    from personalclaw.turn_source import arrived_on
 
     state = get_dashboard_state()
     if state is None:
         return
     try:
-        state.take_channel_turn(log, key, user_text, assistant_text)
+        state.take_channel_turn(
+            log, key, user_text, assistant_text, arrived_on(source_thread, source_user)
+        )
     except Exception:  # noqa: BLE001 - the turn is written; the channel's reply must not fail
         logger.warning("could not give the open chat for %s its turn", key, exc_info=True)
 

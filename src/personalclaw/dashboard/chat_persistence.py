@@ -25,6 +25,7 @@ from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import CREATED_BY_APP_META_KEY
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import VALID_TASK_MODES
+from personalclaw.turn_source import source_of
 
 
 def _load_providers_raw() -> list[dict]:
@@ -308,15 +309,16 @@ def _redact_snapshot_message(m: dict) -> dict:
     """Redact one message dict inside a rewind tail snapshot.
 
     Keeps only the fields the read-only tail viewer renders (role, content, ts,
-    cls, meta) and applies the same credential/URL passes as the main transcript
-    for non-user roles.
+    cls, meta), and where the message came from, which a fork of the tail copies
+    (``turn_source``); applies the same credential/URL passes as the main
+    transcript for non-user roles.
     """
     role = m.get("role", "assistant")
     content = m.get("content", "")
     if role not in ("user", "system"):
         content, _ = redact_exfiltration_urls(content)
         content, _ = redact_credentials(content)
-    out: dict = {"role": role, "content": content, "ts": m.get("ts", "")}
+    out: dict = {"role": role, "content": content, "ts": m.get("ts", ""), **source_of(m)}
     if m.get("cls"):
         out["cls"] = m["cls"]
     if m.get("meta"):
@@ -372,9 +374,9 @@ def _seed_transcript(state: DashboardState, session: _ChatSession, history_key: 
     shutdown flush forced the window over the file, dropping every older message.
 
     Every field of every line comes back — ``cls`` (a stop card's state, an approval's
-    decision) and ``meta`` (tool output, citations, telemetry) included. Resume used to
-    rebuild each line with a guessed ``cls`` and no ``meta``, and the next save wrote the
-    stripped copy over the file.
+    decision), ``meta`` (tool output, citations, telemetry) and where the line came from
+    (``turn_source``) included. Resume used to rebuild each line with a guessed ``cls`` and
+    no ``meta``, and the next save wrote the stripped copy over the file.
 
     Replayed without broadcasting: loading history is not live activity, and a
     ``chat_message`` frame per loaded row would replay the whole chat into every open tab.
@@ -401,6 +403,7 @@ def _seed_transcript(state: DashboardState, session: _ChatSession, history_key: 
             ts=m.get("ts", ""),
             broadcast=False,
             meta=_redact_meta(m["meta"]) if m.get("meta") else None,
+            source=source_of(m),
         )
         _attach_variants(session, m)
         _attach_rewound(session, m)
@@ -1020,13 +1023,10 @@ def save_session_to_history(
             if role not in ("user", "system"):
                 content, _ = redact_exfiltration_urls(content)
                 content, _ = redact_credentials(content)
-            entry: dict = {
-                "role": role,
-                "content": content,
-                "ts": m.get("ts", ""),
-                "source_thread": "dashboard",
-                "source_user": "dashboard",
-            }
+            # Where the line came from, as it was recorded when the line was taken in
+            # (`turn_source`): a save writes no source of its own. It used to write the
+            # dashboard's on every line, so a channel's turns read as typed in the dashboard.
+            entry: dict = {"role": role, "content": content, "ts": m.get("ts", ""), **source_of(m)}
             if m.get("variants"):
                 redacted_variants: list[dict] = []
                 for v in m["variants"]:

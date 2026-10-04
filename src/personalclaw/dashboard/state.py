@@ -9,7 +9,7 @@ import re
 import time
 import traceback
 import uuid
-from collections.abc import Coroutine, Iterable
+from collections.abc import Coroutine, Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -42,6 +42,7 @@ from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for das
     shell_command,
     tool_input_to_str,
 )
+from personalclaw.turn_source import DASHBOARD_SOURCE, source_of
 
 
 def config_dir() -> Path:
@@ -584,8 +585,12 @@ class _ChatSession(ChatQueue):
         *,
         broadcast: bool = True,
         meta: dict | None = None,
+        source: Mapping[str, str] = DASHBOARD_SOURCE,
     ) -> None:
         """Add one transcript entry — something the user wrote or saw.
+
+        *source* is where it came from (:mod:`personalclaw.turn_source`): the dashboard's, unless
+        the caller took the entry in from somewhere else or copies one that records its own.
 
         Stream bookkeeping never comes through here. A streamed chunk grows the one open
         answer (:meth:`stream_chunk`) and the end-of-turn marker goes to live readers only
@@ -597,6 +602,7 @@ class _ChatSession(ChatQueue):
             "content": content,
             "cls": cls,
             "ts": ts or datetime.now(timezone.utc).isoformat(),
+            **source_of(source),
         }
         if meta:
             msg["meta"] = meta
@@ -666,6 +672,7 @@ class _ChatSession(ChatQueue):
         idx = self._stream_index()
         if idx is None:
             self._stream = {"role": "streaming", "content": text, "cls": "msg msg-a", "ts": now}
+            self._stream.update(DASHBOARD_SOURCE)  # the chat's own answer
             self.messages.append(self._stream)
         else:
             self.messages[idx]["content"] += text
@@ -2131,7 +2138,9 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         session._titled = True
         self.push_session_title(session.key, shown)
 
-    def take_channel_turn(self, log: Any, session_key: str, user_text: str, reply: str) -> None:
+    def take_channel_turn(
+        self, log: Any, session_key: str, user_text: str, reply: str, source: Mapping[str, str]
+    ) -> None:
         """A turn a channel wrote to *log* for a conversation it runs itself, also into the chat
         open here for that conversation, when one is (``llm_helpers.save_conversation_turn``).
 
@@ -2139,7 +2148,8 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         whole file from what it holds (``save_session_to_history``). A turn written to the file
         alone was missing from it: the dashboard went on showing the conversation as it was when
         the chat was opened (or trusted, ``chat_trust``), and the save every gateway stop makes
-        wrote that over the turns since. Only for the log this dashboard reads its chats from."""
+        wrote that over the turns since. Only for the log this dashboard reads its chats from.
+        Each line records the *source* the channel wrote it with."""
         session = self._sessions.get(session_key.removeprefix(DASHBOARD_SESSION_PREFIX))
         if session is None or log is not self.conversation_log:
             return
@@ -2147,7 +2157,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         if reply:
             lines.append(("assistant", reply, "msg msg-a"))
         for role, content, cls in lines:
-            session.append(role, content, cls, broadcast=False)
+            session.append(role, content, cls, broadcast=False, source=source)
             self._broadcast_chat_message(
                 session.key, {"role": role, "content": content, "cls": cls}
             )

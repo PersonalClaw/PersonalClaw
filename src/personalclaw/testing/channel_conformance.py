@@ -98,6 +98,7 @@ import inspect
 import itertools
 import json
 import warnings
+from collections.abc import Mapping
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -214,7 +215,12 @@ class CapturedSession:
         self.appended.append((role, content))
 
     def queue_append(
-        self, content: str, *, channel: str = "", files: list[str] | None = None
+        self,
+        content: str,
+        *,
+        channel: str = "",
+        files: list[str] | None = None,
+        source: Mapping[str, str] | None = None,
     ) -> str:
         self.queued.append(content)
         return "q"

@@ -585,7 +585,8 @@
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "content"},
      {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "channel"},
-     {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "files"}
+     {"annotation": "list[str] | None", "default": "None", "kind": "keyword_only", "name": "files"},
+     {"annotation": "Mapping[str, str] | None", "default": "None", "kind": "keyword_only", "name": "source"}
     ],
     "returns": "str"
    }

@@ -270,6 +270,11 @@ Notes that bite:
   as proof of the inbound path rather than demanding the `receive()` shape nobody uses.
 - Persist your cursor (poll offset, IMAP UID, gateway session) **before** dispatching the
   message, not after. A crash mid-dispatch must not replay the message forever.
+- Set `ChannelMessage.sender` to the id your channel knows the person by, and `thread_id` to
+  the conversation. The door records both on the turn it adds to the chat, as where the
+  message came from (`source_user`, `source_thread`), and every save of the chat keeps them.
+  A stand-in session in your tests takes `source=` on `append` and `queue_append`, as the
+  chat does.
 - `health()` is passive and cheap (credentials present? socket up?). `test()` is allowed to
   make one round-trip. If they can disagree, you have two truths and the owner will find
   the wrong one.

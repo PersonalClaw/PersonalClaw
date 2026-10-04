@@ -8,9 +8,11 @@ Items are dicts: ``id`` and ``content``, and what else the message carries when 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
 from personalclaw.own_words import OWN_WORDS
+from personalclaw.turn_source import DASHBOARD_SOURCE, source_of
 
 
 class ChatQueue:
@@ -27,6 +29,7 @@ class ChatQueue:
         channel: str = "",
         files: list[str] | None = None,
         own_words: str | None = None,
+        source: Mapping[str, str] = DASHBOARD_SOURCE,
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -34,9 +37,10 @@ class ChatQueue:
         channel already shows it, so the turn that runs it does not send it back there.
         ``files`` are its attached files, which the message carries when it runs. ``own_words``
         are the words of it its sender typed, when it holds more than them (``own_words``).
+        ``source`` is where it came from (``turn_source``), which its row records when it runs.
         """
         qid = uuid.uuid4().hex[:12]
-        item: dict[str, Any] = {"id": qid, "content": content}
+        item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
         if channel:
             item["channel"] = channel
         if files:

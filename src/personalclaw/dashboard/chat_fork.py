@@ -12,6 +12,7 @@ from personalclaw.dashboard.chat_utils import (
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.sel import sel
+from personalclaw.turn_source import source_of
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,10 @@ async def api_chat_session_fork(request: web.Request) -> web.Response:
                 content, _ = redact_exfiltration_urls(content)
                 content, _ = redact_credentials(content)
             cls = "msg msg-u" if role == "user" else "msg msg-a"
-            new_session.append(role, content, cls, ts=m.get("ts", ""), broadcast=False)
+            # A copied turn is still the turn it was: it keeps where it came from.
+            new_session.append(
+                role, content, cls, ts=m.get("ts", ""), broadcast=False, source=source_of(m)
+            )
         new_session.drain()
         save_session_to_history(state, new_session)
         new_session._resumed_count = len(new_session.messages)
@@ -260,7 +264,9 @@ async def api_chat_session_fork_rewound(request: web.Request) -> web.Response:
                     content, _ = redact_exfiltration_urls(content)
                     content, _ = redact_credentials(content)
                 cls = "msg msg-u" if role == "user" else "msg msg-a"
-                new_session.append(role, content, cls, ts=m.get("ts", ""), broadcast=False)
+                new_session.append(
+                    role, content, cls, ts=m.get("ts", ""), broadcast=False, source=source_of(m)
+                )
             new_session.drain()
             save_session_to_history(state, new_session)
             new_session._resumed_count = len(new_session.messages)

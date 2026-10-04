@@ -162,6 +162,7 @@ from personalclaw.sel import sel
 from personalclaw.session_pid import tie_to_session
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
+from personalclaw.turn_source import shared_source
 from personalclaw.usage_ledger import Attribution, recorder, spent_rows
 
 if TYPE_CHECKING:
@@ -5676,6 +5677,7 @@ async def run_chat(
                     next_msg,
                     json.dumps({"cronLabel": cron_label}) if is_cron else "msg msg-u",
                     meta=queued_meta or None,
+                    source=shared_source(consumed),  # where its messages came from
                 )
                 # A queued user message is persisted here but session.append suppresses
                 # the SSE echo for role="user" (the live page normally adds the user

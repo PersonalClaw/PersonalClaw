@@ -349,16 +349,20 @@ async def _route_to_session(
     broadcast = getattr(state, "broadcast_ws", None)
     push = getattr(state, "push_sessions_update", None)
     from personalclaw.attachments import keep_for_chat
+    from personalclaw.turn_source import arrived_on
 
     paths = keep_for_chat(files) if files else []
+    # Where the message came from, recorded on its row (in the queue as well): the thread and
+    # its sender, which every save of the chat writes back as they are.
+    source = arrived_on(thread_key, msg.sender)
 
     if getattr(session, "running", False):
         # Queued the way a message typed in the dashboard mid-turn is: the queue adds it to
         # the chat when it runs it. Adding it here too put it in the chat twice.
         queue_id = (
-            session.queue_append(text, channel=provider, files=paths)
+            session.queue_append(text, channel=provider, files=paths, source=source)
             if paths
-            else session.queue_append(text, channel=provider)
+            else session.queue_append(text, channel=provider, source=source)
         )
         if broadcast is not None:
             broadcast(
@@ -375,9 +379,9 @@ async def _route_to_session(
         return
 
     if paths:
-        session.append("user", safe, "msg msg-u", meta={"files": paths})
+        session.append("user", safe, "msg msg-u", meta={"files": paths}, source=source)
     else:
-        session.append("user", safe, "msg msg-u")
+        session.append("user", safe, "msg msg-u", source=source)
     # ``Session.append`` skips the global broadcast for role="user" because the
     # dashboard frontend adds its OWN sends optimistically — but this user line
     # originated in a channel, so no frontend has it. Broadcast it explicitly, and
