@@ -772,23 +772,46 @@ async def api_skill_verify(request: web.Request) -> web.Response:
 
 
 async def api_skill_overlay_revert(request: web.Request) -> web.Response:
-    """POST /api/skills/overlay/revert — drop a skill's accepted-refinement overlay.
+    """POST /api/skills/overlay/revert — revert accepted refinements of a skill.
 
-    Body: ``{name: "<skill name>"}`` (the name may carry a namespace slash, e.g.
-    ``auto/release-flow``, which is why it rides the body rather than a URL segment). Revert is
-    the deletion of exactly ONE sidecar file: the base ``SKILL.md`` and its ``.pclaw-lock.json``
-    are untouched, so a marketplace skill stays verifiable across the round trip."""
+    Body: ``{name: "<skill name>", refinement?: "<id>"}`` (the name may carry a namespace slash,
+    e.g. ``auto/release-flow``, which is why it rides the body rather than a URL segment). With
+    ``refinement``, an id from the skill's read (``GET /api/skills/{name}``), that one refinement
+    is reverted and 404 ``not_found`` answers an id that is no longer applied; without it, every
+    one. Answers how many were reverted and the refinements still applied. The skill then loads
+    without what was reverted: a copy an earlier save wrote into its ``SKILL.md`` is taken out of
+    the file first, and nothing else of the skill changes, so a marketplace skill whose file was
+    never doubled stays verifiable across the round trip."""
     try:
         body: dict[str, Any] = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     name = require_string(body, "name")
+    refinement = string_field(body, "refinement")
 
     from personalclaw.skills import overlays
 
-    removed = overlays.revert_overlay(name)
+    from ._shared import _get_skills
+
+    removed = _get_skills(request.app["state"]).revert_refinements(name, refinement)
     _sel_log("skills.overlay_revert", "ok" if removed else "noop", name, request)
-    return web.json_response({"ok": True, "name": name, "reverted": removed})
+    if refinement and not removed:
+        return json_error(
+            "not_found",
+            message=(
+                f"No refinement {refinement!r} is applied to the skill {name!r}: it was reverted "
+                "already, or the skill's refinements changed since they were read."
+            ),
+            status=404,
+        )
+    return web.json_response(
+        {
+            "ok": True,
+            "name": name,
+            "reverted": removed,
+            "refinements": [a.to_dict() for a in overlays.applied(name)],
+        }
+    )
 
 
 # ── Ephemeral session skills (skill-ephemeral-promotion) ─────────────────────

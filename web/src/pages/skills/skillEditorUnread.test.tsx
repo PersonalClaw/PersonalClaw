@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { api, type SkillItem } from '../../lib/api'
+import { api, type SkillDocument, type SkillItem } from '../../lib/api'
 import { SkillInspector } from './SkillInspector'
 
 // ── The SKILL.md editor waits for a real read ─────────────────────────────────────────────────
@@ -17,6 +17,9 @@ const skill: SkillItem = {
   key: 'notes', name: 'notes', description: 'notes description', always: false,
   path: '/skills/notes', source: 'local', type: 'installed', loaded_by_agents: [], integrity: 'intact',
 }
+
+/** The read: the skill's own text and its revision, with nothing applied on top. */
+const doc = (value: string, revision: string): SkillDocument => ({ value, revision, refinements: [], loaded: value })
 
 beforeEach(() => {
   sessionStorage.clear()
@@ -45,7 +48,7 @@ describe('editing SKILL.md', () => {
   it('a Retry that reads the file opens it for editing', async () => {
     vi.spyOn(api, 'skillDocument')
       .mockRejectedValueOnce(new Error('skill directory unreadable'))
-      .mockResolvedValue({ value: '# Notes\nKeep them short.', revision: 'r1' })
+      .mockResolvedValue(doc('# Notes\nKeep them short.', 'r1'))
     await openEditor()
     fireEvent.click(await screen.findByRole('button', { name: /Retry/ }))
     await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('# Notes\nKeep them short.'))
@@ -54,7 +57,7 @@ describe('editing SKILL.md', () => {
   it('a successful read saves what the user edited, over the revision it read', async () => {
     // The control: the whole-document write is right when the document it replaces was read — and
     // it names that read's revision, so a copy that went stale in the meantime is refused.
-    vi.spyOn(api, 'skillDocument').mockResolvedValue({ value: '# Notes', revision: 'r1' })
+    vi.spyOn(api, 'skillDocument').mockResolvedValue(doc('# Notes', 'r1'))
     const update = vi.spyOn(api, 'updateSkill').mockResolvedValue({ ok: true, revision: 'r2' })
     await openEditor()
     const field = await waitFor(() => screen.getByRole('textbox') as HTMLTextAreaElement)
@@ -65,15 +68,15 @@ describe('editing SKILL.md', () => {
 })
 
 describe('a SKILL.md save from a stale copy', () => {
-  // The gateway rewrites skills on its own — the curator ages them, an accepted refinement lands in
-  // the overlay — so the copy the editor opened can be older than what is stored by the time it is
-  // saved. The old editor saved it anyway; the gateway now refuses it (`409 stale_write`).
+  // The gateway rewrites skills on its own — the curator ages them, a consolidation refines an
+  // auto-created one — so the copy the editor opened can be older than what is stored by the time it
+  // is saved. The old editor saved it anyway; the gateway now refuses it (`409 stale_write`).
   const stale = () => Object.assign(new Error('This write replaces the skill, which changed…'), { status: 409, code: 'stale_write' })
 
   it('is refused with the notice, and the draft stays in the editor', async () => {
     vi.spyOn(api, 'skillDocument')
-      .mockResolvedValueOnce({ value: '# Notes\nKeep them short.', revision: 'r1' })
-      .mockResolvedValue({ value: '# Notes\nKeep them short.\n\n## Refinement v1\nCite it.', revision: 'r2' })
+      .mockResolvedValueOnce(doc('# Notes\nKeep them short.', 'r1'))
+      .mockResolvedValue(doc('---\nstatus: stale\n---\n# Notes\nKeep them short.', 'r2'))
     const update = vi.spyOn(api, 'updateSkill').mockRejectedValue(stale())
     await openEditor()
     const field = await waitFor(() => screen.getByRole('textbox') as HTMLTextAreaElement)

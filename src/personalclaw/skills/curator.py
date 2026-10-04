@@ -156,7 +156,9 @@ def run_aging(
             continue  # discovered from a read-only external root → not the curator's
         report.scanned += 1
 
-        content = loader.load_skill(name)
+        # The skill's OWN text, not the body a session loads: that one carries its accepted
+        # refinements, and writing it back put each of them into the file a second time.
+        content = loader.skill_text(name)
         if content is None:
             continue
         meta = _frontmatter(content)
@@ -171,6 +173,12 @@ def run_aging(
         if target == cur:
             continue
 
+        if not dry_run:
+            new_content = _set_status_frontmatter(content, target)
+            if new_content != content and not loader.update_skill(name, new_content, over=content):
+                logger.info("Curator: %s changed while it was aged; left for the next pass", name)
+                continue
+
         # Classify the transition for the report.
         if target == STATE_ARCHIVED:
             report.to_archived.append(name)
@@ -178,11 +186,6 @@ def run_aging(
             report.to_stale.append(name)
         elif target == STATE_ACTIVE:
             report.reactivated.append(name)
-
-        if not dry_run:
-            new_content = _set_status_frontmatter(content, target)
-            if new_content != content:
-                loader.update_skill(name, new_content)
 
     if report.changed:
         logger.info(report.summary())
@@ -193,10 +196,10 @@ def restore(loader: SkillsLoader, name: str) -> bool:
     """Reactivate an archived/stale auto skill (status → active). Reversal of aging."""
     if not name.startswith(f"{AUTO_SKILL_NAMESPACE}/"):
         return False
-    content = loader.load_skill(name)
+    content = loader.skill_text(name)
     if content is None:
         return False
-    return loader.update_skill(name, _set_status_frontmatter(content, STATE_ACTIVE))
+    return loader.update_skill(name, _set_status_frontmatter(content, STATE_ACTIVE), over=content)
 
 
 def is_archived(meta: dict) -> bool:

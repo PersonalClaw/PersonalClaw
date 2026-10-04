@@ -3103,12 +3103,27 @@
     ],
     "returns": "list[SkillResource]"
    },
+   "revert_refinements": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "name"},
+     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "refinement"}
+    ],
+    "returns": "int"
+   },
    "skill_file": {
     "kind": "method",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "name"}
     ],
     "returns": "Path | None"
+   },
+   "skill_text": {
+    "kind": "method",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "name"}
+    ],
+    "returns": "str | None"
    },
    "strip_frontmatter": {
     "kind": "staticmethod",
@@ -3132,7 +3147,8 @@
     "kind": "method",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "name"},
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "content"}
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "content"},
+     {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "over"}
     ],
     "returns": "bool"
    }

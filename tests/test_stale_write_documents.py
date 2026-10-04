@@ -101,9 +101,9 @@ class TestSkill:
 
     @pytest.mark.asyncio
     async def test_an_accepted_refinement_between_read_and_save_is_not_undone(self, skills) -> None:
-        # The read is what a session loads — SKILL.md plus the accepted refinements overlaid on
-        # it — so a refinement the learning flywheel accepts while the editor is open changes
-        # the document even though SKILL.md itself is untouched.
+        # The document is the skill's own text. A refinement accepted while the editor is open is
+        # kept beside the skill, not in that text, so the save replaces nothing it holds: it is
+        # written, and the refinement is still applied on top, once.
         from personalclaw.skills import overlays
 
         async with TestClient(TestServer(_skills_app(skills))) as c:
@@ -112,10 +112,9 @@ class TestSkill:
             resp = await c.put(
                 "/api/skills/notes", json={"content": SKILL_TAB_A}, headers=_based_on(base)
             )
-            assert resp.status == 409
-            assert await _code(resp) == "stale_write"
-        assert skills.skill_file("notes").read_text(encoding="utf-8") == SKILL
-        assert "Cite the source." in skills.load_skill("notes")
+            assert resp.status == 200, await resp.text()
+        assert skills.skill_file("notes").read_text(encoding="utf-8") == SKILL_TAB_A
+        assert skills.load_skill("notes").count("Cite the source.") == 1
 
     @pytest.mark.asyncio
     async def test_the_curator_reactivating_a_skill_between_read_and_save_is_not_undone(

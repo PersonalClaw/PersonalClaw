@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from types import SimpleNamespace
 
 import pytest
 from aiohttp import web
@@ -299,6 +298,7 @@ class TestRoutingNotes:
     ) -> None:
         from personalclaw import agent_metadata
         from personalclaw.orchestrator_skill import generate_orchestrator_skill
+        from personalclaw.skills.loader import SkillsLoader
 
         async with TestClient(TestServer(_notes_app())) as c:
             note, base = await _read_note(c)  # the editor opens on an empty note
@@ -306,7 +306,8 @@ class TestRoutingNotes:
 
             # The orchestrator regenerates its roster and seeds the missing note from the
             # agent's description — the gateway writing the same file itself.
-            generate_orchestrator_skill(SimpleNamespace(_dir=agents_home / "skills"))
+            library = SkillsLoader(skills_path=agents_home / "skills", install_builtins=False)
+            generate_orchestrator_skill(library)
             assert agent_metadata.load(AGENT) == "reads papers"
 
             resp = await c.put(

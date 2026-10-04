@@ -1092,9 +1092,12 @@ async def api_skill_detail(request: web.Request) -> web.Response:
     """GET/PUT /api/skills/{name} — get or update a skill. (Listing is served by
     handlers/skills.py::api_skills_list; deletion by api_skills_delete.)
 
-    The read carries the ``revision`` of the ``content`` it returns — the body a session loads,
-    accepted refinements included — and the PUT, which replaces the whole SKILL.md, must name it
-    in ``If-Match``. A stale one is refused with ``409 stale_write`` and nothing is written."""
+    The read's ``content`` is the skill's own text — its SKILL.md as its author wrote it — with
+    that text's ``revision``; ``refinements`` are the accepted refinements applied on top of it
+    when it loads, and ``loaded`` is the body a session is given. The PUT replaces the own text
+    and must name the read's revision in ``If-Match``: a stale one is refused with ``409
+    stale_write`` and nothing is written. A refinement stays where it is kept and is applied once:
+    a copy of one in the PUT's text is not written into the file."""
     state: DashboardState = request.app["state"]
     name = request.match_info["name"]
     skills = _get_skills(state)
@@ -1114,27 +1117,37 @@ async def api_skill_detail(request: web.Request) -> web.Response:
         refusal = _skill_write_refusal(name, content)
         if refusal is not None:
             return refusal
-        current = skills.load_skill(name)
+        what = f"the skill {name!r}"
+        current = skills.skill_text(name)
         if current is not None:
             # 🔴 A SKILL.md IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. The gateway rewrites
             # skills on its own — the curator ages them, a session refines them, an app or pack
-            # update re-seeds them, an accepted refinement lands in the overlay — and an editor
-            # opened before any of that used to save its old copy straight over it. Compared
-            # against what the read returned (`load_skill`, overlay included), with no await
-            # before the write.
-            stale = stale_write_refusal(request, current, what=f"the skill {name!r}")
+            # update re-seeds them — and an editor opened before any of that used to save its old
+            # copy straight over it. Compared against the skill's own text, the document this
+            # replaces, and again by the writer under the library's lock (`over`), so a write
+            # from another process between the two is refused too.
+            stale = stale_write_refusal(request, current, what=what)
             if stale is not None:
                 return stale
-        # A skill no read can find is not written either: there is no copy to be based on.
-        ok = current is not None and skills.update_skill(name, content)
-        if not ok:
-            return web.json_response({"error": "not found"}, status=404)
-        return web.json_response({"ok": True, "revision": revision_of(skills.load_skill(name))})
+            if skills.update_skill(name, content, over=current):
+                return web.json_response(
+                    {"ok": True, "revision": revision_of(skills.skill_text(name))}
+                )
+            now = skills.skill_text(name)
+            if now is not None and now != current:
+                stale = stale_write_refusal(request, now, what=what)
+                if stale is not None:
+                    return stale
+        # A skill no read can find is not written either: there is no copy to be based on. Nor is
+        # one outside this library (the folder other AI tools share), which PersonalClaw only reads.
+        return web.json_response({"error": "not found"}, status=404)
 
-    # GET
-    content = skills.load_skill(name)
-    mkt_prefix = name.startswith("marketplace/")
-    if content is None and mkt_prefix:
+    # GET. `load_skill` first: it is the gate a suppressed skill is held at, and the load that puts
+    # a file an earlier save doubled back to its own text.
+    own: str | None = None
+    if skills.load_skill(name) is not None:
+        own = skills.skill_text(name)
+    elif name.startswith("marketplace/"):
         bare_name = name.split("/", 1)[1]  # strip prefix
         for s in await _list_marketplace_skills():
             if s["name"] == bare_name or s["key"] == name:
@@ -1145,13 +1158,26 @@ async def api_skill_detail(request: web.Request) -> web.Response:
                     if resolved is None:
                         return web.json_response({"error": "access denied"}, status=403)
                     try:
-                        content = Path(resolved).read_text(encoding="utf-8", errors="replace")
+                        own = Path(resolved).read_text(encoding="utf-8", errors="replace")
                     except OSError:
                         pass
                 break
-    if content is None:
+    if own is None:
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response({"name": name, "content": content, "revision": revision_of(content)})
+    from personalclaw.skills import overlays
+
+    # The skill's own text and that text's revision, the accepted refinements applied on top of it
+    # in the order they load, and the skill as a session loads it.
+    applied = overlays.applied(name)
+    return web.json_response(
+        {
+            "name": name,
+            "content": own,
+            "revision": revision_of(own),
+            "refinements": [a.to_dict() for a in applied],
+            "loaded": overlays.render(own, [a.block for a in applied]),
+        }
+    )
 
 
 async def api_skills_create(request: web.Request) -> web.Response:

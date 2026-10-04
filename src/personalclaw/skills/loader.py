@@ -1,14 +1,18 @@
 """Skills loader — markdown skill files for agent capabilities."""
 
+import fcntl
 import hashlib
 import logging
 import os
 import re
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.home_paths import from_home
 
@@ -249,6 +253,34 @@ def _ensure_builtin_skills(base: Path) -> None:
 
 def skills_dir() -> Path:
     return config_dir() / SKILLS_DIR_NAME
+
+
+#: The skills library's lock (``concurrency.lock_path``), in the home's ``locks/``.
+_LIBRARY_LOCK = "skills-library"
+
+
+@contextmanager
+def hold_library() -> Iterator[None]:
+    """Hold the skills library's lock, waiting for it, while a skill's ``SKILL.md`` or its
+    accepted refinements are read and written.
+
+    Every writer of either holds it across its read and its write: :meth:`SkillsLoader`'s one
+    writer of a ``SKILL.md`` (the Skills page's save, the curator, a consolidation's rewrite, a
+    skill created by any path, the repair of a file an earlier save doubled) and the overlay's
+    accept and revert. A skill loads in other processes too (an agent CLI's tools, the
+    ``personalclaw`` commands), and the repair writes from a load, so ``flock`` on a file opened
+    for this hold: it excludes another thread as it does another process, and the OS frees it if
+    the holder dies. Not re-entrant: nothing done while it is held may take it again. A program
+    that edits the file itself takes no lock.
+    """
+    from personalclaw.concurrency import lock_path
+
+    with lock_path(_LIBRARY_LOCK).open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _suppressed_producers() -> set[tuple[str, str]]:
@@ -713,12 +745,108 @@ class SkillsLoader:
         if skill_file is None:
             return None
         content = skill_file.read_text(encoding="utf-8")
-        # Accepted refinements ride as a sidecar overlay merged HERE, at
-        # load time — the base file is never mutated (so its `.pclaw-lock.json` stays
-        # intact and revert is a one-file delete). No overlay → the body is unchanged.
+        # Accepted refinements ride as a sidecar overlay merged HERE, at load time, each one
+        # once, after the skill's own text — never written into the file (so its
+        # `.pclaw-lock.json` stays intact and a revert removes a refinement completely). No
+        # overlay → the body is unchanged.
         from personalclaw.skills import overlays
 
-        return overlays.render_with_overlay(name, content)
+        blocks = [a.block for a in overlays.applied(name)]
+        own = overlays.without_copies(content, blocks)
+        if own != content:
+            self._repair(name, skill_file, own)
+        return overlays.render(own, blocks)
+
+    def skill_text(self, name: str) -> str | None:
+        """The skill's own text: its ``SKILL.md`` as its author wrote it, or None when no file is
+        found for *name*.
+
+        What an editor of the file starts from — the Skills page, the curator — and never what a
+        session is given, which is :meth:`load_skill`'s body: that adds the accepted refinements
+        after this text, and a writer that saved it back put each refinement into the file, where
+        it then loaded twice. A copy an earlier save left there is not part of it
+        (``overlays.without_copies``). A pure read.
+        """
+        skill_file = self.skill_file(name)
+        if skill_file is None:
+            return None
+        from personalclaw.skills import overlays
+
+        return overlays.own_text(name, skill_file.read_text(encoding="utf-8"))
+
+    def _repair(self, name: str, skill_file: Path, own: str) -> None:
+        """Put a file an earlier save doubled back to its author's text *own*, the first time it
+        loads. Idempotent: once the copies are out, nothing is left to remove.
+
+        Only this library's own copy of the skill, the one file the old writers wrote, and only
+        while it still reads as *own* once its copies are left out (:meth:`_write_skill_md`), so a
+        save made since is never undone. A file that cannot be written loads the same either way.
+        """
+        if skill_file != self._dir / name / "SKILL.md":
+            return
+        try:
+            if self._write_skill_md(name, skill_file, own, over=own):
+                logger.info(
+                    "Skill %s: its file held a copy of a refinement that is applied on top of it "
+                    "(an earlier save wrote it there); kept only its own text",
+                    name,
+                )
+        except OSError:
+            logger.warning("Skill %s: could not put its file back to its own text", name)
+
+    def _write_skill_md(
+        self,
+        name: str,
+        skill_file: Path,
+        content: str,
+        *,
+        over: str | None = None,
+        new: bool = False,
+    ) -> bool:
+        """THE writer of a skill's ``SKILL.md``: every path that writes the file's text comes here.
+
+        It stores *content* as the skill's own text: a copy of a refinement applied on top of
+        *name* is left out of it (``overlays.without_copies``), so the refinement stays where it
+        is kept and loads once, and a revert removes it completely. Under :func:`hold_library`,
+        atomically, and only into what the caller expects: a skill *new* here (no folder yet), or
+        an existing file — and with *over*, only while that file still reads as *over*, the own
+        text the caller built *content* from. False when it wrote nothing.
+        """
+        from personalclaw.skills import overlays
+
+        with hold_library():
+            if new:
+                if skill_file.parent.exists():
+                    return False
+            elif not skill_file.is_file():
+                return False
+            elif (
+                over is not None
+                and overlays.own_text(name, skill_file.read_text(encoding="utf-8")) != over
+            ):
+                return False
+            atomic_write(skill_file, overlays.own_text(name, content))
+        return True
+
+    def revert_refinements(self, name: str, refinement: str = "") -> int:
+        """Revert *name*'s accepted refinements: the one whose id is *refinement*
+        (``overlays.Applied.id``), or every one. Returns how many were reverted.
+
+        A copy of one that an earlier save wrote into this library's ``SKILL.md`` is taken out of
+        the file first, while the overlay still says what it is, so the refinement leaves the
+        skill completely. The overlay itself is the only other thing changed.
+        """
+        from personalclaw.skills import overlays
+
+        skill_file = self._dir / name / "SKILL.md"
+        if self._safe_name(name) and skill_file.is_file():
+            content = skill_file.read_text(encoding="utf-8")
+            own = overlays.own_text(name, content)
+            if own != content:
+                self._repair(name, skill_file, own)
+        if refinement:
+            return 1 if overlays.revert_refinement(name, refinement) else 0
+        return overlays.revert_overlay(name)
 
     # ── Resource tier ──
 
@@ -818,22 +946,22 @@ class SkillsLoader:
         the base skills dir) — matching where the same loader would resolve it."""
         if not self._safe_name(name):
             return False
-        skill_dir = self._write_dir / name
-        if skill_dir.exists():
+        if not self._write_skill_md(name, self._write_dir / name / "SKILL.md", content, new=True):
             return False
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
         logger.info("Created skill: %s", name)
         return True
 
-    def update_skill(self, name: str, content: str) -> bool:
-        """Overwrite an existing skill's SKILL.md.  Returns True if found."""
+    def update_skill(self, name: str, content: str, *, over: str | None = None) -> bool:
+        """Replace an existing skill's own text with *content*.  Returns True when written.
+
+        *content* is the skill's own text (:meth:`skill_text`), never the body a session loads:
+        a copy of an applied refinement in it is left out, so the refinement is still applied
+        once. With *over*, the own text *content* was built from, nothing is written once the file
+        reads otherwise — an edit saved since is kept, and this returns False."""
         if not self._safe_name(name):
             return False
-        skill_file = self._dir / name / "SKILL.md"
-        if not skill_file.exists():
+        if not self._write_skill_md(name, self._dir / name / "SKILL.md", content, over=over):
             return False
-        skill_file.write_text(content, encoding="utf-8")
         logger.info("Updated skill: %s", name)
         return True
 
@@ -948,10 +1076,6 @@ class SkillsLoader:
             )
             return None
         name = f"{AUTO_SKILL_NAMESPACE}/{slug}"
-        skill_dir = self._dir / name
-        if skill_dir.exists():
-            logger.info("Auto skill %s already exists, skipping", name)
-            return None
         content = _build_auto_skill_content(
             slug=slug,
             description=description,
@@ -959,8 +1083,9 @@ class SkillsLoader:
             procedure_md=procedure_md,
             provenance=provenance,
         )
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+        if not self._write_skill_md(name, self._dir / name / "SKILL.md", content, new=True):
+            logger.info("Auto skill %s already exists, skipping", name)
+            return None
         logger.info("Created auto skill: %s", name)
         return name
 
@@ -1016,7 +1141,10 @@ class SkillsLoader:
             procedure_md=procedure_md,
             provenance=provenance,
         )
-        skill_file.write_text(content, encoding="utf-8")
+        # The procedure comes from a session that loaded the skill, refinements included, so it
+        # can hold one word for word: the writer leaves that copy out.
+        if not self._write_skill_md(name, skill_file, content):
+            return False
         logger.info("Refined auto skill: %s", name)
         return True
 

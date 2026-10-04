@@ -40,6 +40,8 @@ vi.mock('../../lib/api', async (orig) => ({
     skillProposals: () => Promise.resolve({ proposals: [], lastReview: null }),
     learningSummary: () => Promise.resolve(null),
     skillFiles: () => Promise.resolve({ files: [] }),
+    // The inspector reads the skill's document for the refinements applied on top: none here.
+    skillDocument: () => Promise.resolve({ value: '', revision: 'r0', refinements: [], loaded: '' }),
     createSkill: (name: string, content: string) => createSkill(name, content),
   },
 }))

@@ -77,6 +77,24 @@ export function withFrontmatterName(content: string, name: string): string {
   return open + next + close + content.slice(whole.length)
 }
 
+/** Whether `text`, a skill's own text, holds `block` — an accepted refinement exactly as the skill
+ *  loads it — word for word as a part of its own: after a blank line, and followed by a blank line or
+ *  by nothing but the end. That is the copy the gateway leaves out of SKILL.md when the text is saved,
+ *  because the refinement is still added on top when the skill loads (`skills/overlays.py`
+ *  `without_copies`, the same test). The editor says so before the save. Searched after the
+ *  frontmatter, found as the server's parser finds it. */
+export function holdsRefinementCopy(text: string, block: string): boolean {
+  const unit = block.trimEnd()
+  if (!unit.trim()) return false
+  const head = /^\s*---\r?\n[\s\S]*?\r?\n---/.exec(text)
+  const needle = `\n\n${unit}`
+  for (let at = text.indexOf(needle, head ? head[0].length : 0); at !== -1; at = text.indexOf(needle, at + 1)) {
+    const rest = text.slice(at + needle.length)
+    if (rest.startsWith('\n\n') || !rest.trim()) return true
+  }
+  return false
+}
+
 /** What an accepted skill proposal DID — one sentence, shared by both surfaces that accept one.
  *
  *  The Skills card and the inbox proposal panel answer the same proposal through the same

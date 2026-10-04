@@ -21,9 +21,10 @@ class _FakeAgent:
 
 @pytest.fixture()
 def skills_loader(tmp_path):
-    loader = MagicMock()
-    loader._dir = tmp_path
-    return loader
+    """A real library over the test's own folder: the skill is written through the loader."""
+    from personalclaw.skills.loader import SkillsLoader
+
+    return SkillsLoader(skills_path=tmp_path, install_builtins=False)
 
 
 def _read_skill(tmp_path: Path) -> str:
@@ -187,3 +188,28 @@ def test_removes_legacy_conductor_skill_dir(
 
     assert not legacy.exists(), "legacy conductor/ dir should be removed"
     assert (skills_loader._dir / "orchestrator" / "SKILL.md").is_file()
+
+
+@patch("personalclaw.config.loader.AppConfig.load")
+@patch("personalclaw.orchestrator_skill.load_all")
+@patch("personalclaw.orchestrator_skill.load")
+@patch("personalclaw.orchestrator_skill.save")
+def test_regenerating_replaces_the_roster_in_the_skills_file(
+    mock_save, mock_load, mock_load_all, mock_config_load, skills_loader
+):
+    """The first generation creates the skill and the next one replaces its file, both through the
+    loader's writer of a skill's file."""
+    from personalclaw.orchestrator_skill import generate_orchestrator_skill
+
+    mock_load.return_value = ""
+    mock_load_all.return_value = {}
+    mock_config_load.return_value = _config_with(
+        [_FakeAgent(name="code-reviewer", description="Reviews code")]
+    )
+    generate_orchestrator_skill(skills_loader)
+    mock_config_load.return_value = _config_with(
+        [_FakeAgent(name="researcher", description="Researches topics")]
+    )
+    generate_orchestrator_skill(skills_loader)
+    content = _read_skill(skills_loader._dir)
+    assert "### researcher" in content and "### code-reviewer" not in content

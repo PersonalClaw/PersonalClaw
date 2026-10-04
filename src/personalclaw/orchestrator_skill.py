@@ -8,12 +8,14 @@ import logging
 from pathlib import Path
 
 from personalclaw.agent_metadata import load, load_all, save
-from personalclaw.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
 
 # Agents to exclude from the roster (self-references).
 _EXCLUDE = {"personalclaw", "personalclaw-orchestrator"}
+
+#: The generated skill's name, and its folder in the library.
+_SKILL_NAME = "orchestrator"
 
 
 def generate_orchestrator_skill(skills_loader) -> Path:
@@ -59,8 +61,12 @@ def generate_orchestrator_skill(skills_loader) -> Path:
     if skill_content is None:
         skill_content = _SKILL_TEMPLATE.format(roster=roster)
 
-    out = skills_loader._dir / "orchestrator" / "SKILL.md"
-    atomic_write(out, skill_content)
+    # Through the loader's one writer of a skill's file, as every other writer of one: a
+    # refinement accepted for this skill is applied on top of it when it loads, never written in.
+    if not skills_loader.update_skill(_SKILL_NAME, skill_content):
+        if not skills_loader.create_skill(_SKILL_NAME, skill_content):
+            logger.warning("Could not write the %s skill", _SKILL_NAME)
+    out = skills_loader._dir / _SKILL_NAME / "SKILL.md"
     # Remove the legacy conductor/ skill dir if a pre-rename install left one — it's
     # an always-loaded skill, so a stale copy would double-inject the routing table.
     _remove_legacy_conductor(skills_loader)

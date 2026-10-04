@@ -306,11 +306,33 @@ answering it on one answers it on the other, and dismissing its Inbox row reject
 Any skill in your library can be refined, whatever folder holds it: one you wrote, an
 imported one under `imported/<source>/`, or an auto-created one under `auto/`. A
 refinement's review shows the diff that accepting it makes. Accepting adds the
-refinement beside the skill as an overlay, merged onto the skill when it loads, so
-the skill's own files are never rewritten: an imported or installed skill still
-matches its lock, and reverting the refinement deletes one file. If the skill was
-removed after the proposal was filed, accepting adds the refinement as a new skill
-under `auto/` instead, as its review says. Rejecting changes nothing.
+refinement beside the skill as an overlay, and each time the skill loads its accepted
+refinements are added after its own text, once each, in the order you accepted them.
+The skill's own files are never rewritten, so an imported or installed skill still
+matches its lock. If the skill was removed after the proposal was filed, accepting adds
+the refinement as a new skill under `auto/` instead, as its review says. Rejecting
+changes nothing.
+
+A skill's `SKILL.md` holds only its own text. On the Skills page, a skill's details list
+its **Accepted refinements**, each exactly as it is added when the skill loads, with
+**Revert**. Reverting one removes it completely: the skill loads without it from then on,
+and the others stay, each moving up a place in the list. **Edit SKILL.md** edits the
+skill's own text, with its refinements listed under the editor: an edit never changes
+them, and saving never writes them into the file. To change what a refinement says,
+revert it and write what you want into the skill's text. If your text holds a refinement
+word for word (you pasted it in), the editor says so: saving leaves that copy out of the
+file, since the refinement is still added on top, so revert the refinement first to make
+it part of the skill's own text. The curator's aging and a consolidation's rewrite of an
+auto-created skill keep to the same rule.
+
+Earlier versions wrote the skill as it loaded, refinements included, back into its
+`SKILL.md` when you saved it on the Skills page or the curator aged it, so a refinement
+then loaded twice and reverting it left its copy in the file. The first time such a skill
+loads, every copy of a refinement that is still accepted is taken out of its `SKILL.md`:
+a refinement's text exactly as it loads, its `## Refinement vN` heading included,
+standing apart from the text around it. Anything else stays as it is: a copy you changed
+is your text now, and the text of a refinement you reverted before this fix cannot be
+told from your own, so delete it in the editor if it is still there.
 
 While a proposal about a skill waits for you, no second one about that skill is
 filed, and a skill takes at most one refinement in any 24 hours.
@@ -330,11 +352,12 @@ the queue moves such a proposal into it, and its Inbox row follows.
 | `~/.agents/skills/<key>/SKILL.md` | Cross-client directory, read only once you allow it; never written |
 | `~/.personalclaw/agents/<agent>/skills/<key>/SKILL.md` | One agent's private override |
 | `~/.personalclaw/skills/.proposals/<id>.json` | Proposals waiting for your review |
-| `~/.personalclaw/skills/.overlays/<key>.json` | Accepted refinements, merged onto the skill `<key>` when it loads |
+| `~/.personalclaw/skills/.overlays/<key>.json` | Accepted refinements, added after the skill `<key>`'s own text when it loads |
 | `~/.personalclaw/skills/.skill_embeddings.json` | Description embeddings, keyed by the text embedded and the model, filled in the background |
 
-Nothing here rewrites a `SKILL.md`. Refinements ride as a sidecar overlay merged
-at load time, so the file you wrote stays the file on disk.
+No refinement is ever written into a `SKILL.md`. Refinements ride as a sidecar overlay
+merged at load time, so the file you wrote stays the file on disk, whichever page or pass
+saves it.
 
 ## See also
 

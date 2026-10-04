@@ -1,18 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion, GraduationCap } from 'lucide-react'
+import { Zap, FileText, ChevronRight, Trash2, ArrowLeft, Pencil, Save, X, ShieldCheck, ShieldAlert, ShieldQuestion, GraduationCap, Undo2 } from 'lucide-react'
 import hljs from 'highlight.js/lib/common'
 import { Button } from '../../ui/Button'
 import { Markdown } from '../../ui/Markdown'
-import { LoadError, Skeleton } from '../../ui/ListScaffold'
-import { confirmDelete } from '../../ui/dialog'
+import { InlineLoadError, LoadError, Skeleton } from '../../ui/ListScaffold'
+import { confirmDelete, confirmDestructive } from '../../ui/dialog'
 import { TextArea, FieldError } from '../../ui/forms'
 import { FeedbackThumbs } from '../../ui/FeedbackThumbs'
-import { useQuery, invalidateKeys } from '../../lib/data'
-import { api, type SkillItem, type SkillFile, type SkillIntegrity } from '../../lib/api'
+import { useQuery, useMutation, invalidateKeys } from '../../lib/data'
+import { api, type SkillItem, type SkillFile, type SkillIntegrity, type SkillDocument, type SkillRefinement } from '../../lib/api'
 import { HELD_CHANGE_REASON, rebaseText, type Revisioned } from '../../lib/staleWrite'
 import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
-import { SOURCE_TONE, noBaselineReason, provenanceMeta } from './skillMeta'
+import { SOURCE_TONE, holdsRefinementCopy, noBaselineReason, provenanceMeta } from './skillMeta'
 import { toneChipSkin } from '../../design/accent'
 import { reportingWrite } from '../../app/reportingWrite'
 
@@ -105,6 +105,10 @@ export function SkillInspector({ skill, onDeleted, onSaved }: { skill: SkillItem
           )}
       </Section>
 
+      {/* An agent-local row is named by its bare name, which this read would resolve to the
+          library's skill of that name, not the agent's own. */}
+      {skill.source !== 'agent-local' && <RefinementsSection name={skill.name} />}
+
       <IntegritySection skill={skill} />
 
       {skill.path && <div className="flex items-start gap-s text-on-surface-low text-[0.75rem]"><FileText size={13} className="shrink-0 mt-0.5" /><span className="font-mono break-all">{skill.path}</span></div>}
@@ -190,18 +194,22 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
   // error — one click replaced the skill's instructions with nothing. The failure is shown with a
   // retry, and the editor waits for a real read.
   //
-  // Its own key, not `FileView`'s. This read is the body a session LOADS — accepted refinements
-  // overlaid — with the revision of exactly that body; the file view reads SKILL.md's raw bytes.
-  // Two different documents used to share `skill:content:<name>:SKILL.md`, so whichever surface
-  // opened second first painted the other one's.
-  const key = `skill:document:${name}`
-  const { data: fetched, error: fetchErr, refresh } = useQuery<Revisioned<string>>(key, () => api.skillDocument(name), { persist: true })
+  // 🔴 THE SKILL'S OWN TEXT, NOT THE BODY A SESSION LOADS. This editor used to read the loaded body,
+  // accepted refinements added on top, and save it back whole, so every refinement it had shown went
+  // into SKILL.md as well and loaded twice, and a revert removed only the copy kept beside the skill.
+  // The read is now the text the file holds, with that text's revision, and the refinements applied
+  // on top come with it to be shown under the editor (`skillDocument`). Its own key, the inspector's
+  // too, and not the one an older build cached the loaded body under.
+  const key = `skill:own:${name}`
+  const { data: fetched, error: fetchErr, refresh } = useQuery<SkillDocument>(key, () => api.skillDocument(name), { persist: true })
   // The copy `content` was seeded from — the base a save names, so it moves only with a re-seed.
   const [base, setBase] = useState<Revisioned<string> | null>(null)
   const [content, setContent] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  useEffect(() => { if (fetched !== undefined) { setBase(fetched); setContent(fetched.value) } }, [fetched])
+  // Seeded when the own text changes, not on every read: reverting a refinement re-reads the
+  // document with the same text, and a re-seed then would throw away what is being typed.
+  useEffect(() => { if (fetched !== undefined) { setBase(fetched); setContent(fetched.value) } }, [fetched?.revision])
   // 🔴 SAVED OVER THE COPY IT WAS BUILT FROM. The gateway rewrites skills on its own — the curator
   // ages them, a session refines them, an app or pack update re-seeds them — and this editor used to
   // save its copy straight over any of that. A stale copy is refused now, and the edit, which is a
@@ -236,12 +244,83 @@ function SkillEditor({ name, onBack, onSaved }: { name: string; onBack: () => vo
         : <TextArea value={content} onChange={setContent} rows={18} mono disabled={held}
             disabledReason={held ? HELD_CHANGE_REASON : undefined} />}
       <StaleWriteNotice guard={guard} what="This skill" />
+      {fetched !== undefined && fetched.refinements.length > 0 && (
+        <AppliedRefinements name={name} refinements={fetched.refinements} draft={content ?? undefined}
+          intro="This is the skill’s own text. When the skill loads, the accepted refinements below are added after it, in this order. Editing this text doesn’t change them, and saving never writes them into SKILL.md. To change one, revert it and write what you want here." />
+      )}
       {err && <FieldError>{err}</FieldError>}
       <div className="flex justify-end gap-s">
         <Button size="sm" variant="ghost" onClick={onBack}><X size={14} /> Cancel</Button>
         <Button size="sm" onClick={save} loading={busy} disabled={busy || content === null || held}
           disabledReason={held ? HELD_CHANGE_REASON : undefined}><Save size={14} /> Save</Button>
       </div>
+    </div>
+  )
+}
+
+/** The accepted refinements this skill loads with, shown with its details: nothing for a skill that
+ *  has none. The same read, under the same key, as the editor's. */
+function RefinementsSection({ name }: { name: string }) {
+  const { data: doc, error } = useQuery<SkillDocument>(`skill:own:${name}`, () => api.skillDocument(name), { persist: true })
+  if (doc === undefined) {
+    return error ? <Section label="Accepted refinements"><InlineLoadError what="this skill’s refinements" error={error} /></Section> : null
+  }
+  if (doc.refinements.length === 0) return null
+  return (
+    <Section label="Accepted refinements">
+      <AppliedRefinements name={name} refinements={doc.refinements}
+        intro="Added after the skill’s own text each time it loads, in this order. Its SKILL.md holds only that text." />
+    </Section>
+  )
+}
+
+/** Each accepted refinement a skill loads with — its block exactly as it is added after the skill's
+ *  own text — and the way to revert it. `draft` is the own text being edited: a refinement it holds
+ *  word for word is named, with what saving does about it (`holdsRefinementCopy`). */
+function AppliedRefinements({ name, refinements, intro, draft }: {
+  name: string
+  refinements: SkillRefinement[]
+  intro: string
+  draft?: string
+}) {
+  const [reverting, setReverting] = useState('')
+  // The document's list changes; the file itself does too when the revert takes out a copy an
+  // earlier save left in it, so its raw view and its size are re-read as well.
+  const revertM = useMutation({
+    run: (r: SkillRefinement) => api.revertSkillRefinement(name, r.id),
+    invalidates: [`skill:own:${name}`, `skill:content:${name}:SKILL.md`, `skill:files:${name}`],
+  })
+  async function revert(r: SkillRefinement) {
+    const ok = await confirmDestructive(
+      `Revert refinement v${r.version} of “${name}”?`,
+      'The skill loads without it from now on, and its own text stays as it is. A reverted refinement can’t be brought back.',
+      { confirmLabel: 'Revert' },
+    )
+    if (!ok) return
+    setReverting(r.id)
+    await reportingWrite(`revert refinement v${r.version} of "${name}"`, () => revertM.mutate(r))
+    setReverting('')
+  }
+  const copied = draft === undefined ? [] : refinements.filter((r) => holdsRefinementCopy(draft, r.text))
+  return (
+    <div className="flex flex-col gap-s">
+      <p data-type="body-s" className="text-on-surface-low">{intro}</p>
+      <ol aria-label={`Accepted refinements of ${name}`} className="flex flex-col gap-s">
+        {refinements.map((r) => (
+          <li key={r.id} className="flex items-start gap-s rounded-md bg-surface-container px-m py-s">
+            <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words font-mono text-on-surface text-[0.75rem]">{r.text}</pre>
+            <Button size="xs" variant="ghost" ariaLabel={`Revert refinement v${r.version}`}
+              loading={reverting === r.id} onClick={() => void revert(r)}>
+              <Undo2 size={14} /> Revert
+            </Button>
+          </li>
+        ))}
+      </ol>
+      {copied.map((r) => (
+        <p key={r.id} role="status" data-type="body-s" className="text-warn">
+          Your text holds refinement v{r.version} word for word, and v{r.version} is still added on top when the skill loads. Saving leaves this copy out of SKILL.md, so the skill carries it once. To make it part of the skill’s own text, revert v{r.version} first.
+        </p>
+      ))}
     </div>
   )
 }

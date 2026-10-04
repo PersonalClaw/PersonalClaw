@@ -907,7 +907,7 @@ The 912 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/skills/install` | install a skill from a marketplace into the home. |
 | `GET` | `/api/skills/marketplace/detail` | _(no summary)_ |
 | `GET` | `/api/skills/marketplaces` | list registered skill marketplaces. |
-| `POST` | `/api/skills/overlay/revert` | drop a skill's accepted-refinement overlay. |
+| `POST` | `/api/skills/overlay/revert` | revert accepted refinements of a skill. |
 | `GET` | `/api/skills/proposals` | the pending autonomous-synthesis proposals |
 | `DELETE` | `/api/skills/proposals/{id}` | drop a proposal (never installed). |
 | `GET` | `/api/skills/proposals/{id}` | full proposal incl. procedure + fenced source. |

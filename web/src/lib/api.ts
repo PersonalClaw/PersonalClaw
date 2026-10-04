@@ -2867,6 +2867,14 @@ export interface PromptSyntax { functions: PromptSyntaxFn[]; constructs: PromptS
  *  hand-authored skills: a verdict there would retire the extractor over a skill the user chose
  *  themselves. Read it, never derive it — the server decides which skills carry one. */
 export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; provenance?: 'dashboard' | 'auto' | 'taught' | ''; type: string; loaded_by_agents: string[]; integrity?: 'intact' | 'tampered' | 'unverified'; agent?: string; feedback_producer?: FeedbackProducer }
+/** One accepted refinement of a skill. `text` is its block exactly as the skill loads it, added after
+ *  the skill's own text; `id` names it across a revert of another, whose `version` (its place in the
+ *  list, 1-based) moves. */
+export interface SkillRefinement { id: string; version: number; description: string; created_at: string; trigger: string; text: string }
+/** `GET /api/skills/{name}`: `value` is the skill's OWN text, what its SKILL.md holds and what the editor
+ *  saves, with that text's revision; `refinements` are applied on top of it, in this order, each time
+ *  it loads; `loaded` is the skill as a session is given it. */
+export interface SkillDocument extends Revisioned<string> { refinements: SkillRefinement[]; loaded: string }
 export interface EphemeralDraft { slug: string; title: string; body: string; created_at: string }
 /** `trigger` is the STUMBLE that produced a refine proposal (`correction` | `failure_retry` |
  *  `rejection`), or absent/'' for one a model proposed. It is the review surface's answer to
@@ -9294,17 +9302,23 @@ export const api = {
   // skills
   skills: () => get<SkillItem[]>('/api/skills'),
   skillFiles: (name: string, path?: string) => get<{ name: string; files?: SkillFile[]; path?: string; content?: string }>(`/api/skills/${encodeURIComponent(name)}/files${path ? `?path=${encodeURIComponent(path)}` : ''}`),
-  // The SKILL.md a session loads — accepted refinements included — with the revision the same read
-  // reported for it. The editor saves over that revision; `skillContent` is the read-only view.
+  // The skill's own text — what its SKILL.md holds, and what the editor saves — with the revision the
+  // same read reported for it, plus the refinements applied on top and the body a session loads.
   skillDocument: (name: string) =>
-    get<{ content?: string; revision: string }>(`/api/skills/${encodeURIComponent(name)}`).then(
-      (d): Revisioned<string> => ({ value: d.content ?? '', revision: d.revision })),
-  skillContent: (name: string) => api.skillDocument(name).then((d) => d.value),
+    get<{ content: string; revision: string; refinements: SkillRefinement[]; loaded: string }>(`/api/skills/${encodeURIComponent(name)}`).then(
+      (d): SkillDocument => ({ value: d.content, revision: d.revision, refinements: d.refinements, loaded: d.loaded })),
+  // The read-only view: the skill as a session is given it, its accepted refinements included.
+  skillContent: (name: string) => api.skillDocument(name).then((d) => d.loaded),
   createSkill: (name: string, content: string) => post<{ ok: boolean }>('/api/skills', { name, content }),
-  // Replaces the whole SKILL.md, which the gateway also rewrites (curator, refinements, app and pack
-  // updates) — so it names the revision of the copy it was built from.
+  // Replaces the skill's own text, which the gateway also rewrites (the curator, a consolidation, app
+  // and pack updates) — so it names the revision of the copy it was built from. A refinement is never
+  // written into it: one copied into `content` word for word is left out, as it is applied on top.
   updateSkill: (name: string, content: string, base: string) =>
     put<{ ok: boolean; revision: string }>(`/api/skills/${encodeURIComponent(name)}`, { content }, basedOn(base)),
+  // Revert ONE accepted refinement (its `id` from the skill's read): the skill loads without it from
+  // then on. Answers the refinements still applied.
+  revertSkillRefinement: (name: string, refinement: string) =>
+    post<{ ok: boolean; reverted: number; refinements: SkillRefinement[] }>('/api/skills/overlay/revert', { name, refinement }),
   deleteSkill: (name: string) => del(`/api/skills/${encodeURIComponent(name)}`),
   verifySkill: (name: string) => post<SkillIntegrity>(`/api/skills/${encodeURIComponent(name)}/verify`),
   // Skill proposals inbox (skill-evolution-proposal-only) — propose-only review.
