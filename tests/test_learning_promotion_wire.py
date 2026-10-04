@@ -144,12 +144,12 @@ def test_the_consolidation_tick_calls_the_gate():
     Testing the functions alone would pass exactly the state this change found: a
     correct gate, fully tested, that no cadence runs.
     """
-    src = Path("src/personalclaw/history.py").read_text()
+    src = Path("src/personalclaw/learning/curator_tick.py").read_text()
     tree = ast.parse(src)
     fn = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "_run_learning_curator"
+        if isinstance(node, ast.FunctionDef) and node.name == "run_curator_tick"
     )
     called = {
         node.func.attr

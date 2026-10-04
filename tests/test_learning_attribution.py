@@ -312,13 +312,16 @@ def test_verdict_history_feeds_proposer_trust(home):
 
 def test_accountability_now_has_a_production_importer():
     """The headline: `accountability.py` had ZERO production importers. `attribution` is that
-    importer, and it is itself wired into the curator tick in `history.py`."""
+    importer, and it is itself wired into the curator tick (`learning/curator_tick.py`), which
+    the consolidation in `history.py` runs."""
     import inspect
 
     src = inspect.getsource(A)
     assert "accountability" in src
+    tick = inspect.getsource(__import__("personalclaw.learning.curator_tick", fromlist=["_x"]))
+    assert "attribution.grade_accepted_changes" in tick
     hist = inspect.getsource(__import__("personalclaw.history", fromlist=["_x"]))
-    assert "attribution.grade_accepted_changes" in hist
+    assert "run_curator_tick(" in hist
 
 
 def test_a_harmful_verdict_also_revokes_standing_autonomy_grants(home, monkeypatch):

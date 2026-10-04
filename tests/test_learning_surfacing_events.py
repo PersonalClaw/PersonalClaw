@@ -388,11 +388,11 @@ def test_the_curator_tick_prunes_surfacing_events():
     """
     import ast
 
-    tree = ast.parse(Path("src/personalclaw/history.py").read_text(encoding="utf-8"))
+    tree = ast.parse(Path("src/personalclaw/learning/curator_tick.py").read_text(encoding="utf-8"))
     fn = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "_run_learning_curator"
+        if isinstance(node, ast.FunctionDef) and node.name == "run_curator_tick"
     )
     called = {
         node.func.attr
