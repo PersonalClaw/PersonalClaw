@@ -38,14 +38,19 @@ again until that machine sent another, which may be days when its records don't 
 
 **Nothing another machine names lands outside where a sync may write.** Every path a peer names
 is resolved before anything is written, and refused unless it is inside the export it came in
-or inside the store it names, every symlink on the way followed (``record_ids.is_path_in_store``):
-an object's key, a path its manifest declares (``shards.OutsideTheExport``), the file each of its
-rows stands for (``reconcile.outside_their_store``), and its machine id, which names its folder of
-the remote. A seq that names one is ``payload-bad`` whole — nothing of it is written — and the
-paths are in ``refused``, with why, for the sync report. A pulled key used to be joined onto the
-scratch folder as it came, so ``../`` in one wrote anywhere this machine's user may. A seq whose
-key the transport itself won't list or read (``KeysRefused``: a link in its folder that leads out,
-say) is refused the same way, with the transport's why.
+(every symlink on the way followed, ``record_ids.is_path_in_store``) or is a name of the store it
+names: an object's key, a path its manifest declares (``shards.OutsideTheExport``), the file each
+of its rows stands for (``reconcile.outside_their_store``), and its machine id, which names its
+folder of the remote. A seq that names one is ``payload-bad`` whole — nothing of it is written —
+and the paths are in ``refused``, with why, for the sync report. A pulled key used to be joined
+onto the scratch folder as it came, so ``../`` in one wrote anywhere this machine's user may. A
+seq whose key the transport itself won't list or read (``KeysRefused``: a link in its folder that
+leads out, say) is refused the same way, with the transport's why.
+
+**Nothing is written through a link this home holds** (``durability.home_paths``): not at a
+store, at a folder or file of one, nor at a database's log. An entry the home holds behind one,
+and a file of a store behind one, is left as it is, the link is in ``refused`` with why, and the
+seq is held, so what it stopped comes in once the link is gone; the rest of the seq is taken in.
 """
 
 from __future__ import annotations
@@ -62,6 +67,7 @@ from personalclaw.durability import reconcile
 from personalclaw.durability.ancestors import Ancestors
 from personalclaw.durability.conflicts import ConflictQueue
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD, PREREQ_ABSENT, Cursor
+from personalclaw.durability.home_paths import LinkInTheWay, home_path
 from personalclaw.durability.registry import Registry, shard_prefix
 from personalclaw.durability.shards import (
     ImportResult,
@@ -173,7 +179,7 @@ def _materialize(objs, prefix: str, dest: Path) -> tuple[int, dict[str, str]]:
     return len(placed), refused
 
 
-def _rows_outside_their_store(home: Path, imported: ImportResult) -> dict[str, str]:
+def _rows_outside_their_store(imported: ImportResult) -> dict[str, str]:
     """The files a peer's rows would write or remove outside their store
     (``reconcile.outside_their_store``), by their path inside the home, with why."""
     refused: dict[str, str] = {}
@@ -181,7 +187,7 @@ def _rows_outside_their_store(home: Path, imported: ImportResult) -> dict[str, s
         entry = inv.by_id(entry_id)
         if entry is None:
             continue  # an entry this build does not know is held, below
-        for rel in reconcile.outside_their_store(home, entry, rows):
+        for rel in reconcile.outside_their_store(entry, rows):
             refused[f"{entry.path}/{rel}"] = OUTSIDE_THE_STORE
     return refused
 
@@ -270,13 +276,17 @@ def _pull_one_seq(
             out.verdict = PAYLOAD_BAD
             out.detail = f"import failed: {exc}"
             return out
-        # Every file the change would write, resolved before any is: one outside its store and
-        # nothing of the change is taken in.
-        refused = _rows_outside_their_store(home, imported)
+        # Every file the change would write, named before any is written: one outside its store
+        # and nothing of the change is taken in.
+        refused = _rows_outside_their_store(imported)
         if refused:
             return _refuse(out, refused)
         held = False
         poison = False
+        # The links this home holds in the way of an entry or of a file of one, by their path
+        # inside the home (`durability.home_paths`): nothing is written through one, and the seq
+        # is held so what they stopped comes in once they are gone.
+        linked: dict[str, str] = {}
         # What the peer last agreed on with this home, as its copy says: the version of a record
         # it took from here before changing it, which an older copy of it used to show.
         agreed_there = imported.agreements.get(self_id, {}) if self_id else {}
@@ -289,6 +299,11 @@ def _pull_one_seq(
                 out.deferred_db.append(entry_id)
                 continue
             out.entries += 1
+            try:
+                home_path(home, entry.path)
+            except LinkInTheWay as link:
+                linked[link.rel] = link.why
+                continue
             if reconcile.handles_kind(entry.kind):
                 res = reconcile.reconcile_entry(
                     home,
@@ -312,6 +327,7 @@ def _pull_one_seq(
                 out.refused.update(
                     {f"{entry.path}/{rel}": OUTSIDE_THE_STORE for rel in res.refused}
                 )
+                linked.update({link.rel: link.why for link in res.linked})
                 if ancestors is not None:
                     # The records this home now holds as the peer does are what the two agree
                     # on, and the next divergence from this peer is measured from them. What the
@@ -330,9 +346,13 @@ def _pull_one_seq(
                 # DB/tree entry with no merger seam yet — hold the whole seq.
                 held = True
                 out.deferred_db.append(entry_id)
-    if held:
+    out.refused.update(linked)
+    if held or linked:
         out.verdict = PREREQ_ABSENT
-        out.detail = out.detail or ("held for DB seam: " + ", ".join(out.deferred_db))
+        why = [f"held for DB seam: {', '.join(out.deferred_db)}"] if held else []
+        if linked:
+            why.append(f"held: this home holds a link in the way of {', '.join(sorted(linked))}")
+        out.detail = out.detail or "; ".join(why)
     else:
         out.verdict = PAYLOAD_BAD if poison else CONSUMED
     return out

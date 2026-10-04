@@ -1135,6 +1135,26 @@ What this does not hold:
 **What this means for you:** answer your runs' questions yourself, and check the Mode of a loop
 someone else asked for before it runs.
 
+## 21. A restore looks for links, then writes
+
+A restore, an import and a sync never write through a link the home holds
+(`durability/home_paths.py`): each looks at every folder on the way to the path it is about to write,
+and at what is there, and leaves the item as it is when it finds a link. It looks, and then it
+writes. A process writing in the home at that moment, such as an app's backend in its `data/`
+folder or a command of the agent's in the workspace, could make a folder a link between the two,
+and the write would follow it.
+
+- **What holds:** a link that is there when the restore, the import or the sync reaches the item,
+  however it got there and wherever it leads. A whole file an archive brings is written as a new
+  file and renamed into place, so a link made at its own name in between is replaced, never
+  written through.
+- **What does not:** a folder made a link in between, and a database or a log merged in place,
+  which is opened by its path.
+
+**What this means for you:** a link put in the home ahead of time is refused; one raced in while the
+restore runs is not. Stop the gateway, and with it the apps' backends and the agent's commands,
+before a replace restore, as the restore asks you to.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -1160,7 +1180,8 @@ program and an agent CLI's own tools, for #18; a fence, enforced by the OS, arou
 long-term memory a private chat's commands could reach, an agent CLI's process kept to one private
 chat and to one person's turns, and a vault that reads back no edit made by such a chat's commands, for #19;
 the same record on every door that hands words to lasting work, and a Mode only you may loosen on
-work someone else asked for, for #20). This page will
+work someone else asked for, for #20; writing each file a restore, an import or a sync brings
+through folders opened without following a link, from the home down, for #21). This page will
 shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

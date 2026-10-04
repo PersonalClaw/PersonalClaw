@@ -720,12 +720,24 @@ this machine's file changed while it wrote.
 machine names is resolved before anything of its change is written: each
 object's key, each path its export's manifest declares, the file each of its
 rows stands for, and its machine id, which names its folder of the remote. One
-that is not inside the export it came in or the store it names, every symlink
-on the way followed (`record_ids.is_path_in_store`), is refused: nothing of
-that change is taken in, the cursor moves past it, and the sync report names
-the path and why (`durability.pull_engine`), as a run that did not go well. A
-pulled key used to be joined onto the pull's scratch folder as it came, so
-`../` in one wrote a file anywhere this machine's user may.
+that is not inside the export it came in (every symlink on the way followed,
+`record_ids.is_path_in_store`), or is not a name inside the store it names, is
+refused: nothing of that change is taken in, the cursor moves past it, and the
+sync report names the path and why (`durability.pull_engine`), as a run that
+did not go well. A pulled key used to be joined onto the pull's scratch folder
+as it came, so `../` in one wrote a file anywhere this machine's user may.
+
+**Nor through a link this home holds** (`durability.home_paths`). Where this
+home keeps a store behind a symbolic link, has one at a folder or a file of a
+store, or beside a database where SQLite keeps its log, or holds a file of a
+store under a second name (a hard link), the pull takes nothing of that store,
+or of that file, in: nothing is written or removed through the link, and its
+lock is not opened. The sync report names the link and why, the run reads as one
+that did not go well, and the cursor stays where it is, so what the link
+stopped comes in on the first pull after it is gone. The rest of the change is
+taken in. A folder store kept behind a link used to take another machine's rows
+wherever the link led. The conflict review writes the same way, and refuses
+(`write_failed`, naming the link) a store this home holds behind one.
 
 **A merge restore and an import take a folder in by the sync's rule.** A merge
 restore or an archive import brings a folder store's files in the way a sync

@@ -132,8 +132,10 @@ class TestEntityDir:
         ]
         r = writeback.apply_rows(prompts, dest, rows, read=Read())
         assert sorted(p.name for p in elsewhere.iterdir()) == ["gone.json"], "written through"
-        assert (r.written, r.removed) == (0, 0)
-        assert r.refused == ["shared/x.yaml", "shared/gone.json"]
+        assert (r.written, r.removed, r.refused) == (0, 0, [])
+        # The write is refused at the link; the delete finds nothing to remove, since a store is
+        # read without following one (``shards.read_entity_dir``).
+        assert {rel: link.rel for rel, link in r.linked.items()} == {"shared/x.yaml": "shared"}
 
     @pytest.mark.parametrize(
         "row,outside",

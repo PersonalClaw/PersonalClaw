@@ -41,6 +41,7 @@ from personalclaw.durability.ancestors import Ancestors
 from personalclaw.durability.conflicts import ID_KEYED_MERGES, ConflictQueue
 from personalclaw.durability.cursor import Cursor
 from personalclaw.durability.db_merge import make_db_merger
+from personalclaw.durability.home_paths import LinkInTheWay, home_path
 from personalclaw.durability.outbox import Outbox
 from personalclaw.durability.published import Published, export_digest
 from personalclaw.durability.pull_engine import PullReport, pull_from_peers
@@ -92,8 +93,9 @@ class SyncCycleReport:
     #: This machine's files the export for the other machines could not carry, by path, with why
     #: (``shards.Read``): said in the report, never dropped in silence.
     left_out: dict[str, str] = field(default_factory=dict)
-    #: The paths another machine named outside what a sync may write, with why
-    #: (``pull_engine.PullReport.refused``): none was written, and the report says so. With them,
+    #: The paths another machine named outside what a sync may write, and the links this home
+    #: holds that a sync never writes through, with why (``pull_engine.PullReport.refused``): none
+    #: was written, and the report says so. With them,
     #: a key the transport refused (``KeysRefused``) where it stopped the cycle: its registry,
     #: its salt, or this machine's push, which the cycle's error says.
     refused: dict[str, str] = field(default_factory=dict)
@@ -157,7 +159,11 @@ def _forget_the_retired_side_log(home: Path, entry: inv.StateEntry) -> None:
     if entry.kind != inv.KIND_JSON_ENTITY_DIR:
         return
     try:
-        (Path(home) / entry.path / _RETIRED_SIDE_LOG).unlink(missing_ok=True)
+        home_path(home, f"{entry.path}/{_RETIRED_SIDE_LOG}").unlink(missing_ok=True)
+    except LinkInTheWay:
+        # Nothing is removed through a link the home holds (`durability.home_paths`); the pull
+        # names it.
+        return
     except OSError:
         logger.debug("sync cycle: could not remove %s/%s", entry.path, _RETIRED_SIDE_LOG)
 

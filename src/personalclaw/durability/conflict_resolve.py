@@ -62,6 +62,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from personalclaw.durability import conflicts as conflicts_mod
+from personalclaw.durability import home_paths
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import reconcile, writeback
 
@@ -216,14 +217,23 @@ def resolve_conflict(home: Path, record_id: str, choice: str, *, now: str = "") 
                 choice=choice,
                 record_id=record_id,
             )
-        dest = Path(home) / entry.path
         try:
+            # Where this home holds the store behind a link, nothing is written through it
+            # (`durability.home_paths`): the review stays open and says which link.
+            dest = home_paths.home_path(home, entry.path)
             applied, edited = reconcile.take_in(entry, dest, rec.entity_id, row)
         except Exception as exc:  # noqa: BLE001 — a failed write must leave the review open
             logger.warning("conflict resolve: write failed for %s", record_id, exc_info=True)
             return _refuse(
                 "write_failed",
                 f"nothing was applied: {exc}",
+                choice=choice,
+                record_id=record_id,
+            )
+        if applied.linked:
+            return _refuse(
+                "write_failed",
+                f"nothing was applied: {next(iter(applied.linked.values())).under(entry.path)}",
                 choice=choice,
                 record_id=record_id,
             )

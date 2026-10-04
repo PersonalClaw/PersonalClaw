@@ -562,12 +562,23 @@ Data leaving the running system:
   user's real home anywhere but that module and a reviewed list of guards and owner-driven actions
   (the service installer, the Claude Code importer, the terminal, the folder picker).
 - **A path another machine or an archive names goes nowhere but where it may be written**
-  (`record_ids.is_path_in_store`: the name's shape, and the path once every symlink is followed).
-  A sync pull resolves every path a peer names before anything of its change is written: each
-  object's key, each path its export's manifest declares, the file each of its rows stands for,
-  and its machine id, which names its folder of the remote. One outside the export it came in or
-  the store it names is refused, nothing of that change is taken in, and the sync report names the
-  path (`durability/pull_engine.py`). A transport whose remote is a folder on this machine (Folder
+  (`record_ids.is_path_in_store`: the name's shape, and the path once every symlink is followed;
+  for a file of a store, the name's shape, and no link on the way, below). A sync pull resolves
+  every path a peer names before anything of its change is written: each object's key, each path
+  its export's manifest declares, the file each of its rows stands for, and its machine id, which
+  names its folder of the remote. One outside the export it came in or the store it names is
+  refused, nothing of that change is taken in, and the sync report names the path
+  (`durability/pull_engine.py`). **Nothing a restore, an import or a sync brings is written
+  through a link the home holds** (`durability/home_paths.py`): where the home has a symbolic link
+  at the path an item would be written to, at a folder on the way to it, or beside a database where
+  SQLite keeps its log, or a file there with another name (a hard link), the item is left as it
+  is. It is not written, nothing is read through the link, a replace does not move it aside, and
+  the result names the link: a restore's last line and the parts it left unchanged, an import's
+  summary, the conflict review's refusal, and the sync report, whose pull is held until the link is
+  gone. Every write those doors make takes its path from `home_paths.home_path`, and
+  `tests/test_home_path_census.py` fails one that takes it from anywhere else. A replace restore
+  used to move a store aside, leave a link where it found one, and copy the snapshot's file to its
+  path, wherever the link led. A transport whose remote is a folder on this machine (Folder
   Sync's shared folder, Git Sync's clone) holds its keys to the same rule, since whoever else
   writes that folder can put a link to any file of this machine's in it: a key outside the folder,
   or one that leads out of it through a link, is neither read, written nor removed, and the

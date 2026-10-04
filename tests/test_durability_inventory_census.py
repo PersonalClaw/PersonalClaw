@@ -722,17 +722,9 @@ _BLIND_BY_DESIGN: dict[str, tuple[frozenset[str], str]] = {
         "a pack lockfile's recorded install path, re-read by update and removed by uninstall",
     ),
     "/rel": (
-        frozenset(
-            {
-                "personalclaw/memory_vault.py",
-                "personalclaw/portability.py",
-                "personalclaw/snapshot.py",
-            }
-        ),
-        "the memory vault's CONFIGURED path (its default is declared), the snapshot's sweep "
-        "over `_everything_paths`, which are inventory entries, and an import's walk over the "
-        "databases an archive holds (`_attach_merge_paths`, `_partition_paths`): declared sqlite "
-        "entries and their declared partitions",
+        frozenset({"personalclaw/memory_vault.py", "personalclaw/snapshot.py"}),
+        "the memory vault's CONFIGURED path (its default is declared), and the snapshot's sweep "
+        "over `_everything_paths`, which are inventory entries",
     ),
     "/entry": (
         frozenset({"personalclaw/portability.py"}),
@@ -742,11 +734,9 @@ _BLIND_BY_DESIGN: dict[str, tuple[frozenset[str], str]] = {
         frozenset(
             {
                 "personalclaw/durability/conflict_resolve.py",
-                "personalclaw/durability/db_merge.py",
                 "personalclaw/durability/footprint.py",
                 "personalclaw/durability/reconcile.py",
                 "personalclaw/durability/shards.py",
-                "personalclaw/durability/sync_cycle.py",
                 "personalclaw/portability.py",
                 "personalclaw/snapshot.py",
             }
@@ -767,9 +757,15 @@ _BLIND_BY_DESIGN: dict[str, tuple[frozenset[str], str]] = {
         "a database the export projects, from the same declared set",
     ),
     "/f": (frozenset({"personalclaw/snapshot.py"}), "a name from `CORE_FILES`, a fixed list"),
-    "/part": (
-        frozenset({"personalclaw/snapshot.py"}),
-        "a store partition from `inventory.partition_paths`, a declared entry's own glob",
+    **dict.fromkeys(
+        ("/part", "/*parts", "/parts[-1]"),
+        (
+            frozenset({"personalclaw/durability/home_paths.py"}),
+            "the path a restore, an import or a sync writes, joined one name at a time by the one "
+            "check that no link is on the way (`home_paths.home_path`): its caller's inventory "
+            "entry, a name from `CORE_FILES`, or a file of a store an archive or another machine "
+            "brings",
+        ),
     ),
     "/path": (
         frozenset({"personalclaw/snapshot.py"}),

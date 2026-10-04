@@ -78,6 +78,7 @@ from personalclaw.durability import inventory as inv
 from personalclaw.durability import writeback
 from personalclaw.durability.ancestors import Deletion
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD
+from personalclaw.durability.home_paths import LinkInTheWay, home_path, landing
 from personalclaw.durability.merge import MergeResult, _is_tombstone, forward, merge_rows
 from personalclaw.durability.shards import (
     Read,
@@ -119,6 +120,10 @@ class ReconcileResult:
     #: The files, by their path inside the store, that the peer's rows named outside it
     #: (``writeback.ApplyResult.refused``): never written.
     refused: list[str] = dataclass_field(default_factory=list)
+    #: The links this home holds in the way of what the peer's rows would write, by their path
+    #: inside the home (``durability.home_paths``): nothing is written through one, and what they
+    #: stopped comes in once the link is gone.
+    linked: list[LinkInTheWay] = dataclass_field(default_factory=list)
     #: ``entity id → content sha`` for the ids where the merge landed on the row the PEER
     #: also holds (converged, the peer's edit taken in, or the remote won) — the only shas
     #: that are evidence of a common ancestor. Excludes every held (conflicted) id, and every
@@ -180,14 +185,14 @@ def handles_kind(kind: str) -> bool:
     return kind in _ROW_KINDS
 
 
-def outside_their_store(home: Path, entry: inv.StateEntry, rows: list[dict]) -> list[str]:
-    """The files a peer's *rows* of *entry* would write or remove outside the store in *home*
+def outside_their_store(entry: inv.StateEntry, rows: list[dict]) -> list[str]:
+    """The files a peer's *rows* of *entry* would write or remove outside its store
     (``writeback.outside_the_store``), by their path inside it. A pull asks before it takes in
     anything of a change, and takes in nothing of one that names any; only an entity directory's
     rows name a file each."""
     if entry.kind != inv.KIND_JSON_ENTITY_DIR:
         return []
-    return writeback.outside_the_store(Path(home) / entry.path, rows)
+    return writeback.outside_the_store(rows)
 
 
 def entity_rows(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:
@@ -285,7 +290,8 @@ def take_in(
     entry: inv.StateEntry, dest: Path, entity_id: str, there: dict
 ) -> tuple[writeback.ApplyResult, bool]:
     """Write *there* — another machine's version of *entity_id*, or a merge drafted from it — into
-    *entry*'s store at *dest* as a sync takes one in, and say whether it was an edit.
+    *entry*'s store at *dest*, the path ``durability.home_paths.home_path`` gave, as a sync takes
+    one in, and say whether it was an edit.
 
     Over the row this home has, it is the edit only the other machine made (:func:`_edited_there`):
     what a person makes of the row is the other machine's, and this home's own part stays — an
@@ -359,7 +365,9 @@ def _delete_here(
     return writeback.ApplyResult(removed=1 if wrote else 0)
 
 
-def bring_in_folder(home: Path, entry: inv.StateEntry, archived: Path) -> int:
+def bring_in_folder(
+    home: Path, entry: inv.StateEntry, archived: Path, *, left_unchanged: list[str] | None = None
+) -> int:
     """Bring the files of *archived* — *entry*'s folder in an archive: a snapshot, an export — into
     this home's store, by the rule a sync brings another machine's in. Returns how many came.
 
@@ -369,8 +377,16 @@ def bring_in_folder(home: Path, entry: inv.StateEntry, archived: Path) -> int:
     files that stay on each machine (``StateEntry.machine_local_within``) never come in. Copied
     whole, an archive's workflow brought the steps its machine's owner allowed there to run here
     unasked, and its agent runtime config the tools that machine's agent runs without asking.
+
+    Where this home holds a link on the way to the store or to a file of it, nothing of the
+    archive's is written there, and the link is named on *left_unchanged*
+    (``durability.home_paths``).
     """
-    read = read_local(entry, Path(home) / entry.path)
+    said = left_unchanged if left_unchanged is not None else []
+    dest = landing(home, entry.path, said)
+    if dest is None:
+        return 0
+    read = read_local(entry, dest)
     held = {conflicts_mod.row_id(r) for r in read.rows}
     arriving = _as_they_arrive(
         entry,
@@ -382,7 +398,9 @@ def bring_in_folder(home: Path, entry: inv.StateEntry, archived: Path) -> int:
     )
     if not arriving:
         return 0
-    applied = writeback.apply_rows(entry, Path(home) / entry.path, arriving, read=read)
+    applied = writeback.apply_rows(entry, dest, arriving, read=read)
+    for link in applied.linked.values():
+        link.under(entry.path).put_on(said)
     return applied.written
 
 
@@ -402,9 +420,11 @@ def bring_in(home: Path, entry: inv.StateEntry, archived: Path) -> int:
     a merge only fills in what the home lacks. A home with no store gets the archive's, every
     record in it brought in by the same rule. Written through the file's lock
     (``record_files.rewrite``), which the store's own writes hold. Raises ``ValueError`` when
-    either file cannot be read or holds another shape, leaving this home's as it is.
+    either file cannot be read or holds another shape, and ``home_paths.LinkInTheWay`` when this
+    home holds the store, or the lock beside it, behind a link, leaving this home's as it is.
     """
     assert entry.records is not None
+    dest = home_path(home, entry.path)
     shape = entry.records
     archived_document = record_files.read(archived)
     if shape.records(archived_document) is None:
@@ -428,7 +448,7 @@ def bring_in(home: Path, entry: inv.StateEntry, archived: Path) -> int:
             return None
         return shape.document(document if document is not None else archived_document, here + added)
 
-    record_files.rewrite(Path(home) / entry.path, change)
+    record_files.rewrite(dest, change)
     return came
 
 
@@ -493,7 +513,12 @@ def reconcile_entry(
         return ReconcileResult(
             entry.id, detail="a folder of append-only files; left as it is (rows name no file)"
         )
-    dest = Path(home) / entry.path
+    try:
+        dest = home_path(home, entry.path)
+    except LinkInTheWay as link:
+        # Nothing of the peer's is written through it, nor read, and nothing is agreed on: its
+        # rows come in once the link is gone.
+        return ReconcileResult(entry.id, detail=f"left as it is: {link}", linked=[link])
     remote_rows = _peer_rows(entry, remote_rows)
     remote = entity_rows(entry, remote_rows)
     bases, handed_back = _in_common(
@@ -573,6 +598,7 @@ def reconcile_entry(
 
             record_files.rewrite(dest, change)
             removed, moved, refused = outcome["merged"].tombstoned, [], []
+            linked: dict[str, LinkInTheWay] = {}
         else:
             # This machine's own files of the folder are not the merge's: left out of what it
             # writes back, so the pull never touches them. The write is only what the merge
@@ -583,6 +609,7 @@ def reconcile_entry(
             outcome["merged"] = merged
             applied = writeback.apply_rows(entry, dest, merged.rows, read=read)
             removed, moved, refused = applied.removed, applied.moved, applied.refused
+            linked = applied.linked
     except Exception as exc:  # noqa: BLE001 — one bad entry must not abort the whole pull
         logger.warning("reconcile: %s failed (%s) — advancing past it", entry.id, exc)
         return ReconcileResult(entry.id, verdict=PAYLOAD_BAD, detail=str(exc))
@@ -600,12 +627,15 @@ def reconcile_entry(
         held = held | set(moved)
     if refused:
         detail += f" {len(refused)} refused (outside the store)"
+    if linked:
+        detail += f" {len(linked)} left as they are (a link in the way)"
+    if refused or linked:
         # Never written, so not held here as the peer holds it: an agreement on one would read as
         # this home's delete, and a delete of one did not happen.
         held = held | {
             conflicts_mod.row_id(r)
             for r in merged.rows
-            if writeback.row_rel(r) in refused or row_file(r) in refused
+            if {writeback.row_rel(r), row_file(r)} & (set(refused) | set(linked))
         }
     by_id = {conflicts_mod.row_id(r): r for r in outcome["effective_remote"]}
     taken = {rid for rid in outcome["applied"] - held if _is_tombstone(by_id.get(rid) or {})}
@@ -618,6 +648,7 @@ def reconcile_entry(
         detail=detail,
         conflicts=recorded,
         refused=list(refused),
+        linked=_in_the_home(entry, linked),
         new_ancestors={
             **{
                 rid: sha
@@ -634,6 +665,16 @@ def reconcile_entry(
             for rid in sorted(taken)
         },
     )
+
+
+def _in_the_home(entry: inv.StateEntry, linked: Mapping[str, LinkInTheWay]) -> list[LinkInTheWay]:
+    """The links *entry*'s store holds in *linked* (``writeback.ApplyResult.linked``), each once,
+    by its path inside the home."""
+    found: dict[str, LinkInTheWay] = {}
+    for link in linked.values():
+        here = link.under(entry.path)
+        found.setdefault(str(here), here)
+    return list(found.values())
 
 
 def _without_what_stays_here(entry: inv.StateEntry, rows: list[dict]) -> list[dict]:

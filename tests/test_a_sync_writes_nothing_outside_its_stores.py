@@ -39,6 +39,9 @@ PREFIX = shard_prefix("B", 1)
 OUTSIDE_THE_EXPORT = "names a path outside the export it came in"
 OUTSIDE_THE_STORE = "names a file outside its store"
 NOT_ONE_NAME = "a machine id that is not one plain name, so it names another folder of the remote"
+A_LINK = (
+    "a symbolic link in this home, which nothing restored, imported or synced is written through"
+)
 
 
 def _task(home: Path, tid: str) -> None:
@@ -176,6 +179,9 @@ def test_an_absolute_manifest_path_is_refused_not_held_for_good(tmp_path, scratc
 
 
 def test_a_folder_of_the_store_that_is_a_symlink_carries_no_write_out(tmp_path, scratch):
+    """A link this home holds is never written through: the row behind it is left out, the link is
+    named, and the change is held so the row comes in once the link is gone. The rest of the change
+    comes in (``durability.home_paths``)."""
     assert inv.by_id("prompts").kind == inv.KIND_JSON_ENTITY_DIR
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
@@ -185,8 +191,9 @@ def test_a_folder_of_the_store_that_is_a_symlink_carries_no_write_out(tmp_path, 
     store = _b_publishes(tmp_path, {"shared/evil.yaml": "name: evil\n"})
     a, report = _a_pulls(store, tmp_path)
     assert list(elsewhere.iterdir()) == [], "a pulled row was written through the symlink"
-    _nothing_taken_in(a)
-    assert report.refused == {"prompts/shared/evil.yaml": OUTSIDE_THE_STORE}
+    assert (a / "tasks" / "from-b.json").exists(), "the rest of the change was not taken in"
+    assert report.refused == {"prompts/shared": A_LINK}
+    assert Cursor(a / "sync").seq_of("B") == 0, "moved past a row that never came in"
 
 
 def test_a_row_that_names_a_path_out_of_its_store_is_refused(tmp_path, scratch):

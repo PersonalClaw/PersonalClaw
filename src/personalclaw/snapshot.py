@@ -1,6 +1,7 @@
 """PersonalClaw snapshot and restore — portable state management."""
 
 import argparse
+import functools
 import hashlib
 import hmac
 import json
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, TextIO
 
 from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes, private_file
-from personalclaw.durability import sqlite_files
+from personalclaw.durability import home_paths, restore_items, sqlite_files
 from personalclaw.sqlite_compat import sqlite3
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -261,27 +262,10 @@ def _derived_ignore(entry_path: str, root: Path):
     return _ignore
 
 
-def _left_out_of_restore(entry_path: str, rel: str) -> bool:
-    """Whether a restore leaves ``rel``, a path inside the entry at ``entry_path``, out of the home.
-
-    What capture leaves behind (the entry's ``derived_within``) is never planted either. An archive
-    written before a path was left out still carries it, and planting it undoes the exclusion: an
-    app's ``venv/`` came back without its interpreter but with its package receipt, so Install
-    engine re-made the interpreter and skipped pip. A path another entry claims (``loop/loops.db``
-    inside ``loop``) is that entry's to restore, so it is kept.
-    """
-    from personalclaw.durability import inventory as inv
-    from personalclaw.portability import _is_derived_within
-
-    if not _is_derived_within(entry_path, rel):
-        return False
-    owner = inv.claim_for(f"{entry_path}/{rel}")
-    return owner is None or owner.path == entry_path
-
-
 def _restore_ignore(entry_path: str, root: Path):
-    """A copytree ``ignore`` that skips what :func:`_left_out_of_restore` leaves out, and every
-    sidecar of a database, which no restore puts into the home (``durability.sqlite_files``)."""
+    """A copytree ``ignore`` that skips what ``restore_items.left_out_of_restore`` leaves out, and
+    every sidecar of a database, which no restore puts into the home (``durability.sqlite_files``).
+    """
     leaves = bool(_derived_within(entry_path))
 
     def _ignore(directory: str, contents: list[str]) -> set[str]:
@@ -290,7 +274,9 @@ def _restore_ignore(entry_path: str, root: Path):
             return skipped
         base = Path(directory).relative_to(root)
         return skipped | {
-            n for n in contents if _left_out_of_restore(entry_path, (base / n).as_posix())
+            n
+            for n in contents
+            if restore_items.left_out_of_restore(entry_path, (base / n).as_posix())
         }
 
     return _ignore
@@ -578,28 +564,6 @@ def _copytree_safe(src: Path, dst: Path, **kwargs) -> None:
         return skipped
 
     shutil.copytree(str(src), str(dst), ignore=_ignore_symlinks, **kwargs)
-
-
-def _copy_tree_no_overwrite(src: Path, dst: Path, *, entry_path: str = "") -> int:
-    """Copy what ``dst`` lacks, and return how many files that was. Given the inventory
-    ``entry_path`` it copies, leaves out what a restore never plants
-    (:func:`_left_out_of_restore`). A database is taken whole, as any other file is, and on its
-    own; a sidecar never comes in, so no log lands beside a database it was not written with
-    (``sqlite_files.bring_in``)."""
-    leaves = bool(entry_path) and bool(_derived_within(entry_path))
-    copied = 0
-    for item in src.rglob("*"):
-        if item.is_symlink():
-            continue
-        rel = item.relative_to(src)
-        if leaves and _left_out_of_restore(entry_path, rel.as_posix()):
-            continue
-        target = dst / rel
-        if item.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-        elif item.is_file() and sqlite_files.bring_in(item, target):
-            copied += 1
-    return copied
 
 
 # ── Snapshot ──────────────────────────────────────────────────────────────────
@@ -1254,11 +1218,13 @@ def _records_entry(rel: str) -> "StateEntry | None":
     return entry if entry is not None and entry.records is not None else None
 
 
-def _merge_records(snap: Path, pc: Path, rel: str) -> str | None:
+def _merge_records(
+    snap: Path, pc: Path, rel: str, *, left_unchanged: list[str] | None = None
+) -> str | None:
     """Merge the archive's *rel*, a store of records, into this home's: the executor of every
     ``StateEntry.records`` store, for a snapshot's merge and an export archive's import alike.
-    Returns the line that says what came, or None when *rel* is no such store or the archive does
-    not hold it.
+    Returns the line that says what came, or None when *rel* is no such store, the archive does
+    not hold it, or a link is in the way, named on *left_unchanged* (``durability.home_paths``).
 
     Each record this home does not have comes in, by the store's arrival rule, after the ones it
     has, which stay as they are — the rule a sync brings another machine's in by
@@ -1275,6 +1241,9 @@ def _merge_records(snap: Path, pc: Path, rel: str) -> str | None:
         return None
     try:
         came = bring_in(pc, entry, snap / rel)
+    except home_paths.LinkInTheWay as link:
+        link.put_on(left_unchanged if left_unchanged is not None else [])
+        return None
     except ValueError as exc:
         return f"{rel}: left as it is ({exc})"
     if not came:
@@ -1580,17 +1549,23 @@ def _merge_security_events(
     newest events, and an archive's rows written after the home's own read as what just happened.
     Every record keeps its bytes, so each one's HMAC verifies as it did.
     """
-    src, dst = snap / "security_events.jsonl", pc / "security_events.jsonl"
+    src = snap / "security_events.jsonl"
     if not src.is_file():
+        return
+    # Where the home holds the log or its key behind a link, nothing is read or written there.
+    left = left_unchanged if left_unchanged is not None else []
+    dst = home_paths.landing(pc, "security_events.jsonl", left)
+    key = home_paths.landing(pc, "sel_hmac.key", left)
+    if dst is None or key is None:
         return
 
     def _key(p: Path) -> bytes | None:
         try:
-            return (p / "sel_hmac.key").read_bytes()
+            return p.read_bytes()
         except OSError:
             return None
 
-    snap_key, live_key = _key(snap), _key(pc)
+    snap_key, live_key = _key(snap / "sel_hmac.key"), _key(key)
     if not dst.exists():
         # Nothing to merge INTO. The generic store pass already copies a missing file; leaving it
         # to that path keeps one copy-if-missing implementation rather than two.
@@ -1603,8 +1578,7 @@ def _merge_security_events(
         imported = bounded_log.merge_jsonl(src, dst, key="event_id", at="timestamp")
     except OSError as exc:
         print(f"  ⚠️  Security events: {exc}")
-        if left_unchanged is not None:
-            left_unchanged.append(dst.name)
+        left.append(dst.name)
         return
     print(f"  Security events imported: {imported}")
 
@@ -1627,7 +1601,8 @@ def _merge_run_history(
     Per-shard, because the store is one file per job (`clock:backup.jsonl`) plus a cross-job
     `_index.jsonl`: a shard only the snapshot has is copied whole, and one both have gets the runs
     it lacks, in time order, under the lock the store's own writes take
-    (`ScheduleRunStore.merge_in`). *dst_dir* is the home's `cron-history`.
+    (`ScheduleRunStore.merge_in`). *dst_dir* is the home's `cron-history`, as ``home_paths`` gave
+    it; a shard behind a link is left as it is and named on *left_unchanged*.
 
     Deliberately does NOT rotate afterwards. `ScheduleRunStore.rotate_all()` runs at gateway boot
     (S175) and owns that policy; trimming here would apply retention twice with a second copy of the
@@ -1638,7 +1613,7 @@ def _merge_run_history(
     from personalclaw.schedule_history import ScheduleRunStore
 
     try:
-        shards, imported = ScheduleRunStore(dst_dir.parent).merge_in(src_dir)
+        shards, imported = ScheduleRunStore(dst_dir.parent).merge_in(src_dir, left=left_unchanged)
     except OSError as exc:
         print(f"  ⚠️  Run history: {exc}")
         if left_unchanged is not None:
@@ -1647,22 +1622,24 @@ def _merge_run_history(
     print(f"  Run history: {shards} shard(s), {imported} row(s) imported")
 
 
-def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str) -> None:
+def _backup_and_copy(pc: Path, backup: Path, snap: Path, component: str, left: list[str]) -> None:
+    """Replace the home's files of *component* with the snapshot's, moving each it has into
+    *backup* first; one behind a link is left as it is and named on *left* (``home_paths``)."""
     for f in CORE_FILES.get(component, ()):
-        if (pc / f).is_file() and os.path.islink(pc / f):
-            print(f"⚠️  Skipping symlinked core file during backup: {pc / f}")
+        live = home_paths.landing(pc, f, left)
+        if live is None:
             continue
         # A database goes aside with the log beside it, so the snapshot's copy never opens with it.
-        sqlite_files.move_aside(pc / f, backup / f)
+        sqlite_files.move_aside(live, home_paths.home_path(backup, f))
         if (snap / f).is_file():
             if os.path.islink(snap / f):
                 print(f"⚠️  Skipping symlinked file from snapshot: {snap / f}")
                 continue
             if component == "security":
                 # Key material: written 0600 from its first byte, never copied and then tightened.
-                atomic_write_bytes(pc / f, (snap / f).read_bytes())
+                atomic_write_bytes(live, (snap / f).read_bytes())
             else:
-                shutil.copy2(str(snap / f), str(pc / f))
+                home_paths.put_file(snap / f, live)
 
 
 def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
@@ -1670,23 +1647,26 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
     ``pre-restore-<ts>/``. Returns what the restore did with app engines, for its result:
     ``engines_kept`` (display names of the apps that kept theirs, :func:`_keep_app_engines`) and
     ``engines_set_aside`` (``{app, bytes}`` of each left in the backup with its app); what it held
-    that the snapshot had working (:func:`_hold_what_was_in_flight`); and the automations it held
+    that the snapshot had working (:func:`_hold_what_was_in_flight`); the automations it held
     that the snapshot ran on their own, ``automations_held``, with ``held_from``, where the
-    snapshot came from (`triggers.restore_hold`)."""
+    snapshot came from (`triggers.restore_hold`); and ``left_unchanged``, each part it left as
+    it is, neither moved aside nor replaced, because a link is in the way (``home_paths``)."""
     from personalclaw.triggers import restore_hold
 
     # Asked before anything is written: whose snapshot this is, by the home it names.
     held_from = restore_hold.origin(_snapshot_home(snap), pc)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup = pc / f"pre-restore-{ts}"
+    backup = home_paths.home_path(pc, f"pre-restore-{ts}")
     backup.mkdir(exist_ok=True)
     kept: list[str] = []
+    left: list[str] = []
     print("🔄 Replace mode — backing up current state...")
 
     for comp in ("memory", "crons", "config", "notifications", "security"):
         if _want(components, comp):
-            _backup_and_copy(pc, backup, snap, comp)
-            print(f"  ✅ {comp}")
+            since = len(left)
+            _backup_and_copy(pc, backup, snap, comp, left)
+            restore_items.said(comp, left, since)
 
     # The workspace and the skills are set aside as they are, moved and never copied, as every
     # other store is below: a copy took each database in them as bytes, its log at another
@@ -1695,10 +1675,13 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
     for tree in ("workspace", "skills"):
         if not _want(components, tree):
             continue
+        since = len(left)
         if (snap / tree).is_dir():
-            sqlite_files.move_aside(pc / tree, backup / tree)
-            _copytree_safe(snap / tree, pc / tree, ignore=sqlite_files.sidecars_in)
-        print(f"  ✅ {tree}")
+            live = home_paths.landing(pc, tree, left)
+            if live is not None:
+                sqlite_files.move_aside(live, home_paths.home_path(backup, tree))
+                _copytree_safe(snap / tree, live, ignore=sqlite_files.sidecars_in)
+        restore_items.said(tree, left, since)
 
     # 🔴 Every remaining inventory entry — see `_extra_restore_paths`. Replace mode moves
     # the live copy into the pre-restore backup FIRST, so the destructive half stays recoverable
@@ -1709,6 +1692,7 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
     if _want(components, "everything") or any(
         _store_selected(components, rel) for rel in _extra_restore_paths(snap)
     ):
+        since = len(left)
         # A folder before the stores inside it (`workflows` before `workflows/runs.db`): moving
         # the folder moves them with it, and copying the snapshot's brings its copies of them
         # (`_restore_ignore` keeps a store another entry owns), so a store inside one already
@@ -1719,17 +1703,19 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
                 continue
             if any(rel.startswith(f"{done}/") for done in restored):
                 continue
-            src, live = snap / rel, pc / rel
-            sqlite_files.move_aside(live, backup / rel)
+            live = home_paths.landing(pc, rel, left)
+            if live is None:
+                continue
+            src = snap / rel
+            sqlite_files.move_aside(live, home_paths.home_path(backup, rel))
             if src.is_dir():
                 _copytree_safe(src, live, ignore=_restore_ignore(rel, src))
             elif src.is_file():
-                live.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(src), str(live))
+                home_paths.put_file(src, live)
             restored.append(rel)
             if rel == "apps":
                 kept = _keep_app_engines(backup / rel, live)
-        print("  ✅ stores")
+        restore_items.said("stores", left, since)
     held = _hold_what_was_in_flight(pc, restored)
 
     kept_names = [_app_display_name(pc / "apps" / name) for name in kept]
@@ -1757,16 +1743,18 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
     # 🔴 Every automation the snapshot ran on its own came back switched on and armed, so a copy
     # restored onto a second machine ran them beside the original, which still did: each brief and
     # digest went out twice. Each waits for a Resume here instead (`triggers.restore_hold`).
+    # Not the home's own store, left as it is behind a link: holding it would write through it.
     automations_held: list[str] = []
     if _want(components, "crons") and (snap / "triggers.json").is_file():
-        automations_held = restore_hold.hold(pc, held_from)
+        if home_paths.landing(pc, "triggers.json", []) is not None:
+            automations_held = restore_hold.hold(pc, held_from)
     if automations_held:
         print(f"  ⏸  {restore_hold.paused_line(len(automations_held), held_from)}")
     try:
         backup.rmdir()
     except OSError:
         print(f"  Previous state saved to: {backup}/")
-    print("✅ Replace complete.")
+    print(restore_items.left_unchanged_line(left, "Replace") if left else "✅ Replace complete.")
     return {
         "engines_kept": kept_names,
         "engines_set_aside": [
@@ -1775,6 +1763,7 @@ def _do_replace(snap: Path, pc: Path, components: list[str] | None) -> dict:
         **held,
         "automations_held": automations_held,
         "held_from": held_from if automations_held else "",
+        "left_unchanged": left,
     }
 
 
@@ -2066,8 +2055,10 @@ def _repoint_library_documents(pc: Path) -> None:
     from personalclaw.knowledge.arrivals import repoint_moved_documents
     from personalclaw.knowledge.store import knowledge_db_path
 
-    library = knowledge_db_path(pc, create=False)
-    if not library.is_file():
+    # A library the home holds behind a link is never opened here: the merge left it as it is.
+    rel = knowledge_db_path(pc, create=False).relative_to(pc).as_posix()
+    library = home_paths.landing(pc, rel, [])
+    if library is None or not library.is_file():
         return
     try:
         with closing(sqlite3.connect(str(library), isolation_level=None, timeout=10)) as conn:
@@ -2082,126 +2073,135 @@ def _repoint_library_documents(pc: Path) -> None:
         )
 
 
-def _left_unchanged_line(left: list[str]) -> str:
-    """The last line of a merge that could not bring everything in: how many parts, and which."""
-    parts = "1 part was" if len(left) == 1 else f"{len(left)} parts were"
-    return f"⚠️  Merge finished, but {parts} left unchanged: {', '.join(left)}."
-
-
 def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
     """Merge *snap* into the home at *pc*, and return what it left unchanged (empty when every
-    part came in): a store that took nothing, or a table it skipped. The last line says which, so
-    a restore that left the knowledge library as it was never ends "✅ Merge complete."."""
+    part came in): a store that took nothing, a table it skipped, or a part behind a link
+    (``home_paths``). The last line says which, so a restore that left the knowledge library as it
+    was never ends "✅ Merge complete."."""
     print("🔀 Merge mode — importing...")
     left: list[str] = []
 
     if _want(components, "memory") and (snap / "memory.db").is_file():
-        if not (pc / "memory.db").is_file():
-            if not sqlite_files.bring_in(snap / "memory.db", pc / "memory.db"):
-                left.append("memory.db")  # a link or a folder is at its path: left as it is
-            elif (snap / "memory_index.db").is_file():
-                sqlite_files.bring_in(snap / "memory_index.db", pc / "memory_index.db")
-            if "memory.db" not in left:
-                print("  Memory: copied (no existing memory.db)")
-        else:
-            _merge_memory(snap / "memory.db", pc / "memory.db", left_unchanged=left)
-        if "memory.db" not in left:
-            print("  ✅ memory")
+        since = len(left)
+        merge = functools.partial(_merge_memory, left_unchanged=left)
+        how = restore_items.merged_or_brought_in(snap, pc, "memory.db", left, merge)
+        if how == "copied":
+            print("  Memory: copied (no existing memory.db)")
+            # Its index comes in only where the home has none: one the home has stays its own.
+            restore_items.merged_or_brought_in(
+                snap, pc, "memory_index.db", left, lambda _src, _dst: None
+            )
+        elif not how and len(left) == since:
+            left.append("memory.db")  # a folder is at its path: left as it is
+        restore_items.said("memory", left, since)
 
     if _want(components, "crons"):
-        st, dt = snap / "triggers.json", pc / "triggers.json"
-        if st.is_file():
-            # Into a home with no store too: every automation arrives by the one rule.
-            _merge_triggers(st, dt)
-        se, de = snap / "event_triggers.json", pc / "event_triggers.json"
-        if se.is_file():
-            if de.is_file():
-                _merge_event_triggers(se, de)
-            else:
-                shutil.copy2(str(se), str(de))
-                print("  Event triggers: copied (none existing)")
-        sc, dc = snap / "crons.json", pc / "crons.json"
-        if sc.is_file():
-            if dc.is_file():
-                _merge_crons(sc, dc)
-            else:
-                shutil.copy2(str(sc), str(dc))
-                print("  Legacy crons: copied (no existing crons)")
-        print("  ✅ automations")
+        since = len(left)
+        if (snap / "triggers.json").is_file():
+            triggers = home_paths.landing(pc, "triggers.json", left)
+            if triggers is not None:
+                # Into a home with no store too: every automation arrives by the one rule.
+                _merge_triggers(snap / "triggers.json", triggers)
+        if restore_items.merged_or_brought_in(
+            snap, pc, "event_triggers.json", left, _merge_event_triggers
+        ) == ("copied"):
+            print("  Event triggers: copied (none existing)")
+        if (
+            restore_items.merged_or_brought_in(snap, pc, "crons.json", left, _merge_crons)
+            == "copied"
+        ):
+            print("  Legacy crons: copied (no existing crons)")
+        restore_items.said("automations", left, since)
 
     if _want(components, "config"):
+        since = len(left)
         for f in CORE_FILES["config"]:
-            if f == "hooks.json":
-                continue  # merged below, by the rule a hook from elsewhere arrives by
-            s, d = snap / f, pc / f
-            if s.is_file() and not d.is_file():
-                shutil.copy2(str(s), str(d))
+            if f == "hooks.json" or not (snap / f).is_file():
+                continue  # hooks are merged below, by the rule a hook from elsewhere arrives by
+            d = home_paths.landing(pc, f, left)
+            if d is not None and not d.is_file() and sqlite_files.bring_in(snap / f, d):
                 print(f"  {f}: restored (was missing)")
-        said = _merge_records(snap, pc, "hooks.json")
+        said = _merge_records(snap, pc, "hooks.json", left_unchanged=left)
         if said:
             print(f"  {said}")
-        print("  ✅ config")
+        restore_items.said("config", left, since)
 
     # 🔴 The run history, whose declared `append_dedup` had no executor. Grouped with
     # `crons` because it IS the crons' history: a merge restore that recovered the triggers but not
     # their runs leaves a user with automations and no record of what they ever did.
-    if _want(components, "crons"):
-        _merge_run_history(snap / "cron-history", pc / "cron-history", left_unchanged=left)
+    if _want(components, "crons") and (snap / "cron-history").is_dir():
+        history = home_paths.landing(pc, "cron-history", left)
+        if history is not None:
+            _merge_run_history(snap / "cron-history", history, left_unchanged=left)
 
     if _want(components, "notifications"):
-        sn, dn = snap / "notifications.jsonl", pc / "notifications.jsonl"
-        if sn.is_file():
-            if dn.is_file():
-                _merge_notifications(sn, dn, left_unchanged=left)
-            else:
-                shutil.copy2(str(sn), str(dn))
-                print("  Notifications: copied")
+        since = len(left)
+        merge = functools.partial(_merge_notifications, left_unchanged=left)
+        if (
+            restore_items.merged_or_brought_in(snap, pc, "notifications.jsonl", left, merge)
+            == "copied"
+        ):
+            print("  Notifications: copied")
         # `feedback.jsonl`, the third declared `append_dedup` with no executor. Grouped here rather
         # than given its own component: both are platform-domain append logs, and a new component
         # name is a CLI surface a user then has to know about.
-        _merge_feedback(snap / "feedback.jsonl", pc / "feedback.jsonl", left_unchanged=left)
+        if (snap / "feedback.jsonl").is_file():
+            feedback = home_paths.landing(pc, "feedback.jsonl", left)
+            if feedback is not None:
+                _merge_feedback(snap / "feedback.jsonl", feedback, left_unchanged=left)
         # `model_calls.jsonl`, the fourth declared `append_dedup` — demanded by its own ratchet
         # the moment S179 declared the entry. Keyed on `AttemptRecord.audit_id`.
-        _merge_keyed_jsonl(
-            snap / "model_calls.jsonl",
-            pc / "model_calls.jsonl",
-            "audit_id",
-            "Model calls",
-            at="ts",
-            left_unchanged=left,
-        )
-        print("  ✅ notifications")
+        if (snap / "model_calls.jsonl").is_file():
+            calls = home_paths.landing(pc, "model_calls.jsonl", left)
+            if calls is not None:
+                _merge_keyed_jsonl(
+                    snap / "model_calls.jsonl",
+                    calls,
+                    "audit_id",
+                    "Model calls",
+                    at="ts",
+                    left_unchanged=left,
+                )
+        restore_items.said("notifications", left, since)
 
     if _want(components, "security"):
+        since = len(left)
         for f in CORE_FILES["security"]:
-            s, d = snap / f, pc / f
-            if s.is_file() and not d.is_file():
+            if not (snap / f).is_file():
+                continue
+            d = home_paths.landing(pc, f, left)
+            if d is not None and not d.is_file():
                 # Key material: written 0600 from its first byte, never copied and then tightened.
-                atomic_write_bytes(d, s.read_bytes())
+                atomic_write_bytes(d, (snap / f).read_bytes())
                 print(f"  {f}: restored (was missing)")
         # The SEL audit log, whose declared `append_dedup` had no executor. Placed AFTER the key
         # copy above, because whether the imported rows can verify depends on which key won.
         _merge_security_events(snap, pc, left_unchanged=left)
-        print("  ✅ security")
+        restore_items.said("security", left, since)
 
     if _want(components, "workspace"):
-        sd = snap / "workspace"
-        if sd.is_dir():
-            dd = pc / "workspace"
-            dd.mkdir(parents=True, exist_ok=True)
+        since = len(left)
+        workspace = (
+            home_paths.landing(pc, "workspace", left) if (snap / "workspace").is_dir() else None
+        )
+        if workspace is not None:
+            workspace.mkdir(parents=True, exist_ok=True)
             # A project's memories are merged into the partition this home also has, as
             # `memory.db`'s are above; the copy below brings a partition this home lacks.
             for part in _partition_paths(snap, of="memory_db"):
-                if (pc / part).is_file():
-                    _merge_memory(snap / part, pc / part, left_unchanged=left, label=part)
-            _copy_tree_no_overwrite(sd, dd)
-        print("  ✅ workspace")
+                here = home_paths.landing(pc, part, left)
+                if here is not None and here.is_file():
+                    _merge_memory(snap / part, here, left_unchanged=left, label=part)
+            restore_items.copy_tree_no_overwrite(snap / "workspace", pc, "workspace", left)
+        restore_items.said("workspace", left, since)
 
     if _want(components, "skills"):
-        if (snap / "skills").is_dir():
-            (pc / "skills").mkdir(parents=True, exist_ok=True)
-            _copy_tree_no_overwrite(snap / "skills", pc / "skills")
-        print("  ✅ skills")
+        since = len(left)
+        skills = home_paths.landing(pc, "skills", left) if (snap / "skills").is_dir() else None
+        if skills is not None:
+            skills.mkdir(parents=True, exist_ok=True)
+            restore_items.copy_tree_no_overwrite(snap / "skills", pc, "skills", left)
+        restore_items.said("skills", left, since)
 
     # 🔴 Every remaining inventory entry. The capture side stages these; neither restore
     # mode read them, so a merge recovered the automations and silently dropped the task board.
@@ -2217,9 +2217,11 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
     # filters `WHERE is_deleted=0`, and a generic all-tables merge would resurrect deleted memories.
     if _want(components, "everything"):
         for rel in _attach_merge_paths(snap):
-            s_db, d_db = snap / rel, pc / rel
-            if s_db.is_file() and d_db.is_file():
-                _merge_sqlite_attach(s_db, d_db, rel, left_unchanged=left)
+            if not (snap / rel).is_file():
+                continue
+            d_db = home_paths.landing(pc, rel, left)
+            if d_db is not None and d_db.is_file():
+                _merge_sqlite_attach(snap / rel, d_db, rel, left_unchanged=left)
 
     # `autonudge.json`, the legacy auto-nudge loops, is a map keyed by loop under `loops`: each
     # the live home lacks comes in, and the boot's legacy import brings it into the trigger store
@@ -2233,8 +2235,9 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
     # into a home without one. Each is this machine's own account (`StateEntry.merged_in`):
     # another machine's spend counted against this machine's budget caps, and its scheduler
     # marks read as backups this machine had just taken. They are left as they are.
-    if _want(components, "everything"):
-        n = _merge_json_map(snap / "autonudge.json", pc / "autonudge.json", wrapper="loops")
+    if _want(components, "everything") and (snap / "autonudge.json").is_file():
+        nudges = home_paths.landing(pc, "autonudge.json", left)
+        n = _merge_json_map(snap / "autonudge.json", nudges, wrapper="loops") if nudges else 0
         if n:
             print(f"  autonudge.json: {n} imported")
 
@@ -2244,31 +2247,34 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
         from personalclaw.durability import inventory as inv
         from personalclaw.durability.reconcile import bring_in_folder
 
+        since = len(left)
         restored = []
         for rel in _extra_restore_paths(snap):
             if not _store_selected(components, rel):
                 continue
             src = snap / rel
-            dst = pc / rel
             entry = _entry_at(rel)
             if entry is not None and not entry.merged_in:
                 # What ran on the archived machine and its own counters stay its own: its running
                 # runs, loops and agents would be picked up here, its spend counted against this
                 # machine's caps (`StateEntry.merged_in`).
                 continue
+            dst = home_paths.landing(pc, rel, left)
+            if dst is None:
+                continue
             if entry is not None and entry.kind == inv.KIND_JSON_ENTITY_DIR and src.is_dir():
                 # A folder of files, each taken in by the rule a sync takes another machine's in:
                 # what its machine's owner allowed there arrives waiting for this one's.
-                if bring_in_folder(pc, entry, src):
+                if bring_in_folder(pc, entry, src, left_unchanged=left):
                     restored.append(rel)
             elif src.is_dir():
                 dst.mkdir(parents=True, exist_ok=True)
-                _copy_tree_no_overwrite(src, dst, entry_path=rel)
+                restore_items.copy_tree_no_overwrite(src, pc, rel, left, entry_path=rel)
                 restored.append(rel)
             elif _records_entry(rel) is not None:
                 # A store of records: each of the archive's this home lacks comes in, into a home
                 # without one too — never the file copied in whole.
-                said = _merge_records(snap, pc, rel)
+                said = _merge_records(snap, pc, rel, left_unchanged=left)
                 if said:
                     print(f"  {said}")
             elif src.is_file() and sqlite_files.bring_in(src, dst):
@@ -2279,7 +2285,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
                 restored.append(rel)
         if restored:
             print(f"  Stores: recovered {len(restored)} ({', '.join(sorted(restored)[:6])}…)")
-        print("  ✅ stores")
+        restore_items.said("stores", left, since)
 
     if _want(components, "workspace") or _want(components, "everything"):
         # The library's rows and its files are both in now: its documents open here at once.
@@ -2292,7 +2298,7 @@ def _do_merge(snap: Path, pc: Path, components: list[str] | None) -> list[str]:
         from personalclaw import embedding_arrivals
 
         embedding_arrivals.arrived()
-    print(_left_unchanged_line(left) if left else "✅ Merge complete.")
+    print(restore_items.left_unchanged_line(left) if left else "✅ Merge complete.")
     return left
 
 
@@ -2470,14 +2476,13 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
     # A replace says where it set the previous state aside as it does it (`_do_replace`).
     summary = apply_import_zip(archive, mode)
     held = len(summary.get("automations_held") or [])
-    # What a merge could not bring in, as a snapshot's merge names it: its last line says which,
-    # and the command fails, so an import that left the knowledge library as it was never ends
-    # as one that brought it in.
+    # What a merge could not bring in, as a snapshot's merge names it, and what a replace left as
+    # it is behind a link: the last line says which, and the command fails, so an import that left
+    # the knowledge library as it was never ends as one that brought it in.
     left = list(summary.get("left_unchanged") or [])
     _audit(
         "state_restored",
-        f"mode={mode} components=all from={archive.name}"
-        + (f" left_unchanged={len(left)}" if mode == "merge" else "")
+        f"mode={mode} components=all from={archive.name} left_unchanged={len(left)}"
         + (f" automations_held={held} held_from={summary.get('held_from')}" if held else ""),
     )
     print(
@@ -2485,7 +2490,7 @@ def _restore_export_archive(archive: Path, args: argparse.Namespace) -> int:
         f"{', '.join(summary.get('items', [])) or 'nothing to add'}"
     )
     if left:
-        print(_left_unchanged_line(left))
+        print(restore_items.left_unchanged_line(left, "Replace" if mode == "replace" else "Merge"))
     _offer_to_resume(pc, summary)
     print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")
     return 1 if left else 0
@@ -2593,16 +2598,18 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         done: dict = {}
         if mode == "replace":
             done = _do_replace(snap, pc, components)
+            left = list(done.get("left_unchanged") or [])
         else:
             left = _do_merge(snap, pc, components)
         engines = _engines_not_here(snap, components)
 
-    # Integrity check
-    if _want(components, "memory") and (pc / "memory.db").is_file():
+    # Integrity check of the memory.db the restore left here: never one behind a link.
+    memory = home_paths.landing(pc, "memory.db", []) if _want(components, "memory") else None
+    if memory is not None and memory.is_file():
         try:
             from contextlib import closing
 
-            with closing(sqlite3.connect(str(pc / "memory.db"))) as conn:
+            with closing(sqlite3.connect(str(memory))) as conn:
                 result = conn.execute("PRAGMA integrity_check;").fetchone()[0]
         except Exception as e:
             result = str(e)

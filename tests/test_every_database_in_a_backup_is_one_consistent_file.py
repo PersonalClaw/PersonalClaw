@@ -447,24 +447,41 @@ def test_a_database_comes_in_on_its_own_where_this_home_left_only_its_log(
     assert _notes(home / rel) == ARCHIVED
 
 
+def _merge_snapshot_leaving(archive: Path) -> list[str]:
+    """Merge a snapshot as the dashboard does, and return the parts it left unchanged."""
+    from personalclaw.snapshot import restore_merge
+
+    return restore_merge(archive, None)["left_unchanged"]
+
+
+def _import_export_leaving(archive: Path) -> list[str]:
+    from personalclaw.portability import apply_import_zip
+
+    return apply_import_zip(archive, "merge")["left_unchanged"]
+
+
 @pytest.mark.parametrize(
     "build, bring_in",
-    [(_snapshot_archive, _merge_snapshot), (_export_archive, _import_export)],
+    [(_snapshot_archive, _merge_snapshot_leaving), (_export_archive, _import_export_leaving)],
     ids=["merge-restore", "import"],
 )
 def test_a_merge_never_writes_through_a_link_this_home_has(home, tmp_path, build, bring_in):
     """🔴 Red on integration: a link this home had at a file's path, to a file that is not there,
     read as nothing there, and the merge wrote the archive's file through it, outside the home.
-    What the home has at a path, a link included, stays as it is."""
+    What the home has at a path, a link included, stays as it is, and the merge names it among the
+    parts it left unchanged."""
     outside = tmp_path / "outside" / "today.md"
     outside.parent.mkdir()
     (home / "workspace" / "notes").mkdir(parents=True)
     (home / "workspace" / "notes" / "today.md").symlink_to(outside)
 
-    bring_in(build(tmp_path / "archive", {"workspace/notes/today.md": b"the archive's notes\n"}))
+    left = bring_in(
+        build(tmp_path / "archive", {"workspace/notes/today.md": b"the archive's notes\n"})
+    )
 
     assert not outside.exists()
     assert (home / "workspace" / "notes" / "today.md").is_symlink()
+    assert [part for part in left if part.startswith("workspace/notes/today.md (")] != []
 
 
 def test_a_syncs_first_copy_of_a_store_comes_in_on_its_own(home, tmp_path):

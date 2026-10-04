@@ -21,7 +21,6 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
-import shutil
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -30,6 +29,7 @@ from typing import Any, Callable, Iterator
 
 from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write
+from personalclaw.durability import home_paths
 
 logger = logging.getLogger(__name__)
 
@@ -316,7 +316,8 @@ class ScheduleRunStore:
     """
 
     def __init__(self, base_dir: Path) -> None:
-        self._dir = Path(base_dir) / _HISTORY_DIRNAME
+        self._base = Path(base_dir)
+        self._dir = self._base / _HISTORY_DIRNAME
         self._index = self._dir / _INDEX_NAME
 
     # ── Paths + lock ──────────────────────────────────────────────────
@@ -735,7 +736,7 @@ class ScheduleRunStore:
 
         await asyncio.to_thread(self._rotate_all_sync)
 
-    def merge_in(self, src_dir: Path) -> tuple[int, int]:
+    def merge_in(self, src_dir: Path, *, left: list[str] | None = None) -> tuple[int, int]:
         """Bring another home's run history in — a snapshot's `cron-history/` — and return
         ``(shards, runs brought in)``.
 
@@ -744,15 +745,26 @@ class ScheduleRunStore:
         archive's runs are older, and the page reads the newest first. Under the lock every append
         takes, so a run the gateway records meanwhile is not written over. Retention stays the
         boot's (:meth:`rotate_all`).
+
+        Each goes where ``durability.home_paths.landing`` says, in the home this store is in:
+        where the home holds a link on the way — the folder, its lock or the shard — nothing of
+        the archive's is written there, and the link is named on *left*.
         """
+        refused = left if left is not None else []
+        folder = home_paths.landing(self._base, _HISTORY_DIRNAME, refused)
+        lock = home_paths.landing(self._base, f"{_HISTORY_DIRNAME}/{_LOCK_NAME}", refused)
+        if folder is None or lock is None:
+            return 0, 0
         shards = imported = 0
         with self._lock():
             for src in sorted(Path(src_dir).glob("*.jsonl")):
-                dst = self._dir / src.name
+                dst = home_paths.landing(self._base, f"{_HISTORY_DIRNAME}/{src.name}", refused)
+                if dst is None:
+                    continue
                 if dst.is_file():
                     imported += bounded_log.merge_jsonl(src, dst, key="run_id", at="started_at")
                 else:
-                    shutil.copy2(src, dst)
+                    home_paths.put_file(src, dst)
                 shards += 1
         return shards, imported
 

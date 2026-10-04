@@ -34,6 +34,7 @@ import logging
 from pathlib import Path
 
 from personalclaw import embedding_arrivals
+from personalclaw.durability import home_paths
 from personalclaw.durability import inventory as inv
 from personalclaw.durability import sqlite_files
 from personalclaw.durability.cursor import CONSUMED, PAYLOAD_BAD, PREREQ_ABSENT
@@ -68,7 +69,13 @@ def make_db_merger(home: Path) -> DbMerger:
             # Hold rather than advance past a sqlite entry we can't losslessly merge from rows.
             logger.info("db_merge: %s has no staged DB copy — holding", entry.id)
             return PREREQ_ABSENT
-        dst = Path(home) / entry.path
+        try:
+            dst = home_paths.home_path(home, entry.path)
+        except home_paths.LinkInTheWay as link:
+            # Nothing of the copy goes through a link this home holds, nor into the file a hard
+            # link shares: held, so it comes in once the link is gone (the pull names it).
+            logger.warning("db_merge: %s left as it is: %s — holding", entry.id, link)
+            return PREREQ_ABSENT
         try:
             left = _apply_db_merge(entry, src, dst)
         except Exception as exc:  # noqa: BLE001 — one bad DB must not wedge the whole pull
@@ -88,8 +95,9 @@ def make_db_merger(home: Path) -> DbMerger:
 
 
 def _apply_db_merge(entry: inv.StateEntry, src: Path, dst: Path) -> list[str]:
-    """ATTACH-merge ``src`` into the live ``dst`` DB via the right snapshot merge function, and
-    return what it left unchanged (empty when everything came in).
+    """ATTACH-merge ``src`` into the live ``dst`` DB, a path ``home_paths.home_path`` gave, via the
+    right snapshot merge function, and return what it left unchanged (empty when everything came
+    in).
 
     A live DB that doesn't exist yet is created by copying the source wholesale (the first sync
     onto a fresh machine), on its own (`sqlite_files.bring_in`: a log left at its path with no

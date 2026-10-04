@@ -414,13 +414,11 @@ def left_out_sentence(left_out: dict[str, str], *, what: str = "exported") -> st
 
 def refused_sentence(refused: dict[str, str]) -> str:
     """The words that name what a pull refused (``pull_engine.PullReport.refused``): the paths
-    another machine named outside what a sync may write, the first few with why."""
+    another machine named outside what a sync may write, and the links this home holds that a sync
+    never writes through, the first few with why."""
     shown = ", ".join(f"{path} ({why})" for path, why in sorted(refused.items())[:3])
     more = f" and {len(refused) - 3} more" if len(refused) > 3 else ""
-    return (
-        f"refused {len(refused)} path(s) another machine named outside what a sync may write: "
-        f"{shown}{more}"
-    )
+    return f"refused {len(refused)} path(s) a sync may not write: {shown}{more}"
 
 
 def _year_of(row: dict) -> str:

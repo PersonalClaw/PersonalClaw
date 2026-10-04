@@ -26,12 +26,14 @@ is only ever appended to — the rows it did not hold, after what it holds — s
 it in between can be lost. A row that names a file the store does not hold
 (``shards.store_file``: a path outside the store, a database, runtime scratch) is never written.
 
-**Nothing outside the store.** A row's file is written, read and removed only where it is inside
-the store's folder once every symlink on the way is followed (``record_ids.is_path_in_store``):
-a name that climbs out, or a folder of the store that is a symlink to somewhere else, would carry
-another machine's write — or its delete — out of the home. Such a row is refused, and named in
-``refused``; a pull asks first (:func:`outside_the_store`) and takes nothing of a change that
-names one.
+**Nothing outside the store, and nothing through a link.** A row's file is written and removed
+only at a name of the store's shape (``record_ids.is_safe_relative_path``): one that climbs out or
+is absolute would carry another machine's write, or its delete, out of the home. Such a row is
+refused, and named in ``refused``; a pull asks first (:func:`outside_the_store`) and takes nothing
+of a change that names one. And only at a path ``durability.home_paths.home_path`` gives from the
+store's folder down, which the caller took from it too: where the store holds a link on the way —
+a folder of it that is a symbolic link, or a file with another name — the row is not written or
+removed, and the link is named in ``linked`` (``durability.home_paths``).
 
 ``sqlite`` and ``tree`` are NOT handled here — the cycle merges DBs via the ATTACH-OR-IGNORE
 path (``snapshot.py``) and a sync leaves trees alone — so routing one through
@@ -48,6 +50,7 @@ from pathlib import Path
 
 from personalclaw.atomic_write import atomic_write_bytes, open_streamed
 from personalclaw.durability import inventory as inv
+from personalclaw.durability.home_paths import LinkInTheWay, home_path
 from personalclaw.durability.shards import (
     Read,
     canonical_json,
@@ -55,7 +58,7 @@ from personalclaw.durability.shards import (
     row_file,
     store_file,
 )
-from personalclaw.record_ids import is_path_in_store
+from personalclaw.record_ids import is_safe_relative_path
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +78,9 @@ class ApplyResult:
     moved: list[str] = field(default_factory=list)
     #: The files, inside the store's folder by name, that rows named outside it: never touched.
     refused: list[str] = field(default_factory=list)
+    #: The files, inside the store's folder, the store holds behind a link, and the link in the way
+    #: of each, by its path inside the folder: never written or removed.
+    linked: dict[str, LinkInTheWay] = field(default_factory=dict)
 
 
 def _is_tombstone(row: dict) -> bool:
@@ -107,8 +113,9 @@ def apply_rows(entry: inv.StateEntry, dest: Path, rows: list[dict], *, read: Rea
     """Write the rows of ``rows`` that changed since ``read`` back to ``dest``, *entry*'s store,
     over files still as ``read`` found them (see the module docstring).
 
-    ``read`` is what the caller read of the store and merged against: ``shards.Read()`` for one
-    it read nothing of, which writes a file only where there is none. Raises ``ValueError`` for
+    ``dest`` is the store's path, which ``durability.home_paths.home_path`` gave. ``read`` is
+    what the caller read of the store and merged against: ``shards.Read()`` for one it read
+    nothing of, which writes a file only where there is none. Raises ``ValueError`` for
     ``sqlite``/``tree`` (handled by other paths), for an append-only store that is a folder of
     files, and for any unknown kind.
     """
@@ -146,12 +153,12 @@ def row_rel(row: dict) -> str | None:
     return f"{rid}.json" if _is_tombstone(row) else row_file(row)
 
 
-def outside_the_store(root: Path, rows: list[dict]) -> list[str]:
-    """The files *rows* — an entity directory's, at *root* — would write or remove outside it: a
-    name that climbs out, or a path that leaves it through a symlink. What :func:`apply_rows`
-    refuses, asked before anything is written."""
+def outside_the_store(rows: list[dict]) -> list[str]:
+    """The files *rows* — an entity directory's — would write or remove outside it: a name that
+    climbs out or is absolute. What :func:`apply_rows` refuses, asked before anything is written. A
+    link on the way is the store's, not the name's, and is the link rule's (``linked``)."""
     rels = (row_rel(row) for row in rows)
-    return [rel for rel in rels if rel is not None and not is_path_in_store(root, rel)]
+    return [rel for rel in rels if rel is not None and not is_safe_relative_path(rel)]
 
 
 def _apply_entity_dir(
@@ -167,7 +174,7 @@ def _apply_entity_dir(
             logger.debug("apply_rows(entity_dir): row without a string id — skipped")
             continue
         rid = str(row["id"])
-        if not is_path_in_store(root, rel):
+        if not is_safe_relative_path(rel):
             result.refused.append(rel)
             logger.warning("apply_rows: %s names %r, outside the store — refused", entry.id, rel)
             continue
@@ -177,16 +184,21 @@ def _apply_entity_dir(
                 "apply_rows: %s names %r, not a file of the store — skipped", entry.id, rel
             )
             continue
-        target = root / rel
         if _is_tombstone(row):
             here = as_read.get(rid)
             if here is None:
                 continue  # nothing of it was read here, so nothing is removed
             rel = row_file(here)
-            if not is_path_in_store(root, rel):
+            if not is_safe_relative_path(rel):
                 result.refused.append(rel)
                 continue
-            target = root / rel
+        try:
+            target = home_path(root, rel)
+        except LinkInTheWay as link:
+            result.linked[rel] = link
+            logger.warning("apply_rows: %s: %s — left as it is", entry.id, link)
+            continue
+        if _is_tombstone(row):
             if target.exists() and _swap(result, rid, target, read.shas.get(rid)):
                 target.unlink()
                 result.removed += 1

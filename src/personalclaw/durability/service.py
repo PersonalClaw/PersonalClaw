@@ -913,8 +913,9 @@ def run_sync_job() -> JobResult:
                 duration_secs=time.monotonic() - started,
                 extra={"failure": "error", "reason": str(exc)},
             )
-    # A path another machine named outside what a sync may write is refused, and the run says
-    # so as a failure: it is the one thing in a sync report its owner has to look at.
+    # A path another machine named outside what a sync may write is refused, and so is a link this
+    # home holds in the way of what a sync writes; the run says so as a failure: it is the one thing
+    # in a sync report its owner has to look at.
     ok = report.ok and not report.refused
     _audit("durability_sync", report.detail, outcome="allowed" if ok else "denied")
     extra: dict = {

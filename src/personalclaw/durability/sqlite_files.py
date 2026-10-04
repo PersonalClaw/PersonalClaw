@@ -37,6 +37,7 @@ from contextlib import closing
 from pathlib import Path
 
 from personalclaw.atomic_write import SQLITE_SIDECARS
+from personalclaw.durability.home_paths import put_file
 from personalclaw.sqlite_compat import connect
 
 #: The first bytes of every SQLite database file.
@@ -114,20 +115,20 @@ def sidecars_in(directory: str | Path, contents: list[str]) -> set[str]:
 def bring_in(item: Path, target: Path) -> bool:
     """Put the archive's file *item* at *target* in the home, for a merge restore, an import or a
     sync's first copy of a store, and say whether it did: only where the home has nothing at
-    *target*, a link included, and never a sidecar (an older archive carried them). A database
-    goes in on its own: a log, a log index or a journal the home keeps at *target* with no
-    database there is removed first. SQLite discards such a leftover the first time it opens a
-    database with no pages, and beside the archive's copy it would read the leftover's pages in
-    place of the copy's own."""
+    *target*, and never a sidecar (an older archive carried them). *target* is a path
+    ``home_paths.home_path`` gave, so no link is on the way to it, at it, or where SQLite keeps a
+    database's log beside it. A database goes in on its own: a log, a log index or a journal the
+    home keeps at *target* with no database there is removed first. SQLite discards such a
+    leftover the first time it opens a database with no pages, and beside the archive's copy it
+    would read the leftover's pages in place of the copy's own."""
     if os.path.lexists(target) or is_sidecar(item.parent, item.name, target.parent):
         return False
     if is_database(item):
         for suffix in SQLITE_SIDECARS:
             leftover = Path(f"{target}{suffix}")
-            if leftover.is_symlink() or leftover.is_file():
+            if leftover.is_file():
                 leftover.unlink()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(item), str(target))
+    put_file(item, target)
     return True
 
 
@@ -135,15 +136,15 @@ def move_aside(live: Path, backup: Path) -> None:
     """Move what the home has at *live* to *backup*, for a replace restore that then puts the
     archive's copy in its place: the file or folder, and, when *live* is or is named as a
     database, each sidecar the home has of it, whether the database itself is there or not. The
-    archive's copy then never opens with this home's log. A link is left where it is."""
-    if live.is_symlink():
-        return
+    archive's copy then never opens with this home's log. Both are paths ``home_paths.home_path``
+    gave, so neither they nor a sidecar beside a database is a link: what moves is the home's
+    own."""
     moves = [(live, backup)] if live.exists() else []
-    if live.name.endswith(".db") or is_database(live):
+    if not live.is_dir() and (live.name.endswith(".db") or is_database(live)):
         moves += [
             (Path(f"{live}{suffix}"), Path(f"{backup}{suffix}"))
             for suffix in SQLITE_SIDECARS
-            if os.path.isfile(f"{live}{suffix}") and not os.path.islink(f"{live}{suffix}")
+            if os.path.isfile(f"{live}{suffix}")
         ]
     for here, aside in moves:
         aside.parent.mkdir(parents=True, exist_ok=True)

@@ -40,11 +40,10 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from personalclaw.config import loader as config_loader
-from personalclaw.durability import sqlite_files
+from personalclaw.durability import home_paths, restore_items, sqlite_files
 from personalclaw.security import is_sensitive_path
 from personalclaw.snapshot import (
     _attach_merge_paths,
-    _copy_tree_no_overwrite,
     _do_replace,
     _entry_at,
     _merge_crons,
@@ -323,8 +322,8 @@ def _is_derived_within(entry_path: str, rel_to_entry: str) -> bool:
     generic `rglob`, so an export of a home with one bound workspace carried the whole worktree.
     Enforcing it in BOTH whole-home paths (here and `snapshot._derived_ignore`) is the point: a
     declaration honored in one direction is the asymmetry that made a restore drop what a backup
-    captured. A restore or import (`snapshot._left_out_of_restore`) asks this too, so what capture
-    leaves out is never planted.
+    captured. A restore or import (`restore_items.left_out_of_restore`) asks this too, so what
+    capture leaves out is never planted.
 
     Matches the path AND every ANCESTOR of it. `*/worktrees` names a directory, and what an export
     walks is the files inside it — `p-1/worktrees/repo/src/a.py` matches no glob written about the
@@ -592,7 +591,7 @@ def create_export_zip(domains: Sequence[str] | None = None) -> tuple[bytes, dict
         # dropped silently. It was the only exclusion here with no reason beside it, and all three
         # authorities disagreed with it: the inventory declares `skills` with
         # `derived_within=(".skill_embeddings.json",)` and NOTHING else derived, so `auto/` is plain
-        # user state; `snapshot.py` captures and restores it (`_copy_tree_no_overwrite` over the
+        # user state; `snapshot.py` captures and restores it (`copy_tree_no_overwrite` over the
         # whole tree, no carve-out); and the panel promises "every non-derived store PersonalClaw
         # holds". So `personalclaw snapshot` kept accepted skills while Export dropped them — two
         # backup mechanisms with different definitions of "your skills", and the export was the
@@ -1002,20 +1001,23 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             summary["items"].append("full replace")
         else:
             # Merge mode. `items` says what became of each store the archive holds, and `left`
-            # names each part a merge could not bring in, as a merge restore names them.
+            # names each part a merge could not bring in, as a merge restore names them. A part
+            # this home holds behind a link is one of them (`linked`): nothing of the archive's is
+            # written through the link, nor read through it (`durability.home_paths`).
             items: list[str] = summary["items"]
             left: list[str] = []
+            linked: list[str] = []
             # `memory_index.db` is NOT copied alongside: it is `derived=True`, so
             # `_strip_excluded_from_staged` has already removed it from the archive. The
             # index rebuilds from `memory.db`; restoring a *stale* one beside a newer
             # store is the failure mode the inventory's derived flag exists to prevent.
             if (snap / "memory.db").is_file():
-                if not (pc / "memory.db").is_file():
-                    if sqlite_files.bring_in(snap / "memory.db", pc / "memory.db"):
-                        items.append("memory (copied)")
-                else:
-                    _merge_memory(snap / "memory.db", pc / "memory.db", left_unchanged=left)
+                memory = home_paths.landing(pc, "memory.db", linked)
+                if memory is not None and memory.is_file():
+                    _merge_memory(snap / "memory.db", memory, left_unchanged=left)
                     items.append(_merge_said("memory", "memory.db", left))
+                elif memory is not None and sqlite_files.bring_in(snap / "memory.db", memory):
+                    items.append("memory (copied)")
 
             # 🔴 THE DATABASES INSIDE THE ARCHIVE'S TREES, MERGED AS A MERGE RESTORE MERGES THEM.
             # The `workspace` walk below copies a file only into a home that lacks it, and each of
@@ -1028,11 +1030,12 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             project_memories = _partition_paths(snap, of="memory_db")
             merged_projects = copied_projects = 0
             for rel in project_memories:
-                if (pc / rel).is_file():
-                    _merge_memory(snap / rel, pc / rel, left_unchanged=left, label=rel)
+                here = home_paths.landing(pc, rel, linked)
+                if here is not None and here.is_file():
+                    _merge_memory(snap / rel, here, left_unchanged=left, label=rel)
                     merged_projects += rel not in left
-                else:
-                    copied_projects += sqlite_files.bring_in(snap / rel, pc / rel)
+                elif here is not None:
+                    copied_projects += sqlite_files.bring_in(snap / rel, here)
             if merged_projects:
                 items.append("project memories (merged)")
             elif copied_projects:
@@ -1053,15 +1056,18 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             for rel in _attach_merge_paths(snap):
                 if not (snap / rel).is_file():
                     continue
+                here = home_paths.landing(pc, rel, linked)
+                if here is None:
+                    continue
                 what = _DATABASE_NAMES.get(rel, rel)
-                if (pc / rel).is_file():
-                    _merge_sqlite_attach(snap / rel, pc / rel, rel, left_unchanged=left)
+                if here.is_file():
+                    _merge_sqlite_attach(snap / rel, here, rel, left_unchanged=left)
                     line = _merge_said(what, rel, left)
                     if rel in project_logs and line == f"{what} (merged)":
                         merged_logs += 1
                     else:
                         items.append(line)
-                elif not sqlite_files.bring_in(snap / rel, pc / rel):
+                elif not sqlite_files.bring_in(snap / rel, here):
                     continue
                 elif rel in project_logs:
                     copied_logs += 1
@@ -1077,53 +1083,45 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # there — into a home without a store too: copied in whole, they came in switched on
             # and granted, to run here on the next event.
             if (snap / "triggers.json").is_file():
-                _merge_triggers(snap / "triggers.json", pc / "triggers.json")
-                items.append("automations (merged)")
+                triggers = home_paths.landing(pc, "triggers.json", linked)
+                if triggers is not None:
+                    _merge_triggers(snap / "triggers.json", triggers)
+                    items.append("automations (merged)")
 
-            if (snap / "event_triggers.json").is_file():
-                if (pc / "event_triggers.json").is_file():
-                    _merge_event_triggers(snap / "event_triggers.json", pc / "event_triggers.json")
-                    items.append("event triggers (merged)")
-                else:
-                    shutil.copy2(str(snap / "event_triggers.json"), str(pc / "event_triggers.json"))
-                    items.append("event triggers (copied)")
+            for rel, what, merge in (
+                ("event_triggers.json", "event triggers", _merge_event_triggers),
+                ("crons.json", "crons", _merge_crons),
+            ):
+                how = restore_items.merged_or_brought_in(snap, pc, rel, linked, merge)
+                if how:
+                    items.append(f"{what} ({how})")
 
-            if (snap / "crons.json").is_file():
-                if (pc / "crons.json").is_file():
-                    _merge_crons(snap / "crons.json", pc / "crons.json")
-                    items.append("crons (merged)")
-                else:
-                    shutil.copy2(str(snap / "crons.json"), str(pc / "crons.json"))
-                    items.append("crons (copied)")
-
-            said = _merge_records(snap, pc, "hooks.json")
+            said = _merge_records(snap, pc, "hooks.json", left_unchanged=linked)
             if said:
                 items.append(said)
 
             # This home's settings are its own: an archive's come in only where there are none.
             if (snap / "config.json").is_file():
-                if not (pc / "config.json").is_file():
-                    shutil.copy2(str(snap / "config.json"), str(pc / "config.json"))
+                here = home_paths.landing(pc, "config.json", linked)
+                if here is not None and sqlite_files.bring_in(snap / "config.json", here):
                     items.append("config (restored)")
-                else:
+                elif here is not None:
                     items.append(f"config ({_KEEPS_ITS_OWN})")
 
-            if (snap / "notifications.jsonl").is_file():
-                if (pc / "notifications.jsonl").is_file():
-                    _merge_notifications(snap / "notifications.jsonl", pc / "notifications.jsonl")
-                    items.append("notifications (merged)")
-                else:
-                    shutil.copy2(str(snap / "notifications.jsonl"), str(pc / "notifications.jsonl"))
-                    items.append("notifications (copied)")
+            how = restore_items.merged_or_brought_in(
+                snap, pc, "notifications.jsonl", linked, _merge_notifications
+            )
+            if how:
+                items.append(f"notifications ({how})")
 
             # Feedback records (append-only; supersede-by-target makes ordering
             # forgiving): restore only when absent — merging two instances'
             # verdict streams is not meaningful.
             if (snap / "feedback.jsonl").is_file():
-                if not (pc / "feedback.jsonl").is_file():
-                    shutil.copy2(str(snap / "feedback.jsonl"), str(pc / "feedback.jsonl"))
+                here = home_paths.landing(pc, "feedback.jsonl", linked)
+                if here is not None and sqlite_files.bring_in(snap / "feedback.jsonl", here):
                     items.append("feedback (restored)")
-                else:
+                elif here is not None:
                     items.append(f"feedback ({_KEEPS_ITS_OWN})")
 
             # `cron-history` joins the merged trees. Export carried it and import ignored it
@@ -1150,12 +1148,14 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # `workspace` were merged above, and the rest of it is files this home either lacked
             # or keeps as its own.
             for dirname in ("workspace", "skills", "cron-history"):
-                sd = snap / dirname
-                if sd.is_dir():
-                    dd = pc / dirname
-                    dd.mkdir(parents=True, exist_ok=True)
-                    if _copy_tree_no_overwrite(sd, dd):
-                        items.append(f"{dirname} (merged)")
+                if not (snap / dirname).is_dir():
+                    continue
+                dd = home_paths.landing(pc, dirname, linked)
+                if dd is None:
+                    continue
+                dd.mkdir(parents=True, exist_ok=True)
+                if restore_items.copy_tree_no_overwrite(snap / dirname, pc, dirname, linked):
+                    items.append(f"{dirname} (merged)")
             # The library's rows and its documents' files are both in now: each document the
             # archive's library kept opens here at once, from this home's files folder.
             _repoint_library_documents(pc)
@@ -1168,7 +1168,7 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             # encodes a per-entry decision (feedback copy-only, cron-history no-overwrite) that a
             # generic pass would erase.
             #
-            # Copy-if-missing, matching `_copy_tree_no_overwrite` above: an import must not
+            # Copy-if-missing, matching `copy_tree_no_overwrite` above: an import must not
             # overwrite state the receiving home already has. A store of records — the inbox,
             # the tags, the comments, … — takes each record it lacks, by the rule a sync takes
             # another machine's by (`snapshot._merge_records`), so an archive's records arrive in
@@ -1181,7 +1181,7 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
             imported_stores = 0
             stores_kept: list[str] = []
             for entry in _remaining_export_paths(snap):
-                sp, dp = snap / entry, pc / entry
+                sp = snap / entry
                 declared = _entry_at(entry)
                 if declared is not None and not declared.merged_in:
                     # What ran on the archived machine and its own counters stay its own: its
@@ -1189,23 +1189,29 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                     # against this machine's caps (`StateEntry.merged_in`).
                     continue
                 if _records_entry(entry) is not None:
-                    said = _merge_records(snap, pc, entry)
+                    said = _merge_records(snap, pc, entry, left_unchanged=linked)
                     if said:
                         items.append(said)
-                elif (
+                    continue
+                dp = home_paths.landing(pc, entry, linked)
+                if dp is None:
+                    continue
+                if (
                     declared is not None
                     and declared.kind == inv.KIND_JSON_ENTITY_DIR
                     and sp.is_dir()
                 ):
                     # Each file taken in by the rule a sync takes another machine's in: what its
                     # machine's owner allowed there arrives waiting for this one's.
-                    if bring_in_folder(pc, declared, sp):
+                    if bring_in_folder(pc, declared, sp, left_unchanged=linked):
                         imported_stores += 1
                 elif sp.is_dir():
                     dp.mkdir(parents=True, exist_ok=True)
                     # What an export leaves out an import never plants, from an older archive
                     # that still carries it either (an app's `venv/`, a project's worktrees).
-                    if _copy_tree_no_overwrite(sp, dp, entry_path=entry):
+                    if restore_items.copy_tree_no_overwrite(
+                        sp, pc, entry, linked, entry_path=entry
+                    ):
                         imported_stores += 1
                 elif sp.is_file():
                     if sqlite_files.bring_in(sp, dp):
@@ -1219,6 +1225,10 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
                     f"{_stores(len(stores_kept))} ({_KEEPS_ITS_OWN}: "
                     f"{', '.join(sorted(stores_kept))})"
                 )
+            # Each part left as it is behind a link is said as the others are, and counted with
+            # what the merge left unchanged.
+            items.extend(linked)
+            left.extend(linked)
             summary["left_unchanged"] = left
             if left:
                 logger.warning("import: the merge left unchanged: %s", ", ".join(left))
