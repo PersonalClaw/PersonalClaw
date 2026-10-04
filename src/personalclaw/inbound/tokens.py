@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.auth.lifetimes import MAX_LIFETIME_SECS, duration_words, when_words
+from personalclaw.config.external_access import WEBHOOK_SURFACE as _WEBHOOK
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ SURFACE_NAMES = {
     "a2a": "A2A",
     "capture": "capture proxy",
     "bridge": "control bridge",
+    "webhook": "webhook",
 }
 
 _lock = threading.Lock()
@@ -542,6 +544,8 @@ def client_ended(
                     "kind": "client",
                     "client": client.client_id,
                     "label": client.label,
+                    # What it was made for, so its holder is told what ended (`_client_sentence`).
+                    "surfaces": list(client.surfaces),
                     "reason": reason,
                     "at": now,
                 }
@@ -605,14 +609,24 @@ def _surface_sentence(record: SurfaceToken, state: str) -> str:
     )
 
 
-def _client_sentence(label: str, *, revoked_at: float = 0.0, client: Any = None) -> str:
-    how = "Register the client again to get a new token."
-    who = f"the “{label}” client" if label else "this client"
+def _client_sentence(
+    label: str, *, surfaces: Any, revoked_at: float = 0.0, client: Any = None
+) -> str:
+    """What the holder of a client token that ended is told, worded by what the token was made
+    for (*surfaces*, its client's), wherever it was presented. A client bound to the webhook is a
+    sender token made for one automation, and its owner makes a new one where they made that one.
+    """
+    if isinstance(surfaces, list) and _WEBHOOK in surfaces:
+        how = "The automation's owner makes a new one on its page in PersonalClaw."
+        token = f"The sender token “{label}”" if label else "This sender token"
+    else:
+        how = "Register the client again to get a new token."
+        token = f"The token for the “{label}” client" if label else "The token for this client"
     if client is None:
-        return f"The token for {who} was revoked {when_words(revoked_at)}. {how}"
+        return f"{token} was revoked {when_words(revoked_at)}. {how}"
     lifetime = client.expires_at - _created_epoch(client)
     took = f", {duration_words(lifetime)} after it was issued" if lifetime > 0 else ""
-    return f"The token for {who} stopped working {when_words(client.expires_at)}{took}. {how}"
+    return f"{token} stopped working {when_words(client.expires_at)}{took}. {how}"
 
 
 def _match(candidates: dict[str, Any], digest: str) -> Any:
@@ -653,7 +667,11 @@ def ending(surface: str, presented: str, *, now: float | None = None) -> Ending 
     if isinstance(row, dict) and row.get("kind") == "client":
         return Ending(
             f"client {row.get('client') or '?'} was revoked",
-            _client_sentence(str(row.get("label") or ""), revoked_at=float(row.get("at") or 0)),
+            _client_sentence(
+                str(row.get("label") or ""),
+                surfaces=row.get("surfaces"),
+                revoked_at=float(row.get("at") or 0),
+            ),
         )
     record = SurfaceToken.from_row(digest, row)
     if record is not None:
@@ -672,7 +690,7 @@ def ending(surface: str, presented: str, *, now: float | None = None) -> Ending 
     if client is not None and client.expires_at <= now and client.may_use(surface):
         return Ending(
             f"client {client.client_id}'s token expired",
-            _client_sentence(client.label, client=client),
+            _client_sentence(client.label, surfaces=list(client.surfaces), client=client),
         )
     return None
 

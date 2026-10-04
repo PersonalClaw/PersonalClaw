@@ -214,13 +214,6 @@ def test_an_event_trigger_needs_a_PATTERN_and_its_SOURCE():
     assert any(i.path == "spec.source" for i in validate_spec("event", {"pattern": "MemoryUpdate"}))
 
 
-def test_a_webhook_with_NO_TOKEN_is_refused_not_defaulted():
-    """A generated default would be a secret nobody chose, and an unauthenticated fire endpoint is
-    worse than a refusal at author time."""
-    issues = validate_spec("webhook", {})
-    assert any(i.path == "spec.token_ref" and i.severity == "error" for i in issues)
-
-
 def test_a_web_watch_needs_a_url():
     assert any(i.path == "spec.url" for i in validate_spec("web_watch", {}))
 

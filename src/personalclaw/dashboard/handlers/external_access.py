@@ -227,6 +227,11 @@ async def api_external_access_client(request: web.Request) -> web.Response:
 
     ``persistent_sessions: true`` registers a client that keeps its conversation (left out, it
     keeps none); only a client bound to the OpenAI-compatible surface has one to keep.
+
+    A client bound to the ``webhook`` is a sender token: bound to it alone, pinned to the one
+    webhook automation ``scope.trigger`` names (as its page shows it, or by its own id), and nothing
+    else (``inbound.webhook.sender_problem``). Its answer also says what a program sends to fire
+    the automation with it: the address, the header and a command that does it.
     """
     from personalclaw.auth import lifetimes
     from personalclaw.inbound import auth
@@ -251,7 +256,7 @@ async def api_external_access_client(request: web.Request) -> web.Response:
         return json_error(
             "invalid_request", message="surfaces must be a non-empty list", status=400
         )
-    known = set(auth.surfaces())
+    known = set(auth.client_surfaces())
     requested = [str(s) for s in raw_surfaces]
     unknown = sorted(set(requested) - known)
     if unknown:
@@ -278,6 +283,21 @@ async def api_external_access_client(request: web.Request) -> web.Response:
     scope = body.get("scope")
     rate_overrides = body.get("rate_overrides")
     upstream = str(body.get("upstream", "") or "").strip()
+    from personalclaw.dashboard.handlers.triggers import _trigger_store
+    from personalclaw.inbound import webhook
+
+    problem, automation = webhook.sender_problem(
+        _trigger_store(),
+        surfaces=requested,
+        scope=scope,
+        agent=str(body.get("agent", "") or ""),
+        tools=tools,
+        upstream=upstream,
+    )
+    if problem:
+        return json_error("invalid_request", message=problem, status=400)
+    if automation:
+        scope = {"trigger": automation}
     if upstream:
         unknown_upstream = _unknown_provider(upstream)
         if unknown_upstream is not None:
@@ -326,6 +346,7 @@ async def api_external_access_client(request: web.Request) -> web.Response:
                 f"works for {lifetimes.duration_words(ttl_secs)}, until "
                 f"{lifetimes.until_words(client.expires_at)}; Settings → Devices lists it."
             ),
+            **({"webhook": webhook.instructions(automation, token)} if automation else {}),
         }
     )
 

@@ -185,7 +185,7 @@ def test_the_webhook_does_not_authenticate_with_an_apps_token(home):
     owner's credential reads as "no token configured", and every request is refused."""
     from aiohttp.test_utils import make_mocked_request
 
-    from personalclaw.dashboard.handlers.hooks import _verify_hook_token
+    from personalclaw.dashboard.handlers.hooks import _hook_token_refusal
 
     key = _other_apps_key()
     (home / "config.json").write_text(
@@ -195,7 +195,9 @@ def test_the_webhook_does_not_authenticate_with_an_apps_token(home):
         "POST", "/api/hooks/agent", headers={"Authorization": f"Bearer {OTHER_TOKEN}"}
     )
 
-    assert _verify_hook_token(request) is False
+    assert (
+        _hook_token_refusal(request) == "hooks.webhook_token names a credential another owner holds"
+    )
     [row] = _denials(key)
     assert row["caller_identity"] == "core"
 

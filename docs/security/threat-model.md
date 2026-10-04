@@ -271,9 +271,15 @@ Content and requests arriving from outside the owner's trust boundary:
   snippet), which every agent is handed whatever its own prompt says
   (`prompt_providers/runtime.py::with_safety_rules`; a path that starts an agent
   without them fails `tests/test_agent_safety_rules_census.py`).
-- **Webhook auth** (`dashboard/handlers/hooks.py::_verify_hook_token`): a
-  constant-time (`hmac.compare_digest`) token check; no configured token means
-  every request is refused, and denials log to the Security Event Log.
+- **Webhook auth** (`inbound/webhook.py`): the webhook's two doors take requests
+  only from programs on this machine and each its own token, compared in constant
+  time — a sender token made for one automation at
+  `/api/triggers/<id>/fire` (`dashboard/handlers/trigger_runs.py::api_trigger_fire`),
+  the owner's webhook token at `/api/hooks/agent`
+  (`dashboard/handlers/hooks.py::_hook_token_refusal`). Neither takes a dashboard
+  session or the internal credential; no configured token means every request is
+  refused; every request is an inbound-audit row, and every refusal and accepted
+  call a Security Event Log entry.
 - **Egress chokepoint** (`net/client.py` + `net/guard.py` + `net/policy.py`): the
   single outbound-HTTP seam with named policies, layered by
   `net/policy.py::egress_policy_for` and narrowed, for every request it judges, by the egress

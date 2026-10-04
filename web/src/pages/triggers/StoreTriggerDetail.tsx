@@ -13,6 +13,7 @@ import { DryRunResult } from './DryRunResult'
 import { ConfigReadout, GrantNote, ReviewNote } from './ReviewNote'
 import { HeldBackNote } from './HeldBackNote'
 import { RestoreHoldNote } from './RestoreHold'
+import { WebhookDoorSection } from './WebhookDoorSection'
 import { reportingWrite } from '../../app/reportingWrite'
 import { BUSY_REASON } from '../../ui/unavailable'
 
@@ -303,6 +304,15 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
         {watchUrl && <div data-type="body-s" className="mt-xs font-mono text-on-surface-low break-all">{watchUrl}</div>}
       </Section>
 
+      {/* Where a program posts to fire it, and the sender tokens made for it. Not on a row someone
+          else wrote: this harness never fires that one. */}
+      {trigger.webhook && !readOnly && (
+        <Section label="Its webhook">
+          <WebhookDoorSection automationId={trigger.id} automationName={trigger.name}
+            door={trigger.webhook} onChanged={onChanged} />
+        </Section>
+      )}
+
       {isWatch && (
         <Section label="Last check">
           {check
@@ -400,7 +410,7 @@ function storeKindLabel(kind?: string): string {
     idle: 'After a period of inactivity',
     run_completed: 'When a workflow run finishes',
     view: 'When its surface is viewed',
-    webhook: 'When its webhook receives a request',
+    webhook: 'When a program posts to its webhook',
     manual: 'Only when you run it',
   }
   return map[kind ?? ''] ?? (kind || 'Automation')

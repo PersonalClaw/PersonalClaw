@@ -948,7 +948,7 @@ def test_every_store_row_is_listed_exactly_once(home, state):
         "idle": {},
         "run_completed": {"source_def": "nightly-backup"},
         "view": {},
-        "webhook": {"token_ref": "hook-token"},
+        "webhook": {},
         "manual": {},
     }
     assert set(specs) == set(KINDS), "a new store kind must be decided here: which group lists it"

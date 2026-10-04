@@ -100,7 +100,9 @@ EMITTER_SITE_BASELINE = 132
 #: at 1499 against 1504. Five slack is not neutral: it is five future flat envelopes that can land
 #: green, which is precisely the "banked, not locked in" state the line above argues against. That
 #: file still carries 27 flat sites, so the next shrink there should ratchet this again.
-FLAT_BASELINE = 1499
+#: 🔁 RATCHETED 1499 -> 1490 on 2026-10-04: the agent-turn webhook (`dashboard/handlers/hooks.py`)
+#: answers each of its nine refusals through `json_error`, in a sentence, as the fire door does.
+FLAT_BASELINE = 1490
 
 #: Flat sites reached through a WRAPPER (see the module docstring). A CEILING, measured
 #: on this tree the moment the scanner could see them at all. The first measurement was

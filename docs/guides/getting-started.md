@@ -442,6 +442,15 @@ defaults flipped, and some routes refuse input they used to accept. Run
   and its progress while it runs, and if PersonalClaw stops part way, the next start
   resumes where it stopped. No model bound means nothing is re-embedded until you choose
   one.
+- **A webhook is fired with a token made for it.** A webhook automation's `token_ref`, which
+  nothing read, is gone (the first start takes it out of each one): make the automation a sender
+  token on its page on the Triggers page, or with
+  `personalclaw inbound webhook create <automation-id>`, and give that to the program that fires
+  it. `POST /api/hooks/agent` no longer takes PersonalClaw's internal credential: a program on
+  this machine sends your webhook token, which must now be at least 32 characters
+  (`personalclaw config set hooks.webhook_token <token>`). Both take requests only from programs
+  on this machine; from another, forward a port over SSH
+  ([automations](automations.md#when-a-program-starts-one-webhooks)).
 - **An app says what its agent work may use, and its agents approve nothing.** An app's
   `agent` permission now names a tier: `text` (the model is handed only the text the app sends,
   with no tools), `read` (read-only tools) or `tools` (your tools, each call that needs approval

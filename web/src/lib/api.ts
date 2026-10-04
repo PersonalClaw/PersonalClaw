@@ -3105,13 +3105,14 @@ export interface TriggerAction { provider: string; config: Record<string, unknow
  *  folder to trust for it, `''` when no folder holds it back. */
 export interface HeldBack { why: string; folder: string }
 /** A callback the agent registered with `hook_register` (`webhook_callbacks.py`): an outside
- *  system's post to `/api/hooks/agent` with `session_key` starts an agent turn, with the agent's
- *  tools, from `context_summary`. `enabled` IS the owner's yes to that context — switching it on is
- *  Allow, which the gateway asks about first, naming the context it read by `seal`. */
+ *  program's post to `url` (`/api/hooks/agent`) with `session_key` starts an agent turn, with the
+ *  agent's tools, from `context_summary`; `reach` is the server's sentence for where `url` answers.
+ *  `enabled` IS the owner's yes to that context — switching it on is Allow, which the gateway asks
+ *  about first, naming the context it read by `seal`. */
 export interface CallbackRow {
   kind: 'callback'; id: string; raw_id: string; name: string; enabled: boolean
   created_by: string; needs_grant: string[]; context_summary: string; session_key: string
-  registered_at: number; seal: string
+  url: string; reach: string; registered_at: number; seal: string
 }
 /** A task in HEARTBEAT.md (`heartbeat.queued`). `allowed` is the owner's yes to it, as written: a
  *  task without one does not run. `deliver` is where its result goes when it is done. */
@@ -3129,6 +3130,20 @@ export type RestoreHold = '' | 'another_home' | 'this_home' | 'unknown'
 export interface TriggerCheck {
   outcome: string; said: string; items: number; at: string; since: string; checks: number; can_fire: boolean
 }
+/** A sender token made for a webhook automation (`inbound/webhook.py::senders_of`): never the token
+ *  or its hash. `created_at`/`last_seen_at` are ISO instants (`''` for never), `expires_at` epoch
+ *  seconds, as a client row in Settings → External Access carries them. */
+export interface WebhookSender {
+  client_id: string; label: string; created_at: string; expires_at: number; last_seen_at: string; disabled: boolean
+}
+/** A webhook automation's door (`inbound/webhook.py::door`): the address a program on this machine
+ *  posts to, the server's sentence for where it answers (`reach`), the most body it takes, and the
+ *  sender tokens made for it. */
+export interface WebhookDoor {
+  url: string; reach: string; body_limit_bytes: number; senders: WebhookSender[]
+}
+/** What a program sends to fire an automation with a sender token, in the answer that made it. */
+export interface WebhookInstructions { url: string; header: string; curl: string }
 export interface Trigger {
   // `GET /api/triggers` serves THREE namespaces (handlers/triggers.py `api_triggers`). A data-event
   // trigger is a row in the one trigger store, so it arrives as `store` with `store_kind: 'event'`
@@ -3171,6 +3186,8 @@ export interface Trigger {
   // A web watch's last check of its page; null for any other kind, or a watch not checked yet. While
   // its `can_fire` is false, `warnings` carries its `said` (`dashboard/handlers/triggers.py`).
   last_check?: TriggerCheck | null
+  // A webhook automation's address and its sender tokens; null for any other kind.
+  webhook?: WebhookDoor | null
   // schedule fields (kind=schedule)
   message?: string; schedule?: string; cron_expr?: string | null; every_secs?: number | null
   agent?: string | null; model?: string | null; channel?: string | null; approval_mode?: string | null
@@ -8002,6 +8019,8 @@ export const api = {
       /** Present in THIS response only — it is stored as a hash and never returned again. */
       token: string
       token_notice: string
+      /** For a webhook sender token: what a program sends to fire its automation with it. */
+      webhook?: WebhookInstructions
     }>('/api/external-access/clients', body),
   // `del` resolves to void by design (it throws on !ok), so revocation is confirmed by
   // the absence of a throw plus the re-read — not by a body this helper cannot return.

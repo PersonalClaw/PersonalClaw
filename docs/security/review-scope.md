@@ -45,36 +45,52 @@ control has not landed. Each says so in its own section.
 Every module path below is relative to `src/personalclaw/`. Entry points are
 named as `module.py::symbol` so they resolve by grep.
 
-### 1. Webhook authentication — the one unauthenticated-by-default door
+### 1. Webhook authentication — the doors with no owner session
 
-**What it is.** Inbound webhooks let an outside system poke the gateway without
-an owner session. `dashboard/handlers/hooks.py::_verify_hook_token` is the only
-thing standing between an arbitrary HTTP request and a trigger that can start an
+**What it is.** The webhook lets a program outside PersonalClaw start work in it
+without an owner session, through two doors that sign their callers in themselves
+(`inbound/webhook.py`): `POST /api/triggers/<id>/fire` fires one webhook
+automation for the bearer of a sender token made for it
+(`dashboard/handlers/trigger_runs.py::api_trigger_fire`, the token checked by
+`inbound/clients.py::lookup_by_token` and pinned by `check_bindings`), and
+`POST /api/hooks/agent` starts an agent turn for the bearer of the owner's webhook
+token (`dashboard/handlers/hooks.py::_hook_token_refusal`). The dashboard's
+sign-in lets both through (`dashboard/token_auth.py`), so these checks are the
+only thing between an arbitrary HTTP request and an automation's action or an
 agent turn.
 
-**Why it is high-risk.** This is the shortest path from "anyone on the network"
-to "the agent runs". A bypass here does not leak data — it *executes*. The
-concrete bad outcome: an unauthenticated request fires a trigger, the trigger
+**Why it is high-risk.** This is the shortest path from "a program that can reach
+the port" to "the agent runs". A bypass here does not leak data — it *executes*.
+The concrete bad outcome: an unauthenticated request fires a trigger, the trigger
 starts a turn, and the turn runs tools under the owner's authority. Everything
 else in the threat model assumes the request on the other side of it was the
 owner's.
 
-**Entry points.** `dashboard/handlers/hooks.py` (`_verify_hook_token` and every
-handler that calls it), plus the trigger surfaces it hands off to
-(`triggers/`, `trigger_sources/`).
+**Entry points.** `dashboard/handlers/trigger_runs.py::api_trigger_fire`,
+`dashboard/handlers/hooks.py` (`api_hooks_agent`, `_hook_token_refusal`),
+`inbound/webhook.py` (the peer rule and the sender-token rules), plus the trigger
+surfaces they hand off to (`triggers/`, `trigger_sources/`).
 
 **What a reviewer should try to break.**
 
-- Reach any hook handler that does *not* call `_verify_hook_token`, or calls it
-  after a side effect has already happened.
+- Reach either door with anything but its own token: no token, the owner's
+  session, the internal credential, another surface's or another automation's
+  token, a revoked or expired sender token, or a sender token for an automation
+  written on another machine.
+- Reach either door from an address other than loopback (with and without a
+  browser `Origin`), or get a side effect to happen before the peer and token
+  checks run.
 - Defeat the comparison: timing, type confusion (a non-string token), an empty or
   whitespace token, a token supplied in an unexpected place (query string, second
   header, body) that a framework normalises into the accepted one.
-- Confirm the fail-closed claim: with **no** token configured, every request must
-  be refused. Look for a code path where "unconfigured" degrades to "open" —
+- Confirm the fail-closed claims: with **no** webhook token configured, or one
+  shorter than 32 bytes, every agent-turn request is refused; a webhook automation
+  with no sender token cannot be fired at all; a client with no automation pin
+  fires nothing. Look for a code path where "unconfigured" degrades to "open" —
   including startup ordering, a config reload, or a first-run state.
-- Verify the denial is *audited*. A refused request that leaves no Security Event
-  Log entry is a finding in its own right: it makes the door silent.
+- Verify every denial is *audited*: an inbound-audit row and a Security Event Log
+  entry. A refused request that leaves neither is a finding in its own right: it
+  makes the door silent.
 
 ### 2. App reverse-proxy token model — privilege narrowing that must never widen
 

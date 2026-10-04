@@ -204,7 +204,7 @@ async def _a_webhooks_fire(command: str, rec: _Recorder, _sh: _Shell, _work: Pat
     """An outside caller fires a webhook automation with its scoped token."""
     from personalclaw.inbound import clients
 
-    _trigger("webhook:deploy", "webhook", command, {"token_ref": "{{secret:WH_TOKEN}}"})
+    _trigger("webhook:deploy", "webhook", command, {})
     _client, token = clients.create_client(
         "deployer", surfaces=["webhook"], scope={"trigger": "store:webhook:deploy"}
     )

@@ -10,8 +10,9 @@ import { relPast } from './triggerMeta'
 
 /** Inspector for a callback the agent registered (`hook_register`, `webhook_callbacks.py`).
  *
- *  An outside system's post to `/api/hooks/agent` naming this callback's session starts an agent
- *  turn, with the agent's tools, from the context the agent saved. So the context is shown in
+ *  An outside program's post to its address (`/api/hooks/agent`, which answers this machine only:
+ *  the server's `reach`) naming this callback's session, with the owner's webhook token, starts an
+ *  agent turn, with the agent's tools, from the context the agent saved. So the context is shown in
  *  full — as text, since it is the agent's words — above the one control that matters: the switch,
  *  which is the owner's yes. Switching it on asks first (the gateway's question), and names the
  *  context this panel shows (`seal`), so a callback registered again with other context in the
@@ -53,10 +54,14 @@ export function CallbackDetail({ callback, onChanged, onDeleted }: {
 
       <Section label="What it does">
         <p data-type="body-s" className="text-on-surface-var">
-          When an outside system that holds your webhook token posts to{' '}
-          <span className="font-mono">/api/hooks/agent</span> with the session key below,
-          PersonalClaw starts an agent turn, with the agent's tools, from this context.
+          When a program posts to <span className="font-mono break-all">{callback.url}</span> with the
+          session key below and your webhook token, as the header{' '}
+          <span className="font-mono">Authorization: Bearer &lt;webhook token&gt;</span>, PersonalClaw
+          starts an agent turn, with the agent's tools, from this context. You set the webhook token
+          with <span className="font-mono">personalclaw config set hooks.webhook_token &lt;token&gt;</span>,
+          at least 32 characters.
         </p>
+        <p data-type="body-s" className="mt-xs text-on-surface-var">{callback.reach}</p>
       </Section>
 
       <Section label="Context the agent saved">

@@ -350,6 +350,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
     `LoadedTrigger`'s own docstring), so a projection handed a bare entity cannot report them and
     has to be told — which is how the write responses ended up reporting every row as clean.
     """
+    from personalclaw.inbound import webhook
     from personalclaw.triggers.schedule_view import _inline_action, _last_run_ts
 
     trigger = row.trigger
@@ -402,6 +403,8 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "held_back": _held_back(trigger),
         # Where the snapshot came from, when a restore holds it (`triggers.restore_hold`).
         "restore_hold": trigger.restore_hold,
+        # A webhook automation's address and its sender tokens; null for another kind.
+        "webhook": webhook.door(trigger),
         **_attribution(trigger, owner=owner),
     }
 

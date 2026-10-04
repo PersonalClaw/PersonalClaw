@@ -53,10 +53,6 @@ SENDERS = {
     (LAUNCHER, "_post"): "a scheduled script's ctx.notify and ctx.call_tool",
 }
 
-#: Listed, and called by no PersonalClaw process: a webhook relayed on this computer presents the
-#: credential (docs/architecture/security.md, "Webhook auth"), and the route checks its own token.
-RELAYED = frozenset({"POST /api/hooks/agent"})
-
 #: How many calls the census reads: 28 when it was written, 27 since `subagent_run` hands a batch
 #: to the gateway in one call rather than saving and starting it in two. Fewer means a reader
 #: stopped reading.
@@ -320,7 +316,7 @@ def test_every_listed_operation_is_one_a_call_names():
     unused = [
         entry
         for entry, route in _routes().items()
-        if entry not in RELAYED and not any(route.admits(call.method, call.path) for call in calls)
+        if not any(route.admits(call.method, call.path) for call in calls)
     ]
     assert unused == [], f"the credential opens these, and nothing calls them with it: {unused}"
 

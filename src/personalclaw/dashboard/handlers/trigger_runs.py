@@ -108,86 +108,92 @@ async def api_trigger_run(request: web.Request) -> web.Response:
 #: Inbound answers may carry the user's own data; never cache them (mirrors `inbound.mcp_http`).
 _NO_STORE = {"Cache-Control": "no-store"}
 
-#: The client-surface identity for the external webhook fire endpoint. Deliberately a string that is
-#: NOT one of the five `EXTERNAL_ACCESS_SURFACES`: `clients.lookup_by_token` gates on
-#: `client.may_use(surface)`, so a bearer scoped to `mcp`/`a2a`/`capture`/… can never fire a webhook
-#: — the surface-binding isolation the client registry exists to provide. It is not a mountable
-#: config surface (this is an always-registered dashboard route), so the surface-mount kill switches
-#: do not apply; the global incident switch and the per-client `disabled` flag do.
-_WEBHOOK_SURFACE = "webhook"
-
 
 async def api_trigger_fire(request: web.Request) -> web.Response:
-    """POST /api/triggers/{id}/fire — fire a `webhook` trigger from an EXTERNAL caller (WF2AUT-12).
+    """POST /api/triggers/{id}/fire — fire a webhook automation for an outside program.
 
-    The external twin of `/run`. `/run` is the OWNER's dashboard-authenticated "fire now" button;
-    `/fire` admits an OUTSIDE caller that presents a per-client **scoped** bearer token, fences the
-    inbound body as untrusted data, and dispatches the trigger's action fire-and-forget.
+    The outside twin of `/run`, the owner's Run now: `/fire` admits a program that presents a
+    sender token made for this automation (`inbound.webhook`, which holds the rules and the words),
+    fences the body it sent as untrusted data, and runs the action without waiting for it. It signs
+    its caller in itself, so the dashboard's sign-in lets it through (`token_auth`).
 
-    The gate, in order — the inbound-surface discipline `inbound/mcp_http.py` follows:
+    The gate, in order, the inbound surfaces' own:
 
-    1. **incident kill switch** (`gate.incident_problem` → 503): an active incident suspends all
-       unattended inbound. The surface-mount switches (master/per-surface) do NOT apply: this is an
-       always-registered dashboard route, not one of the five `EXTERNAL_ACCESS_SURFACES`, and the
-       per-integration on/off switch is the scoped client's own `disabled` flag (enforced inside
-       `lookup_by_token`) plus revocation.
-    2. **token → client** (`clients.lookup_by_token` → 401): verifies the bearer against the
-       SHA-256-hash registry, honouring the client's `disabled` flag and its `"webhook"` surface
-       binding. There is deliberately NO surface-token fallback (unlike `/mcp`): the Done-when
-       requires a *scoped* token, which an un-scoped operator token is not.
-    3. **scope pin** (→ 403 + SEL): the client must be pinned to THIS trigger
-       (`scope.trigger == <id>`). `check_bindings` refuses a DISAGREEING pin; the explicit equality
-       below also refuses an ABSENT pin, so a scope-less client cannot fire an arbitrary webhook
-       (fail-closed). A violation is a security event — logged and audited, never a silent
-       substitution.
-    4. **rate cap** (→ 429): per client, so one noisy integration cannot starve another.
-    5. **resolve** (→ 404): only a `webhook`-kind store trigger that is switched on is fireable
-       here; an unknown id, a non-webhook kind or a paused trigger answers 404 rather than
-       confirming a non-webhook trigger's existence or saying why it will not fire — the answer the
-       inbound gate gives a surface that is switched off. Done AFTER auth+scope, so a misscoped
-       caller learns nothing about which triggers exist. Then the trigger's own grant (→ 403).
-    6. **fence + fire**: the raw body is capped and fenced (`framing.fence_payload`) so it reaches
-       the agent as data and never instructions, then the action is dispatched fire-and-forget (202)
-       — a webhook sender must not block on an LLM turn (the `view`-render idiom).
+    1. **incident** (→ 503): an active incident holds everything that starts work from outside.
+    2. **this machine** (→ 403): a request from another address is refused, and told how to reach
+       the door (an SSH tunnel to this machine's 127.0.0.1, or a relay here), before its token is
+       read, so it cannot probe one.
+    3. **sender token → client** (`clients.lookup_by_token` → 401): its bearer is checked against
+       the hashed registry, honouring the client's `disabled` flag, its lifetime and its binding to
+       the webhook. There is no unscoped token for this surface: a sender token is made for one
+       automation. One that was revoked or ran its lifetime is told so.
+    4. **its automation** (→ 403 + Security log): the client must be pinned to THIS automation
+       (`scope.trigger == <id>`); `check_bindings` refuses a disagreeing pin and the equality below
+       an absent one, so a client with no pin fires nothing (fail-closed).
+    5. **rate** (→ 429), per sender, so one noisy program cannot starve another.
+    6. **resolve** (→ 404): only a webhook automation that is switched on fires; an unknown id,
+       another kind and a paused one get one answer, so the caller learns only that nothing fired.
+       Asked after the token and the pin, so a caller learns nothing of other automations. Then the
+       automation's own grant (→ 403).
+    7. **fence + fire** (→ 202): the body, capped, is fenced (`framing.fence_payload`) so it reaches
+       the agent as data and never as instructions, and the action runs fire-and-forget, as a
+       view's refresh does: a sender must not wait on an agent's turn.
 
-    Network reachability (loopback vs remote) is governed by the dashboard server's own binding and
-    by the deferred owner E4 remote-exposure decision, not by this handler; the scoped bearer is the
-    admission gate wherever the route is reachable.
+    Every answer is one row of the inbound audit, a refusal and an accepted fire one of the Security
+    log too (`webhook.answer`, `webhook.accepted`).
     """
 
     from personalclaw.dashboard.handlers.triggers import _STORE, _split_id, _trigger_store
-    from personalclaw.inbound import audit as audit_mod
     from personalclaw.inbound import caps as caps_mod
     from personalclaw.inbound import clients as clients_mod
-    from personalclaw.inbound import framing
+    from personalclaw.inbound import framing, tokens
+    from personalclaw.inbound import webhook as door
     from personalclaw.inbound.gate import incident_problem
 
     trigger_id = request.match_info["id"]
-    route = "POST /api/triggers/{id}/fire"
+    route = door.FIRE_ROUTE
 
-    # 1) Incident kill switch — the global unattended-inbound suspension.
+    # 1) Incident — the global unattended-inbound suspension.
     incident = incident_problem()
     if incident:
-        audit_mod.audit(_WEBHOOK_SURFACE, route=route, status=503, refused=incident)
-        return json_error("service_unavailable", status=503, headers=_NO_STORE)
+        return door.answer(
+            json_error(
+                "service_unavailable", message=door.SUSPENDED, status=503, headers=_NO_STORE
+            ),
+            route=route,
+            refused=incident,
+        )
 
-    # 2) Token → client. Scoped per-client bearer only; no surface-token fallback.
+    # 2) This machine only, as every inbound surface: refused before any token is read.
+    away = door.off_machine(request)
+    if away:
+        return door.answer(
+            json_error("forbidden", message=away, status=403, headers=_NO_STORE),
+            route=route,
+            refused="a request from another address",
+        )
+
+    # 3) Sender token → client. A token this gateway made that ended is told so.
     presented = ""
     header = request.headers.get("Authorization", "")
     if header.startswith("Bearer "):
         presented = header[len("Bearer ") :].strip()
-    client, reason = clients_mod.lookup_by_token(presented, _WEBHOOK_SURFACE)
+    client, reason = clients_mod.lookup_by_token(presented, door.SURFACE)
     if client is None:
-        audit_mod.audit(
-            _WEBHOOK_SURFACE,
+        ended = tokens.ending(door.SURFACE, presented)
+        return door.answer(
+            json_error(
+                "unauthorized",
+                message=ended.sentence if ended else door.SENDER_TOKEN_NEEDED,
+                status=401,
+                headers=_NO_STORE,
+            ),
             route=route,
-            status=401,
-            refused=reason or "bad or missing bearer token",
+            refused=(ended.reason if ended else "") or reason or "bad or missing bearer token",
         )
-        return json_error("unauthorized", status=401, headers=_NO_STORE)
     client_id = client.client_id
 
-    # 3) Scope pin — the client must be pinned to THIS trigger. `check_bindings` refuses a
+    # 4) Its automation — the client must be pinned to THIS one. `check_bindings` refuses a
     #    disagreeing pin; the explicit equality refuses an absent one (fail-closed).
     violation = clients_mod.check_bindings(client, {"scope": {"trigger": trigger_id}})
     if not violation and str(client.scope.get("trigger", "")) != trigger_id:
@@ -197,105 +203,109 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
         )
     if violation:
         clients_mod.log_binding_violation(client_id, violation)
-        audit_mod.audit(
-            _WEBHOOK_SURFACE, route=route, status=403, refused=violation, client_id=client_id
-        )
-        return json_error(
-            "forbidden",
-            status=403,
-            headers=_NO_STORE,
-            error_extra={"detail": "request conflicts with a client binding"},
+        pinned = bool(client.scope.get("trigger"))
+        return door.answer(
+            json_error(
+                "forbidden",
+                message=door.MADE_FOR_ANOTHER if pinned else door.MADE_FOR_NONE,
+                status=403,
+                headers=_NO_STORE,
+            ),
+            route=route,
+            refused=violation,
+            client_id=client_id,
         )
 
-    # 4) Rate cap, per client.
+    # 5) Rate, per sender.
     caps = caps_mod.caps_for(client)
     peer_fallback = request.headers.get("Host", "") + "|" + (request.remote or "")
-    if not caps_mod.check_rate_for_client(_WEBHOOK_SURFACE, client_id, peer_fallback, caps):
-        audit_mod.audit(
-            _WEBHOOK_SURFACE,
+    if not caps_mod.check_rate_for_client(door.SURFACE, client_id, peer_fallback, caps):
+        wait = caps_mod.retry_after_for_client(door.SURFACE, client_id, peer_fallback, caps)
+        return door.answer(
+            json_error(
+                "rate_limited",
+                message=door.too_often(wait),
+                status=429,
+                headers={**_NO_STORE, "Retry-After": str(wait)},
+            ),
             route=route,
-            status=429,
             refused="rate limit",
             client_id=client_id,
             rate_limited=True,
         )
-        return json_error(
-            "rate_limited",
-            status=429,
-            headers={
-                **_NO_STORE,
-                "Retry-After": str(
-                    caps_mod.retry_after_for_client(
-                        _WEBHOOK_SURFACE, client_id, peer_fallback, caps
-                    )
-                ),
-            },
-        )
     clients_mod.touch_last_seen(client_id)
 
-    # 5) Resolve the trigger. Only a `webhook`-kind store trigger that is switched on is fireable
-    #    here. A paused one answers exactly as an unknown one does: 404 is what the inbound gate
-    #    answers for a surface that is switched off (`inbound.gate.admission_problem`), so the
-    #    caller learns no more than that there is nothing to fire. The audit row says which.
+    # 6) Resolve. Only a webhook automation of the owner's that is switched on fires. A paused one,
+    #    and one written elsewhere (shown here, run where it was written), answer exactly as an
+    #    unknown one does: 404 is what the inbound gate answers for a surface that is switched off
+    #    (`inbound.gate.admission_problem`). The audit row says which.
+    from personalclaw.triggers.ownership import is_owner_authored
+
     kind, raw = _split_id(trigger_id)
     store = _trigger_store()
     row = store.get(raw) if kind == _STORE else None
-    if row is None or row.trigger.kind != "webhook" or not row.trigger.fires_automatically:
-        audit_mod.audit(
-            _WEBHOOK_SURFACE,
+    if row is None or row.trigger.kind != "webhook":
+        why = "unknown or non-webhook trigger"
+    elif not is_owner_authored(row.trigger):
+        why = "the trigger was written elsewhere and runs there"
+    elif not row.trigger.fires_automatically:
+        why = "the trigger is switched off or paused"
+    else:
+        why = ""
+    if why or row is None:
+        return door.answer(
+            json_error("not_found", message=door.NOTHING_TO_FIRE, status=404, headers=_NO_STORE),
             route=route,
-            status=404,
-            refused=(
-                "unknown or non-webhook trigger"
-                if row is None or row.trigger.kind != "webhook"
-                else "the trigger is switched off or paused"
-            ),
+            refused=why,
             client_id=client_id,
         )
-        return json_error("not_found", status=404, headers=_NO_STORE)
 
-    # 5b) The trigger's own grant (`triggers.grants`): a scoped token lets a caller fire THIS
-    #     trigger, and says nothing about what its action may run. Refused here rather than after a
-    #     202, so the caller learns the fire did not happen; the action is not named to an outside
+    # 6b) The automation's own grant (`triggers.grants`): a sender token lets a caller fire THIS
+    #     automation, and says nothing about what its action may run. Refused here rather than after
+    #     a 202, so the caller learns the fire did not happen; the action is not named to an outside
     #     caller, and the owner sees the grant on the Triggers page.
     from personalclaw.triggers import grants
 
     if grants.missing(row.trigger):
-        audit_mod.audit(
-            _WEBHOOK_SURFACE,
+        return door.answer(
+            json_error("forbidden", message=door.NOT_ALLOWED, status=403, headers=_NO_STORE),
             route=route,
-            status=403,
             refused="the trigger's action is not allowed to run",
             client_id=client_id,
         )
-        return json_error(
-            "forbidden",
-            message="This automation is not allowed to run its action until its owner allows it.",
-            status=403,
-            headers=_NO_STORE,
-        )
 
-    # 6) Fence the untrusted body, then fire the trigger's action fire-and-forget.
+    # 7) Fence the untrusted body, then fire the trigger's action fire-and-forget.
     declared = request.content_length or 0
     if declared > caps.body_bytes:
-        audit_mod.audit(
-            _WEBHOOK_SURFACE,
+        return door.answer(
+            json_error(
+                "request_too_large",
+                message=door.too_large(caps.body_bytes),
+                status=413,
+                headers=_NO_STORE,
+            ),
             route=route,
-            status=413,
             refused="body cap (declared)",
             client_id=client_id,
         )
-        return json_error("request_too_large", status=413, headers=_NO_STORE)
     body_bytes = await request.content.read(caps.body_bytes + 1)
     if len(body_bytes) > caps.body_bytes:
-        audit_mod.audit(
-            _WEBHOOK_SURFACE, route=route, status=413, refused="body cap", client_id=client_id
+        return door.answer(
+            json_error(
+                "request_too_large",
+                message=door.too_large(caps.body_bytes),
+                status=413,
+                headers=_NO_STORE,
+            ),
+            route=route,
+            refused="body cap",
+            client_id=client_id,
+            bytes_in=len(body_bytes),
         )
-        return json_error("request_too_large", status=413, headers=_NO_STORE)
 
     fenced = framing.fence_payload(
         body_bytes.decode("utf-8", errors="replace"),
-        surface=_WEBHOOK_SURFACE,
+        surface=door.SURFACE,
         client_id=client_id,
         detail=raw,
         caps=caps,
@@ -328,9 +338,7 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
 
-    audit_mod.audit(
-        _WEBHOOK_SURFACE, route=route, status=202, bytes_in=len(body_bytes), client_id=client_id
-    )
+    door.accepted(route=route, resources=raw, client_id=client_id, bytes_in=len(body_bytes))
     return web.json_response(
         {"ok": True, "accepted": True, "trigger": row.trigger.id}, status=202, headers=_NO_STORE
     )

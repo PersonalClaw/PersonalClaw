@@ -750,7 +750,11 @@ Examples:
 
     # inbound — the shared inbound access seam
     inbound_parser = sub.add_parser(
-        "inbound", help="Manage the inbound access surfaces (openai, mcp, a2a, capture, bridge)"
+        "inbound",
+        help=(
+            "Manage the inbound access surfaces (openai, mcp, a2a, capture, bridge) and the "
+            "webhook's sender tokens"
+        ),
     )
     inbound_sub = inbound_parser.add_subparsers(dest="inbound_command")
     inbound_token = inbound_sub.add_parser(
@@ -782,6 +786,28 @@ Examples:
             "long-lived credential — longer is refused)"
         ),
     )
+    inbound_webhook = inbound_sub.add_parser(
+        "webhook", help="Make, list or revoke the sender tokens that fire a webhook automation"
+    )
+    webhook_sub = inbound_webhook.add_subparsers(dest="webhook_action", required=True)
+    webhook_create = webhook_sub.add_parser(
+        "create", help="Make a sender token for a webhook automation, shown once"
+    )
+    webhook_create.add_argument(
+        "automation", help="The automation's id, as `personalclaw cron list` shows it"
+    )
+    webhook_create.add_argument(
+        "--label", default="", help="What to call the program it is for (default: from its name)"
+    )
+    webhook_create.add_argument(
+        "--ttl",
+        default="90d",
+        help="How long it works: 30m, 20h, 7d (default: 90d, the limit — longer is refused)",
+    )
+    webhook_list = webhook_sub.add_parser("list", help="List the sender tokens made here")
+    webhook_list.add_argument("automation", nargs="?", default="", help="Only this automation's")
+    webhook_revoke = webhook_sub.add_parser("revoke", help="Revoke a sender token")
+    webhook_revoke.add_argument("client_id", help="Its id, as `list` shows it")
 
     # capture — telemetry import for agents that cannot be proxied
     # (EXTERNAL-ACCESS §8). The proxy half of capture needs no CLI; this half does,

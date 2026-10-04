@@ -171,16 +171,32 @@ relative to `PersonalClaw/src/personalclaw/`.
   rule when it fires (`hooks.run_script_hook`); on the gating seam an ungranted
   one blocks the tool call it was asked about rather than letting it through.
   The wire carries `needs_grant` (display names) so the page can badge the row
-  and offer Allow. A `webhook` trigger that is switched off or paused answers
-  `/fire` with the 404 an unknown one gets. Each question is the gateway's,
-  heading included (`http_errors.consent_required` takes a `title` from every
+  and offer Allow. A `webhook` trigger that is switched off or paused, or was
+  written on another machine, answers `/fire` with the 404 an unknown one gets.
+  Each question is the gateway's, heading included
+  (`http_errors.consent_required` takes a `title` from every
   caller): "Allow what this trigger runs?", "Allow the changed action?", "Allow
   this trigger to run?", and "Loosen a security setting?" only for a posture
   that loosens — a question with both halves says both.
+- **Webhook automations** (`kind: webhook`, `inbound/webhook.py`) — fired by a
+  program on this machine posting to `POST /api/triggers/<id>/fire` with a
+  sender token made for that one automation, a registered inbound client bound
+  to the `webhook` surface and pinned to it (`scope.trigger`). Its spec carries
+  nothing: the boot pass takes out the `token_ref` it once required and nothing
+  read (`boot_migrate._drop_webhook_token_refs`). The owner makes sender tokens
+  on its page, which shows its address, where that answers and what to send,
+  with `personalclaw inbound webhook create <automation-id>`, or through
+  Settings' client route; deleting the automation revokes them. The body is
+  fenced as data, and the fire is the trigger's own, held to its switch, its
+  grant and the action denylist. The doors' shared rules are
+  [security.md](security.md#webhooks).
 - **Callbacks the agent registers** (`webhook_callbacks.py`) — the chat's
-  `hook_register` saves context for a later `POST /api/hooks/agent`, which
-  starts an agent turn, with the agent's tools, from that context. Callbacks
-  live in `webhook_callbacks.json`, which only that module writes; the
+  `hook_register` saves context for a later `POST /api/hooks/agent` (the
+  webhook's agent-turn door: a program on this machine with the owner's webhook
+  token), which starts an agent turn, with the agent's tools, from that context.
+  `hook_register`'s answer is the address, the body and the header to send, and
+  where the address answers. Callbacks live in `webhook_callbacks.json`, which
+  only that module writes; the
   lifecycle trigger store (`hooks.json`, `hooks.ScriptHookStore`) is the
   owner's, and a store that meets an entry that is not a trigger skips it
   rather than failing to load. A callback follows the grant rule: registered

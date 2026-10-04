@@ -30,11 +30,15 @@ from personalclaw.hooks import ScriptHookStore
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
+    from personalclaw.inbound import caps
+
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setattr(loader, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(T, "config_dir", lambda: tmp_path)
     monkeypatch.setattr(mcp_core, "_resolve_session_key", lambda: "test", raising=False)
     monkeypatch.setattr(mcp_core, "_api_base", lambda: "http://127.0.0.1:10000")
+    # The webhook's rate is held per caller across the process; every call here is one caller's.
+    caps.reset_for_tests()
     return tmp_path
 
 
@@ -80,15 +84,15 @@ class _Runs:
 def runs(monkeypatch):
     recorder = _Runs()
     monkeypatch.setattr(hooks_mod, "_run_hook_agent", recorder)
-    monkeypatch.setattr(hooks_mod, "_verify_hook_token", lambda _request: True)
+    monkeypatch.setattr(hooks_mod, "_hook_token_refusal", lambda _request: "")
     return recorder
 
 
 def _call_back(session_key: str) -> web.Response:
-    """An outside system posting its results, holding the webhook token."""
+    """An outside system posting its results from this machine, holding the webhook token."""
     app = web.Application()
     app["state"] = types.SimpleNamespace(_background_tasks=set())
-    req = make_mocked_request("POST", "/api/hooks/agent", app=app)
+    req = make_mocked_request("POST", "/api/hooks/agent", app=app).clone(remote="127.0.0.1")
 
     async def _json():
         return {"message": "CI passed", "sessionKey": session_key, "deliver": False}
@@ -190,9 +194,11 @@ def test_a_callback_the_agent_registered_is_refused_until_the_owner_allows_it(ho
     refused = _call_back("hook:review:pr-1")
 
     assert refused.status == 403
-    assert _body(refused)["error"] == "not_allowed"
+    assert _body(refused)["error"]["code"] == "not_allowed"
     assert runs.calls == []
-    assert ("hooks.agent", "denied") in [(r.get("operation"), r.get("outcome")) for r in audit]
+    assert ("POST /api/hooks/agent", "denied") in [
+        (r.get("operation"), r.get("outcome")) for r in audit
+    ]
 
 
 def test_the_owner_is_asked_and_the_yes_lets_it_run(home, runs, audit):

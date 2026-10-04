@@ -24,6 +24,15 @@ from personalclaw.config.coercion import _meta, _num
 #: surface anything actually knew about.
 EXTERNAL_ACCESS_SURFACES: tuple[str, ...] = ("openai", "mcp", "a2a", "capture", "bridge")
 
+#: The webhook: an outside program firing a webhook automation, or calling back an agent's
+#: callback (`inbound.webhook`). Not one of the five above, which each mount behind their own
+#: switches and token: a webhook is always served, and what admits a call is a token made for
+#: it. So it has no section here, and a registered client may be bound to it as to the five.
+WEBHOOK_SURFACE = "webhook"
+
+#: The surfaces a registered client may be bound to.
+CLIENT_SURFACES: tuple[str, ...] = (*EXTERNAL_ACCESS_SURFACES, WEBHOOK_SURFACE)
+
 
 def _ea_surface_data(section: dict, surface: str) -> dict:
     """One surface's raw sub-section, or ``{}``.

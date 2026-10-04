@@ -67,6 +67,7 @@ from personalclaw.dashboard.session_store import (  # noqa: F401 — re-exported
     DeviceInfo,
     SessionRecord,
 )
+from personalclaw.inbound.webhook import FIRE_PATH, HOOK_PATH
 from personalclaw.sel import AUDIT_OUTCOME_SUCCESS
 from personalclaw.sel import sel as _sel_fn
 
@@ -428,8 +429,9 @@ _BYPASS_EXACT.update(
     }
 )
 #: Self-authenticating routes with a path parameter, which no exact entry can name: matched whole,
-#: one segment where the route has one. `/a2a/tasks/{task_id}` (a task poll), matched the way
-#: aiohttp matches ``{task_id}`` itself, so a deeper path or a sibling does not inherit it.
+#: one segment where the route has one, the way aiohttp matches the parameter itself, so a deeper
+#: path or a sibling does not inherit it. `/a2a/tasks/{task_id}` (a task poll), and the webhook's
+#: fire door below.
 #:
 #: And a deployed artifact's page with its files (`artifacts/deploy.SERVED_PATH`): a slug, a
 #: capability, a file. The page runs sandboxed in an origin of its own, so the browser sends its
@@ -440,7 +442,15 @@ _BYPASS_EXACT.update(
 _BYPASS_TEMPLATES: tuple[re.Pattern[str], ...] = (
     re.compile(r"/a2a/tasks/[^{}/]+"),
     ARTIFACT_SERVED_PATH,
+    FIRE_PATH,
 )
+# The webhook's two doors sign their callers in themselves (`inbound.webhook`): the fire door takes
+# a sender token made for its automation, the agent-turn door the owner's webhook token, and each
+# asks the incident switch, then that the request comes from this machine, then for its own token,
+# before it reads a body. Neither reads a dashboard session, and neither takes the internal
+# credential: without these two entries the sign-in here refused every program they exist for,
+# and the agent-turn door opened for a relay holding the internal credential instead.
+_BYPASS_EXACT.add(HOOK_PATH)
 
 # The login front door. These three MUST be reachable without a
 # session, because they are how a remote browser gets one — gating them behind the session

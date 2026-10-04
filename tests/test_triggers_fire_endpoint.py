@@ -57,7 +57,7 @@ def _make_webhook(tmp_path, slug="my-hook", capabilities=None, *, enabled=True, 
             kind="webhook",
             enabled=enabled,
             state=state,
-            spec={"token_ref": "{{secret:WH_TOKEN}}"},
+            spec={},
             workflow={"provider": "run-prompt", "config": {}},
             capabilities=dict(capabilities),
         )

@@ -221,7 +221,6 @@ from personalclaw.dashboard.handlers.hooks import (  # noqa: E402, F401
     _get_hook_store,
     _run_hook_agent,
     _run_hook_inner,
-    _verify_hook_token,
     api_action_providers,
     api_agent_hook_allow,
     api_agent_hooks,

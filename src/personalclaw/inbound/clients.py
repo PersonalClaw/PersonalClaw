@@ -27,12 +27,15 @@ practical oracle when the attacker also controls the guess.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import hmac
 import json
 import logging
 import secrets
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +60,22 @@ def clients_path() -> Path:
     from personalclaw.config.loader import config_dir
 
     return config_dir() / _FILE
+
+
+@contextmanager
+def _locked() -> Iterator[None]:
+    """One writer at a time across processes, around every read-change-write of the registry: the
+    gateway writes it (a client made or revoked in Settings, a request's last-seen time) and so does
+    ``personalclaw inbound webhook``, in a process of its own. Without it, a write made between
+    another writer's read and its write is lost."""
+    path = clients_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.parent / f"{_FILE}.lock", "a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def hash_token(token: str) -> str:
@@ -265,9 +284,10 @@ def create_client(
         created_at=_now(),
     )
     client.expires_at = time.time() + max(1, int(ttl_secs))
-    clients = load_clients()
-    clients[client.client_id] = client
-    save_clients(clients)
+    with _locked():
+        clients = load_clients()
+        clients[client.client_id] = client
+        save_clients(clients)
     tokens.client_signed_in(client, actor=actor)
     return client, token
 
@@ -275,26 +295,28 @@ def create_client(
 def revoke_client(client_id: str, *, actor: str = "owner") -> bool:
     """Delete a client's record. The token dies with it, and whatever still presents it is told
     it was revoked, and when (``tokens.refusal``). False when unknown."""
-    clients = load_clients()
-    client = clients.get(client_id)
-    if client is None:
-        return False
-    del clients[client_id]
-    save_clients(clients)
+    with _locked():
+        clients = load_clients()
+        client = clients.get(client_id)
+        if client is None:
+            return False
+        del clients[client_id]
+        save_clients(clients)
     tokens.client_ended(client, tokens.REVOKED, actor=actor)
     return True
 
 
 def set_disabled(client_id: str, disabled: bool, *, reason: str = "") -> bool:
     """Flip a client's own kill switch (§1.1 layer c). False when unknown."""
-    clients = load_clients()
-    client = clients.get(client_id)
-    if client is None:
-        return False
-    if client.disabled == disabled:
-        return True
-    client.disabled = disabled
-    save_clients(clients)
+    with _locked():
+        clients = load_clients()
+        client = clients.get(client_id)
+        if client is None:
+            return False
+        if client.disabled == disabled:
+            return True
+        client.disabled = disabled
+        save_clients(clients)
     _sel_event(
         "inbound_client_disabled" if disabled else "inbound_client_enabled",
         client_id,
@@ -315,15 +337,16 @@ def set_persistent_sessions(
     whichever way the choice went. Setting the choice the client already has changes nothing,
     and its conversations go on.
     """
-    clients = load_clients()
-    client = clients.get(client_id)
-    if client is None:
-        return None
-    if client.persistent_sessions == persistent:
-        return client
-    client.persistent_sessions = persistent
-    client.conversation_round += 1
-    save_clients(clients)
+    with _locked():
+        clients = load_clients()
+        client = clients.get(client_id)
+        if client is None:
+            return None
+        if client.persistent_sessions == persistent:
+            return client
+        client.persistent_sessions = persistent
+        client.conversation_round += 1
+        save_clients(clients)
     _sel_event(
         (
             "inbound_client_keeps_conversation"
@@ -413,12 +436,13 @@ def touch_last_seen(client_id: str) -> None:
     """Record that a client just made a request. Never raises — a bookkeeping
     failure must not fail the caller's request."""
     try:
-        clients = load_clients()
-        client = clients.get(client_id)
-        if client is None:
-            return
-        client.last_seen_at = _now()
-        save_clients(clients)
+        with _locked():
+            clients = load_clients()
+            client = clients.get(client_id)
+            if client is None:
+                return
+            client.last_seen_at = _now()
+            save_clients(clients)
     except Exception:  # noqa: BLE001
         logger.debug("inbound: last_seen update failed for %s", client_id, exc_info=True)
 

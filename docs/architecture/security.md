@@ -204,20 +204,64 @@ Every caller reads it from the same home, resolved at the call (the gateway decl
   `{"ok": false, "error": {"code": "internal_secret_unavailable", …}}` while the rest of the script
   runs.
 
-### Webhook auth
+### Webhooks
 
-`POST /api/hooks/agent` (`dashboard/handlers/hooks.py`) is one of the internal
-credential's operations: from this machine it takes the internal secret (a local
-relay presents it; no PersonalClaw process calls the route) or an owner session, and
-from anywhere else it is refused. Past that, `_verify_hook_token` is a
-constant-time (`hmac.compare_digest`) check of the Bearer or
-`x-personalclaw-token` header against `hooks.webhook_token` in config — a
-`{{secret:…}}` reference there, resolved from the credential store at the
-check (`config/secret_refs.py`). No configured token, or a reference the store
-cannot answer, means every request is refused. And a session key a callback
-the agent registered names (`webhook_callbacks.py`) starts a turn only once the
-owner allowed that callback: until then the answer is `403 not_allowed`.
-Denials are logged to the Security Event Log.
+The webhook is how a program outside PersonalClaw starts work in it over HTTP
+(`inbound/webhook.py`, which holds the rules and the words). It has two doors:
+
+| Door | Starts | Credential the program sends |
+|---|---|---|
+| `POST /api/triggers/<automation-id>/fire` | that webhook automation's action | `Authorization: Bearer <sender token>`, a token made for that automation |
+| `POST /api/hooks/agent` | an agent turn: a callback the agent registered with `hook_register`, once the owner allowed it, or the owner's own integration | `Authorization: Bearer <webhook token>` (or `x-personalclaw-token`), the owner's `hooks.webhook_token` |
+
+Both keep the inbound surfaces' rules:
+
+- **They sign their callers in themselves.** The dashboard's sign-in lets both through
+  (`token_auth._BYPASS_EXACT`, `_BYPASS_TEMPLATES`), and neither takes the internal credential:
+  presented, it is refused as one (`403 internal_route_refused`, a Security-log row). It opens
+  every internal operation, so no outside program, and no relay for one, is ever handed it.
+- **Programs on this machine only.** Each takes a request only from loopback, whatever address the
+  gateway listens on; one from any other address is refused `403` before its token is read, with
+  the sentence that says where it came from and how to reach the door: forward a port to the
+  machine's 127.0.0.1 over SSH, or run a relay on the machine that forwards to that address. A
+  relay is how an owner exposes a webhook deliberately, and the token still decides. (The CSRF
+  check refuses such a request first when it carries no browser origin, in the same words and
+  with the same rows: `dashboard/origin.py::origin_refusal`.)
+- **Held, capped and audited.** An active incident refuses both (`503`). Each is rate-capped
+  (`429`, `Retry-After`): a sender token per sender, the agent-turn door per caller before its
+  token is read. Every request either door answers, and every one the gateway refuses before it
+  for coming from another machine, is one row of `inbound_audit.jsonl` (surface `webhook`); a
+  refusal is a Security-log row too, and so is an accepted call, under its sender
+  (`inbound:webhook:<client>` or `inbound:webhook`, outcome `allowed`), since it starts work
+  nobody watches.
+- **Refused in a sentence**, under the one error envelope: no token or an unknown one (`401
+  unauthorized`, saying what to send and where the owner makes one), and at the fire door a sender
+  token that was revoked or ran its lifetime (`401`, saying so and when), one made for another
+  automation (`403`), an automation that is not there, is switched off, or was written on another
+  machine (`404`, one answer for all three), an automation whose action its owner has not allowed
+  (`403`), and a body over its 64 KB cap (`413`).
+
+**A sender token** is a registered inbound client (`inbound/clients.py`) bound to the `webhook`
+surface alone and pinned to one webhook automation (`scope.trigger`, the automation's id as its
+page shows it, `store:webhook:<name>`); it carries no agent, tools or upstream. The owner makes one
+on the automation's page, with `personalclaw inbound webhook create <automation-id>`, or through
+Settings' route (`POST /api/external-access/clients`), which refuses any other shape with a
+sentence. It is 64 random characters, shown once and kept only as a SHA-256 hash, and works at
+most 90 days. The automation's page and Settings → Devices list it and revoke it, and Settings →
+External Access lists it, switches it off and revokes it. Deleting the automation revokes its
+sender tokens (`TriggerStore.delete`): one made again under the same id (an automation that
+never ran, a restore, an import) gets the same address, and a token made for the first must not
+fire it. The
+fire is then held as any fire of the automation: its own switch and its grant, the body fenced as
+data, the action denylist for a run nobody answers.
+
+**The webhook token** is `hooks.webhook_token` in `config.json`, a `{{secret:…}}` reference there,
+resolved from the credential store at the check (`config/secret_refs.py`), and compared in
+constant time (`dashboard/handlers/hooks.py::_hook_token_refusal`). No token, a reference the store
+cannot answer or that names another owner's credential, a token shorter than 32 bytes, or one that
+is also the internal credential or a surface token: every request is refused. A session key a
+callback the agent registered names (`webhook_callbacks.py`) starts a turn only once the owner
+allowed that callback: until then the answer is `403 not_allowed`.
 
 The turn a webhook starts runs unattended, under the headless profile
 (`guardrails.policy`, a `hook:` session): its tool grants are `read`, so a call

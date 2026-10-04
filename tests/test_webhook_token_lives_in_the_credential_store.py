@@ -48,7 +48,7 @@ def _config(home) -> dict:
 def _authenticates(token: str) -> bool:
     req = MagicMock()
     req.headers = {"Authorization": f"Bearer {token}"}
-    return hooks_mod._verify_hook_token(req)
+    return hooks_mod._hook_token_refusal(req) == ""
 
 
 def _cli(**kwargs) -> None:

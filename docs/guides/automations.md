@@ -294,6 +294,53 @@ missed time.
 - `src/personalclaw/triggers/restore_hold.py` — what is paused, Resume all, and what the restore
   says.
 
+## When a program starts one: webhooks
+
+**In your words:** *"When my build server finishes, I want PersonalClaw to tell me what it said."*
+
+A **webhook automation** runs when a program posts to its address. Ask for one in the chat ("when
+my build server posts, tell me what it says"), and allow it on the **Triggers** page if its action
+needs your yes. Its page there shows two things:
+
+- **Its address**, `http://127.0.0.1:<port>/api/triggers/store:webhook:<name>/fire`. It takes
+  requests only from programs on the machine PersonalClaw runs on, whatever address PersonalClaw
+  listens on. From another machine, forward a port to that machine's 127.0.0.1 over SSH
+  (`ssh -L 10000:127.0.0.1:10000 you@that-machine`, then post to the same address through the
+  tunnel), or run a relay on that machine that forwards to the address.
+- **Its sender tokens.** A program fires the automation with a token made for it, sent as the
+  header `Authorization: Bearer <sender token>`. **Make a sender token** shows the token once,
+  with a command that tries it from this machine. It is kept only as a hash, works at most 90
+  days, and fires this automation and nothing else. The page and Settings → Devices list it and
+  revoke it, and Settings → External Access lists it, switches it off and revokes it. From a
+  terminal: `personalclaw inbound webhook
+  create store:webhook:<name>`, `personalclaw inbound webhook list` and `personalclaw inbound
+  webhook revoke <id>`. Deleting the automation revokes its sender tokens.
+
+What the program posts, up to 64 KB, reaches what the automation runs as data, never as
+instructions. The fire answers `202` once it is accepted, and the run appears in the automation's
+run history like any other. A refusal says why, in a sentence: `401` for no token or one
+PersonalClaw does not know (and for one that was revoked or ran its lifetime, saying so), `403`
+for a token made for another automation, a request from another machine, or an action you have
+not allowed yet, `404` when the automation is switched off or not there, `429` when a sender
+posts faster than its rate, and `503` during an incident. Every request the address answers is in
+the inbound audit (Settings → External Access counts each sender token's), and every refusal and
+accepted fire is in the Security log.
+
+An agent can also register a **callback** with `hook_register`, for an outside system to call back
+later at `http://127.0.0.1:<port>/api/hooks/agent` with your **webhook token**, which you set with
+`personalclaw config set hooks.webhook_token <token>` (at least 32 characters). The tool's answer
+says exactly what the outside system sends, and the callback waits on the Triggers page until you
+allow it.
+
+| | |
+|---|---|
+| **Checked on** | the automation's page (its address and sender tokens), its run history, Settings → External Access, and the Security log |
+| **The setting** | none: its sender tokens, and its own switch |
+
+- `src/personalclaw/inbound/webhook.py` — the two addresses, the rules both keep, and their words.
+- `src/personalclaw/dashboard/handlers/trigger_runs.py` — `api_trigger_fire`, the fire.
+- `src/personalclaw/dashboard/handlers/hooks.py` — `api_hooks_agent`, the callback's address.
+
 ---
 
 ## Falsify all three, in one automation

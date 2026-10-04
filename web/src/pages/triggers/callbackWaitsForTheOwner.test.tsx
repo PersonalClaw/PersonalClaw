@@ -37,7 +37,9 @@ function row(over: Partial<CallbackRow> = {}): CallbackRow {
     kind: 'callback', id: 'callback:review:pr-1', raw_id: 'review:pr-1', name: 'review:pr-1',
     enabled: false, created_by: 'agent', needs_grant: ['Agent turn'],
     context_summary: 'When CI answers, merge the PR and delete the branch.',
-    session_key: 'hook:review:pr-1', registered_at: Date.now() / 1000 - 120, seal: 'abc123',
+    session_key: 'hook:review:pr-1', url: 'http://127.0.0.1:10000/api/hooks/agent',
+    reach: 'It takes requests only from programs on the machine PersonalClaw runs on.',
+    registered_at: Date.now() / 1000 - 120, seal: 'abc123',
     ...over,
   }
 }
@@ -90,6 +92,15 @@ describe('a callback the agent registered', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Allow this callback to run' }))
 
     expect(await screen.findByText(/registered again with other context/)).toBeInTheDocument()
+  })
+
+  it('says where its address answers and what a program sends to it', async () => {
+    API.callbacks.mockImplementation(() => Promise.resolve([row()]))
+    await mountTriggers({ open: 'callback:review:pr-1' })
+    await waitFor(() => expect(screen.getByText('http://127.0.0.1:10000/api/hooks/agent')).toBeInTheDocument())
+    expect(screen.getByText('It takes requests only from programs on the machine PersonalClaw runs on.')).toBeInTheDocument()
+    expect(screen.getByText('Authorization: Bearer <webhook token>')).toBeInTheDocument()
+    expect(screen.getByText('personalclaw config set hooks.webhook_token <token>')).toBeInTheDocument()
   })
 
   it('has no editor: its context is the agent’s', async () => {

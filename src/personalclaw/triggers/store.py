@@ -315,7 +315,14 @@ class TriggerStore(TriggerStoreProvider):
             if len(kept) == len(rows):
                 return False
             self._write(kept)
-            return True
+        # A webhook automation's sender tokens end with it: one made again under the same id (one
+        # that never ran, a restore, an import) gets the same address, and a token made for this one
+        # must not fire that one.
+        if any(r.get("kind") == "webhook" for r in rows if str(r.get("id") or "") == trigger_id):
+            from personalclaw.inbound import webhook
+
+            webhook.end_senders_of(f"store:{trigger_id}", actor="system")
+        return True
 
     def set_enabled(self, trigger_id: str, enabled: bool) -> Trigger | None:
         """Toggle one trigger, or None if it is not there.
@@ -493,6 +500,24 @@ RUNTIME_FIELDS: tuple[str, ...] = (
     # A restore here switched it off until it is resumed here (`triggers.restore_hold`).
     "restore_hold",
 )
+
+
+def drop_spec_key(store: TriggerStore, kind: str, key: str) -> list[str]:
+    """Take *key* out of the spec of every *kind* row in *store* that carries it, re-reading under
+    the store's lock: the ids of the rows it came out of. For a key the kind no longer reads, so no
+    row keeps it; a second call finds nothing. A boot pass's, so not a method of the store an app is
+    handed."""
+    with store._file_lock():
+        rows = store._read_rows()
+        dropped: list[str] = []
+        for row in rows:
+            spec = row.get("spec")
+            if row.get("kind") == kind and isinstance(spec, dict) and key in spec:
+                del spec[key]
+                dropped.append(str(row.get("id") or ""))
+        if dropped:
+            store._write(rows)
+    return dropped
 
 
 def what_it_is(row: dict[str, Any]) -> dict[str, Any]:

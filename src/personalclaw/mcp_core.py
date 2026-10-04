@@ -504,7 +504,9 @@ def _list_tools() -> list[dict[str, Any]]:
                 "into a dedicated agent session later. Returns the webhook URL and session "
                 "key. Use this when you need to hand off to an external process (e.g. "
                 "submit a PR, then wait for CI to call back with results). "
-                "The external system POSTs to the returned URL with the results. The callback "
+                "The external system POSTs its results to the returned URL with the owner's "
+                "webhook token, from the machine PersonalClaw runs on (or through an SSH tunnel "
+                "or a relay there); the result says exactly what to send. The callback "
                 "does not run until the owner allows it on the Triggers page, so tell them it is "
                 "waiting; registering it again with other context waits for them again."
             ),
@@ -1486,18 +1488,17 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         waiting = not webhook_callbacks.allowed(callback)
         # Resolve webhook URL. A refusal from the base owner is returned as the tool's
         # result: a hook URL naming the wrong port is worse than no hook URL, because the
-        # external system would POST its results into another instance.
+        # external system would POST its results into another instance. The address is this
+        # machine's loopback, the one address the webhook answers (`inbound.webhook`).
         from urllib.parse import urlparse
+
+        from personalclaw.inbound import webhook
 
         try:
             _resolved_base = _api_base()
         except gateway_base.GatewayBaseUnresolved as exc:
             return tool_failure(f"cannot build the webhook URL — {exc}")
-        parsed = urlparse(_resolved_base)
-        base = f"{parsed.scheme}://{parsed.hostname}"
-        if parsed.port:
-            base += f":{parsed.port}"
-        url = f"{base}/api/hooks/agent"
+        url = webhook.hook_url(port=urlparse(_resolved_base).port)
         from personalclaw.security import redact_credentials, redact_exfiltration_urls
         from personalclaw.sel import sel
 
@@ -1514,10 +1515,15 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             f"Hook registered: {hook_id_safe}\n"
             f"Session key: {session_key_safe}\n"
             f"Webhook URL: {url}\n"
-            f"External systems should POST to this URL with:\n"
+            f"{webhook.REACH}\n"
+            f"The outside system POSTs this JSON to it:\n"
             f'  {{"message": "<results>", "sessionKey": "{session_key_safe}", '
             f'"name": "{hook_id_safe}"}}\n'
-            f"Include Authorization: Bearer <webhook_token> header.\n"
+            f"with this header:\n"
+            f"  Authorization: Bearer <webhook token>\n"
+            f"The webhook token is the owner's, set with "
+            f"`personalclaw config set hooks.webhook_token <token>` (at least 32 characters). "
+            f"This tool cannot read it: ask the owner to give it to the outside system.\n"
             f"Context summary saved for session resume.\n"
             + (
                 "It does not run until the owner allows it on the Triggers page, which asks them "

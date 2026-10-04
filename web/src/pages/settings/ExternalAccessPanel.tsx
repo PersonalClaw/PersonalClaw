@@ -352,8 +352,9 @@ export function ExternalAccessPanel() {
             <code>POST /api/external-access/clients</code>, which returns its token once; send{' '}
             <code>"persistent_sessions": true</code> for a client of the OpenAI-compatible API to
             keep its conversation, or choose that here later. A plain surface token also works, but
-            it cannot be scoped. Every token lasts at most 90 days, and Settings → Devices lists
-            each one, with a revoke.
+            it cannot be scoped. A webhook automation&apos;s sender tokens are clients too: make one
+            on the automation&apos;s page, or with <code>personalclaw inbound webhook create &lt;automation-id&gt;</code>.
+            Every token lasts at most 90 days, and Settings → Devices lists each one, with a revoke.
           </div>
         ) : (
           <div className="flex flex-col gap-1">
@@ -497,10 +498,12 @@ function ClientRow({
   const converses = client.surfaces.includes('openai')
   const kept = client.persistent_sessions
   const expired = client.expires_at > 0 && client.expires_at * 1000 <= Date.now()
+  // A webhook sender token is pinned to the one automation it fires, so its row names it.
+  const automation = typeof client.scope.trigger === 'string' ? client.scope.trigger : ''
   const pins = [
     client.agent ? `agent ${client.agent}` : '',
     client.tools.length ? `${client.tools.length} tool${client.tools.length === 1 ? '' : 's'}` : '',
-    Object.keys(client.scope).length ? 'scoped' : '',
+    automation ? `automation ${automation}` : Object.keys(client.scope).length ? 'scoped' : '',
   ].filter(Boolean)
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg bg-surface-container px-3 py-2.5">

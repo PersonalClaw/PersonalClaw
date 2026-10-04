@@ -47,6 +47,13 @@ def surfaces() -> tuple[str, ...]:
     return EXTERNAL_ACCESS_SURFACES
 
 
+def client_surfaces() -> tuple[str, ...]:
+    """The surfaces a registered client may be bound to: the five, and the webhook."""
+    from personalclaw.config.external_access import CLIENT_SURFACES
+
+    return CLIENT_SURFACES
+
+
 def token_env_key(surface: str) -> str:
     """The credential key a surface's token is stored under (EXTERNAL-ACCESS §1.1).
 
@@ -185,6 +192,12 @@ def token_problem(surface: str) -> str | None:
     token = load_surface_token(surface)
     if not token:
         return f"no token configured (run: personalclaw inbound token create {surface})"
+    return token_strength_problem(token, surface)
+
+
+def token_strength_problem(token: str, surface: str) -> str | None:
+    """Why *token* cannot be *surface*'s credential, or None: shorter than :data:`MIN_TOKEN_BYTES`,
+    or the same as a credential that opens something else (:func:`_forbidden_token_values`)."""
     if len(token.encode("utf-8")) < MIN_TOKEN_BYTES:
         return f"token shorter than {MIN_TOKEN_BYTES} bytes"
     if token in _forbidden_token_values(surface):
@@ -248,7 +261,9 @@ def surface_of_path(path: str) -> str | None:
     for route, surface in _SURFACE_PATHS:
         if path == route or (route.endswith("/") and path.startswith(route)):
             return surface
-    return None
+    from personalclaw.inbound import webhook
+
+    return webhook.SURFACE if webhook.is_door(path) else None
 
 
 def off_machine_refusal(request) -> str:
@@ -268,6 +283,14 @@ def off_machine_refusal(request) -> str:
     headers = getattr(request, "headers", {}) or {}
     if headers.get("Origin") or headers.get("Referer"):
         return ""
+    return off_machine_sentence(request, surface)
+
+
+def off_machine_sentence(request, surface: str) -> str:
+    """What a program calling *surface* from another address is told: that the surface takes
+    requests only from programs on PersonalClaw's machine, which address this one came from, and
+    the two ways that do reach it. The words of :func:`off_machine_refusal`, for a surface whose
+    own door asks where a request came from (the webhook, ``inbound.webhook``)."""
     from dataclasses import fields
 
     from personalclaw.config.external_access import ExternalAccessConfig
@@ -369,7 +392,14 @@ def inbound_cmd(args) -> int:
     There is no `confirm` verb: a control-bridge action waits for you in PersonalClaw's Inbox,
     and a command the agent that asked can run as you would let it confirm its own. The parser
     refuses a bare ``inbound`` and any action but these three.
+
+    ``personalclaw inbound webhook …`` makes, lists and revokes a webhook automation's sender
+    tokens (``inbound.webhook.webhook_cmd``).
     """
+    if getattr(args, "inbound_command", "") == "webhook":
+        from personalclaw.inbound import webhook
+
+        return webhook.webhook_cmd(args)
     known = surfaces()
     surface = str(getattr(args, "surface", "") or "mcp").lower()
     if surface not in known:

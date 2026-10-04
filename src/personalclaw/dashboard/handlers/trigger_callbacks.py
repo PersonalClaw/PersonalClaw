@@ -29,6 +29,7 @@ def serialize(callback: Any) -> dict[str, Any]:
     """
     from personalclaw import webhook_callbacks
     from personalclaw.dashboard.handlers.triggers import _redact
+    from personalclaw.inbound import webhook
     from personalclaw.owner_grants import seal
 
     allowed = webhook_callbacks.allowed(callback)
@@ -42,6 +43,9 @@ def serialize(callback: Any) -> dict[str, Any]:
         "needs_grant": [] if allowed else [webhook_callbacks.RUNS_LABEL],
         "context_summary": _redact(callback.context_summary),
         "session_key": callback.session_key,
+        # Where a program calls it back, and where that address answers (`inbound.webhook`).
+        "url": webhook.hook_url(),
+        "reach": webhook.REACH,
         "registered_at": callback.registered_at,
         # What switching it on sends back, so the yes is to this context (`toggle`).
         "seal": seal(callback.context_summary),

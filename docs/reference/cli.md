@@ -532,6 +532,16 @@ client that keeps its conversation can also send it in another session.
 | `personalclaw inbound token create <surface> [--rotate] [--ttl 90d]` | Mint that surface's bearer token, stored in the **credential store** (keychain, else `.env` at `0600`) as `PERSONALCLAW_INBOUND_<SURFACE>_TOKEN`. **Printed once** — copy it into your client immediately. It works for `--ttl` (`30m`, `20h`, `7d`; default and limit 90 days — longer is refused, never shortened), and the output says until when. `--rotate` replaces a working token, which immediately invalidates the old one; a token that expired or was revoked is replaced without it. |
 | `personalclaw inbound token show <surface>` | Report whether a usable token is configured, when it was created and when it stops working — or why it is not usable. Deliberately never prints the value: a credential the CLI can re-read is one an unattended process can exfiltrate. Lost it? Rotate. |
 | `personalclaw inbound token revoke <surface>` | Revoke that surface's token at once: whatever still presents it is refused and told it was revoked. The surface stays on, so a registered client's own token keeps working, and the revoked value stays refused for as long as it is configured — even when the environment sets it again at the next start. `create` then makes a new one. |
+| `personalclaw inbound webhook create <automation-id> [--label NAME] [--ttl 90d]` | Make a **sender token** for a webhook automation, named by its id as `personalclaw cron list` or its page shows it (`webhook:<name>` or `store:webhook:<name>`). **Printed once**, with the address a program posts to and a `curl` command that fires the automation from this machine. It is bound to the webhook alone, pinned to that automation and kept only as a hash; it works for `--ttl` (default and limit 90 days). Settings → External Access and Settings → Devices list it. |
+| `personalclaw inbound webhook list [<automation-id>]` | The sender tokens made here, or one automation's: when each stops working, and when it was last used. Never a token. |
+| `personalclaw inbound webhook revoke <client id>` | Revoke a sender token at once: a program still sending it is refused, and told it was revoked. |
+
+The webhook is not one of the five: it is always served, and what admits a call is a token made
+for it — a sender token for a webhook automation (`POST /api/triggers/<id>/fire`), or your webhook
+token (`hooks.webhook_token`) for an agent's callback (`POST /api/hooks/agent`). Both take
+requests only from programs on this machine; see
+[security](../architecture/security.md#webhooks) and
+[automations](../guides/automations.md#when-a-program-starts-one-webhooks).
 
 A token is refused if it is shorter than 32 bytes, equal to the dashboard token or
 internal secret, or equal to **another surface's** token — five surfaces sharing one

@@ -1158,6 +1158,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "This question was already answered, was open too long to answer, or the trigger no "
         "longer waits on it; run it again to be asked afresh."
     ),
+    # ── calling back an agent's callback (dashboard/handlers/hooks.py — POST /api/hooks/agent) ──
+    # 403: the callback the agent registered waits for its owner's Allow on the Triggers page.
+    "not_allowed": "This callback has not been allowed to run; its owner allows it.",
     # ── binding a use case's models (dashboard/handlers/model_registry.py —
     #    PUT /api/models/active/{use_case}) ──
     # 400: an entry of the chain names no model ("" or "provider:"); the message names it.

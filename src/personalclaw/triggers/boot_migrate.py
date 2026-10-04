@@ -83,6 +83,7 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
     # item right after the dashboard comes up, from the rows waiting then, and the service starts
     # after that — an import there left its loops out of the item the owner is sent to.
     nudges_absorbed = _absorb_nudges(root, now=now)
+    _drop_webhook_token_refs(store)
 
     try:
         report = store.migrate_from_crons(now=now)
@@ -112,6 +113,25 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
     }
     _log_report(out)
     return out
+
+
+def _drop_webhook_token_refs(store: Any) -> None:
+    """Take ``spec.token_ref`` out of every webhook automation. Never raises.
+
+    A webhook automation's spec used to require it, and nothing read it: what admits a caller is a
+    sender token made for the automation, which the client registry keeps as a hash
+    (``inbound.webhook``). So a row keeps no credential it never used, whether it held a
+    ``{{secret:…}}`` reference or the token itself.
+    """
+    try:
+        from personalclaw.triggers.store import drop_spec_key
+
+        dropped = drop_spec_key(store, "webhook", "token_ref")
+    except Exception:  # noqa: BLE001 - a store that cannot be rewritten must not stop the gateway
+        logger.warning("could not take token_ref out of the webhook automations", exc_info=True)
+        return
+    if dropped:
+        logger.info("webhook automations: took the unread token_ref out of %s", ", ".join(dropped))
 
 
 def _absorb_nudges(root: Path | str, *, now: float = 0.0) -> int:

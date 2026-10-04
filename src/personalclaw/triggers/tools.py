@@ -1166,6 +1166,10 @@ def create(
             "  it runs only when you run it: Run now on the Triggers page, or the Run now button "
             "shown with this reply in the chat"
         )
+    if saved.kind == "webhook":
+        from personalclaw.inbound import webhook
+
+        lines.append(f"  {webhook.created_line(saved.id)}")
     if words:
         where = (
             f"on {shown_via}" + (f" to {chat}" if chat else "") + ", and on no other channel"

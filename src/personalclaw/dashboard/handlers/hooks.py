@@ -248,34 +248,56 @@ _HOOK_MAX_CONCURRENT = 6
 _hook_semaphore = asyncio.Semaphore(_HOOK_MAX_CONCURRENT)
 
 
-def _verify_hook_token(request: web.Request) -> bool:
-    """Verify Bearer token against hooks.webhook_token in config.
+def _hook_token_refusal(request: web.Request) -> str:
+    """Why the request's webhook token does not admit it, or ``""`` when it does.
 
-    ``config.json`` holds a ``{{secret:…}}`` reference; the token itself is in the credential
-    store, resolved here, where it is used. A reference the store cannot answer resolves to
-    ``""``, which is "no token configured" — every request is refused — and so does one naming
-    a credential another owner holds (refused and logged by ``resolve``).
+    The token is ``hooks.webhook_token``: ``config.json`` holds a ``{{secret:…}}`` reference, and
+    the token itself is in the credential store, resolved here, where it is used. Every request is
+    refused while none is set, while the reference cannot be answered or names a credential
+    another owner holds (refused and logged by ``resolve``), and while the token is shorter than
+    ``auth.MIN_TOKEN_BYTES`` or is a credential that opens something else: it is the one thing
+    between this route and an agent turn. Compared in constant time, as bytes, so a header that is
+    not ASCII is a refusal and not a fault. The answer is the audit row's reason; the caller is told
+    one sentence, whichever it was (``webhook.WEBHOOK_TOKEN_NEEDED``).
     """
-    import hmac  # noqa: F811
+    import hmac
 
     from personalclaw.config.loader import AppConfig
     from personalclaw.config.secret_refs import ForeignSecretReference, config_owner, resolve
+    from personalclaw.inbound import auth, webhook
 
-    cfg = AppConfig.load()
     try:
-        token = resolve(cfg.hooks, owner=config_owner("hooks")).get("webhook_token", "")
+        token = resolve(AppConfig.load().hooks, owner=config_owner("hooks")).get("webhook_token")
     except ForeignSecretReference:
-        return False
+        return "hooks.webhook_token names a credential another owner holds"
     if not isinstance(token, str) or not token:
-        return False
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        return hmac.compare_digest(auth[7:], token)
-    return hmac.compare_digest(request.headers.get("x-personalclaw-token", ""), token)
+        return "no webhook token is set (hooks.webhook_token)"
+    weak = auth.token_strength_problem(token, webhook.SURFACE)
+    if weak:
+        return f"the webhook token cannot be used: {weak}"
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Bearer "):
+        presented = header[len("Bearer ") :]
+    else:
+        presented = request.headers.get("x-personalclaw-token", "")
+    if not presented:
+        return "no webhook token presented"
+    if not hmac.compare_digest(
+        presented.encode("utf-8", "surrogateescape"), token.encode("utf-8", "surrogateescape")
+    ):
+        return "the token presented is not the webhook token"
+    return ""
 
 
 async def api_hooks_agent(request: web.Request) -> web.Response:
-    """POST /api/hooks/agent — run an agent turn from an external webhook.
+    """POST /api/hooks/agent — run an agent turn for an outside program's call.
+
+    One of the webhook's two doors (``inbound.webhook``, which holds the rules and the words): it
+    signs its caller in itself, with the owner's webhook token, so the dashboard's sign-in lets it
+    through and the gateway's internal credential does not open it. Before it reads a body it asks,
+    in order: the incident switch (503), that the request comes from this machine (403, and how to
+    reach it from another), a rate (429), and the token (401). Every answer is a row of the inbound
+    audit, and a refusal or an accepted call a row of the Security log too.
 
     Runs in an isolated session keyed by ``sessionKey``. Reuses live sessions,
     resumes expired ones via session/load, or creates fresh sessions as fallback.
@@ -288,39 +310,97 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
         deliver (bool): send result to the channel DM + dashboard notification
         timeoutSeconds (int): max agent run duration
     """
+    from personalclaw.http_errors import json_error
+    from personalclaw.inbound import caps as caps_mod
+    from personalclaw.inbound import webhook as door
+    from personalclaw.inbound.gate import incident_problem
 
-    if not _verify_hook_token(request):
-        _sel().log_api_access(
-            caller="webhook",
-            operation="hooks.agent",
-            outcome="denied",
-            source="webhook",
-            error="invalid token",
+    route = door.HOOK_ROUTE
+    incident = incident_problem()
+    if incident:
+        return door.answer(
+            json_error("service_unavailable", message=door.SUSPENDED, status=503),
+            route=route,
+            refused=incident,
         )
-        return web.json_response({"error": "unauthorized"}, status=401)
+    away = door.off_machine(request)
+    if away:
+        return door.answer(
+            json_error("forbidden", message=away, status=403),
+            route=route,
+            refused="a request from another address",
+        )
+    # Before the token, so a caller guessing at it is held to the rate.
+    caps = caps_mod.caps_for(None)
+    peer = request.headers.get("Host", "") + "|" + (request.remote or "")
+    if not caps_mod.check_rate_for_client(door.SURFACE, "", peer, caps):
+        wait = caps_mod.retry_after_for_client(door.SURFACE, "", peer, caps)
+        return door.answer(
+            json_error(
+                "rate_limited",
+                message=door.too_often(wait),
+                status=429,
+                headers={"Retry-After": str(wait)},
+            ),
+            route=route,
+            refused="rate limit",
+            rate_limited=True,
+        )
+    refused = _hook_token_refusal(request)
+    if refused:
+        return door.answer(
+            json_error("unauthorized", message=door.WEBHOOK_TOKEN_NEEDED, status=401),
+            route=route,
+            refused=refused,
+        )
 
     state: DashboardState = request.app["state"]
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+        return door.answer(
+            json_error("invalid_json", message="The body must be JSON.", status=400),
+            route=route,
+            refused="invalid JSON",
+        )
     if not isinstance(body, dict):
-        return web.json_response({"error": "JSON body must be an object"}, status=400)
+        return door.answer(
+            json_error("invalid_body", message="The body must be a JSON object.", status=400),
+            route=route,
+            refused="the body is not a JSON object",
+        )
 
-    message = (body.get("message") or "").strip()
-    if not message:
-        return web.json_response({"error": "message required"}, status=400)
+    message = body.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return door.answer(
+            json_error("field_required", message="message is required, as a string.", status=400),
+            route=route,
+            refused="no message",
+        )
+    message = message.strip()
     if len(message) > _HOOK_MESSAGE_MAX_LEN:
-        return web.json_response(
-            {"error": f"message exceeds {_HOOK_MESSAGE_MAX_LEN} chars"}, status=400
+        return door.answer(
+            json_error(
+                "invalid_request",
+                message=f"message is longer than {_HOOK_MESSAGE_MAX_LEN} characters.",
+                status=400,
+            ),
+            route=route,
+            refused="message too long",
         )
 
     session_key = body.get("sessionKey", "")
     if not session_key:
         session_key = f"hook:default:{int(time.time())}"
-    if not session_key.startswith(HOOK_SESSION_PREFIX):
-        return web.json_response(
-            {"error": f"sessionKey must start with '{HOOK_SESSION_PREFIX}'"}, status=400
+    if not isinstance(session_key, str) or not session_key.startswith(HOOK_SESSION_PREFIX):
+        return door.answer(
+            json_error(
+                "invalid_request",
+                message=f"sessionKey must start with '{HOOK_SESSION_PREFIX}'.",
+                status=400,
+            ),
+            route=route,
+            refused="a sessionKey that is not a webhook's",
         )
     # 🔴 A callback the agent registered (`hook_register`) runs only once the owner allowed it
     # (`webhook_callbacks`): its turn starts from context the agent wrote and runs with the agent's
@@ -331,23 +411,17 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
 
     callback = webhook_callbacks.get(session_key.removeprefix(HOOK_SESSION_PREFIX))
     if callback is not None and not webhook_callbacks.allowed(callback):
-        _sel().log_api_access(
-            caller="webhook",
-            operation="hooks.agent",
-            outcome="denied",
-            source="webhook",
-            resources=session_key,
-            error="callback not allowed by the owner",
-        )
-        return web.json_response(
-            {
-                "error": "not_allowed",
-                "message": (
+        return door.answer(
+            json_error(
+                "not_allowed",
+                message=(
                     "This callback has not been allowed to run. The owner allows it on the "
                     "Triggers page."
                 ),
-            },
-            status=403,
+                status=403,
+            ),
+            route=route,
+            refused=f"{session_key}: callback not allowed by the owner",
         )
 
     name = body.get("name", "Webhook")
@@ -359,29 +433,29 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
             min(int(body.get("timeoutSeconds", _HOOK_TIMEOUT_DEFAULT)), _HOOK_TIMEOUT_MAX),
         )
     except (ValueError, TypeError):
-        return web.json_response({"error": "timeoutSeconds must be an integer"}, status=400)
+        return door.answer(
+            json_error(
+                "invalid_request", message="timeoutSeconds must be a whole number.", status=400
+            ),
+            route=route,
+            refused="timeoutSeconds is not a number",
+        )
 
     # Fire-and-forget: run agent in background, return immediately
     if _hook_semaphore.locked():
-        _sel().log_api_access(
-            caller="webhook",
-            operation="hooks.agent",
-            outcome="rejected",
-            source="webhook",
-            resources=session_key,
-            error="capacity reached",
-        )
-        return web.json_response(
-            {"error": f"hook capacity reached ({_HOOK_MAX_CONCURRENT})"}, status=429
+        return door.answer(
+            json_error(
+                "too_many_concurrent_requests",
+                message=(
+                    f"PersonalClaw is already running {_HOOK_MAX_CONCURRENT} webhook turns. Try "
+                    "again when one ends."
+                ),
+                status=429,
+            ),
+            route=route,
+            refused="capacity reached",
         )
     await _hook_semaphore.acquire()  # immediate — no race in single-threaded asyncio
-    _sel().log_api_access(
-        caller="webhook",
-        operation="hooks.agent",
-        outcome="accepted",
-        source="webhook",
-        resources=session_key,
-    )
     try:
         task = asyncio.create_task(
             _run_hook_agent(
@@ -394,6 +468,7 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
 
+    door.accepted(route=route, resources=session_key, bytes_in=request.content_length or 0)
     return web.json_response({"status": "accepted", "sessionKey": session_key})
 
 

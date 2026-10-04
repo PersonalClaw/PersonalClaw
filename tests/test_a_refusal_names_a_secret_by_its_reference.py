@@ -206,7 +206,7 @@ def _a_webhooks_fire(path: str, rec: _Recorder, state: _State, _work: Path):
             kind="webhook",
             enabled=True,
             created_by="user",
-            spec={"token_ref": "{{secret:WH_TOKEN}}"},
+            spec={},
             workflow=_action(path),
             capabilities={"providers": ["bash"]},
         )

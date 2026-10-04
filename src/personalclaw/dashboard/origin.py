@@ -618,15 +618,25 @@ def origin_refusal(request: web.Request) -> web.Response:
     """The 403 for a state-changing request :func:`check_origin` refused, said for what it was.
 
     A program on another machine calling one of the inbound surfaces (``/mcp``, ``/v1/…``,
-    ``/a2a/…``, ``/capture/…``) sends no browser origin at all, so "the request origin is not
-    allowed" told it neither why nor what would allow it: it is told that the surfaces take
-    requests only from this machine, and how to reach them (``inbound.auth.off_machine_refusal``).
-    Every other refusal is the browser-origin one. The code is the same for both, so a client
-    that branches on it still can.
+    ``/a2a/…``, ``/capture/…``, the webhook's two doors) sends no browser origin at all, so "the
+    request origin is not allowed" told it neither why nor what would allow it: it is told that the
+    surfaces take requests only from this machine, and how to reach them
+    (``inbound.auth.off_machine_refusal``). Every other refusal is the browser-origin one. The code
+    is the same for both, so a client that branches on it still can.
+
+    Refused before the surface reads it, so the surface writes no row for it: it is a row of the
+    inbound audit here, as each surface's own refusals are, and so of the Security log too.
     """
     from personalclaw.http_errors import json_error
-    from personalclaw.inbound.auth import off_machine_refusal
+    from personalclaw.inbound import audit
+    from personalclaw.inbound.auth import off_machine_refusal, surface_of_path
 
-    return json_error(
-        "auth_origin_not_allowed", message=off_machine_refusal(request) or None, status=403
-    )
+    sentence = off_machine_refusal(request)
+    if sentence:
+        audit.audit(
+            surface_of_path(request.path) or "",
+            route=f"{request.method} {request.path}",
+            status=403,
+            refused="a request from another address that carries no browser origin",
+        )
+    return json_error("auth_origin_not_allowed", message=sentence or None, status=403)

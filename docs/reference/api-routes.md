@@ -478,7 +478,7 @@ The 914 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/healthz` | Liveness probe — auth-exempt, returns 200 once gateway is serving HTTP. |
 | `GET` | `/api/heartbeat/tasks` | every task in HEARTBEAT.md, and whether the owner allowed it. |
 | `POST` | `/api/heartbeat/tasks/allow` | the owner's yes to one queued task. |
-| `POST` | `/api/hooks/agent` | run an agent turn from an external webhook. |
+| `POST` | `/api/hooks/agent` | run an agent turn for an outside program's call. |
 | `GET` | `/api/inbox` | list all inbox items (recency, optionally engagement-weighted). |
 | `POST` | `/api/inbox/digest` | on-demand channel digest. |
 | `POST` | `/api/inbox/dismiss-all` | dismiss every OPEN item (pending or seen). |
@@ -981,7 +981,7 @@ The 914 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
 | `PUT` | `/api/triggers/{id}` | DELETE /api/triggers/{id}. |
 | `POST` | `/api/triggers/{id}/answer` | answer the question a trigger's action stopped on. |
-| `POST` | `/api/triggers/{id}/fire` | fire a `webhook` trigger from an EXTERNAL caller (WF2AUT-12). |
+| `POST` | `/api/triggers/{id}/fire` | fire a webhook automation for an outside program. |
 | `GET` | `/api/triggers/{id}/history` | run records; other kinds answer `supported: false`. |
 | `GET` | `/api/triggers/{id}/history/{run_id}` | one full run record. |
 | `POST` | `/api/triggers/{id}/run` | fire now. |

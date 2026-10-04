@@ -19,6 +19,7 @@ from personalclaw.dashboard.origin import build_allowed_origins, check_origin, r
 from personalclaw.dashboard.state import _DEFAULT_PORT, DashboardState
 from personalclaw.dashboard.token_auth import served_port, token_auth_middleware
 from personalclaw.hooks import ScriptHookStore, set_global_hook_store
+from personalclaw.inbound.webhook import is_door as _webhook_door
 from personalclaw.workflows import agent_routes
 
 if TYPE_CHECKING:
@@ -483,9 +484,6 @@ INTERNAL_ROUTES: frozenset[str] = frozenset(
         "GET /api/session-tool-policy",  # an MCP server's per-session tool policy
         "GET /api/chat/sessions/model-reach",  # whether an `mcp-core` tool's chat keeps nothing
         "GET /api/sessions/recall",  # `chat_search`
-        # A webhook, relayed on this computer (docs/architecture/security.md#webhook-auth); the
-        # route then checks the webhook's own token.
-        "POST /api/hooks/agent",
         "POST /api/outbox/notify",  # `notify_attachment`
         "POST /api/channel/upload-file",  # `notify_attachment`
         "POST /api/tools/invoke",  # a scheduled script's ctx.call_tool
@@ -762,7 +760,8 @@ async def start_dashboard(
         request: web.Request,
         handler: object,
     ) -> web.StreamResponse:
-        if request.method in _sel_log_methods and request.path.startswith("/api/"):
+        logged = request.method in _sel_log_methods and request.path.startswith("/api/")
+        if logged and not _webhook_door(request.path):  # no dashboard user; it logs its own
             from personalclaw.sel import sel
 
             try:

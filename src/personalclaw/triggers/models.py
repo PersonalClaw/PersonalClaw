@@ -287,7 +287,9 @@ SPEC_KEYS: dict[str, frozenset[str]] = {
         {"scope", "idle_secs", "first_idle_secs", "message", "max_cycles", "stop_sentinel_path"}
     ),
     "file": frozenset({"paths", "dedup"}),
-    "webhook": frozenset({"token_ref"}),
+    # Nothing: a webhook automation is fired with a sender token made for it, which the client
+    # registry holds as a hash (`inbound.webhook`), so its spec carries no credential of any kind.
+    "webhook": frozenset(),
     "view": frozenset({"surface_binding", "ttl_secs"}),
     "web_watch": frozenset(
         {
@@ -708,17 +710,6 @@ def validate_spec(
     elif kind == "event":
         issues.extend(_event_spec_issues(spec))
         issues.extend(_agent_scope_issues(spec))
-    elif kind == "webhook" and not str((spec or {}).get("token_ref", "") or "").strip():
-        # A webhook with no token is an unauthenticated fire endpoint. Refused at author time rather
-        # than defaulted, because a generated default would be a secret nobody chose.
-        issues.append(
-            Issue(
-                path="spec.token_ref",
-                message="a webhook trigger needs a token_ref; an unauthenticated fire endpoint is "
-                "refused rather than defaulted",
-                severity="error",
-            )
-        )
     elif kind == "web_watch" and not str((spec or {}).get("url", "") or "").strip():
         issues.append(
             Issue(path="spec.url", message="a web_watch trigger needs a url", severity="error")
@@ -1086,51 +1077,6 @@ def _known_fields() -> frozenset[str]:
     return frozenset(f.name for f in _dc.fields(Trigger))
 
 
-def _token_ref_issues(spec: Any) -> list[Issue]:
-    """WARN when a `webhook` trigger's `token_ref` holds the token itself (decision 12 — S119).
-
-    🔴 MEASURED. Decision 12 says webhook bearer tokens are "SHA-256-hashed at rest" and R14 says
-    "never verbatim in triggers.json". Driven against the real store:
-
-        spec: {"token_ref": "sk-LITERAL-SECRET-abc123"}
-          → the token appears VERBATIM in triggers.json, `ok: True`, zero warnings
-
-    S115's `_inline_credential_issues` would have caught that string — but it scans the WORKFLOW
-    only, and a webhook's token lives in `spec`. So the one field on the one kind whose entire
-    purpose is authentication was the field with no credential lint, and `triggers.json` is
-    snapshotted (S113), echoed into run records and rendered in the UI.
-
-    The name is the tell: `token_ref` is a REFERENCE. A value that is not a `{{secret:KEY}}`
-    reference is the token itself, which is what this flags.
-
-    A WARNING, not an error, for the reason S115 recorded: refusing would break every webhook a
-    user has already authored, which is exactly the population that most needs to keep working
-    while they migrate. `parse_trigger` already REFUSES a webhook with no `token_ref` at all — an
-    unauthenticated fire endpoint is a different and worse thing than a badly-stored token.
-    """
-    if not isinstance(spec, dict):
-        return []
-    raw = spec.get("token_ref")
-    if not isinstance(raw, str) or not raw.strip():
-        # Absent is handled by the kind's own required-field check, which errors rather than warns.
-        return []
-    from personalclaw.triggers.secrets import SECRET_REF_RE
-
-    if SECRET_REF_RE.fullmatch(raw.strip()):
-        return []
-    return [
-        Issue(
-            path="spec.token_ref",
-            message=(
-                "token_ref holds the token itself rather than a reference — store it with "
-                "`personalclaw auth` and reference it as {{secret:KEY}}, which is resolved at "
-                "dispatch and never written to triggers.json (which is snapshotted and rendered "
-                "in the UI)"
-            ),
-        )
-    ]
-
-
 def _inline_credential_issues(workflow: Any) -> list[Issue]:
     """WARN when a trigger's action carries a credential LITERALLY (§7 item 6 / R14 — S115).
 
@@ -1294,7 +1240,6 @@ def parse_trigger(raw: dict[str, Any]) -> tuple[Trigger, list[Issue]]:
     issues.extend(validate_gates(gates))
     issues.extend(_inline_credential_issues(data.get("workflow")))
     issues.extend(_resume_target_issues(data.get("workflow")))
-    issues.extend(_token_ref_issues(data.get("spec")))
 
     if not str(data.get("id", "") or "").strip():
         issues.append(Issue(path="id", message="a trigger needs an id", severity="error"))
@@ -1645,8 +1590,8 @@ def fire_issues(record: FireRecord) -> list[Issue]:
 #: them have no same-named home on `Trigger`. A migration written against the dataclass alone would
 #: silently drop `skip_dates` (the trigger keeps firing on a holiday),
 #: `strict_schedule` (a missed slot
-#: catches up when the author said not to), `content_re` (an event trigger fires on everything), and
-#: `token_ref`-class secrets.
+#: catches up when the author said not to), and `content_re` (an event trigger fires on
+#: everything).
 #:
 #: The value is the destination path. `None` means DELIBERATELY DROPPED, and the comment says why —
 #: an unexplained omission is indistinguishable from an oversight when someone reads this in six
