@@ -16,7 +16,11 @@ an item id (``{channel}_{ts}``, and a channel name may contain anything) and a p
 provider rather than trusted to the caller: even a user's own always-approve rule for
 ``reply_draft`` reaches this code, and this code has no send path. Graduating a pattern to an
 actual send is a separate per-rule toggle over a send-capable provider, and it is deliberately
-not reachable from here.
+not reachable from here. Given a ``draft``, it writes that text (a hand-written trigger's own
+words); given none, it drafts the reply through the Inbox's own drafting path
+(:meth:`~personalclaw.inbox_service.InboxService.draft_reply`), the one the Inbox page's Draft
+uses: her voice, its rules, its check. A triage proposal never gives one (its config binds no
+reply text), so a Yes on "Draft a reply" is that drafting, never the proposal model's words.
 
 **Writes go through :func:`personalclaw.inbox.live_store`.** The running service holds items in
 MEMORY and never re-reads the file, so a provider that constructed its own ``InboxStore()``
@@ -120,6 +124,44 @@ def _decode(handle: str) -> dict[str, Any] | None:
     except (ValueError, binascii.Error, UnicodeDecodeError):
         return None
     return decoded if isinstance(decoded, dict) else None
+
+
+async def _draft_through_the_inbox(state: Any, item: Any) -> str:
+    """Draft a reply to *item* through the Inbox's own drafting path: ``""`` when it wrote one,
+    else why it did not, in words the action's result can say.
+
+    A message that takes no reply is refused before the model runs, as the Inbox page's Draft
+    refuses it. A draft that did not happen changes nothing: the drafting path clears the draft
+    when its model judges no reply is wanted, so the draft she had is put back, with what it
+    stood on and who wrote it.
+    """
+    from personalclaw.inbox_service import InboxService
+
+    if not getattr(item, "can_reply", False):
+        return f"{_described(item)} takes no reply, so there is no reply to draft"
+    # Type-checked for `live_store`'s reason: an object answering every getattr must not stand
+    # in for the service and swallow the draft.
+    service = getattr(state, "_inbox_svc", None)
+    if not isinstance(service, InboxService):
+        return "no running inbox service to draft the reply with"
+    before = {
+        "draft": str(getattr(item, "draft", "") or ""),
+        "drafted_by": str(getattr(item, "drafted_by", "") or ""),
+        "context_summary": str(getattr(item, "context_summary", "") or ""),
+    }
+    outcome = await service.draft_reply(item.id)
+    if outcome is None:
+        return "the reply could not be drafted: the call to the drafting model failed"
+    if outcome.unread:
+        return outcome.unread_sentence()
+    if outcome.question:
+        return f"the reply needs your word first: {outcome.question}"
+    if outcome.skipped or not str(getattr(outcome.item, "draft", "") or "").strip():
+        service.inbox.update(item.id, **before)
+        if outcome.skipped:
+            return "the drafting model judged that this message needs no reply"
+        return "the drafting model wrote no reply"
+    return ""
 
 
 def _broadcast(state: Any, item: Any) -> None:
@@ -240,12 +282,16 @@ class InboxOpActionProvider(ActionProvider):
 
         # reply_draft — writes the draft field and nothing else. There is no send path here.
         text = str(action_config.get("draft") or action_config.get("body") or "").strip()
-        if not text:
-            return ActionResult(success=False, error="inbox-op: reply_draft needs a draft body")
         prior_draft = str(getattr(item, "draft", "") or "")
-        # The digest's proposal wrote this text, not the drafting prompt, so it names no producer
-        # a verdict on the draft could be rated against.
-        store.update(item_id, draft=text, drafted_by="")
+        if text:
+            # The caller's own words, not the drafting prompt's, so the draft names no producer
+            # a verdict on it could be rated against.
+            store.update(item_id, draft=text, drafted_by="")
+        else:
+            refused = await _draft_through_the_inbox(state, item)
+            if refused:
+                return ActionResult(success=False, error=f"inbox-op: {refused}")
+            text = str(getattr(store.items.get(item_id), "draft", "") or "")
         _broadcast(state, store.items.get(item_id) or item)
         return ActionResult(
             success=True,

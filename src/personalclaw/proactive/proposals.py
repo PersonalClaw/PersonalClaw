@@ -23,6 +23,13 @@ exists because the alternative is a jailbroken inbox item deciding what the mach
   opposite direction from the gate, which fails open — see `gate.py`.)
 * **A cap that is enforced here, not requested in prose.** `MAX_PROPOSALS` truncates; the
   overflow is refused with `over_cap` rather than dropped, so the digest's counts reconcile.
+* **Only what a Yes can carry out is offered.** Every proposal is a Yes button on the digest
+  card, so a kind nothing performs is not in the action set at all, a kind its item cannot take
+  is refused (:func:`cannot_act`: an Inbox operation on a run), and one item gets one proposal (a
+  reply names the item, so a second proposal's Yes would answer the first).
+* **A proposal binds only the arguments its kind declares** (:data:`ACTION_ARGUMENTS`), and its
+  pattern only ever names its own kind. Its config cannot choose a provider, an operation, an
+  item or a capability, and its pattern cannot ride a rule taught for another kind.
 
 The schema is also emitted as JSON Schema (`proposal_schema`) with `additionalProperties:
 false`, for the typed-structured-output path (`output_type`) on the
@@ -32,21 +39,45 @@ because most providers do not, and a constraint that only holds on some backends
 
 from __future__ import annotations
 
+import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+
+from personalclaw.proactive.manifest import SOURCE_INBOX, CollectedItem, Manifest
 
 #: The pre-declared action set. Proposals BIND ARGUMENTS to these; they can never introduce
 #: an action (the frozen action-set invariant, AUTOMATION-SUBSTRATE decision 7). `none` is a
 #: member so a model can say "nothing to do here" inside the schema instead of omitting the
-#: item and leaving the absence ambiguous.
+#: item and leaving the absence ambiguous. Every other member is one a Yes can carry out
+#: (`autoexec.PROVIDER_FOR_ACTION`): a kind nothing performs would be a button that can only fail.
 ACTION_TYPES: tuple[str, ...] = (
     "archive",
     "reply_draft",
     "create_task",
     "mute_thread",
     "dismiss",
-    "remind",
     "none",
 )
+
+#: The kinds that act on an Inbox row: archive it, mute its thread, dismiss it, or put a reply
+#: draft on it. A channel conversation or a run has no Inbox row for them to act on.
+INBOX_ROW_ACTIONS: frozenset[str] = frozenset({"archive", "mute_thread", "dismiss", "reply_draft"})
+
+#: What each kind may bind in its ``action_config``, and nothing else. A proposal is the model's,
+#: written over fenced untrusted text, so its config never names a provider, an operation, an item,
+#: a capability or a reply's text: the kind and the manifest decide those. A task's title is the
+#: one thing a proposal words. A reply is written by the product's drafting path when she says
+#: yes, in her voice and under its rules, never by the proposal.
+ACTION_ARGUMENTS: dict[str, frozenset[str]] = {
+    "archive": frozenset(),
+    "mute_thread": frozenset(),
+    "dismiss": frozenset(),
+    "reply_draft": frozenset(),
+    "create_task": frozenset({"title"}),
+}
+
+#: The longest task title a proposal may word.
+TASK_TITLE_MAX = 120
 
 #: Tiers, least to most consequential. Index IS the ordering — `clamp_tier` compares indices.
 TIERS: tuple[str, ...] = ("trivial", "low", "medium", "high")
@@ -74,7 +105,8 @@ UNKNOWN_ACTION_FLOOR = "high"
 
 #: Every field a proposal may carry. Anything else is stripped and reported (`extra_keys`) —
 #: the `additionalProperties: false` half of the schema, enforced in Python because most
-#: providers do not enforce it on the wire.
+#: providers do not enforce it on the wire. So is a config key its kind does not declare, as
+#: ``action_config.<key>``.
 PROPOSAL_FIELDS = frozenset(
     {"item_id", "action_type", "action_config", "tier", "pattern_key", "reasoning"}
 )
@@ -87,6 +119,61 @@ REFUSE_UNKNOWN_ACTION = "unknown_action_type"
 REFUSE_NO_ACTION = "no_action"
 REFUSE_OVER_CAP = "over_cap"
 REFUSE_MALFORMED = "malformed_entry"
+#: A second proposal for an item already proposed. A reply names the item ("3 yes"), so the
+#: second one's Yes would answer the first.
+REFUSE_DUPLICATE_ITEM = "duplicate_item"
+#: The item cannot take the kind (:func:`cannot_act`), so its Yes could only be refused.
+REFUSE_CANNOT_ACT = "cannot_act_on_item"
+
+
+def cannot_act(action_type: str, item: CollectedItem) -> str:
+    """Why a proposal of *action_type* cannot be carried out on *item*, or ``""`` when it can."""
+    if action_type in INBOX_ROW_ACTIONS and item.source != SOURCE_INBOX:
+        return "it is not an Inbox message"
+    if action_type == "reply_draft" and not item.can_reply:
+        return "the message takes no reply"
+    return ""
+
+
+def _one_line(value: object, limit: int) -> str:
+    """*value* as one line of at most *limit* characters: every control character a space."""
+    if not isinstance(value, str):
+        return ""
+    text = "".join(" " if unicodedata.category(ch) == "Cc" else ch for ch in value)
+    return " ".join(text.split())[:limit].rstrip()
+
+
+def bind_arguments(action_type: str, raw: object) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The arguments *raw* binds that *action_type* declares, and the keys it gave that it
+    could not bind (undeclared, or a value the argument cannot hold).
+
+    Read wherever a proposal's config is used — the parse, the card's read model and the
+    dispatch — so a config an older process recorded, or one edited on disk, can no more widen a
+    kind than the model can.
+    """
+    if not isinstance(raw, Mapping):
+        return {}, ()
+    declared = ACTION_ARGUMENTS.get(action_type, frozenset())
+    bound: dict[str, str] = {}
+    dropped: list[str] = []
+    for key, value in raw.items():
+        name = str(key)
+        text = _one_line(value, TASK_TITLE_MAX) if name in declared else ""
+        if text:
+            bound[name] = text
+        else:
+            dropped.append(name)
+    return bound, tuple(sorted(dropped))
+
+
+def _own_pattern(action_type: str, raw: object) -> str:
+    """The proposal's pattern when it names the proposal's own kind first, else ``""``.
+
+    A pattern is what "always" teaches and what a taught rule matches, so one that named another
+    kind (``archive:…`` on a dismissal) would let a rule taught for archiving run a dismissal.
+    """
+    pattern = str(raw or "").strip()[:200]
+    return pattern if pattern.split(":", 1)[0].strip().lower() == action_type else ""
 
 
 def tier_floor(action_type: str) -> str:
@@ -183,7 +270,16 @@ def proposal_schema(allowed_ordinals: frozenset[str] | set[str] | None = None) -
                     "properties": {
                         "item_id": item_id,
                         "action_type": {"type": "string", "enum": list(ACTION_TYPES)},
-                        "action_config": {"type": "object"},
+                        # Every argument any kind declares; which kind may bind which is
+                        # `ACTION_ARGUMENTS`, enforced by the parse.
+                        "action_config": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                name: {"type": "string", "maxLength": TASK_TITLE_MAX}
+                                for name in sorted(set().union(*ACTION_ARGUMENTS.values()))
+                            },
+                        },
                         "tier": {"type": "string", "enum": list(TIERS)},
                         "pattern_key": {"type": "string", "maxLength": 200},
                         "reasoning": {"type": "string", "maxLength": 300},
@@ -217,16 +313,17 @@ def proposals_problem(raw: str) -> str:
     return _proposals_payload(raw)[1]
 
 
-def parse_proposals(
-    raw: object,
-    *,
-    allowed_ordinals: frozenset[str] | set[str],
-) -> ProposalBatch:
+def parse_proposals(raw: object, *, manifest: Manifest) -> ProposalBatch:
     """Turn the model's reply into a batch, enforcing every §1.3 constraint.
 
     `raw` is the model's answer, or the dict an injected completion already read from one. An
     answer that holds no object carrying a `proposals` list is a degraded batch — zero proposals,
     one `unparseable` refusal — and the caller renders a plain digest.
+
+    `manifest` is the window the proposals are about: the ordinals they may name, and the items
+    each kind must be able to act on. Every check is one pass in this order, so a proposal its
+    item cannot take is refused before it counts as that item's one proposal: an archive of a
+    run does not shut out the task for it that follows.
     """
     payload, why = _proposals_payload(raw)
     if payload is None:
@@ -238,6 +335,8 @@ def parse_proposals(
     accepted: list[Proposal] = []
     refused: list[RefusedProposal] = []
     extras: set[str] = set()
+    proposed: set[str] = set()
+    allowed_ordinals = manifest.ordinals()
 
     for entry in payload["proposals"]:
         if not isinstance(entry, dict):
@@ -268,6 +367,24 @@ def parse_proposals(
         if action_type == "none":
             refused.append(RefusedProposal(reason=REFUSE_NO_ACTION, item_id=item_id))
             continue
+        item = manifest.by_ordinal(item_id)
+        why = cannot_act(action_type, item) if item is not None else ""
+        if why:
+            # A Yes on it could only be refused (an archive of a run, a reply to a notice), so
+            # it is never offered.
+            refused.append(
+                RefusedProposal(
+                    reason=REFUSE_CANNOT_ACT, item_id=item_id, action_type=action_type, detail=why
+                )
+            )
+            continue
+        if item_id in proposed:
+            refused.append(
+                RefusedProposal(
+                    reason=REFUSE_DUPLICATE_ITEM, item_id=item_id, action_type=action_type
+                )
+            )
+            continue
         if len(accepted) >= MAX_PROPOSALS:
             refused.append(
                 RefusedProposal(reason=REFUSE_OVER_CAP, item_id=item_id, action_type=action_type)
@@ -276,14 +393,16 @@ def parse_proposals(
 
         asked = str(entry.get("tier", "") or "").strip().lower()
         tier = clamp_tier(action_type, asked)
-        cfg = entry.get("action_config")
+        arguments, unbound = bind_arguments(action_type, entry.get("action_config"))
+        extras.update(f"action_config.{name}" for name in unbound)
+        proposed.add(item_id)
         accepted.append(
             Proposal(
                 item_id=item_id,
                 action_type=action_type,
                 tier=tier,
-                action_config=dict(cfg) if isinstance(cfg, dict) else {},
-                pattern_key=str(entry.get("pattern_key", "") or "").strip()[:200],
+                action_config=arguments,
+                pattern_key=_own_pattern(action_type, entry.get("pattern_key")),
                 reasoning=str(entry.get("reasoning", "") or "").strip()[:300],
                 asked_tier=asked if asked != tier else "",
             )
@@ -298,22 +417,29 @@ def parse_proposals(
 
 
 __all__ = [
+    "ACTION_ARGUMENTS",
     "ACTION_TYPES",
     "DESTRUCTIVE_ACTIONS",
     "EXTERNAL_REACH_ACTIONS",
+    "INBOX_ROW_ACTIONS",
     "MAX_PROPOSALS",
     "PROPOSAL_FIELDS",
+    "REFUSE_CANNOT_ACT",
+    "REFUSE_DUPLICATE_ITEM",
     "REFUSE_MALFORMED",
     "REFUSE_NO_ACTION",
     "REFUSE_OVER_CAP",
     "REFUSE_UNKNOWN_ACTION",
     "REFUSE_UNKNOWN_ITEM",
     "REFUSE_UNPARSEABLE",
+    "TASK_TITLE_MAX",
     "TIERS",
     "UNKNOWN_ACTION_FLOOR",
     "Proposal",
     "ProposalBatch",
     "RefusedProposal",
+    "bind_arguments",
+    "cannot_act",
     "clamp_tier",
     "parse_proposals",
     "proposal_schema",

@@ -168,6 +168,9 @@ def render_digest(
             about = manifest.by_ordinal(p.item_id)
             subject = about.title if about is not None else f"item {p.item_id}"
             lines.append(f"  {p.item_id}. [{p.tier}] {p.action_type} — {subject}")
+            # The task a yes files, by the title it is filed under, as the card shows it.
+            if p.action_config.get("title"):
+                lines.append(f"       Task: {p.action_config['title']}")
             if not_done.get(p.item_id):
                 lines.append(f"       {not_done[p.item_id]}")
             if p.reasoning:

@@ -8,12 +8,13 @@ The items:
 For each item that genuinely warrants one, propose at most one action. Propose nothing for items where the right answer is "leave it alone". At most {{max_proposals}} proposals total — choose the ones that matter most.
 
 Allowed action types, and nothing else:
-- "archive" — file it away; reversible
-- "mute_thread" — stop surfacing this thread; reversible
-- "reply_draft" — draft a reply for the person to review; never sends
-- "create_task" — turn it into a task
-- "remind" — surface it again later
-- "dismiss" — remove it from attention
+- "archive" — file an [inbox] message away; reversible
+- "mute_thread" — stop surfacing an [inbox] message's thread; reversible
+- "reply_draft" — have a reply drafted to an [inbox] message, for the person to review; never sends. Not for one marked "takes no reply". You do not write the reply: their own drafting writes it if they say yes, so `action_config` stays {}
+- "create_task" — turn any item into a task on their task list. `action_config` may carry {"title": "<the task, in a few words>"}; without one the task is titled with the item's own words
+- "dismiss" — remove an [inbox] message from attention
+
+An item marked [channel] or [run] can only become a task. Propose at most one action per item.
 
 Tier each proposal by how much it needs a human first:
 - "trivial" — reversible and obviously right

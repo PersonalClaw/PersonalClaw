@@ -104,6 +104,8 @@ def collect_inbox(store: Any, *, since_ts: float = 0.0) -> list[CollectedItem]:
                     # ranks under a run that already changed something but over noise.
                     materiality=MATERIALITY_RESPONSE,
                     ts=str(getattr(item, "ts", "") or ""),
+                    # A reply proposal is offered only for a message that takes one.
+                    can_reply=bool(getattr(item, "can_reply", False)),
                 )
             )
         except Exception:  # noqa: BLE001 - one bad row must not lose the lane

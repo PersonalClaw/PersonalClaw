@@ -40,6 +40,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from personalclaw.proactive.autoexec import not_done_note, stopped_note
+from personalclaw.proactive.proposals import bind_arguments
 
 #: The bundled WorkflowDef the pack card installs. One name, shared with the provider.
 TRIAGE_WORKFLOW = "morning-triage"
@@ -215,13 +216,19 @@ def build_digest_view(
         joined = proposals.get(ordinal, {})
         reply = answered.get(ordinal) or {}
         reason = str(row.get("reason", "") or "")
+        action_type = str(row.get("action_type", "") or "")
         pending.append(
             {
                 "ordinal": ordinal,
-                "action_type": str(row.get("action_type", "") or ""),
+                "action_type": action_type,
                 "tier": str(row.get("tier", "") or joined.get("tier", "") or ""),
                 "pattern_key": str(joined.get("pattern_key", "") or ""),
                 "clamped": bool(joined.get("clamped")),
+                # What the proposal bound when its run recorded it (a task's title): what its Yes
+                # carries out, and what the card shows before she answers. Re-bound here, so a
+                # record from an older process or edited on disk shows and runs no more than the
+                # kind declares.
+                "action_config": bind_arguments(action_type, joined.get("action_config"))[0],
                 "reason": reason,
                 "rule": str(row.get("rule", "") or ""),
                 # The digest's own text says the same sentence (`rank.render_digest`): an action it

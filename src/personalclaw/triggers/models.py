@@ -351,7 +351,8 @@ MIN_CLOCK_INTERVAL_SECS = 900
 #: whose run can queue or reach a model call stays OFF this list. That is why `knowledge-persist`
 #: (its enrichment rides the ingest queue: embedding and entity extraction), `knowledge-retrieve`
 #: (its vector tier embeds the query) and `self-remediation` (it can run the embedding re-index) are
-#: absent though their own docstrings say "zero-token" about the write itself.
+#: absent though their own docstrings say "zero-token" about the write itself, and why `inbox-op`
+#: is: a `reply_draft` given no text is drafted by the Inbox's drafting, a model call.
 ZERO_TOKEN_PROVIDERS: frozenset[str] = frozenset(
     {
         "bash",  # a shell command — the schedule's deterministic mode
@@ -359,7 +360,6 @@ ZERO_TOKEN_PROVIDERS: frozenset[str] = frozenset(
         "notify",  # raises a dashboard notification
         "send-message",  # posts rendered text to a channel (or a dashboard note)
         "create-task",  # files a task row
-        "inbox-op",  # archive / mark read / mute / dismiss / write a supplied draft
         "notification-digest",  # "Deterministic, no model call."
         "usage-recap",  # "Deterministic, no model call."
         "check-work",  # bounded filesystem reads, no command runner

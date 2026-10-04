@@ -46,7 +46,7 @@ from typing import Any
 
 from personalclaw.proactive.approval import ApprovalRule, Decision, match_rules
 from personalclaw.proactive.manifest import SOURCE_INBOX, Manifest
-from personalclaw.proactive.proposals import TIERS, Proposal
+from personalclaw.proactive.proposals import TIERS, Proposal, bind_arguments
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +55,9 @@ TRIVIAL_TIER = TIERS[0]
 
 #: ``action_type`` → the action provider that performs it. **A proposal can never name a
 #: provider**; it names one of `proposals.ACTION_TYPES`, and this table is the only thing that
-#: turns one into a dispatch. An action_type absent from here has no auto-execution path at all,
-#: which is why `remind` and `none` are deliberately missing: a reminder is a trigger to mint,
-#: not an action to run, and `none` is the model saying there is nothing to do.
+#: turns one into a dispatch. Every kind but `none` (the model saying there is nothing to do) is
+#: here, because each is a Yes on the digest card: a kind with no entry would be a button that
+#: can only fail, so it is not in the action set at all.
 PROVIDER_FOR_ACTION: dict[str, str] = {
     "archive": "inbox-op",
     "mute_thread": "inbox-op",
@@ -71,6 +71,18 @@ PROVIDER_FOR_ACTION: dict[str, str] = {
 #: so even a taught always-approve rule for `reply_draft` reaches a provider that can only
 #: write a draft. A caller that declares a wider set on its own node widens it deliberately.
 AUTO_CAPABLE_PROVIDERS: frozenset[str] = frozenset({"inbox-op"})
+
+
+def answer_capabilities(action_type: str) -> frozenset[str]:
+    """What her Yes on one proposal admits: the provider of the proposal's own kind, and only it.
+
+    Not the digest's unattended set: that set bounds what runs with nobody watching, and filing a
+    task is not in it, so a Yes on "File a task" run under it was refused. Nor anything wider: a
+    Yes on an archive admits no task list, whatever the proposal's config says.
+    """
+    provider = PROVIDER_FOR_ACTION.get(action_type, "")
+    return frozenset({provider}) if provider else frozenset()
+
 
 #: The lane an `inbox-op` action can address. A `run`-lane or `channel`-lane item has no inbox
 #: row to archive, and dispatching against its `source_id` would name someone else's row.
@@ -284,13 +296,22 @@ def _action_config(proposal: Proposal, item: Any) -> dict:
     The ordinal→id resolution happens HERE and only here. A proposal's `item_id` is a manifest
     ordinal, never a store id, so a dispatch that forwarded it unchanged would address an inbox
     row named "3".
+
+    Only the arguments the kind declares are read (`proposals.bind_arguments`), whatever the
+    proposal carries, so no caller's proposal names the provider, the operation, the item or the
+    task list the action reaches. A reply binds none: with no text given, `inbox-op` drafts it
+    through the product's own drafting path. A task's title is passed as a VALUE under a fixed
+    template, so the title (the proposal's, else the item's own words) is filed as written and
+    never read as a template of its own.
     """
-    config: dict[str, Any] = dict(proposal.action_config or {})
+    arguments, _unbound = bind_arguments(proposal.action_type, proposal.action_config)
+    config: dict[str, Any] = dict(arguments)
     config["op"] = proposal.action_type
     config["action_type"] = proposal.action_type
     config["item_id"] = item.source_id
-    if proposal.action_type == "create_task" and not config.get("title_template"):
-        config["title_template"] = item.title or f"Follow up: {item.source_id}"
+    if proposal.action_type == "create_task":
+        config["title"] = arguments.get("title") or item.title or f"Follow up: {item.source_id}"
+        config["title_template"] = "$title"
     return config
 
 
@@ -688,6 +709,7 @@ __all__ = [
     "AutoAction",
     "AutoExecResult",
     "DeferredProposal",
+    "answer_capabilities",
     "auto_execute",
     "default_budget_check",
     "dumps",

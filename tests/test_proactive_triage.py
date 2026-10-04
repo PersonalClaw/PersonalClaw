@@ -92,6 +92,8 @@ def _items() -> list[CollectedItem]:
             title=_REVIEW_TITLE,
             sender="alice",
             ts="2026-08-24T02:00:00+00:00",
+            # A message that takes a reply, so a reply proposal for it is one a Yes can carry out.
+            can_reply=True,
         ),
         CollectedItem(
             source=SOURCE_RUN,
@@ -352,8 +354,8 @@ class TestTheGateSpendGuard:
 
 class TestTheOrdinalContract:
     def test_an_invented_id_is_refused_and_named(self) -> None:
-        allowed = build_manifest(_items()).ordinals()
-        batch = parse_proposals({"proposals": [_proposal("99")]}, allowed_ordinals=allowed)
+        window = build_manifest(_items())
+        batch = parse_proposals({"proposals": [_proposal("99")]}, manifest=window)
         assert batch.proposals == ()
         assert [(r.reason, r.item_id) for r in batch.refused] == [("unknown_item_id", "99")]
 
@@ -364,21 +366,21 @@ class TestTheOrdinalContract:
         so a provider that emits numbers works. The pair below is the whole contract — the
         rendering is exact, so `3` resolves and `99` still does not.
         """
-        allowed = build_manifest(_items()).ordinals()
-        numeric = _proposal("1")
+        window = build_manifest(_items())
+        # Item 3 is the run, which can become a task.
+        numeric = _proposal("1", "create_task")
         numeric["item_id"] = 3
         assert [
-            p.item_id
-            for p in parse_proposals({"proposals": [numeric]}, allowed_ordinals=allowed).proposals
+            p.item_id for p in parse_proposals({"proposals": [numeric]}, manifest=window).proposals
         ] == ["3"]
 
-        invented = _proposal("1")
+        invented = _proposal("1", "create_task")
         invented["item_id"] = 99
-        assert parse_proposals({"proposals": [invented]}, allowed_ordinals=allowed).proposals == ()
+        assert parse_proposals({"proposals": [invented]}, manifest=window).proposals == ()
 
     def test_a_real_id_survives(self) -> None:
-        allowed = build_manifest(_items()).ordinals()
-        batch = parse_proposals({"proposals": [_proposal("2")]}, allowed_ordinals=allowed)
+        window = build_manifest(_items())
+        batch = parse_proposals({"proposals": [_proposal("2")]}, manifest=window)
         assert [p.item_id for p in batch.proposals] == ["2"]
 
     def test_the_schema_declares_the_id_enum_and_forbids_extras(self) -> None:
@@ -390,10 +392,10 @@ class TestTheOrdinalContract:
         assert schema["properties"]["proposals"]["maxItems"] == MAX_PROPOSALS
 
     def test_undeclared_keys_are_stripped_and_reported(self) -> None:
-        allowed = build_manifest(_items()).ordinals()
+        window = build_manifest(_items())
         entry = _proposal("1")
         entry["execute_now"] = True
-        batch = parse_proposals({"proposals": [entry]}, allowed_ordinals=allowed)
+        batch = parse_proposals({"proposals": [entry]}, manifest=window)
         assert batch.extra_keys == ("execute_now",)
         assert not hasattr(batch.proposals[0], "execute_now")
 
@@ -429,9 +431,10 @@ class TestTheTierClamp:
         assert clamp_tier("archive", "") == "trivial"
 
     def test_the_asked_tier_is_kept_when_the_clamp_raised_it(self) -> None:
-        allowed = build_manifest(_items()).ordinals()
+        window = build_manifest(_items())
+        # Item 2 is the review request, a message that takes a reply.
         batch = parse_proposals(
-            {"proposals": [_proposal("1", "reply_draft", "trivial")]}, allowed_ordinals=allowed
+            {"proposals": [_proposal("2", "reply_draft", "trivial")]}, manifest=window
         )
         assert batch.proposals[0].tier == "medium"
         assert batch.proposals[0].asked_tier == "trivial"
@@ -440,30 +443,38 @@ class TestTheTierClamp:
 
 class TestTheProposalStageFailsClosed:
     def test_garbage_yields_zero_proposals(self) -> None:
-        allowed = build_manifest(_items()).ordinals()
+        window = build_manifest(_items())
         for raw in ("not json", {"nope": []}, [], 7, None):
-            batch = parse_proposals(raw, allowed_ordinals=allowed)
+            batch = parse_proposals(raw, manifest=window)
             assert batch.proposals == ()
             assert batch.degraded is True
 
     def test_the_cap_truncates_and_records_the_overflow(self) -> None:
-        allowed = {str(n) for n in range(1, 13)}
+        window = build_manifest(
+            [
+                CollectedItem(
+                    source=SOURCE_INBOX,
+                    source_id=f"inbox-{n:02d}",
+                    title=f"message {n}",
+                    ts=f"2026-08-24T{n:02d}:00:00+00:00",
+                )
+                for n in range(1, 13)
+            ]
+        )
         raw = {"proposals": [_proposal(str(n)) for n in range(1, 13)]}
-        batch = parse_proposals(raw, allowed_ordinals=allowed)
+        batch = parse_proposals(raw, manifest=window)
         assert len(batch.proposals) == MAX_PROPOSALS
         assert sum(1 for r in batch.refused if r.reason == "over_cap") == 12 - MAX_PROPOSALS
 
     def test_an_undeclared_action_type_is_refused(self) -> None:
-        allowed = build_manifest(_items()).ordinals()
-        batch = parse_proposals(
-            {"proposals": [_proposal("1", "send_email")]}, allowed_ordinals=allowed
-        )
+        window = build_manifest(_items())
+        batch = parse_proposals({"proposals": [_proposal("1", "send_email")]}, manifest=window)
         assert batch.proposals == ()
         assert batch.refused[0].reason == "unknown_action_type"
 
     def test_a_none_action_is_not_a_proposal(self) -> None:
-        allowed = build_manifest(_items()).ordinals()
-        batch = parse_proposals({"proposals": [_proposal("1", "none")]}, allowed_ordinals=allowed)
+        window = build_manifest(_items())
+        batch = parse_proposals({"proposals": [_proposal("1", "none")]}, manifest=window)
         assert batch.proposals == ()
         assert batch.refused[0].reason == "no_action"
 

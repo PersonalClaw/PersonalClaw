@@ -68,6 +68,7 @@ const PENDING = {
   tier: 'medium',
   pattern_key: 'reply_draft:inbox',
   clamped: true,
+  action_config: {},
   reason: 'needs_you',
   rule: '',
   not_done: '',
@@ -519,6 +520,29 @@ describe('a proposal row announces a concise name', () => {
     const row = await screen.findByRole('listitem', { name: 'Proposal 1: Act on item 1' })
     expect(row.textContent).toContain('Act on')
     expect(row.textContent).toContain('item 1')
+  })
+
+  it('shows and names the task a Yes would file, by the title its run recorded', async () => {
+    // Yes files the task under this title, so it is on the row before she answers: what she
+    // approves is what she reads.
+    const TASK = {
+      ...PENDING, action_type: 'create_task', tier: 'low', clamped: false,
+      pattern_key: 'create_task:sender:venue', action_config: { title: 'Renew the venue booking' },
+      title: 'Your booking for the spring talk venue lapses next week.',
+    }
+    proactiveDigest.mockResolvedValue(view({ pending: [TASK] }))
+    render(<TriageDigestCard />)
+    const row = await screen.findByRole('listitem', {
+      name: 'Proposal 1: File a task for Your booking for the spring talk venue lapses next week., as the task “Renew the venue booking”, inbox',
+    })
+    expect(row.textContent).toContain('as the task “Renew the venue booking”')
+  })
+
+  it('names no task for a proposal that binds none — the pair', async () => {
+    proactiveDigest.mockResolvedValue(view({ pending: [PENDING] }))
+    render(<TriageDigestCard />)
+    const reply = await screen.findByRole('listitem', { name: 'Proposal 1: Draft a reply to Review request on #412, inbox' })
+    expect(reply.textContent).not.toContain('as the task')
   })
 })
 

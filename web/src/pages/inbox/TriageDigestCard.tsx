@@ -474,7 +474,9 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
   // cannot disagree. In particular the verb is NOT conditional on `action_type`: `proposedVerb('')`
   // answers 'Act on', which is what the paragraph below prints, and a guard here would have named the row
   // differently from the row itself in exactly the case where the field is missing.
-  const label = `Proposal ${n}: ${proposedVerb(row.action_type)} ${row.title || `item ${n}`}${row.source ? `, ${row.source}` : ''}`
+  // The task a Yes files, by the title its run recorded: what she approves is what she reads.
+  const task = row.action_config?.title || ''
+  const label = `Proposal ${n}: ${proposedVerb(row.action_type)} ${row.title || `item ${n}`}${task ? `, as the task “${task}”` : ''}${row.source ? `, ${row.source}` : ''}`
   // An answered proposal keeps its row and says what was answered. Removing it would make a reply
   // look like it did nothing; re-offering the buttons would invite a second, duplicate answer.
   return (
@@ -484,6 +486,9 @@ function PendingRow({ row, busy, onReply }: { row: TriagePending; busy: string; 
           <span className="mr-1 text-on-surface-low">#{n}</span>
           <span style={fvs(600)}>{proposedVerb(row.action_type)}</span> {row.title || `item ${n}`}
         </p>
+        {task && (
+          <p data-type="caption" className="truncate text-on-surface">as the task “{task}”</p>
+        )}
         <p data-type="caption" className="mt-0.5 flex flex-wrap items-center gap-s">
           <TierBadge tier={row.tier} clamped={row.clamped} />
           {row.source && <span className="text-on-surface-low">{row.source}</span>}
@@ -582,7 +587,6 @@ const PROPOSED_VERB: Record<string, string> = {
   dismiss: 'Dismiss',
   reply_draft: 'Draft a reply to',
   create_task: 'File a task for',
-  remind: 'Remind you about',
 }
 
 /** What an action that LANDED did. Only `auto_done` rows, which the server fills with landed

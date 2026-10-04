@@ -84,6 +84,9 @@ class CollectedItem:
     permalink: str = ""
     ts: str = ""
     ordinal: str = ""
+    #: Whether the item's message takes a reply (an Inbox row's ``can_reply``): what a reply
+    #: proposal needs. False for every other lane, which has no message to answer.
+    can_reply: bool = False
 
     @property
     def fingerprint(self) -> str:
@@ -234,6 +237,9 @@ def render_manifest_lines(manifest: Manifest) -> str:
     a single fence around a composed block lets one crafted item's content read as
     commentary on its neighbours, and per-item provenance is what makes `source_id`
     available to a reader auditing which row produced a proposal.
+
+    The lane tag, outside the fence, also says when an Inbox message takes no reply: the
+    proposal prompt offers a reply only for one that does.
     """
     from personalclaw.security import fence_untrusted
 
@@ -247,7 +253,10 @@ def render_manifest_lines(manifest: Manifest) -> str:
             source_id=item.source_id,
             transformation_path="collect",
         )
-        lines.append(f"{item.ordinal}. [{item.source}] {fenced}")
+        lane = item.source
+        if item.source == SOURCE_INBOX and not item.can_reply:
+            lane = f"{item.source}, takes no reply"
+        lines.append(f"{item.ordinal}. [{lane}] {fenced}")
     return "\n".join(lines)
 
 

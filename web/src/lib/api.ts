@@ -4918,6 +4918,9 @@ export interface TriageAutoDone {
  *  offer "always" for it rather than inventing one. */
 export interface TriagePending {
   ordinal: string; action_type: string; tier: string; pattern_key: string; clamped: boolean
+  /** What the proposal bound when its run recorded it, and what its Yes carries out: a task's
+   *  `title` for "File a task", nothing for the other kinds (a reply is drafted when she says yes). */
+  action_config: { title?: string }
   reason: string; rule: string; answered: boolean; answer: string
   /** The server's sentence when the digest tried this on its own and it failed, or a safety rule
    *  or its limit held it: "Not done: …", with why and what to do next. Empty for a proposal

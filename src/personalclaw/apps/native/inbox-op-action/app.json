@@ -51,7 +51,7 @@
           "type": "string",
           "x-meta": {
             "label": "Draft Reply",
-            "help": "Body to write into the item's draft field. Only used by reply_draft — it is never sent.",
+            "help": "The text to write as the item's draft. Leave it empty to have the reply drafted in your voice, as the Inbox's Draft does. Only used by reply_draft, and never sent.",
             "tags": [
               "advanced"
             ]

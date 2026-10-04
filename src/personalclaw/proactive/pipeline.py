@@ -122,6 +122,10 @@ class TriageResult:
                     "tier": p.tier,
                     "pattern_key": p.pattern_key,
                     "clamped": p.clamped,
+                    # What the proposal bound (`proposals.ACTION_ARGUMENTS`): a Yes later carries
+                    # out the proposal as it was recorded here, the card shows it, and nothing is
+                    # re-derived when she answers.
+                    "action_config": dict(p.action_config),
                 }
                 for p in self.proposals
             ],
@@ -340,7 +344,10 @@ async def run_triage(
                     notes.append("proposal call failed: plain digest")
                     batch = ProposalBatch(degraded=True)
                 else:
-                    batch = parse_proposals(raw, allowed_ordinals=surviving.ordinals())
+                    # Against the survivors themselves, not just their ordinals: each proposal is
+                    # a Yes on the card, so one its item cannot take (an Inbox operation on a run,
+                    # a reply to a notice) is refused before it is offered.
+                    batch = parse_proposals(raw, manifest=surviving)
                     if len(batch.proposals) > cap:
                         batch = ProposalBatch(
                             proposals=batch.proposals[:cap],

@@ -26,7 +26,7 @@ from personalclaw.llm.base import EVENT_COMPLETE, EVENT_TEXT_CHUNK, LLMEvent
 from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
 from personalclaw.llm_helpers import parse_llm_json, parse_llm_json_list
-from personalclaw.proactive.manifest import SOURCE_INBOX, CollectedItem
+from personalclaw.proactive.manifest import SOURCE_INBOX, CollectedItem, build_manifest
 from personalclaw.routing import rates as rates_mod
 
 
@@ -139,6 +139,8 @@ _REVIEW = CollectedItem(
     title="please review my PR",
     sender="alex",
     ts="2026-08-24T02:00:00+00:00",
+    # It takes a reply, so the reply proposal for it is one the digest offers.
+    can_reply=True,
 )
 _NEWSLETTER = CollectedItem(
     source=SOURCE_INBOX,
@@ -220,7 +222,7 @@ def test_the_proposal_check_and_parser_take_every_answer_the_call_takes(answer):
 
     assert parse_llm_json(answer) is not None, "the one-shot call reads it as an object"
     assert proposals_problem(answer) == ""
-    batch = parse_proposals(answer, allowed_ordinals={"1"})
+    batch = parse_proposals(answer, manifest=build_manifest([_REVIEW]))
     assert batch.degraded is False
     assert [p.item_id for p in batch.proposals] == ["1"]
 
@@ -239,7 +241,7 @@ def test_the_proposal_check_still_refuses_an_answer_without_proposals(answer, wh
     from personalclaw.proactive.proposals import parse_proposals, proposals_problem
 
     assert proposals_problem(answer) == why
-    batch = parse_proposals(answer, allowed_ordinals={"1"})
+    batch = parse_proposals(answer, manifest=build_manifest([_REVIEW]))
     assert batch.degraded is True
     assert [(r.reason, r.detail) for r in batch.refused] == [("unparseable", why)]
 
@@ -254,7 +256,6 @@ def test_the_proposal_check_still_refuses_an_answer_without_proposals(answer, wh
 )
 def test_the_gate_check_and_parser_take_every_answer_the_call_takes(answer):
     from personalclaw.proactive.gate import dispositions_problem, parse_gate_output
-    from personalclaw.proactive.manifest import build_manifest
 
     manifest = build_manifest([_REVIEW, _NEWSLETTER])
 

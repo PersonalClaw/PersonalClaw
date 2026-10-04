@@ -528,6 +528,8 @@ def test_every_ZERO_TOKEN_entry_names_a_REAL_provider_and_no_model_one_is_listed
         ZERO_TOKEN_PROVIDERS - dispatchable_action_providers()
     )
     model_invoking = {
+        # Its reply_draft with no text given drafts the reply through the Inbox's drafting.
+        "inbox-op",
         "invoke-agent",
         "run-prompt",
         "run-workflow",

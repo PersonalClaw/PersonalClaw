@@ -439,11 +439,15 @@ def _persist_rule(request: web.Request, pattern: str, approve: bool) -> tuple[st
     """Teach one approval rule through the SAME guarded write the rules manager POSTs to.
 
     Returns ``(key, error)``. The write goes through ``MemoryService.set_semantic``, so the
-    injection scanner still sees the pattern text even though the user ratified it (§1.4).
+    injection scanner still sees the pattern text even though the user ratified it (§1.4). A
+    proposal with no pattern has nothing to remember, which is said rather than raised: the card
+    offers no "always" for one, and a typed "always" still answers the proposal once.
     """
     from personalclaw.dashboard.handlers.memory import _global_service
     from personalclaw.proactive.approval import ApprovalRule, Verdict, rule_to_value
 
+    if not pattern.strip():
+        return "", "this proposal has no pattern to remember, so nothing was taught"
     rule = ApprovalRule(
         pattern=pattern,
         verdict=Verdict.APPROVE if approve else Verdict.DENY,
@@ -459,7 +463,6 @@ def _persist_rule(request: web.Request, pattern: str, approve: bool) -> tuple[st
 
 #: Why a "yes" did not reach the action stage at all, beside the stage's own reasons
 #: (`autoexec.SKIP_*`).
-_NO_PATTERN = "no_recorded_pattern"
 _NOTHING_RETURNED = "nothing_returned"
 
 
@@ -496,27 +499,34 @@ async def _dispatch_approved(
     `autoexec.SKIP_*`, or that it never reached the stage); ``detail`` is then the sentence the
     card and the response show, in the words the digest uses (`autoexec.not_done_note`).
 
-    The user's tap is expressed as an in-memory approve rule for exactly this proposal's pattern
-    — never persisted, so a single "yes" does not silently become an "always" — and `cap=1`, so a
-    tap can dispatch one action and no more. Every guard PA-3 put in front of an unattended write
-    therefore runs here too, in the order it runs there.
+    The user's tap is expressed as an in-memory approve rule for exactly this one proposal —
+    never persisted, so a single "yes" does not silently become an "always" — keyed
+    :data:`REPLY_RULE`, so the run's journal names her answer as what allowed it rather than a
+    taught rule, and `cap=1`, so a tap can dispatch one action and no more. Its pattern is the
+    proposal's own, or its kind when the run recorded none: the rule is handed this one proposal
+    alone, so it authorises exactly what she saw, and a pattern is what "always" remembers, not
+    what one "yes" needs. The proposal runs as its run recorded it (its arguments), and the
+    capability the answer admits is its own kind's alone (`autoexec.answer_capabilities`), not
+    the digest's unattended set, which holds no task list. Every guard PA-3 put in front of an
+    unattended write therefore runs here too, in the order it runs there.
     """
     from datetime import datetime, timezone
 
     from personalclaw.proactive.approval import ApprovalRule, Verdict
-    from personalclaw.proactive.autoexec import auto_execute, not_done_note
+    from personalclaw.proactive.autoexec import (
+        SKIP_NO_PROVIDER,
+        answer_capabilities,
+        auto_execute,
+        not_done_note,
+    )
     from personalclaw.proactive.manifest import manifest_from_projection
     from personalclaw.proactive.proposals import Proposal
 
-    pattern = str(row.get("pattern_key", "") or "")
+    action_type = str(row.get("action_type", "") or "")
+    pattern = str(row.get("pattern_key", "") or "") or action_type
     if not pattern:
-        # No pattern means the run's output never recorded one, so there is nothing to authorise
-        # against. Refusing is the only honest answer: synthesising a pattern from the action type
-        # would authorise a class of actions the user never saw.
-        return _NO_PATTERN, (
-            "Not done: this proposal has no recorded pattern, so it cannot be authorised. "
-            "Open the item to do it yourself."
-        )
+        # A row with no kind names nothing to do.
+        return SKIP_NO_PROVIDER, not_done_note(SKIP_NO_PROVIDER, answered=True)
     manifest = manifest_from_projection(
         [
             {
@@ -531,19 +541,22 @@ async def _dispatch_approved(
         ],
         window_start=str(view.get("window_start", "") or ""),
     )
+    arguments = row.get("action_config")
     proposal = Proposal(
         item_id=str(row.get("ordinal", "") or ""),
-        action_type=str(row.get("action_type", "") or ""),
+        action_type=action_type,
         tier=str(row.get("tier", "") or ""),
+        action_config=dict(arguments) if isinstance(arguments, dict) else {},
         pattern_key=pattern,
     )
     result = await auto_execute(
         [proposal],
         manifest=manifest,
-        rules=[ApprovalRule(pattern=pattern, verdict=Verdict.APPROVE)],
+        rules=[ApprovalRule(pattern=pattern, verdict=Verdict.APPROVE, key=REPLY_RULE)],
         now=datetime.now(timezone.utc),
         enabled=True,
         cap=1,
+        capabilities=answer_capabilities(action_type),
         session_key=session_key,
         ledger=_run_ledger(run_id),
     )

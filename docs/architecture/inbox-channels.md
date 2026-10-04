@@ -76,6 +76,23 @@ against core protocols). Paths are relative to
   panel counts the draft against it; the shortened draft is the one checked. The route answers
   `{"item", "drafting"}`; the row's `context_summary` says what the draft stood on, and the SEL
   row names the notes the model was given.
+- **Morning triage proposes what a Yes carries out** (`proactive/`). Each proposal is a Yes button
+  on the digest card, so the closed set holds only what one carries out: archive, mute the thread
+  of or dismiss an Inbox message (`inbox-op`); have a reply drafted to an Inbox message that takes
+  one, by the drafting above (`inbox-op` with no text given calls `InboxService.draft_reply`: her
+  voice, its rules, its check), never sent; and file a task on her task list for any item
+  (`create-task`), under the title the proposal gave, which the card and the digest's text show,
+  else the item's own words. A proposal binds only what its kind declares
+  (`proposals.ACTION_ARGUMENTS`: a task's title), so neither the model nor a record on disk names
+  a provider, an operation, an item or a reply's text, and its pattern names only its own kind, so
+  it cannot ride a rule taught for another. One the item cannot take (an Inbox operation on a
+  channel conversation or a run, a reply to a message that takes none) is refused as
+  `cannot_act_on_item`, and a second proposal for one item as `duplicate_item`, since an answer
+  names the item by its number (`3 yes`): neither is offered. A Yes runs the proposal as its run
+  recorded it and admits only its own kind's provider (`autoexec.answer_capabilities`), not the
+  digest's unattended set (which has no task list); the run's journal names her answer
+  (`reply:you-approved`) as what allowed it, and one Yes needs no pattern, which only "always"
+  remembers. Nothing performs a reminder, so the digest proposes none.
 - **Agents read it** with `inbox_list` (`agents/native/inbox_tool_defs.py`): the open items
   (`OPEN_STATUSES`), newest first, with what each is, who raised it, when, and its text, the
   sender and text fenced as untrusted data. It declares itself a read, so a read-only automation
