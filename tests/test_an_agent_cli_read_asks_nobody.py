@@ -169,7 +169,7 @@ async def test_ask_mode_still_refuses_a_declared_change_before_anything_approves
 async def test_a_hook_that_denies_the_read_still_denies_it(tmp_path):
     from personalclaw.hooks import ToolHookResult
 
-    def _deny(title, *, cwd=None):
+    def _deny(title, *, cwd=None, command=None):
         if "memory_recall" in title:
             return ToolHookResult.deny("not this one")
         return ToolHookResult.allow()

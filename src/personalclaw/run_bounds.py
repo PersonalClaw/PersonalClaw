@@ -505,7 +505,14 @@ def screen(hooks: Any, event: Any, session_key: str, cwd: str | None = None) -> 
     from personalclaw.acp.permission_authority import screen_tool_call
     from personalclaw.hooks import TOOL_AUTO_APPROVE
 
-    verdict = screen_tool_call(hooks, str(event.title or ""), event.tool_input, cwd)
+    verdict = screen_tool_call(
+        hooks,
+        str(event.title or ""),
+        event.tool_input,
+        cwd,
+        tool_kind=str(getattr(event, "tool_kind", "") or ""),
+        declared=getattr(event, "risk_level", "") or "",
+    )
     reaches = off_list(event, session_key)
     if reaches and verdict.action == TOOL_AUTO_APPROVE:
         verdict = type(verdict).allow()

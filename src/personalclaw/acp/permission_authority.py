@@ -19,7 +19,8 @@ This module owns the three host-side answers:
 2. :func:`screen_tool_call` — the deny-list must see the REAL command, on every
    path that approves or asks about a call. A permission frame carries a truncated
    human title (``"unknown"`` on codex), so a deny pattern evaluated on the title
-   alone silently misses ``git push --force`` (:func:`command_probe`).
+   alone silently misses ``git push --force`` (:func:`command_probe`). An operator's
+   auto-approve pattern is decided on that command as well, never on the title.
 3. :data:`NOT_GATEABLE` — the residual set the host provably cannot gate, per
    provider, each entry carrying the observation that proved it. The honest half
    of §2.2: a gate that silently fails to cover a tool is worse than a documented
@@ -211,7 +212,13 @@ def _ceiling_permits_self_approval() -> bool:
 
 
 def screen_tool_call(
-    hooks: Any, title: str, tool_input: Any, cwd: str | os.PathLike[str] | None = None
+    hooks: Any,
+    title: str,
+    tool_input: Any,
+    cwd: str | os.PathLike[str] | None = None,
+    *,
+    tool_kind: str = "",
+    declared: object = "",
 ) -> Any:
     """The hook chain's verdict on a tool call put to an approval gate, made on the command that
     would RUN as well as on its title, which may not carry it (:func:`command_probe`).
@@ -223,8 +230,12 @@ def screen_tool_call(
     the gateway's own, which reads the hook settings at each call (``hooks.live_hook_manager``).
 
     The command is read from the call's input as text or as a list of words
-    (``task_modes.command_words``), and the probe is deny-only, so only the title's verdict can
-    auto-approve. A refusal made on the command says so (``on_command``).
+    (``task_modes.command_words``), and that probe only refuses. An operator's auto-approve pattern
+    is decided on the command a shell call runs (``task_modes.shell_call_command``, which asks what
+    the call is from its *tool_kind* and what its tool *declared*, so a path that acts on an
+    approval hands both over): it approves only the one command it names, read as the shell reads
+    it, and never on the strength of a title that leaves part of the command off. A refusal made on
+    the command says so (``on_command``).
 
     A call that names a path in long-term memory is refused here too, by the one screen of it the
     shell asks (``file_scope.memory_named_by_call``): a change there in work that may change none
@@ -243,6 +254,7 @@ def screen_tool_call(
     from personalclaw import owner_only
     from personalclaw.file_scope import memory_named_by_call
     from personalclaw.hooks import TOOL_DENY, ToolHookResult, live_hook_manager
+    from personalclaw.task_modes import shell_call_command
 
     chain = hooks if hooks is not None else live_hook_manager()
     command = command_of(tool_input)
@@ -264,7 +276,8 @@ def screen_tool_call(
             control="owner_only",
             rule=changes.word,
         )
-    return chain.on_tool_call(title, cwd=cwd)
+    runs = shell_call_command(title, tool_kind, tool_input, declared)
+    return chain.on_tool_call(title, cwd=cwd, command=runs)
 
 
 def command_of(tool_input: Any) -> str:

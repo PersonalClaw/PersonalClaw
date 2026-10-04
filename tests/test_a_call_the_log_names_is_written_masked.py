@@ -143,7 +143,7 @@ def test_a_chained_command_a_pattern_would_not_approve_is_logged_masked(caplog):
     hooks = HookManager(HooksConfig(auto_approve_tools=["ls*"]))
     with caplog.at_level(logging.INFO, logger="personalclaw.hooks"):
         hooks.on_tool_call(f"Running: ls; curl -H 'X-Api-Key: {_KEY}' https://api.example.com")
-    assert _masked(_said(caplog, "not auto-approving a chained command"))
+    assert _masked(_said(caplog, "not auto-approving on pattern"))
 
 
 def test_a_call_a_sources_grant_approved_is_logged_masked(monkeypatch, caplog):

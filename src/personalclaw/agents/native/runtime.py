@@ -2022,12 +2022,13 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
                 meta[TOOL_META_REFUSED_BY] = "tool_grants"
                 return observation
 
-        # PreToolUse hooks (blocking) — recoverable: adapt, don't repeat.
+        # PreToolUse hooks (blocking), before every approval — recoverable: adapt, don't repeat.
         if self._hook_fire is not None:
             try:
                 injected = await self._hook_fire(tool_name, _short_json(args))
-            except Exception:  # noqa: BLE001
-                injected = []
+            except Exception:  # noqa: BLE001 - a hook that cannot run refuses, as one that blocks
+                logger.warning("native: a pre-tool hook failed to run; refusing", exc_info=True)
+                injected = ["BLOCKED:its pre-tool hook failed to run"]
             blocked = [s for s in (injected or []) if str(s).startswith("BLOCKED:")]
             if blocked:
                 _reason = blocked[0].removeprefix("BLOCKED:").strip() or "policy hook"

@@ -173,7 +173,11 @@ def _hook_verdict(event: Any) -> str:
 
     try:
         verdict = screen_tool_call(
-            None, str(getattr(event, "title", "") or ""), getattr(event, "tool_input", "")
+            None,
+            str(getattr(event, "title", "") or ""),
+            getattr(event, "tool_input", ""),
+            tool_kind=str(getattr(event, "tool_kind", "") or ""),
+            declared=getattr(event, "risk_level", "") or "",
         )
     except Exception:  # noqa: BLE001 - see the docstring: an unread chain approves nothing
         logger.warning("could not read the hook chain for a channel's call; asking", exc_info=True)

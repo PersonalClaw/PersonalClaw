@@ -4192,7 +4192,9 @@
    {"annotation": "Any", "kind": "positional_or_keyword", "name": "hooks"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "title"},
    {"annotation": "Any", "kind": "positional_or_keyword", "name": "tool_input"},
-   {"annotation": "str | os.PathLike[str] | None", "default": "None", "kind": "positional_or_keyword", "name": "cwd"}
+   {"annotation": "str | os.PathLike[str] | None", "default": "None", "kind": "positional_or_keyword", "name": "cwd"},
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "tool_kind"},
+   {"annotation": "object", "default": "''", "kind": "keyword_only", "name": "declared"}
   ],
   "returns": "Any"
  },

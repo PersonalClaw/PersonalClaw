@@ -368,7 +368,22 @@ grants, is refused before its message is sent, and the owner is told why.
   `hooks.auto_deny_tools`, both read by the hook chain at each call through the same
   screen (`screen_tool_call`): on an agent CLI's call and on PersonalClaw's own agent's,
   whatever grant would answer it, and on Tools → Try it and a scheduled script's tool call
-  by the tool's name.
+  by the tool's name. An exception is applied only to a line the shell reads as one command
+  (`shell_syntax.one_command`), so a push joined to `git stash push`, the background `&`
+  included, is refused as the push it is.
+- **An operator's auto-approve pattern approves one command** (`hooks.auto_approve_tools`,
+  `hooks._pattern_verdict`). A pattern that names a command approves that command only, read
+  as the shell reads it (`shell_syntax`, the reader the task-mode gate reads commands with): a
+  second command joined by any operator the shell runs, the background `&` included, a redirect
+  other than one descriptor copied onto another (`2>&1`), and a substitution or other syntax
+  the reader does not parse are each more than it names, and the call asks. A shell call is
+  decided on the command its input gives (`task_modes.shell_call_command`), never on the
+  permission frame's title, which can be shorter than the command. `*`, a class-wide pattern
+  (`Running: *`) and a pattern that itself joins commands are matched as they are written, and
+  a pattern naming the shell tool itself (`bash`, `Terminal`) approves every command of it. A
+  call that runs no shell command is matched on its tool's name. On both runtimes the pre-tool
+  hooks run before any pattern, grant or person can approve a call, past the deny list and the
+  task mode, and a hook that blocks it or fails to run refuses it there.
 - **Credential screen** — `is_sensitive_bash_command`, run by the native bash tool
   (before its deny list), a bash action and the ACP permission hook. It refuses a command
   that names a file only its owner reads (`SensitivePaths` without the `$HOME`
@@ -932,7 +947,7 @@ from nothing else except a shell command's own text:
 - **A gateway log line that names a tool call writes its title masked** (`audit_subject.log_title`).
   An agent CLI titles a shell call with its command, so a line that named a call by its raw title
   (a permission asked or refused, a call refused with its batch or on an unattended run, a source's
-  grant, a chained command a pattern would not approve, a call that ran without asking or keeps
+  grant, a command that is more than a pattern names, a call that ran without asking or keeps
   failing) wrote whatever the command carried, and all of it. Each writes the title as the audit
   log writes a call's command (`audit_text`): masked, on one line, cut at 160 characters with a
   marker saying how much it left out. The log sinks' own mask (`MaskingFormatter`) is the floor

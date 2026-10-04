@@ -96,7 +96,7 @@ async def test_a_call_ask_mode_refused_says_so_on_its_card(tmp_path):
 async def test_a_command_the_shell_denylist_refused_says_which_rule(tmp_path):
     from personalclaw.security import is_denied
 
-    def _deny_listed(name, *, cwd=None):
+    def _deny_listed(name, *, cwd=None, command=None):
         reason = is_denied(name)
         return ToolHookResult.deny(reason) if reason else ToolHookResult.allow()
 

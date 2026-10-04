@@ -133,16 +133,13 @@ def subject_of(tool_name: str, tool_kind: str, tool_input: object) -> str:
     """
     try:
         from personalclaw.run_bounds import FILE_WRITES
-        from personalclaw.task_modes import SHELL_TITLE_PREFIXES, command_words, shell_command
+        from personalclaw.task_modes import shell_call_command
 
         name, kind = str(tool_name or ""), str(tool_kind or "")
         subject = kind_of_subject(name, kind)
         args = _arguments(tool_input)
         if subject == COMMAND:
-            command = shell_command(name, kind, tool_input) or command_words(tool_input)
-            if not command and name.lower().startswith(SHELL_TITLE_PREFIXES):
-                command = name.split(":", 1)[1].strip()
-            return command
+            return shell_call_command(name, kind, tool_input) or ""
         if subject == FILE_PATH and name in FILE_WRITES:
             path = args.get(FILE_WRITES[name])
             return path if isinstance(path, str) else ""

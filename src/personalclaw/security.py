@@ -26,6 +26,7 @@ from personalclaw.command_paths import (
     strip_shell_quotes,
 )
 from personalclaw.sel import SecurityEvent, SecurityEventLog
+from personalclaw.shell_syntax import one_command
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +55,13 @@ BUILTIN_DENY_PATTERNS: list[str] = [
 # Exceptions keyed by the deny pattern they apply to. If an input matches
 # a deny pattern AND one of that pattern's exceptions, the deny is skipped.
 # This avoids a blanket allowlist that could bypass unrelated deny rules.
-# Exceptions are NOT applied when the input contains command separators
-# (;, &&, ||, |, newlines) to prevent chaining bypasses.
+# An exception is applied only to an input the shell reads as one command
+# (`shell_syntax.one_command`, the reading an auto-approve pattern is held to):
+# a second command after `git stash push`, joined by any operator the shell
+# runs or run inside it, is a command the exception never named.
 _DENY_EXCEPTIONS: dict[str, list[str]] = {
     "*git*push*": ["* stash push*"],
 }
-
-_CMD_SEPARATOR_RE = re.compile(r"[;\n`]|\|\|?|&&|\$\(")
 
 # ── Sensitive Paths ──
 # Directories and files that must never be read by the agent.
@@ -713,7 +714,11 @@ def is_system_path(path_str: str) -> bool:
     return False
 
 
-#: Chain separators, the same set the deny path uses — one vocabulary for "more than one command".
+#: Where the home-``cd`` reading below cuts a line into the commands a moved shell runs next. It
+#: only ever adds a respelled path to what the credential screen matches. Whether a line is one
+#: command, which an approval and a deny exception are decided on, is the shell reader's answer
+#: (``shell_syntax.one_command``). A backgrounded ``cd ~ &`` moves no shell the next command
+#: runs in, so it is not a cut here.
 _CHAIN_SPLIT_RE = re.compile(r"(?:&&|\|\||;|\||\n)")
 
 #: A segment that moves the shell to the user's home: `cd`, `cd ~`, `cd $HOME`, `cd "${HOME}"`.
@@ -2434,15 +2439,14 @@ def is_denied(tool_name: str, extra_patterns: list[str] | None = None) -> str | 
     Returns denial reason string, or None if allowed.
     """
     lower = tool_name.lower()
-    has_separators = bool(_CMD_SEPARATOR_RE.search(lower))
     all_patterns = BUILTIN_DENY_PATTERNS + (extra_patterns or [])
     for pattern in all_patterns:
         if fnmatch.fnmatch(lower, pattern.lower()):
             exceptions = _DENY_EXCEPTIONS.get(pattern, [])
             if (
-                not has_separators
-                and exceptions
+                exceptions
                 and any(fnmatch.fnmatch(lower, e.lower()) for e in exceptions)
+                and one_command(lower) is not None
             ):
                 if not _emit_deny_exception_event(tool_name, pattern):
                     return f"Blocked by security policy: {pattern}"

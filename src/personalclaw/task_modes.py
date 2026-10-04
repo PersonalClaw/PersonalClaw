@@ -107,6 +107,26 @@ def shell_command(title: str, tool_kind: str, tool_input: object, declared: obje
     return extract_bash_command(tool_input)
 
 
+def shell_call_command(
+    title: str, tool_kind: str, tool_input: object, declared: object = ""
+) -> str | None:
+    """The command a shell call runs, or ``None`` for a call that is not one
+    (:func:`is_shell_invocation`): its ``command`` as text (:func:`shell_command`) or as a list of
+    words, joined the way a shell reads them (:func:`command_words`), and else the command its
+    ``Running: `` title names; ``""`` for a shell call whose command never arrived.
+
+    What a call's audit row records it ran (``audit_subject.subject_of``), and what an operator's
+    auto-approve pattern is decided on (``acp.permission_authority.screen_tool_call``).
+    """
+    if not is_shell_invocation(title, tool_kind, declared):
+        return None
+    command = shell_command(title, tool_kind, tool_input, declared) or command_words(tool_input)
+    name = str(title or "")
+    if not command and name.lower().startswith(SHELL_TITLE_PREFIXES):
+        command = name.split(":", 1)[1].strip()
+    return command
+
+
 def reads_only(title: str, tool_kind: str, tool_input: object, declared: object = "") -> bool:
     """Whether this ONE call is established as a read: what an approval surface publishes as
     ``is_read_only``.

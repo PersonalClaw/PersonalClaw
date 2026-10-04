@@ -471,7 +471,7 @@ class TestDenyListAtThePrompt:
     """Acceptance clause 2: the deny-list rejects a denied command at the prompt."""
 
     @staticmethod
-    def _deny_git_push(name, *, cwd=None):
+    def _deny_git_push(name, *, cwd=None, command=None):
         from personalclaw.security import is_denied
 
         reason = is_denied(name)

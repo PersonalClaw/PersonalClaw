@@ -1,16 +1,18 @@
 """How a shell splits a command line into words: the small subset of the shell an agent's command
-is read in (:mod:`personalclaw.command_effects`).
+is read in (:mod:`personalclaw.command_effects`), and the one reading of whether a line is a single
+command (:func:`one_command`), which an operator's auto-approve pattern and the deny list's
+exceptions are both held to (:mod:`personalclaw.hooks`, :mod:`personalclaw.security`).
 
 What is parsed: words, single and double quotes, backslash escapes, ``&&``, ``||``, ``;``,
 newlines, pipes, redirects and here-documents. A parameter expansion (``$NAME``, ``${NAME}``) is a
 word whose text is not known (``Word.opaque``), unless it is one of :data:`LEADING_VARIABLES`
 leading a path. A command substitution, a backtick, a subshell, a brace or a group, a background
-``&`` and a comment are not parsed: :func:`lex` answers ``None`` for a command holding one. A
-here-document's body is the program's input: one whose delimiter is quoted is text the shell leaves
-as written, and one that is not quoted is parsed only when its body holds no ``$``, backtick or
-backslash. A ``$`` inside double quotes is read as the literal character the shell leaves it as
-only before a closing quote, a space, ``|``, ``)``, ``/`` or ``.`` (a regular expression's end
-anchor).
+``&`` and a comment are not parsed: :func:`lex` answers ``None`` for a command holding one, and
+says which of them it met when asked (``unread``). A here-document's body is the program's input:
+one whose delimiter is quoted is text the shell leaves as written, and one that is not quoted is
+parsed only when its body holds no ``$``, backtick or backslash. A ``$`` inside double quotes is
+read as the literal character the shell leaves it as only before a closing quote, a space, ``|``,
+``)``, ``/`` or ``.`` (a regular expression's end anchor).
 
 This module imports nothing from PersonalClaw.
 """
@@ -74,6 +76,55 @@ LEADING_VARIABLES = frozenset({"TMPDIR", "HOME"})
 _EXPANDS_IN_BODY = frozenset("$`\\")
 #: Where a here-document's delimiter word ends.
 _DELIMITER_ENDS = frozenset(" \t\n;&|<>()")
+
+# ── What a line holds that this reader does not parse (``lex(…, unread=…)``) ──
+#: A command substitution: a backtick, ``$(…)`` or ``$((…))``, a ``${…}`` holding one included.
+SUBSTITUTION = "substitution"
+#: A subshell, or a process substitution (``<(…)``, ``>(…)``).
+SUBSHELL = "subshell"
+#: A group (``{ …; }``), or a brace expansion, which this reader cannot tell from one.
+GROUP = "group"
+#: A background job: a single ``&``.
+BACKGROUND = "background"
+#: A pipe of both output streams: ``|&``.
+BOTH_STREAMS = "both streams"
+#: The end of a ``case`` branch: ``;;``.
+CASE_BRANCH = "case branch"
+#: A comment: a ``#`` that begins a word.
+COMMENT = "comment"
+#: A ``$`` this reader does not parse: ``$'…'``, a ``${…}`` holding an expansion, a ``$`` alone.
+EXPANSION = "expansion"
+#: A quote that never closes, or a backslash that ends the line.
+UNCLOSED = "unclosed"
+#: A control character.
+CONTROL = "control character"
+#: A here-document whose delimiter or body this reader cannot read, or whose body never came.
+HERE_DOCUMENT = "here-document"
+#: What runs another command or joins one to the command before it. A line holding one is more than
+#: one command; the rest are syntax this reader cannot vouch for, whatever they hold.
+RUNS_ANOTHER: frozenset[str] = frozenset(
+    {SUBSTITUTION, SUBSHELL, BACKGROUND, BOTH_STREAMS, CASE_BRANCH}
+)
+
+
+def _declined(unread: list[str] | None, kind: str) -> list[Token] | None:
+    """:func:`lex`'s answer for a line it declines, ``None``, noting why for a caller that asked."""
+    if unread is not None:
+        unread.append(kind)
+    return None
+
+
+def _dollar_kind(text: str, i: int) -> str:
+    """What the ``$`` at *i*, which :func:`_expansion_end` does not parse, begins: a command
+    substitution (``$(``, or a ``${`` holding one before it closes), or another expansion."""
+    if text.startswith("$(", i):
+        return SUBSTITUTION
+    if text.startswith("${", i):
+        close = text.find("}", i)
+        inner = text[i + 2 : close if close >= 0 else len(text)]
+        if "$(" in inner or "`" in inner:
+            return SUBSTITUTION
+    return EXPANSION
 
 
 def _expansion_end(text: str, i: int) -> int | None:
@@ -151,8 +202,14 @@ def _skip_heredoc(text: str, i: int, delimiter: str, *, strip: bool, quoted: boo
     return None
 
 
-def lex(text: str) -> list[Token] | None:  # noqa: C901 - one pass over a small grammar
-    """Split *text* into words, operators and redirects, or ``None`` for syntax not parsed here."""
+def lex(  # noqa: C901 - one pass over a small grammar
+    text: str, *, unread: list[str] | None = None
+) -> list[Token] | None:
+    """Split *text* into words, operators and redirects, or ``None`` for syntax not parsed here.
+
+    *unread*, when given, is told what the declined syntax was: one of the kinds named above
+    (:data:`SUBSTITUTION`, :data:`BACKGROUND`, …), the first one met, appended once.
+    """
     tokens: list[Token] = []
     buf: list[str] = []
     glob_at = -1
@@ -200,13 +257,13 @@ def lex(text: str) -> list[Token] | None:  # noqa: C901 - one pass over a small 
                 delimiter, strip, quoted = pending.pop(0)
                 after = _skip_heredoc(text, i, delimiter, strip=strip, quoted=quoted)
                 if after is None:
-                    return None
+                    return _declined(unread, HERE_DOCUMENT)
                 i = after
         elif ord(c) < 32 or c == "\x7f":
-            return None
+            return _declined(unread, CONTROL)
         elif c == "\\":
             if i + 1 >= n:
-                return None
+                return _declined(unread, UNCLOSED)
             if text[i + 1] == "\n":  # a line continuation joins the lines
                 i += 2
                 continue
@@ -215,7 +272,7 @@ def lex(text: str) -> list[Token] | None:  # noqa: C901 - one pass over a small 
         elif c == "'":
             end = text.find("'", i + 1)
             if end < 0:
-                return None
+                return _declined(unread, UNCLOSED)
             take(text[i + 1 : end], quoted=True)
             i = end + 1
         elif c == '"':
@@ -225,7 +282,7 @@ def lex(text: str) -> list[Token] | None:  # noqa: C901 - one pass over a small 
                 d = text[j]
                 if d == "\\":
                     if j + 1 >= n:
-                        return None
+                        return _declined(unread, UNCLOSED)
                     e = text[j + 1]
                     if e in '$`"\\':
                         part.append(e)
@@ -234,11 +291,11 @@ def lex(text: str) -> list[Token] | None:  # noqa: C901 - one pass over a small 
                     j += 2
                     continue
                 if d == "`":
-                    return None
+                    return _declined(unread, SUBSTITUTION)
                 if d == "$" and (j + 1 >= n or text[j + 1] not in _LITERAL_DOLLAR_BEFORE):
                     stop = _expansion_end(text, j)
                     if stop is None:
-                        return None
+                        return _declined(unread, _dollar_kind(text, j))
                     expansion(text[j:stop], at_start=not in_word and not part)
                     part.append(text[j:stop])
                     j = stop
@@ -246,27 +303,29 @@ def lex(text: str) -> list[Token] | None:  # noqa: C901 - one pass over a small 
                 part.append(d)
                 j += 1
             if j >= n:
-                return None
+                return _declined(unread, UNCLOSED)
             take("".join(part), quoted=True)
             i = j + 1
         elif c == "$":
             stop = _expansion_end(text, i)
             if stop is None:
-                return None
+                return _declined(unread, _dollar_kind(text, i))
             expansion(text[i:stop], at_start=not in_word)
             take(text[i:stop], quoted=True)
             i = stop
         elif c in _UNPARSED:
-            return None
+            return _declined(
+                unread, SUBSTITUTION if c == "`" else (GROUP if c in "{}" else SUBSHELL)
+            )
         elif c == "#" and not in_word:
-            return None
+            return _declined(unread, COMMENT)
         elif c == "|":
             finish()
             if text.startswith("||", i):
                 tokens.append(("op", "||"))
                 i += 2
             elif text.startswith("|&", i):
-                return None
+                return _declined(unread, BOTH_STREAMS)
             else:
                 tokens.append(("op", "|"))
                 i += 1
@@ -281,10 +340,10 @@ def lex(text: str) -> list[Token] | None:  # noqa: C901 - one pass over a small 
                 tokens.append(("redir", Redirect("&", op)))
                 i += 1 + len(op)
             else:
-                return None  # a background job
+                return _declined(unread, BACKGROUND)
         elif c == ";":
             if text.startswith(";;", i):
-                return None
+                return _declined(unread, CASE_BRANCH)
             finish()
             tokens.append(("op", ";"))
             i += 1
@@ -302,7 +361,7 @@ def lex(text: str) -> list[Token] | None:  # noqa: C901 - one pass over a small 
                 strip = text.startswith("<<-", i)
                 found = _heredoc_delimiter(text, i + (3 if strip else 2))
                 if found is None:
-                    return None
+                    return _declined(unread, HERE_DOCUMENT)
                 delimiter, quoted, i = found
                 pending.append((delimiter, strip, quoted))
                 tokens.append(("redir", Redirect(fd, "<<")))
@@ -321,7 +380,7 @@ def lex(text: str) -> list[Token] | None:  # noqa: C901 - one pass over a small 
             i += 1
     finish()
     if pending:
-        return None  # a here-document whose body never came
+        return _declined(unread, HERE_DOCUMENT)
     return tokens
 
 
@@ -361,4 +420,71 @@ def simple_commands(tokens: list[Token]) -> list[Simple] | None:
     return out
 
 
-__all__ = ["LEADING_VARIABLES", "Redirect", "Simple", "Token", "Word", "lex", "simple_commands"]
+def one_command(text: str) -> Simple | None:
+    """The one simple command *text* is, read as the shell reads it, or ``None`` when it is not
+    one: a second command joined to it by any operator the shell runs (``;``, ``&&``, ``||``,
+    ``|``, a new line), syntax this reader does not parse (a substitution, a subshell or a group, a
+    background ``&``, a comment, a quote that never closes), or no command at all.
+
+    What its redirects do is the caller's question (:attr:`Simple.redirects`,
+    :func:`duplicates_a_descriptor`)."""
+    tokens = lex(text)
+    if tokens is None:
+        return None
+    commands = simple_commands(tokens)
+    return commands[0] if commands is not None and len(commands) == 1 else None
+
+
+def joins_commands(text: str) -> bool:
+    """Whether *text*, read as the shell reads it, is more than one command: two commands joined
+    by an operator the shell runs, or a command that runs another (:data:`RUNS_ANOTHER`: a
+    substitution, a subshell, a background job). Syntax this reader cannot vouch for that does
+    neither (a quote that never closes, a comment) is not evidence of a second command."""
+    unread: list[str] = []
+    tokens = lex(text, unread=unread)
+    if tokens is None:
+        return bool(unread) and unread[0] in RUNS_ANOTHER
+    commands = simple_commands(tokens)
+    if commands is not None:
+        return len(commands) > 1
+    return any(kind == "op" and value != "\n" for kind, value in tokens)
+
+
+def duplicates_a_descriptor(redirect: Redirect, target: Word) -> bool:
+    """Whether one redirect only makes one descriptor a copy of another (``2>&1``, ``>&2``,
+    ``0<&3``): it opens no file and starts nothing. ``>&`` before anything but a descriptor's
+    number writes the file it names, stdout and stderr both, and ``>&-`` closes one."""
+    text = target.text
+    return (
+        redirect.op in (">&", "<&")
+        and text.isascii()
+        and text.isdigit()
+        and not target.opaque
+        and target.glob_at < 0
+    )
+
+
+__all__ = [
+    "BACKGROUND",
+    "BOTH_STREAMS",
+    "CASE_BRANCH",
+    "COMMENT",
+    "CONTROL",
+    "EXPANSION",
+    "GROUP",
+    "HERE_DOCUMENT",
+    "LEADING_VARIABLES",
+    "RUNS_ANOTHER",
+    "Redirect",
+    "SUBSHELL",
+    "SUBSTITUTION",
+    "Simple",
+    "Token",
+    "UNCLOSED",
+    "Word",
+    "duplicates_a_descriptor",
+    "joins_commands",
+    "lex",
+    "one_command",
+    "simple_commands",
+]

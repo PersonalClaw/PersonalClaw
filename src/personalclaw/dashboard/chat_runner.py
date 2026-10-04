@@ -4244,20 +4244,21 @@ async def run_chat(
                         },
                     )
                     continue
-                _pre_tool_hooks_fired = False
                 # The deny-list, on the REAL command as well as the display title
                 # (`screen_tool_call`, the one screen every approval path asks): an ACP
                 # permission frame's title is a truncated human string ("unknown" when the
                 # adapter sends none — G18), so the patterns read on the title alone silently
                 # miss `git push --force` while the card still offers it. Refused before
-                # anything could approve or ask about it; only the title's verdict can
-                # auto-approve. The verdict and its reason go to the transcript and to the model
-                # as the call's result.
+                # anything could approve or ask about it. An operator's auto-approve pattern is
+                # decided on the command a shell call runs, never on that title. The verdict and
+                # its reason go to the transcript and to the model as the call's result.
                 tool_result = acp_permission_authority.screen_tool_call(
                     state.context_builder.hooks if state.context_builder else None,
                     event.title,
                     event.tool_input,
                     cwd=_file_change_base(session),
+                    tool_kind=event.tool_kind,
+                    declared=getattr(event, "risk_level", "") or "",
                 )
                 if tool_result.action == TOOL_DENY:
                     _cmd = tool_result.on_command
@@ -4296,128 +4297,116 @@ async def run_chat(
                     state, session, session_key, event, _refuse_call, agent=_agent_label(session)
                 ):
                     continue
-                if state.context_builder:
-                    # An operator's auto-approve pattern is a grant at the `hook_based` level:
-                    # a `hook_based` ceiling lets it stand, an `ask` one sends the call on to ask.
-                    if tool_result.action == TOOL_AUTO_APPROVE and approval_grants.stands_for_call(
+                try:
+                    validated_tool = _validate_tool_name(event.title, event.tool_kind)
+                except ValueError as e:
+                    await _refuse_call(event, why=f"invalid tool name: {e}")
+                    note_refusal(session, event, f"its tool name is invalid ({e})")
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=event.title,
+                        tool_kind=event.tool_kind,
+                        outcome="denied",
+                        request_id=event.request_id,
+                        tool_input=event.tool_input,
+                        error=f"validation_failed: {e}",
+                        metadata={"decided_by": "validation", **_offered},
+                    )
+                    continue
+                # The pre-tool hooks, once, before anything can approve the call or ask about it:
+                # an operator's pattern, what the call declares, Trust reads, Trust, YOLO or a
+                # person. The built-in runtime fires them at the same point, past its deny-list
+                # and task mode and before its approval (`_guard_and_invoke`). A hook that blocks
+                # the call, or that fails to run, refuses it here.
+                try:
+                    _parsed_input = json.loads(event.tool_input) if event.tool_input else None
+                except Exception:
+                    _parsed_input = None
+                try:
+                    pre_hook_results = await _fire(
+                        HOOK_EVENT_PRE_TOOL_USE,
+                        tool_name=validated_tool,
+                        tool_input=_parsed_input,
+                    )
+                except Exception as hook_exc:
+                    await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
+                    note_refusal(session, event, turn_endings.HOOK_FAILED)
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=event.title,
+                        tool_kind=event.tool_kind,
+                        outcome="hook_error",
+                        request_id=event.request_id,
+                        tool_input=event.tool_input,
+                        error=str(hook_exc),
+                        metadata={"decided_by": "hook", **_offered},
+                    )
+                    continue
+                if any(r.startswith("BLOCKED:") for r in pre_hook_results):
+                    _blk_reason = turn_endings.blocked_reason(pre_hook_results)
+                    await _refuse_call(event, why=_blk_reason, kind="hook")
+                    note_refusal(session, event, f"a pre-tool hook blocked it ({_blk_reason})")
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=event.title,
+                        tool_kind=event.tool_kind,
+                        outcome="hook_blocked",
+                        request_id=event.request_id,
+                        tool_input=event.tool_input,
+                        metadata={"decided_by": "hook", **_offered},
+                    )
+                    continue
+                # An operator's auto-approve pattern is a grant at the `hook_based` level: a
+                # `hook_based` ceiling lets it stand, an `ask` one sends the call on to ask.
+                if (
+                    state.context_builder
+                    and tool_result.action == TOOL_AUTO_APPROVE
+                    and approval_grants.stands_for_call(
                         approval_grants.HOOK_PATTERN,
                         session_key=session_key,
                         event=event,
                         level=approval_grants.LEVEL_HOOK,
-                    ):
-                        try:
-                            validated_tool = _validate_tool_name(event.title, event.tool_kind)
-                        except ValueError as e:
-                            await _refuse_call(event, why=f"invalid tool name: {e}")
-                            note_refusal(session, event, f"its tool name is invalid ({e})")
-                            sel().log_tool_invocation(
-                                session_key=session_key,
-                                agent=_agent_label(session),
-                                source="dashboard",
-                                tool_name=event.title,
-                                tool_kind=event.tool_kind,
-                                outcome="denied",
-                                request_id=event.request_id,
-                                tool_input=event.tool_input,
-                                error=f"validation_failed: {e}",
-                                metadata={"decided_by": "validation", **_offered},
-                            )
-                        else:
-                            await _let_through(event)
-                            _tool_title = _broadcast_auto_tool(state, session, event)
-                            state.broadcast_ws(
-                                "activity_event",
-                                {
-                                    "session": session.key,
-                                    "kind": "permission",
-                                    "text": f"Auto-approved: {_tool_title}",
-                                },
-                            )
-                            sel().log_tool_invocation(
-                                session_key=session_key,
-                                agent=_agent_label(session),
-                                source="dashboard",
-                                tool_name=_tool_title,
-                                tool_kind=event.tool_kind,
-                                outcome="auto_approved",
-                                request_id=event.request_id,
-                                tool_input=event.tool_input,
-                                metadata={
-                                    **_offered,
-                                    "reason": approval_grants.HOOK_PATTERN,
-                                    "decided_by": approval_grants.HOOK_PATTERN,
-                                },
-                            )
-                            _settle_granted(
-                                state,
-                                session,
-                                tool=event.title,
-                                tool_input=event.tool_input,
-                                grant=approval_grants.HOOK_PATTERN,
-                            )
-                        continue
-                    try:
-                        validated_tool = _validate_tool_name(event.title, event.tool_kind)
-                    except ValueError as e:
-                        await _refuse_call(event, why=f"invalid tool name: {e}")
-                        note_refusal(session, event, f"its tool name is invalid ({e})")
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=_agent_label(session),
-                            source="dashboard",
-                            tool_name=event.title,
-                            tool_kind=event.tool_kind,
-                            outcome="denied",
-                            request_id=event.request_id,
-                            tool_input=event.tool_input,
-                            error=f"validation_failed: {e}",
-                            metadata={"decided_by": "validation", **_offered},
-                        )
-                        continue
-                    try:
-                        _parsed_input = json.loads(event.tool_input) if event.tool_input else None
-                    except Exception:
-                        _parsed_input = None
-                    try:
-                        pre_hook_results = await _fire(
-                            HOOK_EVENT_PRE_TOOL_USE,
-                            tool_name=validated_tool,
-                            tool_input=_parsed_input,
-                        )
-                    except Exception as hook_exc:
-                        await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
-                        note_refusal(session, event, turn_endings.HOOK_FAILED)
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=_agent_label(session),
-                            source="dashboard",
-                            tool_name=event.title,
-                            tool_kind=event.tool_kind,
-                            outcome="hook_error",
-                            request_id=event.request_id,
-                            tool_input=event.tool_input,
-                            error=str(hook_exc),
-                            metadata={"decided_by": "hook", **_offered},
-                        )
-                        continue
-                    if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                        _blk_reason = turn_endings.blocked_reason(pre_hook_results)
-                        await _refuse_call(event, why=_blk_reason, kind="hook")
-                        note_refusal(session, event, f"a pre-tool hook blocked it ({_blk_reason})")
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=_agent_label(session),
-                            source="dashboard",
-                            tool_name=event.title,
-                            tool_kind=event.tool_kind,
-                            outcome="hook_blocked",
-                            request_id=event.request_id,
-                            tool_input=event.tool_input,
-                            metadata={"decided_by": "hook", **_offered},
-                        )
-                        continue
-                    _pre_tool_hooks_fired = True
-                    # Hooks passed — fall through to trust-reads/trust/yolo/interactive
+                    )
+                ):
+                    await _let_through(event)
+                    _tool_title = _broadcast_auto_tool(state, session, event)
+                    state.broadcast_ws(
+                        "activity_event",
+                        {
+                            "session": session.key,
+                            "kind": "permission",
+                            "text": f"Auto-approved: {_tool_title}",
+                        },
+                    )
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=_tool_title,
+                        tool_kind=event.tool_kind,
+                        outcome="auto_approved",
+                        request_id=event.request_id,
+                        tool_input=event.tool_input,
+                        metadata={
+                            **_offered,
+                            "reason": approval_grants.HOOK_PATTERN,
+                            "decided_by": approval_grants.HOOK_PATTERN,
+                        },
+                    )
+                    _settle_granted(
+                        state,
+                        session,
+                        tool=event.title,
+                        tool_input=event.tool_input,
+                        grant=approval_grants.HOOK_PATTERN,
+                    )
+                    continue
                 # YOLO is your switch, for your chats: an app's conversation approves nothing on
                 # its own, which the posture above already put in `session._trust`.
                 yolo_active = not _app_chat and state.is_yolo_active()
@@ -4455,12 +4444,6 @@ async def run_chat(
                 ):
                     _unasked_by = approval_grants.TRUST_READS
                 if _unasked_by:
-                    try:
-                        validated_tool = _validate_tool_name(event.title, event.tool_kind)
-                    except ValueError as e:
-                        await _refuse_call(event, why=f"invalid tool name: {e}")
-                        note_refusal(session, event, f"its tool name is invalid ({e})")
-                        continue
                     await _let_through(event)
                     _tool_title = _broadcast_auto_tool(state, session, event)
                     session.append(
@@ -4509,71 +4492,6 @@ async def run_chat(
                 if _standing and approval_grants.stands_for_call(
                     _standing, session_key=session_key, event=event
                 ):
-                    try:
-                        validated_tool = _validate_tool_name(event.title, event.tool_kind)
-                    except ValueError as e:
-                        await _refuse_call(event, why=f"invalid tool name: {e}")
-                        note_refusal(session, event, f"its tool name is invalid ({e})")
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=_agent_label(session),
-                            source="dashboard",
-                            tool_name=event.title,
-                            tool_kind=event.tool_kind,
-                            outcome="denied",
-                            request_id=event.request_id,
-                            tool_input=event.tool_input,
-                            error=f"validation_failed: {e}",
-                            metadata={"decided_by": "validation", **_offered},
-                        )
-                        continue
-                    if not _pre_tool_hooks_fired:
-                        try:
-                            _parsed_input = (
-                                json.loads(event.tool_input) if event.tool_input else None
-                            )
-                        except Exception:
-                            _parsed_input = None
-                        try:
-                            pre_hook_results = await _fire(
-                                HOOK_EVENT_PRE_TOOL_USE,
-                                tool_name=validated_tool,
-                                tool_input=_parsed_input,
-                            )
-                        except Exception as hook_exc:
-                            await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
-                            note_refusal(session, event, turn_endings.HOOK_FAILED)
-                            sel().log_tool_invocation(
-                                session_key=session_key,
-                                agent=_agent_label(session),
-                                source="dashboard",
-                                tool_name=event.title,
-                                tool_kind=event.tool_kind,
-                                outcome="hook_error",
-                                request_id=event.request_id,
-                                tool_input=event.tool_input,
-                                error=str(hook_exc),
-                                metadata={"decided_by": "hook", **_offered},
-                            )
-                            continue
-                        if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                            _blk_reason = turn_endings.blocked_reason(pre_hook_results)
-                            await _refuse_call(event, why=_blk_reason, kind="hook")
-                            note_refusal(
-                                session, event, f"a pre-tool hook blocked it ({_blk_reason})"
-                            )
-                            sel().log_tool_invocation(
-                                session_key=session_key,
-                                agent=_agent_label(session),
-                                source="dashboard",
-                                tool_name=event.title,
-                                tool_kind=event.tool_kind,
-                                outcome="hook_blocked",
-                                request_id=event.request_id,
-                                tool_input=event.tool_input,
-                                metadata={"decided_by": "hook", **_offered},
-                            )
-                            continue
                     await _let_through(event)
                     _tool_title = _broadcast_auto_tool(state, session, event)
                     sel().log_tool_invocation(
@@ -4838,107 +4756,41 @@ async def run_chat(
                     session._trust_from_floor = ""  # yours now, not a floor's to withdraw
                     outcome = "approved"
                 if outcome == "approved":
-                    try:
-                        validated_tool = _validate_tool_name(event.title, event.tool_kind)
-                    except ValueError as e:
-                        await _refuse_call(event, why=f"invalid tool name: {e}")
-                        note_refusal(session, event, f"its tool name is invalid ({e})")
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=_agent_label(session),
-                            source="dashboard",
-                            tool_name=event.title,
-                            tool_kind=event.tool_kind,
-                            outcome="denied",
-                            request_id=event.request_id,
-                            tool_input=event.tool_input,
-                            error=f"validation_failed: {e}",
-                            metadata={
-                                "reason": "interactive",
-                                "decided_by": "validation",
-                                **_offered,
-                            },
-                        )
-                        break
-                    try:
-                        _parsed_input = json.loads(event.tool_input) if event.tool_input else None
-                    except Exception:
-                        _parsed_input = None
-                    try:
-                        pre_hook_results = await _fire(
-                            HOOK_EVENT_PRE_TOOL_USE,
-                            tool_name=validated_tool,
-                            tool_input=_parsed_input,
-                        )
-                    except Exception as hook_exc:
-                        await _refuse_call(event, why=turn_endings.HOOK_FAILED, kind="hook")
-                        note_refusal(session, event, turn_endings.HOOK_FAILED)
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=_agent_label(session),
-                            source="dashboard",
-                            tool_name=event.title,
-                            tool_kind=event.tool_kind,
-                            outcome="hook_error",
-                            request_id=event.request_id,
-                            tool_input=event.tool_input,
-                            error=str(hook_exc),
-                            metadata={"reason": "interactive", "decided_by": "hook", **_offered},
-                        )
-                        break
-                    if any(r.startswith("BLOCKED:") for r in pre_hook_results):
-                        _blk_reason = turn_endings.blocked_reason(pre_hook_results)
-                        await _refuse_call(event, why=_blk_reason, kind="hook")
-                        note_refusal(session, event, f"a pre-tool hook blocked it ({_blk_reason})")
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=_agent_label(session),
-                            source="dashboard",
-                            tool_name=event.title,
-                            tool_kind=event.tool_kind,
-                            outcome="hook_blocked",
-                            request_id=event.request_id,
-                            tool_input=event.tool_input,
-                            metadata={"reason": "interactive", "decided_by": "hook", **_offered},
-                        )
-                    else:
-                        await _let_through(event)
-                        _approved_title, _ = redact_exfiltration_urls(event.title)
-                        _approved_title, _ = redact_credentials(_approved_title)
-                        session.append(
-                            "tool",
-                            f"{_approved_title}",
-                            "msg msg-tool",
-                            meta=(
-                                {
-                                    "tool_call_id": event.tool_call_id,
-                                    "purpose": redact_credentials(
-                                        redact_exfiltration_urls((event.tool_purpose or "")[:200])[
-                                            0
-                                        ]
-                                    )[0],
-                                }
-                                if event.tool_call_id
-                                else None
-                            ),
-                        )
-                        sel().log_tool_invocation(
-                            session_key=session_key,
-                            agent=_agent_label(session),
-                            source="dashboard",
-                            tool_name=event.title,
-                            tool_kind=event.tool_kind,
-                            outcome="approved",
-                            request_id=event.request_id,
-                            tool_input=event.tool_input,
-                            metadata={
-                                **_offered,
-                                "reason": "interactive",
-                                "risk": effective_risk,
-                                "decided_by": approval_grants.YOU,
-                                **_asked_by,
-                            },
-                        )
+                    await _let_through(event)
+                    _approved_title, _ = redact_exfiltration_urls(event.title)
+                    _approved_title, _ = redact_credentials(_approved_title)
+                    session.append(
+                        "tool",
+                        f"{_approved_title}",
+                        "msg msg-tool",
+                        meta=(
+                            {
+                                "tool_call_id": event.tool_call_id,
+                                "purpose": redact_credentials(
+                                    redact_exfiltration_urls((event.tool_purpose or "")[:200])[0]
+                                )[0],
+                            }
+                            if event.tool_call_id
+                            else None
+                        ),
+                    )
+                    sel().log_tool_invocation(
+                        session_key=session_key,
+                        agent=_agent_label(session),
+                        source="dashboard",
+                        tool_name=event.title,
+                        tool_kind=event.tool_kind,
+                        outcome="approved",
+                        request_id=event.request_id,
+                        tool_input=event.tool_input,
+                        metadata={
+                            **_offered,
+                            "reason": "interactive",
+                            "risk": effective_risk,
+                            "decided_by": approval_grants.YOU,
+                            **_asked_by,
+                        },
+                    )
                 else:
                     # `cancelled` is the turn being stopped while it waited (see
                     # `DashboardState.cancel_approval`), and `expired` is its window closing with

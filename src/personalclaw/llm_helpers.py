@@ -358,7 +358,13 @@ async def _resolve_permission(
     caller = session_key or "background"
     # The deny-list is a floor (the shell denylist's, for a CLI's request): nobody is asked about
     # what cannot run, and no policy approves it.
-    tool_result = screen_tool_call(hooks, str(event.title or ""), event.tool_input)
+    tool_result = screen_tool_call(
+        hooks,
+        str(event.title or ""),
+        event.tool_input,
+        tool_kind=str(getattr(event, "tool_kind", "") or ""),
+        declared=getattr(event, "risk_level", "") or "",
+    )
     if tool_result.action == TOOL_DENY:
         await provider.reject_tool(event.request_id)
         control = tool_result.audit()
