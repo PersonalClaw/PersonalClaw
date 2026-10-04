@@ -454,21 +454,28 @@ def memory(tmp_path):
 
 def _memory_app(mem) -> web.Application:
     from personalclaw.dashboard.handlers.memory import (
-        api_memory_history,
+        api_memory_history_day,
         api_memory_preferences,
         api_memory_projects,
     )
 
     app = web.Application()
     app["state"] = SimpleNamespace(context_builder=SimpleNamespace(memory=mem))
-    for which, handler in (
+    for route, handler in (
         ("preferences", api_memory_preferences),
         ("projects", api_memory_projects),
-        ("history", api_memory_history),
+        ("history/{day}", api_memory_history_day),
     ):
-        app.router.add_get(f"/api/memory/{which}", handler)
-        app.router.add_put(f"/api/memory/{which}", handler)
+        app.router.add_get(f"/api/memory/{route}", handler)
+        app.router.add_put(f"/api/memory/{route}", handler)
     return app
+
+
+def _doc(which: str) -> str:
+    """Where *which* is read and saved whole: the history one day at a time, here today's."""
+    from personalclaw.memory import history_today
+
+    return f"history/{history_today()}" if which == "history" else which
 
 
 class TestTheMemoryDocuments:
@@ -479,19 +486,19 @@ class TestTheMemoryDocuments:
         self, memory, which, body
     ) -> None:
         async with TestClient(TestServer(_memory_app(memory))) as c:
-            base = await (await c.get(f"/api/memory/{which}")).json()
+            base = await (await c.get(f"/api/memory/{_doc(which)}")).json()
             seeded = await c.put(
-                f"/api/memory/{which}",
+                f"/api/memory/{_doc(which)}",
                 json={"content": base["content"] + "\n- the owner's line"},
                 headers=_based_on(base["revision"]),
             )
             assert seeded.status == 200, await seeded.text()
             kept = (await seeded.json())["content"]
             resp = await c.put(
-                f"/api/memory/{which}", json=body, headers=_based_on(revision_of(kept))
+                f"/api/memory/{_doc(which)}", json=body, headers=_based_on(revision_of(kept))
             )
             refusal = await resp.json()
-            stored = (await (await c.get(f"/api/memory/{which}")).json())["content"]
+            stored = (await (await c.get(f"/api/memory/{_doc(which)}")).json())["content"]
         assert resp.status == 400, refusal
         assert "content" in _message(refusal), refusal
         assert stored == kept and "the owner's line" in stored

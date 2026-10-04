@@ -18,8 +18,14 @@ several writers: the owner in Settings → Memory or the Files editor, the agent
 consolidation, which reads both, waits for its model (seconds, for a real one) and rewrites them.
 So a consolidation's rewrite is applied to each file as it is when the model has answered, never
 written over it from the copy it read (:meth:`MemoryStore.rewrite`, :func:`apply_rewrite`),
-and every writer of the documents reads and writes them under one lock
+and every writer of the documents and of the daily history reads and writes them under one lock
 (:func:`hold_documents`), so none lands between another's read and its write.
+
+**Each day of the daily history is its own file.** A consolidation appends its entry to today's;
+the owner reads and saves one day at a time (:meth:`MemoryStore.read_history_day`,
+:meth:`MemoryStore.write_history_day`), so a save of one day changes no other. The recent days read
+together (:meth:`MemoryStore.read_recent_history`) are what the agent's context carries, older days
+cut short, and are never written back.
 """
 
 import fcntl
@@ -78,9 +84,9 @@ def memory_dir() -> Path:
 
 # ── The documents' writers ──
 
-#: The memory documents' lock (``concurrency.lock_path``): one for every memory's preferences.md
-#: and projects.md, in the home's ``locks/`` rather than beside them, where it would be listed and
-#: copied with the memory.
+#: The memory documents' lock (``concurrency.lock_path``): one for every memory's preferences.md,
+#: projects.md and daily history, in the home's ``locks/`` rather than beside them, where it would
+#: be listed and copied with the memory.
 _DOCUMENTS_LOCK = "memory-documents"
 
 
@@ -88,14 +94,17 @@ _DOCUMENTS_LOCK = "memory-documents"
 def hold_documents() -> Iterator[None]:
     """Hold the memory documents' lock, waiting for it, while a document is read and written.
 
-    Every writer of preferences.md and projects.md holds it across its read and its write: a
-    consolidation applying its rewrite (:meth:`MemoryStore.rewrite`), the Memory page's
-    save, :meth:`MemoryStore.add_preference`, the boot that creates the files, a partition's
-    documents moving into another, and the Files editor's save and the agent's ``write_file`` and
-    ``edit_file`` (``write_locks``). ``flock`` on a file opened for this hold, so it excludes
-    another thread as it does another process (the ``personalclaw consolidate`` command), and the
-    OS frees it if the holder dies. Not re-entrant: nothing done while it is held may take it
-    again. A command the agent's shell runs, or another program, takes no lock.
+    Every writer of preferences.md, projects.md and the days of the daily history holds it across
+    its read and its write: a consolidation applying its rewrite (:meth:`MemoryStore.rewrite`) and
+    appending its entry (:meth:`MemoryStore.append_history`), the Memory page's save of a document
+    or of a day, :meth:`MemoryStore.add_preference`, the removal at start of what an Incognito or
+    Temporary chat left in the history (:meth:`MemoryStore.forget_history_entries`), the boot that
+    creates the files, a partition's documents moving into another, and the Files editor's save and
+    the agent's ``write_file`` and ``edit_file`` (``write_locks``). ``flock`` on a file opened for
+    this hold, so it excludes another thread as it does another process (the ``personalclaw
+    consolidate`` command), and the OS frees it if the holder dies. Not re-entrant: nothing done
+    while it is held may take it again. A command the agent's shell runs, or another program, takes
+    no lock.
     """
     from personalclaw.concurrency import lock_path
 
@@ -108,12 +117,42 @@ def hold_documents() -> Iterator[None]:
 
 
 def is_document(path: Path | str) -> bool:
-    """Whether *path* is a memory document, a preferences.md or projects.md in a memory folder,
-    named directly or through a link. Known by where every store keeps them, so a file of that name
-    in a folder of that name elsewhere counts too, which only makes its write wait for a memory
-    document's."""
+    """Whether *path* is a memory document: a preferences.md or projects.md in a memory folder, or a
+    day of its daily history (a ``.md`` file in the memory folder's ``history``), named directly or
+    through a link. Known by where every store keeps them, so a file of that name in a folder of
+    that name elsewhere counts too, which only makes its write wait for a memory document's."""
     real = Path(os.path.realpath(path))
-    return real.name in (PREFERENCES_FILE, PROJECTS_FILE) and real.parent.name == MEMORY_DIR_NAME
+    if real.parent.name == MEMORY_DIR_NAME:
+        return real.name in (PREFERENCES_FILE, PROJECTS_FILE)
+    return (
+        real.suffix == ".md"
+        and real.parent.name == HISTORY_DIR_NAME
+        and real.parent.parent.name == MEMORY_DIR_NAME
+    )
+
+
+#: How the daily history names a day: its file is ``history/<YYYY-MM-DD>.md``.
+_DAY = "%Y-%m-%d"
+
+
+def is_history_day(name: str) -> bool:
+    """Whether *name* names a day as the daily history does: a date of the calendar, ``YYYY-MM-DD``
+    exactly."""
+    try:
+        return datetime.strptime(name, _DAY).strftime(_DAY) == name
+    except ValueError:
+        return False
+
+
+def history_today() -> str:
+    """Today, as the daily history names it: the date where the gateway runs."""
+    return datetime.now().strftime(_DAY)
+
+
+def _entry_count(text: str) -> int:
+    """How many entries a day of the daily history holds: one under each ``#### <time>`` heading,
+    as :meth:`MemoryStore.append_history` writes them."""
+    return sum(1 for line in text.splitlines() if line.startswith("#### "))
 
 
 def apply_rewrite(read: str, now: str, rewrite: str) -> str | None:
@@ -609,44 +648,73 @@ class MemoryStore:
 
     # ── Daily History ──
 
+    def _history_file(self, day: str) -> Path:
+        """Where the daily history keeps *day* (``YYYY-MM-DD``). Any other name is refused rather
+        than made into a path: it could name a file outside the history."""
+        if not is_history_day(day):
+            raise ValueError(f"not a day of the daily history: {day!r}")
+        return self._history_dir / f"{day}.md"
+
     def _today_history_file(self) -> Path:
-        date = datetime.now().strftime("%Y-%m-%d")
-        return self._history_dir / f"{date}.md"
+        return self._history_file(history_today())
+
+    def history_days(self) -> list[tuple[str, int]]:
+        """Each day the daily history keeps a file for, newest first, with how many entries the
+        file holds."""
+        if not self._history_dir.is_dir():
+            return []
+        days = [
+            (path.stem, _entry_count(path.read_text(encoding="utf-8", errors="replace")))
+            for path in self._history_dir.glob("*.md")
+            if is_history_day(path.stem)
+        ]
+        return sorted(days, reverse=True)
+
+    def read_history_day(self, day: str) -> str:
+        """The daily history file of *day* (``YYYY-MM-DD``) as it is kept, or "" when there is
+        none."""
+        path = self._history_file(day)
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def write_history_day(self, day: str, content: str) -> None:
+        """Replace the daily history file of *day* (``YYYY-MM-DD``) with *content*, and index it.
+        No other day's file is touched. A writer that read the file first writes under the
+        documents' lock (:func:`hold_documents`), held across both."""
+        path = self._history_file(day)
+        make_private_dirs(self._history_dir)
+        self._persist(path, content)
 
     def append_history(self, entry: str) -> None:
-        """Append a timestamped entry to today's daily history file."""
+        """Append a timestamped entry to today's daily history file, read and written under the
+        documents' lock (:func:`hold_documents`)."""
         make_private_dirs(self._history_dir)
-        path = self._today_history_file()
         timestamp = datetime.now().astimezone().strftime("%H:%M %Z")
-
-        content = ""
-        if path.exists():
-            content = path.read_text(encoding="utf-8")
-        if not content:
-            date = datetime.now().strftime("%Y-%m-%d")
-            content = f"# {date}\n"
-
-        content += f"\n#### {timestamp}\n{entry.strip()}\n"
-        self._persist(path, content)
+        with hold_documents():
+            day = history_today()
+            content = self.read_history_day(day) or f"# {day}\n"
+            content += f"\n#### {timestamp}\n{entry.strip()}\n"
+            self._persist(self._history_file(day), content)
 
     def forget_history_entries(self, entries: "set[str]") -> int:
         """Remove from the daily history every entry whose text is one of ``entries``, verbatim.
 
         Returns how many entries went. What the consolidator appended for a session that keeps
         nothing is removed this way at start (see ``memory_writes``); an entry that is not word for
-        word one of ``entries`` is left as it is.
+        word one of ``entries`` is left as it is. Each day is read and written under the documents'
+        lock (:func:`hold_documents`).
         """
         wanted = {e.strip() for e in entries if e and e.strip()}
         if not wanted or not self._history_dir.is_dir():
             return 0
         removed = 0
-        for path in sorted(self._history_dir.glob("*.md")):
-            content = path.read_text(encoding="utf-8")
-            head, *blocks = content.split("\n#### ")
-            kept = [b for b in blocks if b.partition("\n")[2].strip() not in wanted]
-            if len(kept) != len(blocks):
-                removed += len(blocks) - len(kept)
-                self._persist(path, "\n#### ".join([head, *kept]))
+        with hold_documents():
+            for path in sorted(self._history_dir.glob("*.md")):
+                content = path.read_text(encoding="utf-8")
+                head, *blocks = content.split("\n#### ")
+                kept = [b for b in blocks if b.partition("\n")[2].strip() not in wanted]
+                if len(kept) != len(blocks):
+                    removed += len(blocks) - len(kept)
+                    self._persist(path, "\n#### ".join([head, *kept]))
         return removed
 
     def take_in_documents(self, other: "MemoryStore") -> None:
@@ -656,7 +724,7 @@ class MemoryStore:
         not added again, so taking the same documents twice changes nothing."""
         if other is self:
             return
-        # Each document read and written under the documents' lock (`hold_documents`).
+        # Each document and each day read and written under the documents' lock (`hold_documents`).
         with hold_documents():
             mine = self.read_preferences()
             held = set(mine.splitlines())
@@ -670,17 +738,19 @@ class MemoryStore:
                 current = self.read_projects()
                 if body and body not in current:
                     self._persist(self._projects_file, current.rstrip("\n") + "\n\n" + body + "\n")
-        if not other._history_dir.is_dir():
-            return
-        for path in sorted(other._history_dir.glob("*.md")):
-            entries = path.read_text(encoding="utf-8").split("\n#### ")[1:]
-            target = self._history_dir / path.name
-            current = target.read_text(encoding="utf-8") if target.exists() else f"# {path.stem}\n"
-            kept = set(current.split("\n#### ")[1:])
-            add = [entry for entry in entries if entry not in kept]
-            if add:
-                make_private_dirs(self._history_dir)
-                self._persist(target, current + "".join("\n#### " + entry for entry in add))
+            if not other._history_dir.is_dir():
+                return
+            for path in sorted(other._history_dir.glob("*.md")):
+                entries = path.read_text(encoding="utf-8").split("\n#### ")[1:]
+                target = self._history_dir / path.name
+                current = (
+                    target.read_text(encoding="utf-8") if target.exists() else f"# {path.stem}\n"
+                )
+                kept = set(current.split("\n#### ")[1:])
+                add = [entry for entry in entries if entry not in kept]
+                if add:
+                    make_private_dirs(self._history_dir)
+                    self._persist(target, current + "".join("\n#### " + entry for entry in add))
 
     def _history_files_over_retention(self, keep_days: int) -> list[Path]:
         """Daily history files older than *keep_days*. Shared by the prune and its

@@ -5228,6 +5228,14 @@ export interface MemoryPartition {
   projects: { id: string; name: string }[]
   semantic: number; episodic: number
 }
+/** A markdown memory document, read and saved whole as the file it is kept in: the preferences, the
+ *  projects, or one day of the daily history (`history/<YYYY-MM-DD>`). The history has no document
+ *  of several days: each day is its own file, so a save of one day changes no other. */
+export type MemoryDoc = 'preferences' | 'projects' | `history/${string}`
+/** The days of the daily history, as `GET /api/memory/history` lists them: newest first, each with
+ *  how many entries its file holds, and today among them whether or not anything is recorded for
+ *  it yet. `today` is the gateway's date, which names the day its entries are written to. */
+export interface MemoryHistoryDays { today: string; days: { date: string; entries: number }[] }
 // The auto-linked memory graph: fact nodes (grouped by key namespace) + relations.
 // `ref` is a stable un-hashed handle onto the source memory (`sem:<key>`, `lesson:<rule>`,
 // …) — the Memory Studio maps a selected list entry to its node by ref, not by re-hashing.
@@ -8193,14 +8201,16 @@ export const api = {
   memoryFacetForget: (key: string, partition = '') =>
     post<{ ok: boolean }>(inMemory(`/api/memory/facets/${encodeURIComponent(key)}/forget`, partition)),
   memoryGraphRebuild: (partition = '') => post<MemoryGraphRebuild>(inMemory('/api/memory/graph/rebuild', partition)),
-  // Raw markdown memory files (preferences / projects / history) — GET+PUT {content}. The gateway
-  // writes these too (the consolidator, the agent's memory tool), so the read carries the revision
-  // and the PUT — a whole-file replace — names it (`lib/staleWrite.ts`). The save answers with what
-  // is STORED and its revision: the projects write adds its header to a body without one.
-  memoryDoc: (which: 'preferences' | 'projects' | 'history', partition = '') =>
+  // Raw markdown memory files (preferences / projects / one day of history) — GET+PUT {content}.
+  // The gateway writes these too (the consolidator, the agent's memory tool), so the read carries
+  // the revision and the PUT — a whole-file replace — names it (`lib/staleWrite.ts`). The save
+  // answers with what is STORED and its revision: the projects write adds its header to a body
+  // without one.
+  memoryHistoryDays: (partition = '') => get<MemoryHistoryDays>(inMemory('/api/memory/history', partition)),
+  memoryDoc: (which: MemoryDoc, partition = '') =>
     get<{ content: string; revision: string }>(inMemory(`/api/memory/${which}`, partition)).then(
       (d): Revisioned<string> => ({ value: d.content, revision: d.revision })),
-  saveMemoryDoc: (which: 'preferences' | 'projects' | 'history', content: string, base: string, partition = '') =>
+  saveMemoryDoc: (which: MemoryDoc, content: string, base: string, partition = '') =>
     put<{ ok: boolean; content: string; revision: string }>(inMemory(`/api/memory/${which}`, partition), { content }, basedOn(base)).then(
       (d): Revisioned<string> => ({ value: d.content, revision: d.revision })),
   // Legacy-markdown → vector-store migration + JSON import (maintenance flows).

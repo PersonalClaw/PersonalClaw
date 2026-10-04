@@ -408,7 +408,7 @@ class TestSnippet:
             assert resp.status == 200, await resp.text()
 
 
-# ── PUT /api/memory/{preferences|projects|history} ────────────────────────────────────────
+# ── PUT /api/memory/{preferences|projects|history/{day}} ──────────────────────────────────
 
 
 @pytest.fixture
@@ -422,24 +422,31 @@ def memory(tmp_path):
 
 def _memory_app(mem) -> web.Application:
     from personalclaw.dashboard.handlers.memory import (
-        api_memory_history,
+        api_memory_history_day,
         api_memory_preferences,
         api_memory_projects,
     )
 
     app = web.Application()
     app["state"] = SimpleNamespace(context_builder=SimpleNamespace(memory=mem))
-    for which, handler in (
+    for route, handler in (
         ("preferences", api_memory_preferences),
         ("projects", api_memory_projects),
-        ("history", api_memory_history),
+        ("history/{day}", api_memory_history_day),
     ):
-        app.router.add_get(f"/api/memory/{which}", handler)
-        app.router.add_put(f"/api/memory/{which}", handler)
+        app.router.add_get(f"/api/memory/{route}", handler)
+        app.router.add_put(f"/api/memory/{route}", handler)
     return app
 
 
 DOCS = ("preferences", "projects", "history")
+
+
+def _doc(which: str) -> str:
+    """Where *which* is read and saved whole: the history one day at a time, here today's."""
+    from personalclaw.memory import history_today
+
+    return f"history/{history_today()}" if which == "history" else which
 
 
 class TestMemoryDoc:
@@ -447,34 +454,34 @@ class TestMemoryDoc:
     @pytest.mark.asyncio
     async def test_two_saves_from_one_read_the_second_is_refused(self, memory, which) -> None:
         async with TestClient(TestServer(_memory_app(memory))) as c:
-            read = await (await c.get(f"/api/memory/{which}")).json()
+            read = await (await c.get(f"/api/memory/{_doc(which)}")).json()
             base = read["revision"]
             assert base == revision_of(read["content"])
             first = await c.put(
-                f"/api/memory/{which}",
+                f"/api/memory/{_doc(which)}",
                 json={"content": read["content"] + "\n- tab A's line"},
                 headers=_based_on(base),
             )
             assert first.status == 200
             second = await c.put(
-                f"/api/memory/{which}",
+                f"/api/memory/{_doc(which)}",
                 json={"content": read["content"] + "\n- tab B's line"},
                 headers=_based_on(base),
             )
             assert second.status == 409
             assert await _code(second) == "stale_write"
-            stored = (await (await c.get(f"/api/memory/{which}")).json())["content"]
+            stored = (await (await c.get(f"/api/memory/{_doc(which)}")).json())["content"]
         assert "tab A's line" in stored and "tab B's line" not in stored
 
     @pytest.mark.parametrize("which", DOCS)
     @pytest.mark.asyncio
     async def test_a_save_that_names_no_revision_is_refused(self, memory, which) -> None:
         async with TestClient(TestServer(_memory_app(memory))) as c:
-            before = (await (await c.get(f"/api/memory/{which}")).json())["content"]
-            resp = await c.put(f"/api/memory/{which}", json={"content": "- overwritten"})
+            before = (await (await c.get(f"/api/memory/{_doc(which)}")).json())["content"]
+            resp = await c.put(f"/api/memory/{_doc(which)}", json={"content": "- overwritten"})
             assert resp.status == 428
             assert await _code(resp) == "revision_required"
-            after = (await (await c.get(f"/api/memory/{which}")).json())["content"]
+            after = (await (await c.get(f"/api/memory/{_doc(which)}")).json())["content"]
         assert after == before
 
     @pytest.mark.asyncio
@@ -482,15 +489,15 @@ class TestMemoryDoc:
         self, memory
     ) -> None:
         async with TestClient(TestServer(_memory_app(memory))) as c:
-            read = await (await c.get("/api/memory/history")).json()
+            read = await (await c.get(f"/api/memory/{_doc('history')}")).json()
             memory.append_history("Shipped the stale-write fix.")  # the consolidator's write
             resp = await c.put(
-                "/api/memory/history",
+                f"/api/memory/{_doc('history')}",
                 json={"content": read["content"] + "\nmy note"},
                 headers=_based_on(read["revision"]),
             )
             assert resp.status == 409
-            stored = (await (await c.get("/api/memory/history")).json())["content"]
+            stored = (await (await c.get(f"/api/memory/{_doc('history')}")).json())["content"]
         assert "Shipped the stale-write fix." in stored and "my note" not in stored
 
     @pytest.mark.asyncio

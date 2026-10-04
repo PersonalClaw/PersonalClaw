@@ -414,7 +414,8 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_get("/api/memory/projects", handlers.api_memory_projects)
     app.router.add_put("/api/memory/projects", handlers.api_memory_projects)
     app.router.add_get("/api/memory/history", handlers.api_memory_history)
-    app.router.add_put("/api/memory/history", handlers.api_memory_history)
+    app.router.add_get("/api/memory/history/{day}", handlers.api_memory_history_day)
+    app.router.add_put("/api/memory/history/{day}", handlers.api_memory_history_day)
     app.router.add_get("/api/memory/settings", handlers.api_memory_settings)
     app.router.add_put("/api/memory/settings", handlers.api_memory_settings)
 

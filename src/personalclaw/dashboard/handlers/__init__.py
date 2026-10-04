@@ -276,6 +276,7 @@ from personalclaw.dashboard.handlers.memory import (  # noqa: E402, F401
     api_memory_graph_export,
     api_memory_graph_rebuild,
     api_memory_history,
+    api_memory_history_day,
     api_memory_import,
     api_memory_lint,
     api_memory_migrate,

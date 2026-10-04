@@ -3,7 +3,8 @@
 Two kinds of file are read by a task of the gateway that then waits and writes them again:
 HEARTBEAT.md, whose finished tasks a heartbeat pass takes out once its turns end
 (``heartbeat.run_tasks``), and the memory documents, each memory's preferences.md and projects.md,
-which a consolidation rewrites once its model answers (``memory.MemoryStore.rewrite``).
+which a consolidation rewrites once its model answers (``memory.MemoryStore.rewrite``), with the
+days of its daily history, which the consolidation appends to and the Memory page saves one by one.
 Each reads the file again when it is done waiting, and writes under the file's lock; every other
 writer of the file holds that lock across its own read and write, so none lands between another's
 read and its write.
@@ -31,8 +32,9 @@ _T = TypeVar("_T")
 @contextmanager
 def write_lock(path: Path | str) -> Iterator[None]:
     """Hold the lock *path* is written under while it is read and written: the heartbeat queue's
-    for HEARTBEAT.md, the memory documents' for a preferences.md or projects.md, none for any other
-    path. Neither lock is re-entrant: nothing done while it is held may take it again."""
+    for HEARTBEAT.md, the memory documents' for a preferences.md, a projects.md or a day of the
+    daily history (``memory.is_document``), none for any other path. Neither lock is re-entrant:
+    nothing done while it is held may take it again."""
     from personalclaw import heartbeat, memory
 
     if heartbeat.is_queue_file(path):

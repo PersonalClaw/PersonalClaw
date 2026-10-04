@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **918 registrations** over **744 distinct paths** — 911 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **919 registrations** over **745 distinct paths** — 912 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -26,7 +26,7 @@ The 128 families the surface divides into, largest first.
 |---|---|---|
 | `/api/chat` | 81 | 69 |
 | `/api/knowledge` | 71 | 58 |
-| `/api/memory` | 51 | 43 |
+| `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
 | `/api/models` | 38 | 30 |
 | `/api/loops` | 28 | 22 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 911 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 912 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -680,8 +680,9 @@ The 911 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/memory/graph/entities` | the entity topology (§7.2). |
 | `GET` | `/api/memory/graph/export` | the entity graph as ONE self-contained HTML file (§7.2). |
 | `POST` | `/api/memory/graph/rebuild` | seed entities, then link every record. |
-| `GET` | `/api/memory/history` | recent daily summaries. |
-| `PUT` | `/api/memory/history` | recent daily summaries. |
+| `GET` | `/api/memory/history` | the days of the daily history, newest first, with their entries. |
+| `GET` | `/api/memory/history/{day}` | one day of the daily history, as its file holds it. |
+| `PUT` | `/api/memory/history/{day}` | one day of the daily history, as its file holds it. |
 | `POST` | `/api/memory/import` | import memory from JSON (export format). |
 | `GET` | `/api/memory/lint` | run the memory-health sweep, return its report. |
 | `POST` | `/api/memory/migrate` | migrate legacy markdown memory to vector store. |

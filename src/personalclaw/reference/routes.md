@@ -527,8 +527,9 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/memory/graph/entities` — the entity topology (§7.2).
 - `GET /api/memory/graph/export` — the entity graph as ONE self-contained HTML file (§7.2).
 - `POST /api/memory/graph/rebuild` — seed entities, then link every record.
-- `GET /api/memory/history` — recent daily summaries.
-- `PUT /api/memory/history` — recent daily summaries.
+- `GET /api/memory/history` — the days of the daily history, newest first, with their entries.
+- `GET /api/memory/history/{day}` — one day of the daily history, as its file holds it.
+- `PUT /api/memory/history/{day}` — one day of the daily history, as its file holds it.
 - `POST /api/memory/import` — import memory from JSON (export format).
 - `GET /api/memory/lint` — run the memory-health sweep, return its report.
 - `POST /api/memory/migrate` — migrate legacy markdown memory to vector store.

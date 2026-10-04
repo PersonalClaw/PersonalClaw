@@ -18,7 +18,7 @@ import {
   type MemoryGraphSummary, type MemoryLink, type MemoryGraphData,
   type MemoryEntityProposal, type MemorySlot, type MemorySlotTrimProposal,
   type MemoryFacet, type DoctorProbe,
-  type RecallRanking, hasApiCode,
+  type RecallRanking, type MemoryDoc, type MemoryHistoryDays, hasApiCode,
 } from '../../lib/api'
 import { ProbeRow } from './DoctorPanel'
 import { PanelHeader, Section, Field, Row, Toggle, SavedToast } from './settingsUI'
@@ -229,7 +229,7 @@ interface StudioItem {
   fact?: SemanticEntry
   episodic?: EpisodicEntry
   lesson?: Lesson
-  doc?: { which: 'preferences' | 'projects' | 'history'; label: string }
+  doc?: StudioDoc
   entity?: MemoryEntity
   slot?: MemorySlot
   /** A fact that IS a learned preference (`pref.facet.*`), read out of its stored value. */
@@ -265,11 +265,21 @@ const STUDIO_KIND_META: Record<StudioKind, { label: string; icon: LucideIcon }> 
   entity: { label: 'Entities', icon: Users },
   slot: { label: 'Slots', icon: SlidersHorizontal },
 }
-const STUDIO_DOCS: { which: 'preferences' | 'projects' | 'history'; label: string }[] = [
-  { which: 'preferences', label: 'Preferences' },
-  { which: 'projects', label: 'Projects' },
-  { which: 'history', label: 'History' },
+/** A markdown document the Studio lists. History is the daily history, which is no one document:
+ *  each day is its own file, edited on its own (`HistoryDayEditor`). */
+interface StudioDoc { which: 'preferences' | 'projects' | 'history'; label: string; preview: string }
+const STUDIO_DOCS: StudioDoc[] = [
+  { which: 'preferences', label: 'Preferences', preview: 'Editable markdown memory' },
+  { which: 'projects', label: 'Projects', preview: 'Editable markdown memory' },
+  { which: 'history', label: 'History', preview: 'One editable file per day' },
 ]
+
+/** What a memory doc is called on the page: "Preferences memory", "Projects memory", or the day of
+ *  history it is ("History of 2026-10-02"). */
+function docName(which: MemoryDoc): string {
+  if (which.startsWith('history/')) return `History of ${which.slice('history/'.length)}`
+  return `${STUDIO_DOCS.find((d) => d.which === which)?.label ?? which} memory`
+}
 
 /** A lesson's graph ref mirrors the backend `_add("lesson", str(rule)[:80], …)` — so
  *  a selected lesson maps to its node without re-hashing (the `ref` seam handles the
@@ -398,7 +408,7 @@ function MemoryStudio({ onChanged, initialSel }: { onChanged: () => void; initia
   // ── unified item list ──
   const items: StudioItem[] = useMemo(() => {
     const out: StudioItem[] = []
-    for (const d of STUDIO_DOCS) out.push({ uid: `doc:${d.which}`, kind: 'doc', title: d.label, preview: 'Editable markdown memory', ref: null, doc: d })
+    for (const d of STUDIO_DOCS) out.push({ uid: `doc:${d.which}`, kind: 'doc', title: d.label, preview: d.preview, ref: null, doc: d })
     for (const s of slots) out.push({ uid: `slot:${s.name}`, kind: 'slot', title: s.title, preview: s.live_count ? `${s.live_count} line${s.live_count === 1 ? '' : 's'} · ${s.live_chars}/${s.cap_chars} chars` : 'empty register', ref: null, slot: s })
     for (const e of entities) out.push({ uid: `entity:${e.id}`, kind: 'entity', title: e.name, preview: `${e.entity_type} · ${e.inbound_count} memor${e.inbound_count === 1 ? 'y' : 'ies'}`, ref: `entity:${e.id}`, entity: e })
     // Only facts are Facts. A slot and a lesson are each stored AS a semantic row, so listing
@@ -905,9 +915,9 @@ function StudioInspector({ item, onDelete, onSaved, onSlotChanged, docDrafts, fa
         {item.kind === 'slot' && item.slot && (
           <SlotEditor slot={item.slot} onChanged={onSlotChanged} />
         )}
-        {item.kind === 'doc' && item.doc && (
-          <StudioDocEditor which={item.doc.which} onSaved={onSaved} drafts={docDrafts} />
-        )}
+        {item.kind === 'doc' && item.doc && (item.doc.which === 'history'
+          ? <HistoryDayEditor onSaved={onSaved} drafts={docDrafts} />
+          : <StudioDocEditor which={item.doc.which} onSaved={onSaved} drafts={docDrafts} />)}
         {/* Per-record entity links + evidence tags. This is the citation deep-link
             target: a `[Memory N]` chip lands on `?sel=<uid>`, which selects the record HERE,
             so "why is this in my context?" is answered at the record rather than in a
@@ -1133,7 +1143,7 @@ export interface DocDraft { text: string; base: Revisioned<string> }
  *  be asserted directly rather than at a prop seam.
  */
 export function StudioDocEditor({ which, onSaved, drafts }: {
-  which: 'preferences' | 'projects' | 'history'
+  which: MemoryDoc
   onSaved: () => void
   /** Host-owned per-doc draft cache: this component is unmounted on every selection change, so a
    *  cache it owned itself would die with it. Written through on each edit, dropped on save. */
@@ -1151,7 +1161,7 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
   const [err, setErr] = useState('')
   const [loadErr, setLoadErr] = useState('')
   const [reloads, setReloads] = useState(0)
-  const label = STUDIO_DOCS.find((d) => d.which === which)?.label ?? which
+  const name = docName(which)
   // The disk read still happens on every mount — the baseline must be CURRENT, so a restored edit
   // is measured against fresh content and stays marked dirty. The cache hands back the draft AND the
   // copy it was typed on, so its save still names that copy: saving it over the fresh read's
@@ -1230,7 +1240,7 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
       {/* Read-only while a refused save waits for the user's choice: the notice re-applies the
           text it kept, so anything typed meanwhile would be dropped by that save. */}
       <textarea value={draft} onChange={(e) => edit(e.target.value)} rows={16} spellCheck={false}
-        readOnly={held} aria-label={`${label} memory`}
+        readOnly={held} aria-label={name}
         data-type="caption" className="w-full resize-y rounded-lg bg-surface-high px-3 py-2 font-mono text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
         style={{ fontFamily: '"JetBrains Mono", ui-monospace, monospace' }} />
       <div className="flex items-center gap-2">
@@ -1240,9 +1250,70 @@ export function StudioDocEditor({ which, onSaved, drafts }: {
         {saved && <span data-type="caption" className="text-ok">Saved ✓</span>}
         {err && <span role="alert" data-type="caption" className="text-danger">{err}</span>}
       </div>
-      <StaleWriteNotice guard={guard} what={`${label} memory`} />
+      <StaleWriteNotice guard={guard} what={name} />
     </div>
   )
+}
+
+/** The daily history, one day at a time: a day picker over `StudioDocEditor`.
+ *
+ *  🔴 EACH DAY IS ITS OWN FILE, SO A SAVE CHANGES ONE DAY. History used to open as the recent days
+ *  read as one text, the way the agent's context carries them (older days cut to their first
+ *  entry), and its Save wrote that whole text into TODAY's file: one save stored every other day's
+ *  entries a second time in today's. So the days are listed here, the editor holds one day's file
+ *  exactly as it is kept, and Save replaces that file and no other (`MemoryDoc` `history/<date>`).
+ *  Today is always listed, so a note can be written on a day nothing has been recorded yet.
+ *
+ *  Each day's unsaved edit is its own draft in the host's cache, keyed by its doc, so it survives a
+ *  switch to another day and back and is never shown under another day; the picker marks a day that
+ *  holds one. */
+export function HistoryDayEditor({ onSaved, drafts }: {
+  onSaved: () => void
+  /** The host's per-doc draft cache — see `StudioDocEditor`. */
+  drafts: Map<string, DocDraft>
+}) {
+  const partition = useMemoryPartition()
+  const [listed, setListed] = useState<MemoryHistoryDays | null>(null)
+  const [day, setDay] = useState('')
+  const [loadErr, setLoadErr] = useState('')
+  const [reloads, setReloads] = useState(0)
+  useEffect(() => {
+    let alive = true
+    setLoadErr('')
+    api.memoryHistoryDays(partition)
+      .then((l) => {
+        if (!alive) return
+        setListed(l)
+        // The day on screen stays on screen when the list is read again (after its save); the first
+        // time, it is the newest day anything is recorded for, else today.
+        setDay((shown) => (l.days.some((d) => d.date === shown) ? shown : (l.days.find((d) => d.entries > 0)?.date ?? l.today)))
+      })
+      .catch((e) => { if (alive) setLoadErr(e instanceof Error ? e.message : 'Could not list the days of history') })
+    return () => { alive = false }
+  }, [partition, reloads])
+  if (loadErr) return (
+    <div className="flex flex-col items-start gap-s">
+      <p role="alert" data-type="body-s" className="text-danger">Couldn’t list the days of history. {loadErr}</p>
+      <Button size="sm" onClick={() => setReloads((n) => n + 1)}><RefreshCw size={14} /> Try again</Button>
+    </div>
+  )
+  if (listed === null || !day) return <div data-type="body-s" className="flex items-center gap-s text-on-surface-low"><Loader2 size={14} className="animate-spin" /> Loading…</div>
+  const options = listed.days.map((d) => ({ value: d.date, label: historyDayLabel(d, listed.today, drafts.has(`history/${d.date}`)) }))
+  return (
+    <div className="flex flex-col gap-s">
+      <Select value={day} onChange={setDay} options={options} ariaLabel="Day of history" size="sm" />
+      <p data-type="caption" className="text-on-surface-low">Each day is kept in its own file. Saving changes only the day shown.</p>
+      <StudioDocEditor key={day} which={`history/${day}`} drafts={drafts}
+        onSaved={() => { setReloads((n) => n + 1); onSaved() }} />
+    </div>
+  )
+}
+
+/** A day as the picker lists it: its date, whether it is today, how many entries its file holds,
+ *  and whether an unsaved edit of it is waiting. */
+export function historyDayLabel(d: MemoryHistoryDays['days'][number], today: string, unsaved: boolean): string {
+  const entries = d.entries === 0 ? 'no entries' : d.entries === 1 ? '1 entry' : `${d.entries} entries`
+  return `${d.date}${d.date === today ? ' (today)' : ''} · ${entries}${unsaved ? ' · unsaved changes' : ''}`
 }
 
 /** Add a learned lesson from the Studio (POST /api/lessons) — the manual entry the

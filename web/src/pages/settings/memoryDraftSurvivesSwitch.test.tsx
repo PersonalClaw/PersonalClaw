@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MemoryDoc } from '../../lib/api'
 import { StudioDocEditor, type DocDraft } from './MemoryPanel'
 
 /** An unsaved memory-doc edit is not thrown away (issue 525).
@@ -33,7 +34,7 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 
-function mount(drafts: Map<string, DocDraft>, which: 'preferences' | 'projects' | 'history' = 'preferences') {
+function mount(drafts: Map<string, DocDraft>, which: MemoryDoc = 'preferences') {
   return render(<StudioDocEditor which={which} onSaved={() => {}} drafts={drafts} />)
 }
 

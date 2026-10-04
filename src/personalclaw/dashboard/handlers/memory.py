@@ -5,20 +5,18 @@ import json
 import logging
 import threading
 from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 from aiohttp import web
 
 from personalclaw import memory_locality, memory_reads, memory_service
-from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import ConfigWriteError
 from personalclaw.config.transactions import mutate_config_async
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_download import attachment_disposition
 from personalclaw.http_errors import json_error
-from personalclaw.memory import hold_documents
+from personalclaw.memory import history_today, hold_documents, is_history_day
 from personalclaw.request_validation import bool_field, json_object_body, require_string
 from personalclaw.security import (
     MaskConflict,
@@ -85,26 +83,26 @@ def _ranking_payload(capable: Any, *, question_unembedded: str = "") -> dict[str
 
 async def _memory_doc(
     request: web.Request,
-    which: str,
+    what: str,
     read: Callable[[Any], str],
     write: Callable[[Any, str], None],
-    *,
-    held: Callable[[], AbstractContextManager[Any]],
 ) -> web.Response:
-    """GET/PUT of one markdown memory document: the read carries ``revision`` beside
-    ``content``, and the PUT — which replaces the whole document — must name it in ``If-Match``.
+    """GET/PUT of one markdown memory document, *what* by name: the read carries ``revision``
+    beside ``content``, and the PUT — which replaces the whole document — must name it in
+    ``If-Match``.
 
     🔴 THE DOCUMENT IS REPLACED ONLY OVER THE COPY IT WAS BUILT FROM. These files are written by
     the gateway as well as the page — a consolidation rewrites preferences and projects and
-    appends to history, and the agent's file tools can write them — so an editor opened before one
-    of those writes used to save its old copy straight over it, and what the agent had just
-    learned was gone without a word. The comparison reads with the SAME reader the GET uses (for
-    history, the multi-day composite it returns), and nothing is awaited between the comparison
-    and the write, both under *held*: the lock every writer of preferences and projects holds
-    across its read and write (``memory.hold_documents``), so a writer on another thread or in
-    another process lands before the comparison or after the write, never between. The success
-    response carries what is stored now, and its revision, because the write can reshape it
-    (``write_projects`` adds the header).
+    appends to the day's history, and the agent's file tools can write them — so an editor opened
+    before one of those writes used to save its old copy straight over it, and what the agent had
+    just learned was gone without a word. The comparison reads with the SAME reader the GET uses,
+    and nothing is awaited between the comparison and the write, both under the lock every writer
+    of the memory documents and the daily history holds across its read and write
+    (``memory.hold_documents``), so a writer on another thread or in another process lands before
+    the comparison or after the write, never between. The write is the store's, so it is refused
+    for work that may change none of your memory and indexed for keyword search like every other
+    write of a memory file (``MemoryStore._persist``). The success response carries what is stored
+    now, and its revision, because the write can reshape it (``write_projects`` adds the header).
     """
     mem = _memory_of(request)
     if request.method == "PUT":
@@ -120,17 +118,17 @@ async def _memory_doc(
         if content is None:
             return json_error(
                 "field_required",
-                message=f"content is required: the whole text of the {which} memory.",
+                message=f"content is required: the whole text of {what}.",
                 status=400,
             )
         if not isinstance(content, str):
             return json_error(
                 "field_not_a_string",
-                message=f"content must be a string: the whole text of the {which} memory.",
+                message=f"content must be a string: the whole text of {what}.",
                 status=400,
             )
-        with held():
-            stale = stale_write_refusal(request, read(mem), what=f"the {which} memory")
+        with hold_documents():
+            stale = stale_write_refusal(request, read(mem), what=what)
             if stale is not None:
                 return stale
             write(mem, content)
@@ -140,19 +138,13 @@ async def _memory_doc(
     return web.json_response({"content": content, "revision": revision_of(content)})
 
 
-def _write_today_history(mem: Any, content: str) -> None:
-    """The history PUT writes today's daily file (the read is the recent-days composite)."""
-    atomic_write(mem._today_history_file(), content)
-
-
 async def api_memory_preferences(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/preferences."""
     return await _memory_doc(
         request,
-        "preferences",
+        "the preferences memory",
         lambda mem: mem.read_preferences(),
         lambda mem, content: mem.write_preferences(content),
-        held=hold_documents,
     )
 
 
@@ -160,23 +152,43 @@ async def api_memory_projects(request: web.Request) -> web.Response:
     """GET/PUT /api/memory/projects."""
     return await _memory_doc(
         request,
-        "projects",
+        "the projects memory",
         lambda mem: mem.read_projects(),
         lambda mem, content: mem.write_projects(content),
-        held=hold_documents,
     )
 
 
 async def api_memory_history(request: web.Request) -> web.Response:
-    """GET/PUT /api/memory/history — recent daily summaries."""
-    # The daily history is not a document a consolidation rewrites (it appends to it, reading and
-    # writing the day's file with nothing awaited between), so it is not held under their lock.
+    """GET /api/memory/history — the days of the daily history, newest first, with their entries.
+
+    Each day carries how many entries its file holds. Today is always one of them, recorded or not,
+    so its note can be written on a day nothing has been recorded yet. Each day is its own file,
+    read and saved on its own (:func:`api_memory_history_day`), so a save of one day changes no
+    other. The recent days read together, as the agent's context carries them
+    (``MemoryStore.read_recent_history``, older days cut short), are no document and have no save:
+    a save of that view into today's file stored every other day's entries a second time there.
+    """
+    days = dict(_memory_of(request).history_days())
+    today = history_today()
+    days.setdefault(today, 0)
+    listed = [{"date": day, "entries": n} for day, n in sorted(days.items(), reverse=True)]
+    return web.json_response({"today": today, "days": listed})
+
+
+async def api_memory_history_day(request: web.Request) -> web.Response:
+    """GET/PUT /api/memory/history/{day} — one day of the daily history, as its file holds it.
+
+    The day is named by its date (``YYYY-MM-DD``); a name that is not one is refused (400
+    ``history_day_invalid``) and never made into a path. The PUT replaces that day's file whole,
+    and no other day with it."""
+    day = request.match_info["day"]
+    if not is_history_day(day):
+        return json_error("history_day_invalid", status=400)
     return await _memory_doc(
         request,
-        "history",
-        lambda mem: mem.read_recent_history(),
-        _write_today_history,
-        held=nullcontext,
+        f"the history of {day}",
+        lambda mem: mem.read_history_day(day),
+        lambda mem, content: mem.write_history_day(day, content),
     )
 
 

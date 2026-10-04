@@ -178,7 +178,7 @@ PARENT_READ_EXCLUDE = {
     "/api/workflows/runs/{run_id}/steering": "guard and service resolve the run first",
     "/api/workflows/runs/{run_id}/workspace": "service.workspace_review rejects an unknown run",
     "/api/workflows/{name}/versions": "service.get_def resolves the workflow first",
-    # Deep terminal-parameter controls.  Fifteen are ordinary detail/key reads; the two
+    # Deep terminal-parameter controls.  Sixteen are ordinary detail/key reads; the two
     # collection-for-parent exceptions (autonudge and ephemeral skills) are covered above.
     "/api/agent-marketplace/agents/{name}": "plain detail; marketplace.get rejects absence",
     "/api/agents/detail/{name}": "plain detail; agent-file resolver rejects absence",
@@ -189,6 +189,11 @@ PARENT_READ_EXCLUDE = {
     "/api/evals/studies/{study_id}": "plain study detail; study_view rejects absence",
     "/api/knowledge/items/{id}": "plain item detail; get_item rejects absence",
     "/api/learning/proposals/{id}": "plain proposal detail; proposal store rejects absence",
+    "/api/memory/history/{day}": (
+        "one day's document, keyed by its date (any other name is history_day_invalid); a day "
+        "with no file reads as the empty text it is, and the PUT may write it, so absent and "
+        "empty are one state here, not a ghost parent"
+    ),
     "/api/mcp/servers/{name}": "plain server detail; _definition_of rejects an unset name",
     "/api/session/archive/{name}": "plain archive-file detail; file read rejects absence",
     "/api/skills/proposals/{id}": "plain proposal detail; proposal store rejects absence",
@@ -287,8 +292,8 @@ def _directly_named_handlers() -> set[str]:
 def test_all_src_get_census_is_fully_adjudicated():
     selected, nonterminal, deep_terminal = _census()
     assert len(nonterminal) == 89
-    assert len(deep_terminal) == 18
-    assert len(selected) == 107
+    assert len(deep_terminal) == 19
+    assert len(selected) == 108
 
     covered = set(PARENT_READ_COVERED)
     excluded = set(PARENT_READ_EXCLUDE)

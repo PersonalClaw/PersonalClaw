@@ -98,6 +98,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # A folder's memory that is there and whose memory database cannot be opened, so nothing in
     # it can be listed, changed or removed record by record this time.
     "memory_partition_unavailable": "That folder's memory database cannot be opened right now.",
+    # A day of the daily history (`/api/memory/history/{day}`) named by anything but its date.
+    # Nothing is read or written: the name is never made into a path.
+    "history_day_invalid": "A day of the daily history is named by its date, as YYYY-MM-DD.",
     # A lesson memory refused (its store's rules, or the scan of an untrusted source's text)
     # before it changed anything, so the lesson it would have replaced is kept as it was. The
     # message says why, and `reason` inside the error is the store's own reject code.

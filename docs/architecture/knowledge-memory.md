@@ -604,12 +604,28 @@ item vector).
     is left exactly as it is, that file's rewrite is not applied in this pass, and the
     gateway log says so. A file nobody changed while the model ran is the rewrite, as
     the model wrote it.
-  - **One lock for every writer of the two files.** The consolidation, the Memory
-    page's save, `add_preference` (the sandboxed agent's `memory_remember`, the
-    plain-text memory's writes), the boot that creates the files, a partition's
-    documents moving into a project's, and the Files editor's save and the agent's
-    `write_file` and `edit_file` (`write_locks.write_lock`, which also holds
-    HEARTBEAT.md's lock for it) read and write them under `memory.hold_documents`, a
+  - **Each day of the daily history is its own file, and the Memory page edits one day
+    at a time.** A consolidation appends its entry to today's file
+    (`history/<YYYY-MM-DD>.md`); the agent's context reads the recent days together
+    (`MemoryStore.read_recent_history`: the last two weeks whole, older days cut to
+    their first entry, then to a count), and that view is never written back. The
+    History editor in Settings → Memory lists the days (`GET /api/memory/history`:
+    newest first, each with its entry count, today always among them) and holds one
+    day's file as it is kept (`GET`/`PUT /api/memory/history/{day}`, named by its date;
+    any other name is refused `history_day_invalid` and never made into a path). Its
+    Save replaces that day's file and no other, through the write every memory file
+    takes (`MemoryStore._persist`): refused for work that may change none of your memory,
+    in the refusal's own words, then written, then indexed for keyword search. Like the
+    other documents, a save names the copy it was built from (`If-Match`), so an entry a
+    consolidation appended meanwhile is not saved over.
+  - **One lock for every writer of the documents and the daily history.** The
+    consolidation (its rewrite of the two files and its history entry), the Memory
+    page's save of a document or a day, `add_preference` (the sandboxed agent's
+    `memory_remember`, the plain-text memory's writes), the removal at start of what an
+    Incognito or Temporary chat left in the history, the boot that creates the files, a
+    partition's documents and history moving into a project's, and the Files editor's
+    save and the agent's `write_file` and `edit_file` (`write_locks.write_lock`, which also
+    holds HEARTBEAT.md's lock for it) read and write them under `memory.hold_documents`, a
     lock file in the home's `locks/`, so none lands between another's read and its
     write; the `personalclaw consolidate` command takes it from its own process. A
     command the agent's shell runs, or another program, takes no lock: it can meet a
