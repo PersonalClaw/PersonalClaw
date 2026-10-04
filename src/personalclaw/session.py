@@ -61,7 +61,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from personalclaw import shutdown_event
+from personalclaw import session_keys, shutdown_event
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config import AppConfig
 from personalclaw.config.loader import default_workspace_dir
@@ -97,18 +97,13 @@ _MAX_POOL = 10
 # prevents replenishment when the live process count is already high.
 _MAX_POOL_PROCESSES = 150
 
-_SUBAGENT_PREFIX = "subagent:"
-_CHANNEL_PREFIX = "channel:"
 # Goal loop worker sessions are HEADLESS (no UI tab) and long-running — a single
 # cycle can fan out to subagents and run well past the idle-sweep window. They
 # are NOT dashboard chat tabs, so the "tab closed → orphan" heuristic must never
 # reap them; their lifecycle is owned by the loop watchdog (unresponsive /
 # loop-exhaustion), not the idle sweep. Reaping one mid-turn kills the in-flight
 # cycle (and its subagents) before it can record a finding.
-_LOOP_WORKER_PREFIX = "dashboard:loop-"
-
-# Session key prefixes that are stateless (reset after each use) — skip resume
-_STATELESS_PREFIXES = ("cron:", _SUBAGENT_PREFIX, _CHANNEL_PREFIX, "inbox:", "side:")
+_LOOP_WORKER_PREFIX = session_keys.DASHBOARD.key(session_keys.LOOP.prefix)
 
 
 # Context usage at which a turn's log line is a warning. Compaction itself happens at the
@@ -1104,7 +1099,7 @@ class SessionManager:
         # classifier, not taken on trust from the caller. Only ``subagent.py`` passes
         # ``unattended=True``; the cron parent session, a heartbeat task, loop-cycle
         # workers, the inbox/side sweeps, channel deliveries and sessionless trigger
-        # dispatches all arrive here without it — nine unattended families that a
+        # dispatches all arrive here without it — unattended kinds (``session_keys``) that a
         # kwarg-only gate silently let through. One vocabulary, no per-caller opt-in: the
         # kwarg is still honoured (it names a spawn the key cannot describe), but it is
         # no longer the only way to be seen as unattended.
@@ -1112,7 +1107,7 @@ class SessionManager:
 
         # Check session map for resume — only for long-lived sessions
         resume_sid: str | None = None
-        is_stateless = any(key.startswith(p) for p in _STATELESS_PREFIXES)
+        is_stateless = session_keys.is_stateless(key)
         if not is_stateless:
             resume_sid = self._session_map.get(key)
 
@@ -1591,7 +1586,7 @@ class SessionManager:
                 )
                 if isinstance(sess.provider, AgentProvider) and not sess.forgotten:
                     sid = sess.provider.session_id
-                    if sid and not any(key.startswith(p) for p in _STATELESS_PREFIXES):
+                    if sid and not session_keys.is_stateless(key):
                         self._session_map.set(key, sid, cwd=_cwd_str)
 
             sessions = dict(self._sessions)
@@ -1668,7 +1663,7 @@ class SessionManager:
         """
         session = self._sessions.get(key)
         if session:
-            if cleanup and key.startswith(_SUBAGENT_PREFIX):
+            if cleanup and session_keys.SUBAGENT.names(key):
                 try:
                     session_id = session.provider.session_id
                     if session_id:
@@ -2222,7 +2217,7 @@ class SessionManager:
         total_checked = 0
         async with self._lock:
             for key, sess in self._sessions.items():
-                if key.startswith(_CHANNEL_PREFIX):
+                if session_keys.CHANNEL.names(key):
                     continue
                 # Goal loop workers are headless + supervised by the watchdog;
                 # never idle/orphan-reap them (a long cycle would be killed

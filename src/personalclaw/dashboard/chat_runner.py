@@ -2726,12 +2726,12 @@ async def run_chat(
         # so (``session._unattended``): the loop manager sets it from the loop's Mode each time it
         # arms a worker, True for an Unattended loop and False for an Attended one, because a
         # loop's key names a loop and not whether anybody is watching it. Every other session is
-        # classified by its key (``is_unattended_session``: cron:/subagent:/channel:/inbox:/side:
-        # prefixes, a loop's and the ``unattended:`` dispatch identity), the by-construction
-        # classifier that also picks the HEADLESS safety profile. So a cron or scheduled turn
-        # on an ACP provider is unattended without anyone flagging it (it used to
-        # park its permission prompts on a human who was asleep), and an Attended loop's worker
-        # puts its asks to a person instead of having each one declined unasked.
+        # classified by its key (``is_unattended_session``: the kinds ``session_keys`` marks
+        # unattended), the by-construction classifier that also picks the HEADLESS safety
+        # profile. So a cron or scheduled turn on an ACP provider is unattended without anyone
+        # flagging it (it used to park its permission prompts on a human who was asleep), and an
+        # Attended loop's worker puts its asks to a person instead of having each one declined
+        # unasked.
         #
         # An INTERACTIVE session matches no prefix, so it stays attended and keeps
         # The clamp. That is the safety-critical direction of this change and it

@@ -25,7 +25,7 @@ import uuid
 
 from aiohttp import web
 
-from personalclaw import memory_writes
+from personalclaw import memory_writes, session_keys
 from personalclaw.dashboard.side_context import build_side_message
 from personalclaw.dashboard.side_state import SideState
 from personalclaw.dashboard.state import DashboardState
@@ -75,7 +75,7 @@ async def api_side_close(request: web.Request) -> web.Response:
         return err
     session._side = None
     try:
-        await state.sessions.destroy(f"side:{name}")
+        await state.sessions.destroy(session_keys.SIDE.key(name))
     except Exception:
         logger.debug("side session destroy failed for %s", name, exc_info=True)
     return web.json_response({"ok": True})
@@ -144,7 +144,7 @@ async def _run_side_turn(
     from personalclaw.providers.provider_bridge import turn_model_ref
     from personalclaw.usage_ledger import recorder
 
-    side_key = f"side:{name}"
+    side_key = session_keys.SIDE.key(name)
 
     def _emit(delta: str, *, done: bool) -> None:
         # Drop stale frames: the side chat was closed or a newer turn started.

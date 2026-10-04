@@ -41,9 +41,8 @@ greps this module for bindable vendor names and fails if one appears — with a 
 case proving the grep can fail — because "the alias made me name a vendor" is the
 specific way this tenet dies.
 
-Statelessness is enforced HERE rather than by adding ``inbound:`` to
-``session._STATELESS_PREFIXES`` — see ``_reset_session`` for why that list is the
-wrong lever.
+Statelessness is enforced HERE rather than by marking the ``inbound:`` kind stateless in
+``session_keys`` — see ``_reset_session`` for why that is the wrong lever.
 """
 
 from __future__ import annotations
@@ -58,6 +57,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import session_keys
 from personalclaw.inbound import auth, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
@@ -83,11 +83,11 @@ ROUTE_VOICES = "/v1/audio/voices"
 MODEL_PREFIX = "personalclaw/"
 
 #: Session-key family for this surface: ``inbound:<client_id>:<sha8>``.
-#: ``policy.INBOUND_PREFIX`` classifies the whole family as unattended, so every turn
+#: ``session_keys.INBOUND`` classifies the whole family as unattended, so every turn
 #: through here resolves to HEADLESS by construction, and ``chat_handlers``'
 #: ``_run_chat_scoped`` reads segment 1 — the client_id — as the SpendMeter run scope,
 #: which is what makes the budget PER-CLIENT without this module binding one itself.
-SESSION_PREFIX = "inbound:"
+SESSION_PREFIX = session_keys.INBOUND.prefix
 
 #: Session id used when the caller names none. The declared default.
 DEFAULT_SESSION_TAG = "default"
@@ -438,8 +438,8 @@ def _reset_session(session: Any, key: str, state: Any) -> None:
     """Let go of everything *session* holds of the requests before this one: the one reset made
     before each turn of a client that keeps no conversation.
 
-    Adding ``inbound:`` to ``session._STATELESS_PREFIXES`` is the wrong lever: that list
-    is the PROVIDER resume/pool axis, and ``inbound:cli:`` — headless ``personalclaw run``
+    Marking the ``inbound:`` kind stateless (``session_keys``) is the wrong lever: that axis
+    is the PROVIDER resume/pool one, and ``inbound:cli:`` — headless ``personalclaw run``
     — shares this prefix, so it would silently break ``run --session``, whose entire
     purpose is to let a NAMED headless session continue a conversation. No narrower
     literal prefix separates them, because the middle segment is a client_id and ``cli``

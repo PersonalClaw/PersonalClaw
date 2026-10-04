@@ -12,6 +12,7 @@ import uuid
 
 from aiohttp import web
 
+from personalclaw import session_keys
 from personalclaw.agents.defaults import LITE_AGENT_NAME
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.given_details import ungiven
@@ -107,7 +108,7 @@ async def handle_optimize(request: web.Request) -> web.Response:
     # A session of this request's own, ended with its answer: the rewrite is sent this draft and
     # its context and nothing else. One kept for every request carried each earlier draft and its
     # rewrite into the next, whichever chat it came from.
-    optimizer_session_key = f"_optimizer:{uuid.uuid4().hex}"
+    optimizer_session_key = session_keys.OPTIMIZER.key(uuid.uuid4().hex)
     # The optimizer system prompt lives in the prompt system (bundled
     # ``task-prompt-optimizer``, bindable in Settings → Prompts).
     from personalclaw.prompt_providers.runtime import render_use_case_prompt

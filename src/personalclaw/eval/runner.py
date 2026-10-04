@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import session_keys
 from personalclaw.audit_subject import log_title
 from personalclaw.eval.scenario import (
     Assertion,
@@ -358,7 +359,7 @@ class EvalRunner:
     ) -> SessionResult:
         """Run a single session — create provider, send turns, tear down."""
         factory = provider_factory or self.provider_factory
-        session_key = f"eval_{session_def.name}_{time.monotonic_ns()}"
+        session_key = session_keys.EVAL.key(f"{session_def.name}_{time.monotonic_ns()}")
         provider = factory(session_key)
         await provider.start()
 

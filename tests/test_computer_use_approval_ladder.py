@@ -622,15 +622,16 @@ def test_a_request_with_no_session_header_resolves_to_an_unattended_identity():
     an ACP CLI — read as "a human is watching". Minted into a sessionless unattended identity by
     the same helper the trigger and hook seams use, at the one seam that knows the header was
     absent."""
+    from personalclaw import session_keys
     from personalclaw.dashboard.handlers.computer_use import _caller_identity
-    from personalclaw.guardrails.policy import UNATTENDED_DISPATCH_PREFIX, profile_for_session
+    from personalclaw.guardrails.policy import profile_for_session
 
     class _Req:
         def __init__(self, headers):
             self.headers = headers
 
     minted = _caller_identity(_Req({}))
-    assert minted.startswith(UNATTENDED_DISPATCH_PREFIX), minted
+    assert session_keys.UNATTENDED.names(minted), minted
     assert profile_for_session(minted).approval == "hook_based"
     # And a real session key is passed through untouched — the vacuity half.
     assert _caller_identity(_Req({"X-Session-Key": INTERACTIVE})) == INTERACTIVE

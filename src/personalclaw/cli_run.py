@@ -55,12 +55,14 @@ import urllib.request
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import session_keys
+
 if TYPE_CHECKING:
     import aiohttp
 
-#: Session-key prefix for a headless CLI turn. ``guardrails.policy`` classifies the
-#: ``inbound:`` family as unattended, so this prefix is what makes the run HEADLESS.
-CLI_SESSION_PREFIX = "inbound:cli:"
+#: Session-key prefix for a headless CLI turn. ``session_keys.INBOUND`` classifies the
+#: ``inbound:`` kind as unattended, so this prefix is what makes the run HEADLESS.
+CLI_SESSION_PREFIX = session_keys.INBOUND.key("cli:")
 
 #: SpendMeter run scope for CLI turns (§9.5 "budgets ride SpendMeter scope_key=cli").
 #: The meter's real parameter is ``run_key``, not ``scope_key`` — see the DEVIATION note

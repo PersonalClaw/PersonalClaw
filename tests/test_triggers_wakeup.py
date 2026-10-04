@@ -88,14 +88,16 @@ class _Fire:
 
 
 def test_a_trigger_targets_the_shipped_cron_prefix():
-    """§3.2 says to extend the session-key conventions table rather than invent a parallel
-    one. `cron:`
-    is preserved verbatim: `_STATELESS_PREFIXES`, the `cron-{id}` dashboard pairing and
-    `schedule_trigger`'s HTTP path all key off it, so a new prefix would silently opt every migrated
-    trigger out of conventions it already relies on."""
+    """A fire runs under the trigger kind of the one table of session-key kinds rather than a
+    parallel one. `cron:` is preserved verbatim: the stateless reset, the `cron-{id}` dashboard
+    pairing and `schedule_trigger`'s HTTP path all key off it, so a new prefix would silently opt
+    every migrated trigger out of conventions it already relies on."""
+    from personalclaw import session_keys
+
     assert W.session_key_for("schedule:j1") == "cron:j1"
     assert W.session_key_for("j2") == "cron:j2"
-    assert W.KEY_PREFIX_TRIGGER == "cron:"
+    assert session_keys.TRIGGER.prefix == "cron:"
+    assert session_keys.kind_of(W.session_key_for("j2")) is session_keys.TRIGGER
 
 
 def test_a_pinned_session_renders_as_the_same_cron_key():

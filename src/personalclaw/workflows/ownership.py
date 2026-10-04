@@ -40,12 +40,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw import session_keys
 from personalclaw.safety_flags import yes_or_no
 
-#: The key prefix for a run-owned session. A COLON separator, matching `cron:`/`subagent:` — the
-#: loop convention (`loop-<id>`, a hyphen) is the odd one out, and copying it would make a fourth
-#: parser needed for a fourth shape.
-OWNED_PREFIX = "workflow:"
+#: The key prefix for a run-owned session (``session_keys.WORKFLOW_STEP``). A COLON separator,
+#: matching `cron:`/`subagent:` — the loop convention (`loop-<id>`, a hyphen) is the odd one out,
+#: and copying it would make a fourth parser needed for a fourth shape.
+OWNED_PREFIX = session_keys.WORKFLOW_STEP.prefix
 
 #: The `_app` value behaviour keys off. Set explicitly, because behaviour is keyed off `_app`
 #: and NOT
@@ -60,7 +61,9 @@ OWNED_APP = "workflow"
 #: unrecognized key silently lands.
 SEL_SOURCE = "workflow"
 
-_KEY_RE = re.compile(r"^workflow:(?P<run>[A-Za-z0-9_.-]+):(?P<node>[A-Za-z0-9_.\[\]-]+)$")
+_KEY_RE = re.compile(
+    rf"^{re.escape(OWNED_PREFIX)}(?P<run>[A-Za-z0-9_.-]+):(?P<node>[A-Za-z0-9_.\[\]-]+)$"
+)
 
 
 class MemoryMode(str, Enum):

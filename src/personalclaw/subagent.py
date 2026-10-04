@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
-from personalclaw import approval_grants, memory_writes, run_bounds
+from personalclaw import approval_grants, memory_writes, run_bounds, session_keys
 from personalclaw.approval_grants import ToolDecision, decision_of
 from personalclaw.auth.lifetimes import duration_words
 from personalclaw.cancellation import cancel_and_wait
@@ -235,7 +235,7 @@ def tool_approval_id(agent_id: str, request_id: object) -> str:
 def agent_work_id(agent_id: str) -> str:
     """How a trigger's history row names the agent its fire started (`ActionResult.work_id`), so
     the row can say how that agent's run ended when it does."""
-    return f"subagent:{agent_id}"
+    return session_keys.SUBAGENT.key(agent_id)
 
 
 def approval_subagent_id(approval_id: str) -> str:
@@ -973,7 +973,7 @@ class SubagentManager:
         *reason* is a cancel's own error; empty for the reaper's deadline kill, which states its
         own.
         """
-        session_key = f"subagent:{agent_id}"
+        session_key = session_keys.SUBAGENT.key(agent_id)
 
         # Kill the process FIRST so the pipe unblocks, then cancel the task.
         try:
@@ -1897,7 +1897,7 @@ class SubagentManager:
 
     async def _run(self, info: SubagentInfo) -> None:
         """Execute a subagent task in its own session."""
-        session_key = f"subagent:{info.id}"
+        session_key = session_keys.SUBAGENT.key(info.id)
         # The time limit as Settings reads it when this agent starts (the reaper re-reads it). It
         # counts from HERE, the start of the run, which the reaper reads too (`_run_started`): a
         # wait for a slot or for its owner to approve the start is not the run.

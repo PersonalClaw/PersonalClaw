@@ -36,6 +36,7 @@ from personalclaw import (
     gateway_base,
     notification_kinds,
     run_bounds,
+    session_keys,
     shutdown_event,
     subagent_notes,
 )
@@ -4618,7 +4619,7 @@ class GatewayOrchestrator:
                 trigger = str(getattr(info, "trigger_id", "") or "")
                 auto_denials.note_unattended(
                     self.dashboard_state,
-                    session_key=session_name or f"subagent:{info.id}",
+                    session_key=session_name or session_keys.SUBAGENT.key(info.id),
                     tool=str(extra.get("tool") or ""),
                     who=(
                         ""

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 
-from personalclaw import lasting_work
+from personalclaw import lasting_work, session_keys
 from personalclaw.config.loader import AppConfig
 from personalclaw.declined_calls import named, said, under
 from personalclaw.loop import files as loop_files
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def session_key(loop_id: str) -> str:
     """The hidden worker session key for a loop (filtered from the chat sidebar)."""
-    return f"loop-{loop_id}"
+    return session_keys.LOOP.key(loop_id)
 
 
 def worker_ids(key: str) -> tuple[str, str]:

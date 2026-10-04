@@ -86,6 +86,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from personalclaw import session_keys
+
 if TYPE_CHECKING:
     import asyncio
 
@@ -112,8 +114,8 @@ UNREADABLE = "unreadable"
 
 #: A dashboard chat's key (``dashboard:<name>``), and the key the dashboard's own pages send: the
 #: owner, not a chat.
-_DASHBOARD = "dashboard:"
-_DASHBOARD_UI = "dashboard:ui"
+_DASHBOARD = session_keys.DASHBOARD.prefix
+_DASHBOARD_UI = session_keys.DASHBOARD_UI
 
 #: What one record of a session's mode can say beside a mode: that it is there and cannot be read,
 #: and, of a transcript, that it records no mode (one written before modes existed, or by a channel
@@ -467,8 +469,9 @@ def refuse_write(what: str) -> None:
 
 # ── an app's work ───────────────────────────────────────────────────────────────────────────
 
-#: The source a record an app's work writes names: ``app:<name>``.
-APP_SOURCE_PREFIX = "app:"
+#: The source a record an app's work writes names: ``app:<name>``, the app's own work
+#: (``session_keys.APP``).
+APP_SOURCE_PREFIX = session_keys.APP.prefix
 
 
 def _app_may_not_change(app: str) -> str:

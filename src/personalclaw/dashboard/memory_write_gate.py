@@ -37,12 +37,12 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import approval_answer, lasting_work, memory_reads, memory_writes
+from personalclaw import approval_answer, lasting_work, memory_reads, memory_writes, session_keys
 from personalclaw.http_errors import json_error
 from personalclaw.sel import sel
 
 #: The key the dashboard's own pages send: the owner, not a session.
-_DASHBOARD_UI = "dashboard:ui"
+_DASHBOARD_UI = session_keys.DASHBOARD_UI
 
 
 def _mode_of(request: web.Request, session_key: str) -> str | None:
@@ -85,7 +85,7 @@ def memory_write_middleware() -> Any:
         token_app = str(request.get("app") or "")
         if not session_key and not token_app:
             return await handler(request)
-        key = session_key or f"{memory_writes.APP_SOURCE_PREFIX}{token_app}"
+        key = session_key or session_keys.APP.key(token_app)
         state = request.app.get("state")
         whose = functools.partial(memory_reads.reach_of, state, key, app=token_app)
 

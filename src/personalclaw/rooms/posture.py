@@ -407,11 +407,11 @@ def agent_shaped_identity(identity: str) -> str:
     human's exactly when it carries no agent-session prefix at all.
 
     Built on :func:`~personalclaw.guardrails.policy.is_unattended_session` rather than on a
-    private copy of the prefix tuples, so the two answers cannot drift — plus the one case
-    that predicate deliberately answers ``False`` for. ``room:`` is absent from both prefix
-    tuples BY DESIGN (that absence is what keeps the human the approver), which means a
-    member's own session key reads as attended and would otherwise pass as human. It is the
-    single most important identity to refuse here, so it is checked explicitly.
+    private copy of the prefixes, so the two answers cannot drift — plus the one case that
+    predicate deliberately answers ``False`` for. ``room:`` is a watched kind BY DESIGN
+    (``session_keys.ROOM``: that is what keeps the human the approver), which means a member's
+    own session key reads as attended and would otherwise pass as human. It is the single most
+    important identity to refuse here, so it is checked explicitly.
 
     An empty identity is refused: "nobody in particular" must not resolve to the human.
     """

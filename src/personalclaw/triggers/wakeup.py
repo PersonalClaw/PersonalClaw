@@ -63,6 +63,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw import session_keys
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,19 +76,11 @@ class WakeKind(str, Enum):
     RESUME = "resume"
 
 
-#: Session-key prefixes, centralized here per the "all bus/queue key formats are
-#: centralized in one
-#: auditable module (the `MessageBusKeys` pattern) — extending the session-key conventions table
-#: (`cron:{id}`, `cron-{id}` dashboard pair, `loop-<id>`, …) rather than inventing a
-#: parallel one".
-#:
-#: `cron:` is preserved verbatim rather than renamed to `trigger:`: the shipped
-#: `_STATELESS_PREFIXES`
-#: reset behaviour, the `cron-{id}` dashboard pairing and `schedule_trigger`'s HTTP path all
-#: key off it.
-#: A new prefix would silently opt every migrated trigger out of conventions it already relies on.
-KEY_PREFIX_TRIGGER = "cron:"
-KEY_PREFIX_LOOP = "loop-"
+#: A trigger's fire runs under the trigger kind of session key (``session_keys.TRIGGER``,
+#: ``cron:<id>``), from the one table of session-key kinds rather than a parallel one. ``cron:`` is
+#: kept rather than renamed to ``trigger:``: the stateless reset, the ``cron-<id>`` dashboard
+#: pairing and ``schedule_trigger``'s HTTP path all key off it, and a new prefix would silently opt
+#: every migrated trigger out of conventions it already relies on.
 
 
 def session_key_for(trigger_id: str, *, session: str = "") -> str:
@@ -108,8 +102,8 @@ def session_key_for(trigger_id: str, *, session: str = "") -> str:
     raw = trigger_id.split(":", 1)[-1] if trigger_id.startswith("schedule:") else trigger_id
     binding = (session or "").strip()
     if binding.startswith("conversation:"):
-        return binding.split(":", 1)[1] or f"{KEY_PREFIX_TRIGGER}{raw}"
-    return f"{KEY_PREFIX_TRIGGER}{raw}"
+        return binding.split(":", 1)[1] or session_keys.TRIGGER.key(raw)
+    return session_keys.TRIGGER.key(raw)
 
 
 @dataclass

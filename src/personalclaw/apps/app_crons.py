@@ -48,6 +48,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from personalclaw import session_keys
 from personalclaw.apps.agent_tiers import AGENT_READ, AGENT_TEXT, AGENT_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -192,7 +193,7 @@ def start_job(
         return None, f"the scheduled job starts no agent: {no_agent_work(app)}"
     info = subagents.spawn(
         task,
-        parent_session_key=f"{_APP_JOB_PREFIX}{app}",
+        parent_session_key=session_keys.APP.key(app),
         agent="" if tier == AGENT_TEXT else agent,
         max_turns=max_turns,
         model=model,

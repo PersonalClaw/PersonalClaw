@@ -24,6 +24,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import session_keys
 from personalclaw.agents.instructions import AgentInstructions
 from personalclaw.agents.marketplace import AgentDefinition, get_default_agent_registry
 from personalclaw.providers.failure_copy import relayed_failure_copy
@@ -260,7 +261,7 @@ async def api_agent_marketplace_test(request: web.Request) -> web.Response:
 
         # A one-turn chat: a session of this test's own, ended with its reply, so a test is sent
         # its prompt and nothing of an earlier test of the same agent.
-        session_key = f"agent_marketplace_test:{name}:{uuid.uuid4().hex}"
+        session_key = session_keys.AGENT_TEST.key(f"{name}:{uuid.uuid4().hex}")
         acquired = False
         try:
             client, _is_new, _resumed = await state.sessions.get_or_create(

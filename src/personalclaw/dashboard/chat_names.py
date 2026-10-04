@@ -29,6 +29,7 @@ import re
 import time
 from typing import TYPE_CHECKING
 
+from personalclaw import session_keys
 from personalclaw.dashboard.chat_utils import candidate_history_keys
 
 if TYPE_CHECKING:
@@ -78,6 +79,6 @@ def new_chat_name(state: DashboardState) -> str:
         state._session_counter = _highest_kept_number(state)
     while True:
         state._session_counter += 1
-        name = f"chat-{state._session_counter}-{int(time.time())}"
+        name = session_keys.CHAT.key(f"{state._session_counter}-{int(time.time())}")
         if not _taken(state, name):
             return name

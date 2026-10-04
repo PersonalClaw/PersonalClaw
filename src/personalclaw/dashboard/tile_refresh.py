@@ -35,6 +35,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
+from personalclaw import session_keys
 from personalclaw.atomic_write import atomic_write
 from personalclaw.dashboard import views_store as store
 from personalclaw.ledger import (
@@ -449,11 +450,12 @@ async def refresh_tile(
 
     outputs: dict[str, Any] = {}
     outcomes: list[NodeOutcome] = []
-    # A synthetic, per-tile session key. NOT "" — `enforce_action`'s empty key classifies the
-    # dispatch as ATTENDED and skips the SafetyProfile layer entirely (the defect), and an
-    # unattended refresh is exactly what that layer is for. Derived from the tile so a profile can
-    # be bound to one tile rather than to the whole band.
-    session_key = f"tile:{tile_key(view_id, ref)}"
+    # A per-tile session key of the tile kind, which nobody watches (`session_keys.TILE`), so every
+    # gate the data nodes pass judges them as unattended work. NOT "" — an empty key reads as
+    # ATTENDED and skips the SafetyProfile layer entirely, and an unattended refresh is exactly
+    # what that layer is for. Derived from the tile so a profile can be bound to one tile rather
+    # than to the whole band.
+    session_key = session_keys.TILE.key(tile_key(view_id, ref))
     for node in binding.data:
         value, node_outcome = await _run_data_node(node, session_key=session_key)
         outcomes.append(node_outcome)

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from aiohttp import web
 
-from personalclaw import approval_answer
+from personalclaw import approval_answer, session_keys
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
@@ -341,15 +341,13 @@ def _live_session_key(state: DashboardState, key: str) -> str | None:
     """
     if key in state._sessions:
         return key
-    stripped = key
-    if stripped.startswith("dashboard:"):
-        stripped = stripped[len("dashboard:") :]
-    while stripped.startswith("dashboard_"):
-        stripped = stripped[len("dashboard_") :]
+    stripped = key.removeprefix(session_keys.DASHBOARD.prefix)
+    while session_keys.CHAT_FILE.names(stripped):
+        stripped = stripped[len(session_keys.CHAT_FILE.prefix) :]
     if stripped in state._sessions:
         return stripped
-    if ("dashboard_" + key) in state._sessions:
-        return "dashboard_" + key
+    if session_keys.CHAT_FILE.key(key) in state._sessions:
+        return session_keys.CHAT_FILE.key(key)
     return None
 
 

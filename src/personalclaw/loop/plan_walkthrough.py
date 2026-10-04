@@ -25,6 +25,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from personalclaw import session_keys
 from personalclaw.declined_calls import said
 from personalclaw.loop import files as loop_files
 from personalclaw.loop import store
@@ -136,7 +137,7 @@ def planner_agent(loop_id: str) -> str:
 
 
 #: What every loop planner's session key starts with (:func:`planner_session_key`).
-PLANNER_SESSION_PREFIX = "loop-plan-"
+PLANNER_SESSION_PREFIX = session_keys.LOOP.key("plan-")
 
 
 def planner_session_key(loop_id: str) -> str:

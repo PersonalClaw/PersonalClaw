@@ -35,10 +35,10 @@ def trigger_schedule_job(job_id: str) -> tuple[bool, str]:
         return False, "no job id given"
     # Deferred import: keeps this module importable in contexts where the MCP
     # core isn't wired, and avoids a circular import at module load.
-    from personalclaw import mcp_core
+    from personalclaw import mcp_core, session_keys
 
     named = mcp_core._resolve_session_key()
-    token = None if named else mcp_core.set_current_session_key(f"cron:{job_id}")
+    token = None if named else mcp_core.set_current_session_key(session_keys.TRIGGER.key(job_id))
     try:
         resp = mcp_core._post(f"/api/triggers/schedule:{quote(job_id, safe='')}/run", {})
     finally:

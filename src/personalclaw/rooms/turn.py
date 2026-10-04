@@ -9,13 +9,12 @@ members of one room are two distinct provider objects with two distinct historie
 that is a property :func:`member_session` exists to make structural rather than
 aspirational.
 
-**The ``room:`` key prefix is load-bearing, by absence.** It appears in neither
-``session._STATELESS_PREFIXES`` nor ``guardrails.policy._EXTRA_UNATTENDED_PREFIXES``, so
-``is_unattended_session("room:x:y")`` is False and ``profile_for_session`` hands back the
-INTERACTIVE profile, whose ``approval`` is ``"ask"``. That is what makes "the human is the
-room's sole approver" true by construction rather than by a policy branch a later change
-could forget. A room must never register itself as an unattended or stateless prefix: the
-HEADLESS profile approves via hooks, which would silently remove the human from the loop
+**The ``room:`` kind is watched and never reset.** ``session_keys.ROOM`` marks it neither
+unattended nor stateless, so ``is_unattended_session("room:x:y")`` is False and
+``profile_for_session`` hands back the INTERACTIVE profile, whose ``approval`` is ``"ask"``. That
+is what makes "the human is the room's sole approver" true by construction rather than by a
+policy branch a later change could forget. A room must never be marked unattended or stateless:
+the HEADLESS profile approves via hooks, which would silently remove the human from the loop
 of a surface whose entire point is that they are in it.
 :func:`personalclaw.rooms.posture.member_posture` REFUSES a turn whose base resolved to any
 other approval posture, so that absence is re-checked on every turn rather than only
@@ -48,7 +47,7 @@ import re
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator, Callable, NamedTuple
 
-from personalclaw import context_headroom
+from personalclaw import context_headroom, session_keys
 from personalclaw.agents.instructions import agent_instructions
 from personalclaw.audit_subject import audit_text
 from personalclaw.context_compaction import compact, should_compact
@@ -75,9 +74,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 logger = logging.getLogger(__name__)
 
-#: Session-key prefix for a room member. Deliberately absent from every
-#: stateless/unattended prefix tuple — see the module docstring.
-SESSION_KEY_PREFIX = "room:"
+#: Session-key prefix for a room member: a watched kind that is never reset
+#: (``session_keys.ROOM``) — see the module docstring.
+SESSION_KEY_PREFIX = session_keys.ROOM.prefix
 
 #: An ``@name`` mention. The alphabet is ``agent_metadata._SAFE_NAME_RE``'s, so a mention
 #: can name exactly the strings a member name can be and nothing else. The lookbehind

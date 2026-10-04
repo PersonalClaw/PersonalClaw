@@ -38,6 +38,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import session_keys
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body, require_string, string_field
 from personalclaw.security import (
@@ -1222,7 +1223,7 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
     # what lets it start on the app's install consent while approving none of its calls.
     info = state.subagents.spawn(
         task,
-        parent_session_key=f"app:{name}",
+        parent_session_key=session_keys.APP.key(name),
         agent=agent,
         max_turns=max_turns,
         capability_class=capability_class(tier),
@@ -1266,7 +1267,7 @@ async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
     # oracle over every other spawner's runs. An owner-initiated call carries no app
     # identity (the dashboard reaches this route when app-token minting failed) and
     # is not scoped — the owner already sees every run via /api/spawn.
-    if request_app and info.parent_session_key != f"app:{request_app}":
+    if request_app and info.parent_session_key != session_keys.APP.key(request_app):
         _sel_log(
             "apps.agent_run_status",
             "denied",

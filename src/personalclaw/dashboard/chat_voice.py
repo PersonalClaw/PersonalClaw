@@ -15,6 +15,8 @@ from aiohttp import web
 
 from personalclaw.config import AppConfig
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.guardrails.budgets import BudgetConfigUnreadable
+from personalclaw.guardrails.failure import BudgetExceededError
 from personalclaw.http_errors import json_error
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.tts.registry import TtsNotReady, active_voice_params, can_speak
@@ -220,6 +222,14 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
     except TtsNotReady as refused:
         # The provider stopped being able to speak between the check above and the synthesis.
         return json_error("tts_not_ready", message=refused.message, status=refused.status)
+    except BudgetExceededError as refused:
+        # A spend cap refused the speech: it is work nobody watches (an app's request, a scheduled
+        # script's), held to the caps. Said in the cap's own words, never as a broken runtime.
+        return json_error("tts_spend_refused", message=refused.sentence(), status=503)
+    except BudgetConfigUnreadable as unknown:
+        return json_error(
+            "tts_spend_refused", message=f"{unknown}, so nothing was spoken.", status=503
+        )
     finally:
         if final_path:
             with contextlib.suppress(OSError):

@@ -10,7 +10,8 @@ or transcribe hours of audio with no cap ever seeing it. :func:`metered_media_ca
 * the call is priced in its unit by the one pricing function for it (``routing.rates
   .price_units``): a price the owner set, an engine on this machine's known $0, an app's
   declaration, the shipped table;
-* an unattended call (an automation, a loop, a subagent, background work: its session is one
+* an unattended call (an automation, a loop, a subagent, an app's own work, background work: its
+  session, or the work it is made in when it names none, is one
   ``guardrails.policy.is_unattended_session`` names, or it runs inside a tracked run) is weighed
   against the day's and its run's dollar ceilings BEFORE it is made, as a model call is
   (``guardrails.model_call.admit_call``), and refused when a ceiling is reached, when it does not
@@ -65,11 +66,15 @@ class MediaCall:
 
 def is_unattended(session_key: str = "") -> bool:
     """Whether a call made for *session_key* is unattended work: an unattended session's, or one
-    made inside a tracked run (a trigger fire, a loop, a subagent)."""
+    made inside a tracked run (a trigger fire, a loop, a subagent). A call that names no session is
+    the work it is made in (``memory_writes.source_session``): speech an app's request asks for is
+    the app's work, as its tool calls are."""
+    from personalclaw import memory_writes
     from personalclaw.guardrails.budgets import current_run_key
     from personalclaw.guardrails.policy import is_unattended_session
 
-    return bool(current_run_key()) or (bool(session_key) and is_unattended_session(session_key))
+    key = session_key or memory_writes.source_session()
+    return bool(current_run_key()) or (bool(key) and is_unattended_session(key))
 
 
 async def metered_media_call(

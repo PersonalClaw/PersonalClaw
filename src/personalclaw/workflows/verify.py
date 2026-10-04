@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import session_keys
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows.judge_contract import Verdict
 
@@ -275,7 +276,7 @@ def judge_session_key(run_id: str, node_path: str, *, epoch: int = 0) -> str:
     judge can never accidentally reuse one. Without a distinct session the judge inherits
     the producer's reasoning and rubber-stamps its output.
     """
-    return f"judge:{run_id}:{node_path}:{epoch}"
+    return session_keys.JUDGE.key(f"{run_id}:{node_path}:{epoch}")
 
 
 def requires_fresh_judge(node_config: dict[str, Any]) -> bool:

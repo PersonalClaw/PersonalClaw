@@ -804,6 +804,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The text-to-speech model is chosen but cannot speak yet. Fix: check it in "
         "Settings → Models."
     ),
+    # Speech refused by a spend cap: the request is work nobody watches (an app's, a scheduled
+    # script's), and the daily or run dollar cap for such work refused it. The message is the
+    # cap's own sentence, which says which cap and how to lift it.
+    "tts_spend_refused": (
+        "A spend cap for work nobody watches refused this speech, so nothing was spoken."
+    ),
     # ── capture telemetry import (inbound/capture_proxy.py) ──
     # ONE code, for the store failing under the import — NOT for a file that parsed badly.
     # A malformed export is a 200 whose `reasons` name each skipped line (§8's

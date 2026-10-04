@@ -76,20 +76,19 @@ async def test_a_room_members_session_never_appears_in_the_chat_history(tmp_path
 async def test_the_defect_would_otherwise_have_read_as_a_MANUAL_chat(tmp_path):
     """Why the filter is needed at all, asserted rather than argued.
 
-    `_origin_of` classifies a `room:` key as `manual` — the user's OWN chat — because the prefix is
-    absent from every worker-origin tuple BY DESIGN (that absence is the sole-approver property).
-    So the row would not merely have appeared; it would have appeared in the DEFAULT scope, beside
-    the user's real conversations.
+    `_origin_of` classifies a `room:` key as `manual` — the user's OWN chat — because the room
+    kind is a watched one BY DESIGN (that is the sole-approver property). So the row would not
+    merely have appeared; it would have appeared in the DEFAULT scope, beside the user's real
+    conversations.
     """
     from personalclaw.dashboard.chat_handlers import _origin_of
 
     assert _origin_of("room:pricing-debate:analyst") == ("manual", "")
-    # …and the prefix really is absent from both tuples, which is what makes that true.
-    from personalclaw.guardrails.policy import _EXTRA_UNATTENDED_PREFIXES
-    from personalclaw.session import _STATELESS_PREFIXES
+    # …and the room kind really is watched and never reset, which is what makes that true.
+    from personalclaw import session_keys
 
-    assert not any(p.startswith("room") for p in _STATELESS_PREFIXES)
-    assert not any(p.startswith("room") for p in _EXTRA_UNATTENDED_PREFIXES)
+    assert session_keys.kind_of("room:pricing-debate:analyst") is session_keys.ROOM
+    assert not session_keys.ROOM.unattended and not session_keys.ROOM.stateless
 
 
 @pytest.mark.asyncio

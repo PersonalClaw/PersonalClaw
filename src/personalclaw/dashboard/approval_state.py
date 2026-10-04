@@ -18,7 +18,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from personalclaw import approval_answer
+from personalclaw import approval_answer, session_keys
 from personalclaw.approval_answer import AnswerRefused, Principal
 from personalclaw.approval_brief import RISK_LABELS, derive_blast_radius
 from personalclaw.channel_delivery import APPROVAL_ENDINGS
@@ -162,11 +162,12 @@ def _who_asked(entry: dict[str, Any]) -> str:
         # subagent, which none of its tasks is yet.
         return batch
     session = str(entry.get("session") or "")
-    if entry.get("source") == "subagent" and session.startswith("app:"):
+    if entry.get("source") == "subagent" and session_keys.APP.names(session):
         # An app's background agent (`SubagentInfo.app`), named by the app it works for.
         from personalclaw.apps.app_manager import display_name_of
 
-        return f"A background agent of the app “{display_name_of(session[len('app:') :])}”"
+        app = session[len(session_keys.APP.prefix) :]
+        return f"A background agent of the app “{display_name_of(app)}”"
     if entry.get("source") == "subagent" and whose:
         # A subagent an app's agent started: the app's work, named by the app.
         return f"A subagent of {whose}"

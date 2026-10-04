@@ -1,5 +1,7 @@
 """Shared constants used across cli and gateway modules."""
 
+from personalclaw import session_keys
+
 #: The name, drawn in figlet's "small" font, that ``personalclaw`` with no command and the
 #: ``personalclaw chat`` prompt print. Defined here once and imported by both: when each
 #: module drew its own copy, the two could say different things, and a word search reads
@@ -34,19 +36,19 @@ JSONRPC_METHOD_NOT_FOUND = -32601
 #:
 #: Lives here, not in ``dashboard/chat_utils`` where the wrapper is applied, because
 #: three layers below the HTTP surface have to agree on it and each learned it the hard
-#: way: ``guardrails.policy`` classifies the wrapped form (a headless session read as
+#: way: ``session_keys`` classifies the wrapped form (a headless session read as
 #: ATTENDED while its bare key read unattended), and ``usage_ledger`` rows are KEYED by
 #: the wrapped form (a bare-key query returned a confident 0 tokens for a turn that had
 #: really billed 22,979). A private copy in each of those modules is the same literal
 #: three times, free to drift; and importing ``chat_utils`` to get it inverts the
 #: dependency — core would need the web app stood up to name a session.
-DASHBOARD_SESSION_PREFIX = "dashboard:"
+DASHBOARD_SESSION_PREFIX = session_keys.DASHBOARD.prefix
 
 #: The session key of a webhook's agent turn: ``POST /api/hooks/agent`` takes only a ``hook:<id>``
 #: key, and a callback the agent registers is keyed so. One spelling for the route, the callbacks
-#: and the classifier that runs such a turn unattended (``guardrails.policy``): a copy the route
+#: and the classifier that runs such a turn unattended (``session_keys.WEBHOOK``): a copy the route
 #: checked and the classifier did not would be a webhook turn run as a watched chat.
-HOOK_SESSION_PREFIX = "hook:"
+HOOK_SESSION_PREFIX = session_keys.WEBHOOK.prefix
 
 
 def dashboard_session_key(session_name: str) -> str:
@@ -65,7 +67,7 @@ def dashboard_session_key(session_name: str) -> str:
 #: A dashboard chat's FILE form: its transcript is filed as ``dashboard_<name>``
 #: (``history._safe_key`` turns the ``:`` into ``_``), and resume round-trips once stacked the
 #: prefix (``dashboard_dashboard_<name>``).
-DASHBOARD_FILE_PREFIX = "dashboard_"
+DASHBOARD_FILE_PREFIX = session_keys.CHAT_FILE.prefix
 
 
 def dashboard_key_from_file_form(name: str) -> str:

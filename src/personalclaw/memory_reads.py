@@ -59,14 +59,16 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
+from personalclaw import session_keys
+
 #: The key the dashboard's own pages send: the owner, not a session.
-_DASHBOARD_UI = "dashboard:ui"
+_DASHBOARD_UI = session_keys.DASHBOARD_UI
 #: A subagent's key (``subagent.agent_work_id``), an app's agent run's parent key
 #: (``handlers.apps``: ``app:<name>``) and a trigger's own session (``triggers.wakeup``:
 #: ``cron:<trigger id>``).
-_SUBAGENT = "subagent:"
-_APP = "app:"
-_TRIGGER = "cron:"
+_SUBAGENT = session_keys.SUBAGENT.prefix
+_APP = session_keys.APP.prefix
+_TRIGGER = session_keys.TRIGGER.prefix
 
 #: Why a Temporary chat's work reads no memory, as the agent is told it.
 TEMPORARY = (

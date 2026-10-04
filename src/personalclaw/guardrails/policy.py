@@ -6,11 +6,10 @@ single object that decides approval + tool grants + egress + budget + scan for a
 run — replacing the ad-hoc ``ToolApprovalPolicy.AUTO_APPROVE`` vs ``HOOK_BASED`` pick
 the gateway makes today.
 
-**Headless by construction:** unattended trigger-fired runs resolve through
-``HEADLESS`` mechanically, keyed off the session-key conventions that already
-classify unattended work (``session._STATELESS_PREFIXES`` + ``loop-*`` workers).
-Auto-fired runs default read-only; write/execute is a creation-time grant on the
-job/trigger, never acquired mid-run.
+**Headless by construction:** unattended work resolves through ``HEADLESS``
+mechanically, keyed off the kind of session key it runs under (``session_keys``, the one
+table of kinds and whether anybody watches each). Auto-fired runs default read-only;
+write/execute is a creation-time grant on the job/trigger, never acquired mid-run.
 
 ``tool_grants`` is enforced by :func:`tool_grant_denial`, which every live tool seam
 that owns a read-only decision now asks: the in-process MCP handler
@@ -32,7 +31,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.constants import DASHBOARD_SESSION_PREFIX, HOOK_SESSION_PREFIX
+from personalclaw import session_keys
 from personalclaw.guardrails.autonomy import RUNG_AUTO_WITH_UNDO, RUNG_AUTONOMOUS, RUNG_ONE_TAP
 from personalclaw.guardrails.budgets import Budget
 
@@ -187,106 +186,40 @@ def safety_profile_for(base: SafetyProfile) -> SafetyProfile:
 
 # ── Headless-by-construction resolution ─────────────────────────────────────────
 
-#: The prefix for a dispatch that has NO session at all — a store-backed trigger fire, a
-#: memory-event trigger, a top-level script hook. Those seams hold a trigger/hook id and
-#: nothing else, and they are unattended by definition: no human is watching, and the
-#: action is an automated side-effect (the same reasoning the incident kill switch already
-#: applies to a hook's action). Before PHF-8 every one of them passed ``session_key=""``,
-#: which classified as ATTENDED and resolved INTERACTIVE — so "headless by construction"
-#: held in tests and nowhere else. :func:`unattended_dispatch_key` mints the identity.
-UNATTENDED_DISPATCH_PREFIX = "unattended:"
-
-# loop-worker session keys (Goal/Code loop cycle workers) — unattended, like the
-# stateless prefixes. Kept here (not in session.py) since it's a guardrail concern.
-_LOOP_PREFIXES = ("loop-", "loop:")
-
-#: Inbound-access session keys — ``inbound:<surface>:<client>`` for the HTTP dialects and
-#: ``inbound:cli:<...>`` for headless ``personalclaw run``.
-#: A caller reaching in from outside the dashboard is unattended BY DEFINITION: no human
-#: is watching the turn, so it resolves through HEADLESS.
-#:
-#: Deliberately here and NOT in ``session._STATELESS_PREFIXES`` (which the scope names).
-#: That list is the PROVIDER-resume/pool axis: a key on it never resumes its ACP session
-#: and never claims a warm process. Putting ``inbound:`` there would have silently
-#: contradicted its own ``--session`` clause, which exists to let a named headless
-#: session CONTINUE a conversation. Unattended and stateless are two different questions;
-#: this module answers only the first one.
-INBOUND_PREFIX = "inbound:"
-
-#: A webhook's agent turn (``POST /api/hooks/agent``, ``hook:<id>``): an outside system starts it,
-#: and nobody is watching it run. The route has always said so ("runs unattended") and nothing
-#: here did, so the turn resolved INTERACTIVE, the posture of a chat someone is reading: full
-#: tool grants, and each call that needed approval parked on a prompt nobody would see. Unattended
-#: and not stateless, like ``inbound:`` above: a registered callback resumes its own context.
-_WEBHOOK_PREFIX = HOOK_SESSION_PREFIX
-
-#: Every prefix this module classifies as unattended on top of session.py's own.
-_EXTRA_UNATTENDED_PREFIXES = (
-    *_LOOP_PREFIXES,
-    UNATTENDED_DISPATCH_PREFIX,
-    INBOUND_PREFIX,
-    _WEBHOOK_PREFIX,
-)
-
 
 def unattended_dispatch_key(origin: str) -> str:
-    """The guardrail identity for a sessionless unattended dispatch.
+    """The guardrail identity for a dispatch that has NO session at all: a store-backed trigger
+    fire, a memory-event trigger, a top-level script hook, a workflow's own commands.
 
-    ``origin`` names WHAT fired (``trigger:<id>``, ``hook:<id>``) so a clamp in the SEL is
-    attributable to the automation that caused it. The key is a guardrail identity only —
-    it is never used to open or look up a chat session.
+    Those seams hold an id and nothing else, and they are unattended by definition: no human is
+    watching, and the action is an automated side-effect. An empty key would read as ATTENDED and
+    resolve INTERACTIVE. ``origin`` names WHAT fired (``trigger:<id>``, ``hook:<id>``) so a clamp
+    in the SEL is attributable to the automation that caused it. The key is a guardrail identity
+    only — it is never used to open or look up a chat session.
     """
-    return f"{UNATTENDED_DISPATCH_PREFIX}{(origin or 'unknown').strip()}"
-
-
-#: The dashboard's provider-key wrapper. ``chat_utils._history_key_for`` turns a chat
-#: session's own key into ``dashboard:<key>`` for the provider/history layer, so the
-#: guardrail readers downstream of a turn see the WRAPPED form while ``chat_runner``'s
-#: own classification reads the bare one.
-#:
-#: 🔴 ``is_unattended_session("inbound:cli:abc")`` was True while
-#: ``is_unattended_session("dashboard:inbound:cli:abc")`` was False, and
-#: ``profile_for_session`` on the wrapped key returned INTERACTIVE. A headless CLI turn
-#: therefore presented the unattended posture to the one caller that reads
-#: ``session.key`` and the ATTENDED posture to every caller downstream of the provider
-#: key — the egress tier, the rung ceiling and the denylist among them. Stripping the
-#: wrapper is done for the INBOUND family only: a plain ``dashboard:mychat`` still
-#: matches nothing after stripping and stays attended, so no interactive session's
-#: classification moves.
-#:
-#: Aliased from ``constants`` rather than re-declared: ``chat_utils`` applies the wrapper
-#: and ``usage_ledger`` keys rows by it, so a private copy here would be the same literal
-#: a third time, free to drift from the layer that writes it.
-_DASHBOARD_WRAPPER = DASHBOARD_SESSION_PREFIX
+    return session_keys.UNATTENDED.key((origin or "unknown").strip())
 
 
 def is_unattended_session(session_key: str) -> bool:
-    """True when ``session_key`` names an unattended run (cron/subagent/channel/inbox/
-    side/loop worker, an ``inbound:`` access surface, a webhook's ``hook:`` turn, or a
-    sessionless ``unattended:`` dispatch) — the keys that resolve through HEADLESS by
-    construction.
+    """True when nobody watches the work ``session_key`` names — the keys that resolve through
+    HEADLESS by construction: a trigger's run, a subagent, a loop's worker, a caller from outside
+    the dashboard, a webhook's turn, a Home tile's refresh, an app's own work, a sessionless
+    dispatch, and every other kind ``session_keys`` marks unattended.
 
-    Accepts either the bare session key or the dashboard-wrapped provider form of an
-    inbound key (see ``_DASHBOARD_WRAPPER``), so the posture does not depend on which
-    layer is asking.
+    The answer is :func:`personalclaw.session_keys.is_unattended`, which also reads a kind's
+    dashboard-wrapped provider form where its work runs as a dashboard chat, so the posture does not
+    depend on which layer is asking. A chat's own name is watched.
     """
-    from personalclaw.session import _STATELESS_PREFIXES
-
-    key = session_key or ""
-    if key.startswith(_DASHBOARD_WRAPPER + INBOUND_PREFIX):
-        key = key[len(_DASHBOARD_WRAPPER) :]
-    return any(key.startswith(p) for p in (*_STATELESS_PREFIXES, *_EXTRA_UNATTENDED_PREFIXES))
+    return session_keys.is_unattended(session_key)
 
 
 def profile_for_session(session_key: str) -> SafetyProfile:
     """Resolve the safety profile for a session key BY CONSTRUCTION.
 
-    An unattended session (cron/subagent/channel/inbox/side/loop, a webhook's turn, or a
-    sessionless ``unattended:`` dispatch) resolves to ``HEADLESS`` (read-only default,
-    config-layered budget + scan); everything else is the human-watched ``INTERACTIVE`` posture.
-    This is the single object the gateway's approval pick consults, replacing the ad-hoc
-    AUTO_APPROVE/HOOK_BASED branch. Operator config is layered in via
-    ``safety_profile_for``.
+    An unattended session (:func:`is_unattended_session`) resolves to ``HEADLESS`` (read-only
+    default, config-layered budget + scan); everything else is the human-watched ``INTERACTIVE``
+    posture. This is the single object the gateway's approval pick consults, replacing the ad-hoc
+    AUTO_APPROVE/HOOK_BASED branch. Operator config is layered in via ``safety_profile_for``.
 
     **Then the CEILING intersects it** (PLATFORM-HARDENING-FLOORS §5): the operator's
     ``governance/ceiling.json`` is level one and this profile is level two, and tightest

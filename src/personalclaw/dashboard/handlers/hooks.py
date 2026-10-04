@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from personalclaw import notification_kinds
+from personalclaw import notification_kinds, session_keys
 from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.guardrails.failure import BudgetExceededError
@@ -391,7 +391,7 @@ async def api_hooks_agent(request: web.Request) -> web.Response:
 
     session_key = body.get("sessionKey", "")
     if not session_key:
-        session_key = f"hook:default:{int(time.time())}"
+        session_key = session_keys.WEBHOOK.key(f"default:{int(time.time())}")
     if not isinstance(session_key, str) or not session_key.startswith(HOOK_SESSION_PREFIX):
         return door.answer(
             json_error(

@@ -116,34 +116,27 @@ async def _synthesize_chunk(
 
     Metered by the characters it speaks (``guardrails.media_call``): held to the dollar caps
     first when it is unattended work, and counted in Usage either way. A chunk a cap refuses is
-    not spoken: the refusal is logged and None returned, the answer this helper gives for any
-    failure.
+    not spoken, and the refusal is raised for the caller to say:
+    :class:`~personalclaw.guardrails.failure.BudgetExceededError`, or
+    :class:`~personalclaw.guardrails.budgets.BudgetConfigUnreadable` when the caps cannot be read.
     """
-    from personalclaw.guardrails.budgets import BudgetConfigUnreadable
-    from personalclaw.guardrails.failure import BudgetExceededError
     from personalclaw.guardrails.media_call import MediaCall, metered_media_call
     from personalclaw.providers.engines import binding_name
 
-    try:
-        return await metered_media_call(
-            MediaCall(
-                provider=binding_name(provider),
-                model=voice,
-                unit="character",
-                quantity=len(text),
-            ),
-            lambda: provider.synthesize(
-                text,
-                voice=voice,
-                speed=speed,
-                speech_voice=speech_voice,
-            ),
-        )
-    except BudgetExceededError as refused:
-        logger.warning("voice_reply: not spoken: %s", refused.sentence())
-    except BudgetConfigUnreadable as unknown:
-        logger.warning("voice_reply: not spoken: %s", unknown)
-    return None
+    return await metered_media_call(
+        MediaCall(
+            provider=binding_name(provider),
+            model=voice,
+            unit="character",
+            quantity=len(text),
+        ),
+        lambda: provider.synthesize(
+            text,
+            voice=voice,
+            speed=speed,
+            speech_voice=speech_voice,
+        ),
+    )
 
 
 async def synthesize_speech(
@@ -164,9 +157,13 @@ async def synthesize_speech(
     redaction, so we apply both filters here to prevent secrets or
     suspicious URLs from being spoken and persisted in the channel.
 
-    A voice the provider says it cannot speak with now (``can_synthesize``) is not asked for:
-    the reason is logged and None returned, the answer this helper gives for any failure.
+    A voice the provider says it cannot speak with now (``can_synthesize``) is not asked for, and
+    speech a spend cap refuses is not spoken: the reason is logged and None returned, the answer
+    this helper gives for any failure.
     """
+    from personalclaw.guardrails.budgets import BudgetConfigUnreadable
+    from personalclaw.guardrails.failure import BudgetExceededError
+
     if not await can_speak(provider, voice):
         logger.warning("voice_reply: %s", TtsNotReady(provider, voice).message)
         return None
@@ -180,13 +177,19 @@ async def synthesize_speech(
     plain = strip_markdown(text).strip()
     if not plain:
         return None
-    return await _synthesize_chunk(
-        provider,
-        plain,
-        voice=voice,
-        speed=speed,
-        speech_voice=speech_voice,
-    )
+    try:
+        return await _synthesize_chunk(
+            provider,
+            plain,
+            voice=voice,
+            speed=speed,
+            speech_voice=speech_voice,
+        )
+    except BudgetExceededError as refused:
+        logger.warning("voice_reply: not spoken: %s", refused.sentence())
+    except BudgetConfigUnreadable as unknown:
+        logger.warning("voice_reply: not spoken: %s", unknown)
+    return None
 
 
 async def upload_voice_to_channel(
@@ -305,8 +308,9 @@ async def streaming_voice_reply(
     to the dashboard bypasses the usual text-path redaction.
 
     Raises :class:`~personalclaw.tts.registry.TtsNotReady` before the first chunk when the
-    provider says it cannot speak with *voice* now (``can_synthesize``), so the surface names
-    that reason rather than reporting a synthesis that produced no audio.
+    provider says it cannot speak with *voice* now (``can_synthesize``), and a spend cap's
+    refusal of a sentence (:func:`_synthesize_chunk`) where it stops, so the surface names that
+    reason rather than reporting a synthesis that produced no audio.
     """
     if not await can_speak(provider, voice):
         raise TtsNotReady(provider, voice)

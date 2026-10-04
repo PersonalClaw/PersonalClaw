@@ -51,6 +51,7 @@ from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import CREATED_BY_APP_META_KEY
 from personalclaw.http_errors import json_error
 from personalclaw.loop import files as loop_files
+from personalclaw.loop.plan_walkthrough import PLANNER_SESSION_PREFIX
 from personalclaw.own_words import OWN_WORDS, RAN_PROMPT, pasted_blocks, typed_text
 from personalclaw.request_validation import bool_field, json_object_body
 
@@ -93,10 +94,10 @@ async def _run_chat_scoped(state: DashboardState, session: _ChatSession, message
     being lumped in with the CLI. A dashboard session binds nothing, keeping every
     interactive turn byte-identical to today.
     """
-    from personalclaw.guardrails.policy import INBOUND_PREFIX
+    from personalclaw import session_keys
 
     key = session.key or ""
-    if not key.startswith(INBOUND_PREFIX):
+    if not session_keys.INBOUND.names(key):
         await run_chat(state, session, message)
         return
 
@@ -566,7 +567,7 @@ async def _maybe_cancel_and_replace(
 _WORKER_PREFIX_ORIGIN = (("loop-", "loop"), ("campaign-", "campaign"))
 
 # The unified planner session key (loop-plan-<id>) — no standing loop to link to.
-_LOOP_PLAN_PREFIX = "loop-plan-"
+_LOOP_PLAN_PREFIX = PLANNER_SESSION_PREFIX
 
 
 def _origin_of(name: str, app: str = "") -> tuple[str, str]:

@@ -809,14 +809,15 @@ def test_a_room_session_key_leaves_the_human_as_sole_approver(enabled):
     assert profile.approval == "ask", "the human approves every room action"
 
 
-def test_the_room_prefix_is_absent_from_both_prefix_tuples(enabled):
-    """Stated directly, because the test above would still pass if `room:` were added to
-    a tuple whose semantics later changed. This is the invariant, not its consequence."""
-    from personalclaw import session as session_mod
-    from personalclaw.guardrails import policy
+def test_the_room_kind_is_watched_and_never_reset(enabled):
+    """Stated directly, because the test above would still pass if the room kind's row changed
+    in a way that still read attended today. This is the invariant, not its consequence."""
+    from personalclaw import session_keys
 
-    assert not any(p.startswith("room") for p in session_mod._STATELESS_PREFIXES)
-    assert not any(p.startswith("room") for p in policy._EXTRA_UNATTENDED_PREFIXES)
+    assert session_keys.ROOM.prefix == "room:"
+    assert session_keys.ROOM.unattended is False
+    assert session_keys.ROOM.stateless is False
+    assert not any(p.startswith("room") for p in session_keys.STATELESS_PREFIXES)
 
 
 # ── the turn path: what makes a member speak (the residual) ────────────────

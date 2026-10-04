@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import session_keys
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
 if TYPE_CHECKING:
@@ -70,14 +71,14 @@ def inject_schedule_result_to_session(
     one is threaded the result, as an open one is, rather than handed the cron's runs since
     as turns of their own beside the results already in it.
     """
-    session_name = f"cron-{job.id}"
+    session_name = session_keys.SCHEDULE_CHAT.key(job.id)
     session = state.get_or_create_session(name=session_name, agent=job.agent_id or "")
     session.title = f"Cron: {_redact(job.name)}"
 
     if not session.linked_session_key:
         # First open here — link to the cron's agent session, and hydrate its history into a
         # new chat.
-        session.linked_session_key = f"cron:{job.id}"
+        session.linked_session_key = session_keys.TRIGGER.key(job.id)
         if not session.messages:
             msgs = history
             if msgs is None and state.conversation_log is not None:

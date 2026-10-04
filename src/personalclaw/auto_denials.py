@@ -91,24 +91,20 @@ def answerable_chat(session_key: str) -> str:
 
 
 def unattended_origin(session_key: str) -> str:
-    """Who was running, for an unattended session key — prose, never the key itself."""
+    """Who was running, for an unattended session key — prose, never the key itself: the kind's
+    own words (``session_keys``), a heartbeat task as one, and an app by its name."""
+    from personalclaw import session_keys
     from personalclaw.action_providers.heartbeat_tasks_provider import TASK_SESSION_PREFIX
-    from personalclaw.guardrails.policy import is_unattended_session
 
     key = session_key or ""
-    if ownership.is_owned(key):
-        return "A workflow step"
     if key.startswith(TASK_SESSION_PREFIX):
         return "A heartbeat task"
-    if key.startswith("cron:"):
-        return "A scheduled automation"
-    if key.startswith("subagent:"):
-        return "A subagent"
-    if key.startswith("loop"):
-        return "A loop"
-    if is_unattended_session(key):
-        return "An unattended run"
-    return "A run"
+    kind = session_keys.judged_kind(key)
+    if kind is session_keys.APP and (app := key[len(kind.prefix) :]):
+        from personalclaw.apps.app_manager import display_name_of
+
+        return f"The app “{display_name_of(app)}”"
+    return kind.who if kind is not None else "A run"
 
 
 def trigger_asker(name: str) -> str:

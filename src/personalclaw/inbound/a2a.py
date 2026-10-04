@@ -37,7 +37,7 @@ client here. A client's ``messageId`` (or an explicit ``idempotencyKey``) become
 task rather than starting a second run.
 
 **Headless is inherited, not configured.** The run's session key is
-``inbound:a2a:<client>``, and ``guardrails.policy.INBOUND_PREFIX`` already classifies
+``inbound:a2a:<client>``, and ``session_keys.INBOUND`` already classifies
 that family as unattended → ``HEADLESS``. There is deliberately no profile argument on
 this path: a surface that *chooses* its own safety profile is a surface that can choose
 wrong, and an A2A caller must inherit exactly the ceiling an inbound OpenAI client gets.
@@ -317,15 +317,15 @@ def outbound_policy() -> Any:
 def session_key_for(client_id: str) -> str:
     """The guardrail identity for an A2A-started run.
 
-    ``inbound:`` is what ``guardrails.policy`` already classifies as unattended, so this
-    one string is the whole of "runs execute under the headless profile". The prefix is
-    IMPORTED from the classifier rather than spelled here: a private copy of the literal
-    is free to drift from the module that decides what it means, and the drift would
-    present as an A2A run silently resolving INTERACTIVE.
+    ``inbound:`` is what ``session_keys.INBOUND`` classifies as unattended, so this
+    one string is the whole of "runs execute under the headless profile". The key is
+    minted from the classifier's own row rather than spelled here: a private copy of the
+    literal is free to drift from the module that decides what it means, and the drift
+    would present as an A2A run silently resolving INTERACTIVE.
     """
-    from personalclaw.guardrails.policy import INBOUND_PREFIX
+    from personalclaw import session_keys
 
-    return f"{INBOUND_PREFIX}{SURFACE}:{client_id or SURFACE}"
+    return session_keys.INBOUND.key(f"{SURFACE}:{client_id or SURFACE}")
 
 
 # ── The card ──────────────────────────────────────────────────────────────────
