@@ -349,12 +349,14 @@ def suggest_for_send(
     *pasted* is the send's pasted blocks (``own_words.pasted_blocks``); the classifier reads the
     message without them (``own_words.typed_text``).
 
-    Gates (any fail → None, no event): routing disabled; session not default-agent;
-    ``memory_mode != "persistent"``; per-session frequency cap not elapsed; the matched
-    agent is suppressed (cooldown/muted).
+    Gates (any fail → None, no event): routing disabled; session not default-agent; the chat
+    keeps nothing (an Incognito or Temporary chat, or one whose mode cannot be read); per-session
+    frequency cap not elapsed; the matched agent is suppressed (cooldown/muted).
     """
     try:
+        from personalclaw import memory_writes
         from personalclaw.config.loader import AppConfig
+        from personalclaw.constants import dashboard_history_key
 
         cfg = AppConfig.load()
         rc = cfg.agents_routing
@@ -366,7 +368,14 @@ def suggest_for_send(
         sess_agent = getattr(session, "agent", "") or ""
         if sess_agent and sess_agent != default_agent:
             return None
-        if getattr(session, "memory_mode", "persistent") != "persistent":
+        # The send runs outside the chat's turn, so the embedding model would read the message
+        # here: the one answer to whether a model other than the chat's own may read it, asked of
+        # every record of the chat's mode under both spellings of its key.
+        key = str(getattr(session, "key", "") or "")
+        mode = getattr(session, "memory_mode", None)
+        if memory_writes.blocks_background_models(
+            key, dashboard_history_key(key), memory_mode=mode if isinstance(mode, str) else None
+        ):
             return None
 
         import time as _time

@@ -577,8 +577,9 @@ Data leaving the running system:
   [limitations §19](limitations.md#19-a-private-chat-is-kept-out-of-the-memory-folders-not-out-of-every-store)); no
   background model (titles, tags, follow-ups, a condensed history, suggestions)
   is given anything of one; and nothing of one reaches any model but the one its
-  turn runs on (the embedding model, a tool's or a subagent's model, the image
-  reader, a fallback, an agent CLI's tool process: `memory_writes.model_may_read`;
+  turn runs on (the embedding model, so its tools are ranked by their words, a
+  tool's or a subagent's model, the image reader, a fallback, an agent CLI's tool
+  process, a side question asked beside it: `memory_writes.model_may_read`;
   the work it starts away from its turn, its subagents and the steps of a run it
   started, is handed that model with its mode, after a restart too, the mode
   read by one reader with the live chat first, so a chat's first-turn work keeps

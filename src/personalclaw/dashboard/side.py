@@ -10,6 +10,11 @@ of the parent session. Isolation is structural (see side_state.py):
   - tools are hard-rejected (ToolApprovalPolicy.REJECT_ALL);
   - deltas stream over a dedicated ``chat.side_result`` WS event the main
     transcript does not consume.
+
+A side turn is the parent chat's own work (``memory_writes.as_its_session``) and names the model
+it is answered on, as the chat's turn does. So in an Incognito or Temporary chat neither the
+question nor the conversation it reads reaches any other model: its tools are ranked by their
+words, and the embedding model is sent nothing.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import uuid
 
 from aiohttp import web
 
+from personalclaw import memory_writes
 from personalclaw.dashboard.side_context import build_side_message
 from personalclaw.dashboard.side_state import SideState
 from personalclaw.dashboard.state import DashboardState
@@ -135,6 +141,7 @@ async def _run_side_turn(
         ToolApprovalPolicy,
         stream_and_collect,
     )
+    from personalclaw.providers.provider_bridge import turn_model_ref
     from personalclaw.usage_ledger import recorder
 
     side_key = f"side:{name}"
@@ -151,27 +158,31 @@ async def _run_side_turn(
     accumulated = ""
     try:
         prompt = build_side_message(session, side, question)
-        provider, _is_new, _resumed = await state.sessions.get_or_create(
-            side_key,
-            agent=session.agent,
-            model=session.model or None,
-        )
-        try:
-
-            def _on_chunk(text: str) -> None:
-                nonlocal accumulated
-                accumulated += text
-                _emit(text, done=False)
-
-            await stream_and_collect(
-                provider,
-                prompt,
-                approval_policy=ToolApprovalPolicy.REJECT_ALL,
-                on_chunk=_on_chunk,
-                on_complete=recorder(provider, chat_usage(session)),
+        # The chat's own work, as its turn is: what the question and the snapshot are handed to
+        # is asked of the chat's mode at every seam, and the model it is answered on is named.
+        with memory_writes.as_its_session(session):
+            provider, _is_new, _resumed = await state.sessions.get_or_create(
+                side_key,
+                agent=session.agent,
+                model=session.model or None,
             )
-        finally:
-            state.sessions.release(side_key)
+            try:
+                memory_writes.answered_by(turn_model_ref(provider))
+
+                def _on_chunk(text: str) -> None:
+                    nonlocal accumulated
+                    accumulated += text
+                    _emit(text, done=False)
+
+                await stream_and_collect(
+                    provider,
+                    prompt,
+                    approval_policy=ToolApprovalPolicy.REJECT_ALL,
+                    on_chunk=_on_chunk,
+                    on_complete=recorder(provider, chat_usage(session)),
+                )
+            finally:
+                state.sessions.release(side_key)
     except PromptBusyExhaustedError:
         _emit("\n_(side chat interrupted — try again)_", done=False)
     except Exception:

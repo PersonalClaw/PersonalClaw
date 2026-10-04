@@ -42,12 +42,13 @@ session, or in its work, anywhere but its own turn.
 
 Nor to any model but the one its turn runs on. :func:`model_may_read` is the one answer to "may
 this work hand what it carries to that model", asked by every seam that does: the embedding
-functions (so such a session's memory is searched by keyword, and nothing of it is embedded), the
-guard every model built for anything but a person's own turn passes (a tool's model, a subagent's,
-a knowledge node's), the image reader, the image and video tools, and the models a turn falls back
-to. Inside work that derives from a restricted session it allows only the model the session's turn
-named (:func:`answered_by`). A one-shot call such work makes runs on that model, stamped as serving
-in the bound model's place (``llm_helpers.one_shot_completion``); anything else is refused with
+functions (so such a session's memory is searched by keyword, its tools are ranked by their words,
+and nothing of it is embedded), the guard every model built for anything but a person's own turn
+passes (a tool's model, a subagent's, a knowledge node's), the image reader, the image and video
+tools, and the models a turn falls back to. Inside work that derives from a restricted session it
+allows only the model the session's turn named (:func:`answered_by`). A one-shot call such work
+makes runs on that model, stamped as serving in the bound model's place
+(``llm_helpers.one_shot_completion``); anything else is refused with
 :class:`OtherModelRefused` before anything is sent. The scope follows the work into the worker
 threads it hands work to only through :class:`ScopeCarryingExecutor`, so every worker pool is one,
 and into the tool process an agent CLI runs only because that process asks the gateway what the
@@ -59,7 +60,9 @@ a request its agent's tool makes runs as the chat on it (:func:`as_work_of`), a 
 it with its mark when it is spawned (:func:`hand_on`) and runs on it (:func:`spawn_model`) as its
 own work wherever its start comes from (:func:`work_context`), and a workflow run records it with
 the mode it inherits, so its steps run on it after a restart too. A start that cannot run on it says
-so before anything is sent.
+so before anything is sent. A side question asked beside the chat reads its conversation, so it is
+the chat's own work as a turn is (:func:`as_its_session`), answered on the model the chat's own
+choice of model builds, and named as such.
 
 What the person gives such a chat themselves in a form its model cannot read is the exception, and
 the only one: a file they attach, read for its text, and a screen they share, described. The model
@@ -753,28 +756,39 @@ def other_model_refusal(model_ref: str, *, unknown: bool = False) -> str:
 _Turn = TypeVar("_Turn", bound=Callable[..., Awaitable[None]])
 
 
-def runs_as_its_session(turn: _Turn) -> _Turn:
-    """Run each call of a turn engine ``turn(state, session, message, ...)`` as deriving from
-    ``session``, under the mode the session holds and as the work of the app that started it, if
-    one did: the turn and every task and worker thread it starts. The chat is named by its
+@contextmanager
+def as_its_session(session: Any) -> Iterator[None]:
+    """Run the enclosed work as the chat ``session``'s own: deriving from it, under the mode it
+    holds and as the work of the app that started it, if one did, and so every task and worker
+    thread the work starts. A turn of the chat runs so (:func:`runs_as_its_session`), and so does a
+    side question asked beside it, which reads its conversation. The chat is named by its
     transcript's key first (a channel thread's own key when that is the one with a transcript,
-    else the dashboard's) and by the key it was given."""
+    else the dashboard's) and by the key it was given. The work names the model it runs on
+    (:func:`answered_by`) once that model is built."""
+    from personalclaw.constants import dashboard_history_key
+    from personalclaw.history import session_path
+
+    mode = getattr(session, "memory_mode", None)
+    key = str(getattr(session, "key", "") or "")
+    app = getattr(session, "created_by_app", "")
+    transcript = key if key and session_path(key).exists() else dashboard_history_key(key)
+    with derived_from(
+        transcript,
+        key,
+        memory_mode=mode if isinstance(mode, str) else None,
+        app=app if isinstance(app, str) else "",
+    ):
+        yield
+
+
+def runs_as_its_session(turn: _Turn) -> _Turn:
+    """Run each call of a turn engine ``turn(state, session, message, ...)`` as the chat
+    ``session``'s own work (:func:`as_its_session`): the turn and every task and worker thread it
+    starts."""
 
     @functools.wraps(turn)
     async def _as_its_session(state: Any, session: Any, message: str, *args: Any, **kw: Any):
-        from personalclaw.constants import dashboard_history_key
-        from personalclaw.history import session_path
-
-        mode = getattr(session, "memory_mode", None)
-        key = str(getattr(session, "key", "") or "")
-        app = getattr(session, "created_by_app", "")
-        transcript = key if key and session_path(key).exists() else dashboard_history_key(key)
-        with derived_from(
-            transcript,
-            key,
-            memory_mode=mode if isinstance(mode, str) else None,
-            app=app if isinstance(app, str) else "",
-        ):
+        with as_its_session(session):
             await turn(state, session, message, *args, **kw)
 
     return _as_its_session  # type: ignore[return-value]

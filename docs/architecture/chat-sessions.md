@@ -132,7 +132,9 @@ chat, channel thread, loop worker, webhook, subagent).
     a dashboard chat the gateway does not hold that nothing records keep
     nothing.
   - `derived_from(key)` names the session work derives from. It is set by the
-    turn (`chat_runner.run_chat`), by every consolidation pass
+    turn (`chat_runner.run_chat`) and by a side question asked beside the chat
+    (`dashboard/side.py`), both as the chat's own work (`as_its_session`), by
+    every consolidation pass
     (`HistoryConsolidator._consolidate` / `consolidate_session`) and by every
     API request that names a session in `X-Session-Key`
     (`dashboard/memory_write_gate.py`), and it follows the work into the tasks
@@ -170,7 +172,10 @@ chat, channel thread, loop worker, webhook, subagent).
     refused (`OtherModelRefused`, before anything is sent). Every seam that
     reaches a model asks it: the embedding functions (`embed_fn_for` /
     `embed_many_fn_for`, and `VectorMemoryStore._try_embed` for a function
-    pinned on a store), so such a session's memory is searched by keyword;
+    pinned on a store), so such a session's memory is searched by keyword and
+    its tools are ranked by their words: a turn whose catalog must be ranked
+    (`agents/native/tool_retrieval.py`), a subagent's turn and a side question's
+    alike, as with no embedding model bound, and `tool_search` too;
     `provider_bridge.metered`, the guard every model built for anything but a
     person's own turn passes (a tool's model, a subagent's, a knowledge node's,
     a loop's), and an agent CLI built for such work; the image reader
@@ -218,7 +223,11 @@ chat, channel thread, loop worker, webhook, subagent).
     or mark is left to say them. A start that cannot run on the chat's model is
     refused before anything is built, in words: one naming another model "…:
     <model> was not asked.", one whose chat's model is not known "…, and this work
-    was not told which model that is."
+    was not told which model that is." A side question asked beside the chat
+    reads its conversation, so it is the chat's own work as a turn is
+    (`as_its_session`): it names the model it is answered on, the one the chat's
+    own choice of model builds, and nothing of the question or the conversation
+    reaches any other model.
   - A consolidation pass over a restricted session is skipped before its
     transcript is read or a model is called: the idle sweep's expiry, a
     channel's end of session, `personalclaw consolidate`, the consolidate
@@ -241,7 +250,9 @@ chat, channel thread, loop worker, webhook, subagent).
     follow-ups (`dashboard/chat_followups.py`); a reopened chat whose history
     does not fit is cut to fit rather than condensed
     (`context.compress_thread_history`); the suggestions built from recent chats
-    leave it out (`suggestions.py`). The batch re-tag, organize proposals and
+    leave it out (`suggestions.py`); no agent-routing suggestion is worked out
+    for a message sent to it, which would embed the message outside its turn
+    (`agents/routing.suggest_for_send`). The batch re-tag, organize proposals and
     background compression already leave restricted chats out of what they list.
     The one way a chore reaches a model (`chores.run_chore`) keeps the rule
     itself, so a caller that did not ask first still hands the chat to no model:

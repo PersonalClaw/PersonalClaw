@@ -14,6 +14,14 @@ kept across restarts, filled in the background in batches, and read without a ne
 tool whose vector is not there yet ranks by its words. :meth:`ToolRetriever.select` still embeds
 the query (one request), so its caller runs it off the event loop.
 
+**An Incognito or Temporary chat's request is never embedded.** Its turn, a side question asked
+beside it and every subagent it starts rank their tools by their words alone, as a gateway with no
+embedding model bound does: the embedding functions hand such work's text to no model but the one
+the chat runs on (``memory_writes.model_may_read``), so the query gets no vector. The ranking
+otherwise holds: the core tools, the ones already called, the hinted ones and the best keyword
+matches ride in full within the turn's budget, and every other tool is in the catalog, which
+``tool_search`` ranks by the same words.
+
 **A hint names tools by their words, never by part of a word** (:func:`_names_fragment`). A
 hint is admitted before anything the scores rank, so a loose one takes the room the ranked
 tools needed: a path in the request used to force every tool whose name merely CONTAINED

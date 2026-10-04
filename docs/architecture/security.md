@@ -1384,12 +1384,15 @@ commands by the OS sandbox; what that does not cover is
 [limitations §19](../security/limitations.md#19-a-private-chat-is-kept-out-of-the-memory-folders-not-out-of-every-store)),
 no background model is given anything of one
 (`blocks_background_models`), and nothing of one reaches any model but the one
-its turn runs on: not the embedding model, a tool's model, a subagent's, the
-image reader or a fallback (`model_may_read`, asked at every seam that reaches a
+its turn runs on: not the embedding model (its memory is searched by keyword and
+its tools are ranked by their words), a tool's model, a subagent's, the image
+reader or a fallback (`model_may_read`, asked at every seam that reaches a
 model, carried into every worker thread and into the tool process an agent CLI
 runs). The work it starts away from its turn (a subagent, its own subagents, the
 steps of a run it started) is handed that model with its mode and runs on it,
 after a restart too, and a start that cannot is refused before anything is sent.
+A side question asked beside it reads its conversation and runs as its own work,
+as a turn does (`memory_writes.as_its_session`), held to the same answer.
 Every one of these reads a session's mode through one reader
 (`memory_writes.session_mode`): the live chat first, then the registry, the
 transcript and a workflow step's run. So work a chat starts on its first turn,
