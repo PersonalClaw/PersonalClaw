@@ -36,6 +36,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
+from signed_in_sessions import without_sign_in
 
 from personalclaw.providers.failure_copy import UNEXPECTED_FAILURE_COPY
 
@@ -298,7 +299,7 @@ async def test_set_password_store_failure_speaks_guidance(monkeypatch) -> None:
 
     monkeypatch.setattr(creds, "set_password", _boom)
 
-    app = web.Application()
+    app = without_sign_in(web.Application())
     app["port"] = 10000
     app["allowed_origins"] = {"http://localhost:10000"}
     app.router.add_post("/api/auth/password", auth_h.api_auth_set_password)

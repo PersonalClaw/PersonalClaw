@@ -29,6 +29,7 @@ from aiohttp import web
 
 from personalclaw import channel_trust
 from personalclaw.channel_transports import WEBUI_TRANSPORT, get_transport
+from personalclaw.dashboard.owner_presence import ACTION_CHANNEL_OWNER, require_owner_presence
 from personalclaw.http_errors import json_error
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,12 @@ async def api_channel_owner(request: web.Request) -> web.Response:
 
 
 async def api_channel_owner_pairing_start(request: web.Request) -> web.Response:
-    """POST /api/channels/{name}/owner/pairing — mint the owner's code and return it once."""
+    """POST /api/channels/{name}/owner/pairing — mint the owner's code and return it once.
+
+    The account that sends the code becomes the channel's owner, which can ask the channel for a
+    dashboard sign-in link, so minting it needs a recent sign-in, not just a live session
+    (``owner_presence``). Cancelling one never asks.
+    """
     transport = _channel(request)
     if transport is None:
         return _unknown()
@@ -94,6 +100,9 @@ async def api_channel_owner_pairing_start(request: web.Request) -> web.Response:
             message=f"{transport.display_name} cannot pair its owner from the dashboard.",
             status=409,
         )
+    refused = require_owner_presence(request, ACTION_CHANNEL_OWNER)
+    if refused is not None:
+        return refused
     code = channel_trust.create_owner_pairing_code(transport.name)
     status = channel_trust.owner_pairing_status(transport.name)
     logger.info("channel %s: owner pairing started", transport.name)

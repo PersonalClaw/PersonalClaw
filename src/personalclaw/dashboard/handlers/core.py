@@ -28,6 +28,11 @@ from personalclaw.dashboard.handlers._shared import (
     RefusedInConfigTransaction,
     config_write_refusal,
 )
+from personalclaw.dashboard.owner_presence import (
+    ACTION_SIGN_IN_SETTING,
+    loosens_sign_in,
+    require_owner_presence,
+)
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.dashboard.token_auth import (
     DEFAULT_TOKEN_TTL_SECS,
@@ -984,7 +989,14 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
         # The same value is what the question names as the one being changed from.
         #
         # A record that the owner was asked, not authorization — anything holding the owner's
-        # session can send the flag. The authorization half is `app_write_refusal` above.
+        # session can send the flag. The authorization half is `app_write_refusal` above, and,
+        # for a write that makes signing in less strict, a recent sign-in: a session left signed
+        # in must not be able to open the password door or drop the code (`owner_presence`).
+        # Asked first, since there is no consent to ask of a device that cannot show it is you.
+        if loosens_sign_in(path_key, spec, current=current, new=value):
+            refused = require_owner_presence(request, ACTION_SIGN_IN_SETTING)
+            if refused is not None:
+                raise RefusedInConfigTransaction(refused)
         loosening = unconsented_loosening(path_key, spec, current=current, new=value, body=body)
         if loosening is not None:
             raise RefusedInConfigTransaction(

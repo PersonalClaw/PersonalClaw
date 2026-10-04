@@ -1144,10 +1144,7 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
                 f"Every device was signed out {when}, when the key PersonalClaw signs sign-ins "
                 "with was replaced."
             ),
-            END_REPLACED: (
-                f"This browser signed in again {when} with a newer link, which ended this "
-                "earlier sign-in."
-            ),
+            END_REPLACED: f"{device} signed in again {when}, which ended this earlier sign-in.",
             END_SUPERSEDED: (
                 f"This sign-in link was replaced {when}, when PersonalClaw started again and "
                 "made a new one."
@@ -1642,6 +1639,35 @@ def sign_out(nonces: list[str], reason: str, *, actor: str) -> int:
             _state.revoke_nonce(nonce)
         return 0
     return _signed_out(ended, reason, actor=actor)
+
+
+def renew_sign_in(request: Any, previous: str, ttl_seconds: int, *, owner: str) -> MintedSession:
+    """The sign-in that replaces *previous* — the session this device's cookie holds — once the
+    owner has confirmed it is them (``POST /api/auth/confirm``). The cookie is the caller's to set.
+
+    A paired or enrolled device keeps its door, which is what makes it a paired device
+    (``session_store.paired_sessions``); any other is now signed in by its password. The session
+    it replaces ends and its pushes move to the new one, as when a browser opens a newer link, so
+    a copy of the old cookie gains nothing from this check. A cookie naming no live owner session
+    ends nothing.
+    """
+    from personalclaw.dashboard.session_store import load_session_records
+
+    valid, user, _reason, app = (
+        validate_token_with_app(previous, use_session_exp=True) if previous else (False, "", "", "")
+    )
+    previous_nonce = token_nonce(previous) if valid and not app else ""
+    record = load_session_records().get(previous_nonce) if previous_nonce else None
+    device = client_of(request)
+    issuer, subject = ISSUER_LOGIN, owner
+    if record is not None and record.issuer in (ISSUER_PAIR, ISSUER_ENROLL):
+        issuer, subject = record.issuer, user
+        device.name, device.kind = record.device.name, record.device.kind
+    minted = mint_session(subject, ttl_seconds, issuer=issuer, device=device)
+    if previous_nonce:
+        _keep_the_browser_s_pushes(previous_nonce, minted.nonce)
+        sign_out([previous_nonce], END_REPLACED, actor=owner)
+    return minted
 
 
 def retire_startup_links() -> int:

@@ -33,16 +33,27 @@ from aiohttp import web
 from personalclaw.auth import credentials as creds
 from personalclaw.dashboard.handlers.page_shell import page_document
 from personalclaw.dashboard.origin import check_origin
+from personalclaw.dashboard.owner_presence import (
+    ACTION_CHANGE_PASSWORD,
+    ACTION_CONFIRM,
+    ACTION_ENROLL_DEVICE,
+    ACTION_SET_PASSWORD,
+    PRESENCE_WINDOW_SECS,
+    Identity,
+    require_owner_presence,
+)
 from personalclaw.dashboard.owner_token_url import script_source as owner_token_script_source
 from personalclaw.dashboard.token_auth import (
     ISSUER_ENROLL,
     ISSUER_LOGIN,
     SIGNED_OUT_NOTICE_GRACE_SECS,
+    _login_offered,
     browser_session_ttl,
     client_of,
     mint_session,
     notice_html,
     parse_config_duration,
+    renew_sign_in,
     secure_cookies,
     signed_out_notice,
     validate_token,
@@ -356,13 +367,20 @@ async def api_auth_session(request: web.Request) -> web.Response:
 
 
 async def api_auth_set_password(request: web.Request) -> web.Response:
-    """POST /api/auth/password — set the owner password from an AUTHENTICATED session.
+    """POST /api/auth/password — set the owner's sign-in password, or change it.
 
-    This is the LAN/Settings path the plan calls for (T3.4), and it is not a contradiction of
-    "a password never rides in an HTTP body": the caller already holds a valid session token,
-    the request is same-origin, and the alternative is that a user who reaches their box only
-    through the browser can never set a password at all. What stays true is that this cannot
-    be reached WITHOUT a session — it is behind the normal middleware, unlike `login`.
+    Body ``{username?, password, current_password?, totp?}``. Behind the normal middleware, so it
+    is never reached without a session, and the plaintext rides in a same-origin body only so that
+    a user who reaches their box through the browser alone can set one at all; it is never logged
+    or echoed.
+
+    A session alone does not change a password that is already set: the current one is asked for,
+    and the authenticator code when one is set up (``owner_presence.Identity``), whatever the
+    session. A phone left unlocked would otherwise lock its owner out of their own sign-in. A wrong
+    one is refused, written to the security log and counted toward the sign-in page's lockout.
+    The first password is a new way in, so setting it needs a recent sign-in instead
+    (``owner_presence``). Forgotten, a password is set again on the computer running PersonalClaw
+    with ``personalclaw auth set-password``.
     """
     if not check_origin(request):
         return json_error(ERR_ORIGIN, status=403)
@@ -372,6 +390,19 @@ async def api_auth_set_password(request: web.Request) -> web.Response:
 
     username = str(body.get("username") or "").strip()
     password = str(body.get("password") or "")
+    if creds.has_credentials():
+        refused = require_owner_presence(
+            request,
+            ACTION_CHANGE_PASSWORD,
+            identity=Identity(
+                password=str(body.get("current_password") or ""),
+                code=str(body.get("totp") or ""),
+            ),
+        )
+    else:
+        refused = require_owner_presence(request, ACTION_SET_PASSWORD)
+    if refused is not None:
+        return refused
     if not username:
         username = creds.status()["username"] or str(request.get("user") or "owner")
 
@@ -402,11 +433,15 @@ async def api_auth_enroll_start(request: web.Request) -> web.Response:
     """POST /api/auth/enroll/start — mint a single-use device enrollment code.
 
     Behind the normal middleware (a live session), so this is the "I am already in, on my
-    laptop, and want my phone in too" path. The code is returned ONCE; nothing can read it
-    back, because the store holds only its hash.
+    laptop, and want my phone in too" path — and the code redeems for a sign-in of its own, so
+    it needs a recent sign-in, not just a live one (``owner_presence``). The code is returned
+    ONCE; nothing can read it back, because the store holds only its hash.
     """
     if not check_origin(request):
         return json_error(ERR_ORIGIN, status=403)
+    refused = require_owner_presence(request, ACTION_ENROLL_DEVICE)
+    if refused is not None:
+        return refused
 
     from personalclaw.auth import enrollment
 
@@ -421,6 +456,51 @@ async def api_auth_enroll_start(request: web.Request) -> web.Response:
             "expires_in": enrollment.CODE_TTL_SECS,
         }
     )
+
+
+async def api_auth_confirm(request: web.Request) -> web.Response:
+    """POST /api/auth/confirm — sign this device in again with the password, to show it is you.
+
+    What the dashboard sends when a write was answered ``fresh_sign_in_required``
+    (``owner_presence``) on a gateway that offers password sign-in. Body ``{password, totp?}``,
+    checked by the one identity check the password change uses, lockout included. A right one
+    replaces this device's sign-in with a new one (``token_auth.renew_sign_in``), so the next
+    ten minutes count from now; the sign-in it replaces ends, so a copy of the old cookie gains
+    nothing from this check. Behind the normal middleware: it renews a sign-in, and is no way in.
+    """
+    if not check_origin(request):
+        return json_error(ERR_ORIGIN, status=403)
+    if not _login_offered():
+        return json_error(
+            ERR_NOT_ENABLED,
+            message=(
+                "Password sign-in isn’t on here, so sign in again with a new link: run "
+                "`personalclaw token` on the computer running PersonalClaw."
+            ),
+            status=403,
+        )
+    body = await json_object_body(request)
+    if not isinstance(body, dict):
+        body = {}
+    refused = require_owner_presence(
+        request,
+        ACTION_CONFIRM,
+        identity=Identity(
+            password=str(body.get("password") or ""), code=str(body.get("totp") or "")
+        ),
+    )
+    if refused is not None:
+        return refused
+    ttl = browser_session_ttl(_auth_cfg())
+    minted = renew_sign_in(
+        request,
+        request.cookies.get(_cookie_name(request), ""),
+        ttl,
+        owner=str(creds.status()["username"] or "owner"),
+    )
+    resp = web.json_response({"ok": True, "expires_in": ttl, "recent_for": PRESENCE_WINDOW_SECS})
+    _set_session_cookie(request, resp, minted.token, ttl)
+    return resp
 
 
 async def api_auth_enroll_complete(request: web.Request) -> web.Response:

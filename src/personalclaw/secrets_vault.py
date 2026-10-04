@@ -115,6 +115,42 @@ def is_project_key(key: str) -> bool:
     return key.startswith(PROJECT_KEY_PREFIX)
 
 
+#: What the gateway reads from its own environment to decide who can reach it and how the owner
+#: signs in: whether sign-in is asked for at all, the local-network bypass, the address it listens
+#: on, the web origins it answers, and the first password a container enrolls. Literals, each
+#: pinned to the module that reads it by
+#: ``tests/test_a_secret_that_changes_who_can_sign_in_asks_for_the_owner.py``.
+SIGN_IN_ENVIRONMENT: tuple[str, ...] = (
+    "PERSONALCLAW_AUTH_MODE",
+    "PERSONALCLAW_BYPASS_LOCAL_NETWORKS",
+    "PERSONALCLAW_BIND_HOST",
+    "PERSONALCLAW_CORS_ORIGINS",
+    "PERSONALCLAW_LOGIN_USER",
+    "PERSONALCLAW_LOGIN_PASSWORD",
+)
+
+
+def is_sign_in_key(key: str) -> bool:
+    """Whether a secret named *key* changes who can sign in or connect: the authenticator's seed,
+    an inbound surface's token, a channel owner's id, or a sign-in setting the gateway reads from
+    its environment (:data:`SIGN_IN_ENVIRONMENT`).
+
+    A stored secret is mirrored into the gateway's environment, and each of these is read from
+    there, most at once: storing one by name makes the change the route that sets it up makes. So
+    Settings → Secrets asks for the owner first, as that route does (``dashboard.owner_presence``),
+    and a connector pack may not name one. Removing one never asks: that is containment.
+    """
+    from personalclaw.auth.credentials import TOTP_SECRET_KEY
+    from personalclaw.config.loader import CRED_OWNER_ID
+    from personalclaw.inbound.auth import client_surfaces, token_env_key
+
+    if key == TOTP_SECRET_KEY or key in SIGN_IN_ENVIRONMENT:
+        return True
+    if key == CRED_OWNER_ID or key.startswith(f"{CRED_OWNER_ID}_"):
+        return True
+    return key in {token_env_key(surface) for surface in client_surfaces()}
+
+
 def is_namespaced_key(key: str) -> bool:
     """Whether *key* lies in a namespace the store keeps for keys nobody names by hand: a setting's
     own key (:func:`is_reserved_key`) or a project's (:func:`is_project_key`). A secret is stored,

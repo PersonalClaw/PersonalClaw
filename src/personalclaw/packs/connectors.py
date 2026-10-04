@@ -252,12 +252,15 @@ def _save_credentials(names: list[str], values: dict[str, str]) -> list[str]:
     reason nobody can name, so refuse before writing the server. A pack chooses these names, so
     one that is not a credential name, or that is reserved for a key PersonalClaw manages (a
     provider's own ``PCSECRET_…`` key, a project's ``PCPROJ_…`` secret), is refused too: storing
-    it would overwrite that key.
+    it would overwrite that key. So is one that changes who can sign in
+    (``secrets_vault.is_sign_in_key``): no server needs it, and storing it would change it.
     """
     from personalclaw.config.credentials import save_credentials
-    from personalclaw.secrets_vault import is_namespaced_key, valid_key_name
+    from personalclaw.secrets_vault import is_namespaced_key, is_sign_in_key, valid_key_name
 
-    unusable = [n for n in names if not valid_key_name(n) or is_namespaced_key(n)]
+    unusable = [
+        n for n in names if not valid_key_name(n) or is_namespaced_key(n) or is_sign_in_key(n)
+    ]
     if unusable:
         raise ConnectorResolutionError(
             f"the pack names credential(s) PersonalClaw cannot store for it: "

@@ -4,11 +4,12 @@ import { Button } from '../ui/Button'
 import type { SignedOut } from '../lib/signedOut'
 
 /** The gateway's sentence, with its `backticked` commands shown as code — the same rendering the
- *  gateway's own sign-in pages give the same sentence (`token_auth.notice_html`).
+ *  gateway's own sign-in pages give the same sentence (`token_auth.notice_html`). The sign-in
+ *  prompt (`lib/freshSignIn.ts`) shows the gateway's sentences with it too.
  *
  *  The prose stays bare text nodes rather than spans: an accessible-description computation
  *  trims each element child, so "run <span>…</span><code>" is announced "runpersonalclaw token". */
-function Sentence({ text }: { text: string }) {
+export function GatewaySentence({ text }: { text: string }) {
   return (
     <>
       {text.split('`').map((part, i) => (i % 2
@@ -45,7 +46,7 @@ export function SignedOutScreen({ notice }: { notice: SignedOut }) {
             You’re signed out
           </h1>
           <p id="signed-out-why" data-type="body-m" className="mt-s text-on-surface-low">
-            <Sentence text={notice.message} />
+            <GatewaySentence text={notice.message} />
           </p>
         </div>
         <Button size="sm" onClick={() => window.location.reload()}>Sign in again</Button>

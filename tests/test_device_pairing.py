@@ -25,6 +25,7 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw.auth import pairing
 from personalclaw.dashboard import session_store as ss
@@ -65,7 +66,7 @@ def sel_events(monkeypatch) -> list[dict[str, Any]]:
 
 
 def _app() -> web.Application:
-    app = web.Application()
+    app = without_sign_in(web.Application())
     app["port"] = PORT
     app["allowed_origins"] = {f"http://localhost:{PORT}"}
     devices_h.register_device_routes(app)
@@ -717,7 +718,14 @@ async def test_every_route_emits_a_sel_event(_isolated, sel_events) -> None:
     # shape every sign-in shares (`auth/signins.py`); every other row is this module's own.
     session_rows = [e for e in sel_events if e["operation"].startswith("session_signed_")]
     assert [e["operation"] for e in session_rows] == ["session_signed_in", "session_signed_out"]
-    assert all(e["source"] == "devices" for e in sel_events if e not in session_rows)
+    # Minting the code asked whether the owner is here now, and that check writes its own row.
+    presence_rows = [e for e in sel_events if e["operation"] == "owner_presence"]
+    assert [(e["outcome"], e["resources"]) for e in presence_rows] == [
+        ("granted", "Pairing a device")
+    ]
+    assert all(
+        e["source"] == "devices" for e in sel_events if e not in session_rows + presence_rows
+    )
 
 
 @pytest.mark.asyncio

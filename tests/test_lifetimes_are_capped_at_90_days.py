@@ -29,6 +29,7 @@ from unittest.mock import patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw import cli_server
 from personalclaw.dashboard import session_store as ss
@@ -208,7 +209,7 @@ async def test_personalclaw_run_gets_the_hour_it_asks_for(tmp_path):
 def _config_app() -> web.Application:
     from personalclaw.dashboard.handlers import api_personalclaw_config_patch
 
-    app = web.Application()
+    app = without_sign_in(web.Application())
     app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
     return app
 

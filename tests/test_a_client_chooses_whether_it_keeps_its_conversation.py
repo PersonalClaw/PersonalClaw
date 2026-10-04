@@ -35,6 +35,7 @@ import pytest
 import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw.config.external_access import ExternalAccessConfig
 from personalclaw.config.external_access import ExternalAccessSurfaceConfig as Surface
@@ -172,7 +173,7 @@ class _World:
     async def start(self) -> None:
         # The gateway's own route table, behind the boundary every route runs behind (it answers a
         # refused field): the routes a client is registered through, and the endpoint it then asks.
-        app = web.Application(middlewares=[request_boundary_middleware()])
+        app = without_sign_in(web.Application(middlewares=[request_boundary_middleware()]))
         app["state"] = self.state
         register_dashboard_routes(app)
         self.http = TestClient(TestServer(app))

@@ -30,6 +30,7 @@ import os
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw.inbound import auth
 from personalclaw.inbound import capture_proxy as proxy
@@ -412,6 +413,7 @@ async def test_the_create_route_pins_a_known_provider_and_reports_it(monkeypatch
     class _Req:
         method = "POST"
         match_info: dict = {}
+        app = without_sign_in(web.Application())
 
         def get(self, key, default=None):  # request state: who is asking
             return default
@@ -446,6 +448,7 @@ async def test_the_create_route_refuses_an_unknown_provider_and_creates_nothing(
     class _Req:
         method = "POST"
         match_info: dict = {}
+        app = without_sign_in(web.Application())
 
         def get(self, key, default=None):  # request state: who is asking
             return default

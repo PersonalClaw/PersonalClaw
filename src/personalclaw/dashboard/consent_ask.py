@@ -1,11 +1,14 @@
-"""The owner's consent question, answered as a question to a client that asks one.
+"""A question the owner is asked, answered as a question to a client that asks one.
 
 A write that needs the owner's yes, sent without it, is answered ``400 confirmation_required``
 with the question in ``error.detail`` (`http_errors.consent_required`). The SPA sends every such
 write that way first ON PURPOSE — the gateway, not the page, decides which writes need a yes
 (`web/src/lib/securityConsent.ts`) — then asks the owner in the gateway's words and sends it again
 with ``"confirm": true``. So every Allow the owner was asked for left a failed request in the
-browser's console: the handshake worked, and read as an error while it did.
+browser's console: the handshake worked, and read as an error while it did. A write that needs a
+recent sign-in, from a device that signed in too long ago, is the same kind of answer
+(``401 fresh_sign_in_required``, `dashboard.owner_presence`): the page asks the owner to sign in
+again (`web/src/lib/freshSignIn.ts`) and sends it once more.
 
 A client that says it will ask (``X-PersonalClaw-Consent: ask``) gets the same body with ``200``
 and ``X-PersonalClaw-Consent-Asked: 1``: for it the question is the answer. Nothing is written

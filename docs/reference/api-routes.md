@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **925 registrations** over **750 distinct paths** — 918 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **926 registrations** over **751 distinct paths** — 919 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -52,13 +52,13 @@ The 128 families the surface divides into, largest first.
 | `/api/lexicon` | 10 | 6 |
 | `/api/model-providers` | 10 | 8 |
 | `/api/rooms` | 10 | 8 |
+| `/api/auth` | 9 | 9 |
 | `/api/browse` | 9 | 7 |
 | `/api/doctor` | 9 | 9 |
 | `/api/evals` | 9 | 9 |
 | `/api/learning` | 9 | 7 |
 | `/api/security` | 9 | 9 |
 | `/api/agent-marketplace` | 8 | 5 |
-| `/api/auth` | 8 | 8 |
 | `/api/devices` | 7 | 7 |
 | `/api/config` | 6 | 3 |
 | `/api/doc-comments` | 6 | 3 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 918 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 919 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -247,11 +247,12 @@ The 918 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/artifacts/{slug}/versions/{version}` | immutable historical content. |
 | `GET` | `/api/attachment-extract` | the extracted text content for an |
 | `GET` | `/api/auth-status` | Auth configuration status — mode, bind_host, and session validity. |
+| `POST` | `/api/auth/confirm` | sign this device in again with the password, to show it is you. |
 | `POST` | `/api/auth/enroll/complete` | redeem a code for a device session. |
 | `POST` | `/api/auth/enroll/start` | mint a single-use device enrollment code. |
 | `POST` | `/api/auth/login` | verify the owner credential and mint a session cookie. |
 | `POST` | `/api/auth/logout` | clear the cookie AND revoke the session behind it. |
-| `POST` | `/api/auth/password` | set the owner password from an AUTHENTICATED session. |
+| `POST` | `/api/auth/password` | set the owner's sign-in password, or change it. |
 | `POST` | `/api/auth/rotate-key` | replace the key every sign-in is signed with. |
 | `GET` | `/api/auth/session` | the authenticated account view (Settings → Account). |
 | `GET` | `/api/auth/status` | what the login UI needs to render itself. |

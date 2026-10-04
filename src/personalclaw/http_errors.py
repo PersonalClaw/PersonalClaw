@@ -194,6 +194,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "auth_enroll_code_invalid": "The enrollment code did not verify.",
     "auth_bearer_invalid": "The bearer credential cannot authorize this request.",
     "auth_credential_conflict": "The request presents two different owner credentials.",
+    "auth_password_required": "The request needs the owner's password, and it carried none.",
+    # ── a sign-in too old for what it asks (dashboard/owner_presence.py): minting a credential or
+    # making sign-in less strict needs a sign-in from the last ten minutes. The message says how
+    # to sign in again, and `detail` what the dashboard asks for ──
+    "fresh_sign_in_required": (
+        "This needs a recent sign-in; the message says how to sign in again."
+    ),
     # ── a signed-out device's refusal (dashboard/token_auth.py) — the message is the sentence
     # that device reads: why its sign-in ended, when, and how to sign back in ──
     "session_signed_out": "This device was signed out; the message says why and how to sign in.",
@@ -1414,8 +1421,9 @@ def json_error(
     return web.json_response({"error": err, **extra}, status=status, headers=dict(headers or {}))
 
 
-#: Marks a response as the owner's consent question (:func:`consent_required`), so
-#: `dashboard.consent_ask` can answer it as a question to a client that asks one.
+#: Marks a response as a question the owner is asked — their consent (:func:`consent_required`),
+#: or that they sign in again (`dashboard.owner_presence`) — so `dashboard.consent_ask` can answer
+#: it as a question to a client that asks one.
 CONSENT_QUESTION = "personalclaw.consent_question"
 
 

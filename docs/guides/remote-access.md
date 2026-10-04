@@ -117,6 +117,17 @@ short string you keep in a note app. The password is stored as an argon2id hash 
 **Your token link keeps working.** Sign-in is an *additional* front door, never a replacement.
 If you forget the password, walk to the machine and run `personalclaw token`.
 
+**Some changes need a recent sign-in.** A sign-in lasts 30 days, so a phone left unlocked would
+otherwise be enough to plant a lasting way in. Pairing a device, making a device sign-in code,
+creating an integration token, pairing a channel's owner, setting the first password, making
+sign-in less strict and storing a secret that changes who can sign in (such as
+`PERSONALCLAW_BYPASS_LOCAL_NETWORKS` in Settings → Secrets) each need a sign-in from the last
+10 minutes; from an older one the dashboard asks you to sign in again — with your password, or
+with a new `personalclaw token` link where password sign-in is off — and then carries on.
+Changing the password asks for the current one, and the 2FA code when you have one set up.
+Signing a device out, revoking a token, removing a secret, replacing the sign-in key and turning
+incident mode on never ask. The desktop app's own window never asks.
+
 ### Step 2 — declare the public URL
 
 In `~/.personalclaw/config.json`:

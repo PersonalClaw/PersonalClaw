@@ -76,6 +76,8 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_post("/api/auth/logout", _auth_h.api_auth_logout)
     app.router.add_get("/api/auth/session", _auth_h.api_auth_session)
     app.router.add_post("/api/auth/password", _auth_h.api_auth_set_password)
+    # Signing this device in again, when a write needs a recent sign-in (owner_presence.py).
+    app.router.add_post("/api/auth/confirm", _auth_h.api_auth_confirm)
     app.router.add_post("/api/auth/enroll/start", _auth_h.api_auth_enroll_start)
     app.router.add_post("/api/auth/enroll/complete", _auth_h.api_auth_enroll_complete)
 

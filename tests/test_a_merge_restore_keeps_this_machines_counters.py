@@ -40,9 +40,15 @@ COUNTERS: dict[str, tuple[dict, dict]] = {
 }
 
 
+#: Left out of a merge for another reason: a registered integration client is a credential, and one
+#: an archive brings is a credential nobody registered here (its lifetimes go with it). Driven by
+#: ``test_an_archive_brings_no_integration_client_in``.
+CREDENTIALS = frozenset({"inbound_clients", "inbound_tokens"})
+
+
 def test_every_counter_is_left_out_of_a_merge():
     left_out = {e.id for e in inv.INVENTORY if not e.merged_in and e.kind == inv.KIND_JSON_FILE}
-    assert left_out == set(COUNTERS)
+    assert left_out == set(COUNTERS) | CREDENTIALS
 
 
 def _archive_and_home(tmp_path: Path, *, here: bool) -> tuple[Path, Path]:

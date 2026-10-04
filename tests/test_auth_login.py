@@ -18,6 +18,7 @@ import json
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw.auth import credentials as creds
 from personalclaw.config import credentials as cred_store
@@ -60,7 +61,7 @@ def _app() -> web.Application:
     # and the test could not see the real behaviour of the route it names.
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
-    app = web.Application(middlewares=[request_boundary_middleware()])
+    app = without_sign_in(web.Application(middlewares=[request_boundary_middleware()]))
     app["port"] = PORT
     app["allowed_origins"] = {"http://localhost:10000"}
     app.router.add_get("/login", auth_h.login_page)

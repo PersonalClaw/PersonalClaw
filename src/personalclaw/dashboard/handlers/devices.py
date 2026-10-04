@@ -53,6 +53,7 @@ from aiohttp import web
 
 from personalclaw.dashboard.handlers.page_shell import page_document
 from personalclaw.dashboard.origin import check_origin
+from personalclaw.dashboard.owner_presence import ACTION_PAIR_DEVICE, require_owner_presence
 from personalclaw.dashboard.session_store import (
     POOL_CAPS,
     DeviceInfo,
@@ -158,12 +159,16 @@ async def api_devices_pair_start(request: web.Request) -> web.Response:
     """POST /api/devices/pair/start — mint a single-use pairing code + QR payload.
 
     Behind the normal middleware, so this is the "I am already in on my laptop and want my
-    phone in too" path. The code is returned ONCE; nothing can read it back, because the store
-    holds only its hash.
+    phone in too" path — and the code redeems for a device sign-in of its own, which outlives the
+    session that asked, so it needs a recent sign-in, not just a live one (``owner_presence``).
+    The code is returned ONCE; nothing can read it back, because the store holds only its hash.
     """
     if not check_origin(request):
         _audit("device_pair_started", "denied", error="origin rejected")
         return json_error(ERR_ORIGIN, status=403)
+    refused = require_owner_presence(request, ACTION_PAIR_DEVICE)
+    if refused is not None:
+        return refused
 
     from personalclaw.auth import pairing
 

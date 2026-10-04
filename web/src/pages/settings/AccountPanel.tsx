@@ -215,6 +215,10 @@ function LoginSection() {
   const [userDraft, setUserDraft] = useState('')
   const [pwDraft, setPwDraft] = useState('')
   const [pwConfirm, setPwConfirm] = useState('')
+  // A password that is already set is changed only with the current one, and the authenticator
+  // code when one is set up: the gateway refuses a change without them, whatever the session.
+  const [currentPw, setCurrentPw] = useState('')
+  const [codeDraft, setCodeDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [pwSaved, setPwSaved] = useState(false)
   // 🔴 A FAILED READ HID THIS WHOLE SECTION. `.catch(() => {})` left `state` null and the section
@@ -249,13 +253,16 @@ function LoginSection() {
   const userDirty = userDraft.trim() !== (state.username || '')
   const pwLongEnough = pwDraft.length >= 12
   const pwMatches = pwDraft.length > 0 && pwDraft === pwConfirm
-  const canSavePw = pwLongEnough && pwMatches && !busy
+  const changing = state.credential_configured
+  const askCode = changing && state.totp_enabled
+  const proven = !changing || (currentPw.length > 0 && (!askCode || codeDraft.trim().length > 0))
+  const canSavePw = pwLongEnough && pwMatches && proven && !busy
 
   const savePassword = () => {
     setBusy(true)
-    api.setLoginPassword(userDraft.trim(), pwDraft)
+    api.setLoginPassword(userDraft.trim(), pwDraft, changing ? { password: currentPw, code: codeDraft.trim() } : undefined)
       .then(() => {
-        setPwDraft(''); setPwConfirm('')
+        setPwDraft(''); setPwConfirm(''); setCurrentPw(''); setCodeDraft('')
         setPwSaved(true); setTimeout(() => setPwSaved(false), 2400)
         load()
       })
@@ -308,9 +315,15 @@ function LoginSection() {
           Field, so each carries its own name — the case `ui/forms` carves an explicit `ariaLabel` out
           for. */}
       <Field label={state.credential_configured ? 'Change the sign-in username or password' : 'Set a sign-in username and password'}
-        hint="Both are saved together, in one step — so changing the username means entering the password again. At least 12 characters: length matters more than symbols. Stored as an argon2id hash; it is never shown again, and never leaves this box.">
+        hint={`Both are saved together, in one step — so changing the username means entering the password again. At least 12 characters: length matters more than symbols. Stored as an argon2id hash; it is never shown again, and never leaves this box.${state.credential_configured ? ' Changing it asks for the current one; if you have forgotten it, run personalclaw auth set-password on the computer running PersonalClaw.' : ''}`}>
         <div className="flex flex-col gap-s" style={{ maxWidth: 280 }}>
           <TextInput value={userDraft} onChange={setUserDraft} placeholder="you" ariaLabel="Sign-in username" autoComplete="username" />
+          {changing ? (
+            <TextInput type="password" value={currentPw} onChange={setCurrentPw} placeholder="Current password" ariaLabel="Current password" autoComplete="current-password" />
+          ) : null}
+          {askCode ? (
+            <TextInput value={codeDraft} onChange={setCodeDraft} placeholder="Authenticator code" ariaLabel="Authenticator code" autoComplete="one-time-code" />
+          ) : null}
           <TextInput type="password" value={pwDraft} onChange={setPwDraft} placeholder="New password" ariaLabel="New password" autoComplete="new-password" />
           <TextInput type="password" value={pwConfirm} onChange={setPwConfirm} placeholder="Confirm password" ariaLabel="Confirm password" autoComplete="new-password" />
           <div className="flex items-center gap-s">
@@ -321,7 +334,9 @@ function LoginSection() {
               disabledReason={busy ? undefined
                 : !pwLongEnough
                   ? (userDirty ? 'Enter the password too — the username is saved with it' : 'Use at least 12 characters')
-                  : 'Both fields must match'}>
+                  : !pwMatches
+                    ? 'Both fields must match'
+                    : askCode && currentPw ? 'Enter the code from your authenticator app' : 'Enter your current password'}>
               {pwSaved ? <Check size={14} /> : null} {pwSaved ? 'Saved' : 'Save sign-in'}
             </Button>
             {pwDraft.length > 0 && !pwLongEnough ? (

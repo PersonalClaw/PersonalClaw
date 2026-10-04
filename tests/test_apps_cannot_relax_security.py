@@ -29,6 +29,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 APP = "evil-app"
 
@@ -49,7 +50,7 @@ def _identity(app_name: str) -> Any:
 def _config_app(app_name: str = "") -> web.Application:
     from personalclaw.dashboard.handlers import api_personalclaw_config_patch
 
-    app = web.Application(middlewares=[_identity(app_name)])
+    app = without_sign_in(web.Application(middlewares=[_identity(app_name)]))
     app.router.add_patch("/api/config/personalclaw", api_personalclaw_config_patch)
     return app
 

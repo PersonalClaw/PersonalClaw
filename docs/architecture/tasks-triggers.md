@@ -569,6 +569,10 @@ without asking and their undo handles (`autonomy_rungs.json`,
 `autonomy_reversals.json`), and which integrations may connect
 (`inbound_clients.json`, `inbound_tokens.json`). They are `replace_only`, as the
 configuration is: restored whole or not at all, and left as they are by a pull.
+The integrations' two are not `merged_in` either, so a merge restore and an archive
+import leave them as they are here: a registered client is a credential, and one an
+archive brings would be a working token nobody registered on this machine. A replace
+restore brings them back with the whole home.
 
 **What is one machine's own stays on it.** Its model spend by day, which its
 budget caps count (`spend.json`), its tool counters (`tool_usage.json`), its

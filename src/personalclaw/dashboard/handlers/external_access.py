@@ -232,8 +232,15 @@ async def api_external_access_client(request: web.Request) -> web.Response:
     webhook automation ``scope.trigger`` names (as its page shows it, or by its own id), and nothing
     else (``inbound.webhook.sender_problem``). Its answer also says what a program sends to fire
     the automation with it: the address, the header and a command that does it.
+
+    Creating one needs a recent sign-in, not just a live session (``owner_presence``): the
+    token outlives the session that asked for it. Revoking one never asks — that is containment.
     """
     from personalclaw.auth import lifetimes
+    from personalclaw.dashboard.owner_presence import (
+        ACTION_INTEGRATION_TOKEN,
+        require_owner_presence,
+    )
     from personalclaw.inbound import auth
     from personalclaw.inbound import clients as clients_mod
     from personalclaw.inbound.tokens import INTEGRATION_TTL_SECS
@@ -319,6 +326,9 @@ async def api_external_access_client(request: web.Request) -> web.Response:
                 ),
                 status=400,
             )
+    refused = require_owner_presence(request, ACTION_INTEGRATION_TOKEN)
+    if refused is not None:
+        return refused
     client, token = clients_mod.create_client(
         label,
         surfaces=requested,

@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw.http_errors import HTTP_ERROR_CODES
 from personalclaw.inbound import a2a, auth, bridge
@@ -613,7 +614,7 @@ class TestRegisterWithLifetime:
     async def test_the_create_route_takes_a_lifetime_up_to_90_days(self, ttl, status, code):
         from personalclaw.dashboard.handlers.external_access import api_external_access_client
 
-        app = web.Application()
+        app = without_sign_in(web.Application())
         app.router.add_post("/api/external-access/clients", api_external_access_client)
         http = TestClient(TestServer(app))
         await http.start_server()

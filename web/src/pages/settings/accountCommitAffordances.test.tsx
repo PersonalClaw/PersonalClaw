@@ -93,7 +93,7 @@ describe('the sign-in username is committed by a button that exists', () => {
     // The server sets both in one call. If a future cycle adds a lone save it must add the endpoint
     // too — this assertion is what makes that a deliberate act instead of a plausible-looking patch.
     const src = stripped()
-    expect(src, 'still exactly one credential writer').toMatch(/api\.setLoginPassword\(userDraft\.trim\(\), pwDraft\)/)
+    expect(src, 'still exactly one credential writer').toMatch(/api\.setLoginPassword\(userDraft\.trim\(\), pwDraft, /)
     expect((src.match(/setLoginPassword\(/g) || []).length, 'and only one call site').toBe(1)
   })
 })

@@ -1607,26 +1607,31 @@ INVENTORY: tuple[StateEntry, ...] = (
     # A client here is a grant: its token's hash lets whoever holds the token in, to what its
     # bindings reach. A grant is given on the machine where the owner was shown it, so another
     # machine's client never arrives by a sync, which leaves the file as it is; synced, the token
-    # an owner gave one machine's integration would open this one too.
+    # an owner gave one machine's integration would open this one too. Nor by a merge restore or
+    # an import (`merged_in=False`): an archive is a file anyone can hand the dashboard, and its
+    # client registry would be a working credential planted by whoever chose the token behind
+    # the hash. A replace restore, run with the gateway stopped, still brings the whole home back.
     StateEntry(
         id="inbound_clients",
         kind=KIND_JSON_FILE,
         path="inbound_clients.json",
         domain=DOMAIN_SECURITY,
         merge=MERGE_REPLACE_ONLY,
+        merged_in=False,
         help="inbound access clients: labels, bindings and token hashes (never tokens)",
     ),
     # How long each integration token works (ledger 317a), keyed by the token's SHA-256 —
     # never the token. EXPORTS beside the client registry it describes, for the same
     # reason: a home restored without it records every configured token as new, and gives
     # each a fresh 90 days. Not `secret=True`: a hash does not authenticate anything. Left as it
-    # is by a sync, with the clients it describes.
+    # is by a sync, a merge restore and an import, with the clients it describes.
     StateEntry(
         id="inbound_tokens",
         kind=KIND_JSON_FILE,
         path="inbound_tokens.json",
         domain=DOMAIN_SECURITY,
         merge=MERGE_REPLACE_ONLY,
+        merged_in=False,
         help="when each integration token was issued and stops working, by hash (never tokens)",
     ),
     # 🔴 `derived=True`, so this is DELIBERATELY excluded from exports (§10 lists it

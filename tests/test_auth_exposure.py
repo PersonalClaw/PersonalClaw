@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw.auth import credentials as creds
 from personalclaw.auth import enrollment
@@ -405,7 +406,7 @@ def test_active_codes_never_returns_the_codes(_isolated) -> None:
 
 
 def _enroll_app() -> web.Application:
-    app = web.Application()
+    app = without_sign_in(web.Application())
     app["port"] = PORT
     app["allowed_origins"] = {"http://localhost:10000"}
     app.router.add_post("/api/auth/enroll/start", auth_h.api_auth_enroll_start)

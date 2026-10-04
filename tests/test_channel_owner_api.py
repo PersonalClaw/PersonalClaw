@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from signed_in_sessions import without_sign_in
 
 from personalclaw import channel_transports
 from personalclaw import channel_trust as ct
@@ -80,7 +81,7 @@ def _app() -> web.Application:
     )
     from personalclaw.dashboard.handlers.channels import api_channel_get, api_channels_list
 
-    app = web.Application()
+    app = without_sign_in(web.Application())
     app.router.add_get("/api/channels", api_channels_list)
     app.router.add_get("/api/channels/{name}", api_channel_get)
     app.router.add_get("/api/channels/{name}/owner", api_channel_owner)

@@ -145,6 +145,27 @@ and the address is never logged, since a sign-in page's carries its single-use `
   `session_signed_in` / `session_signed_out` row. A token that expired, was revoked or was
   replaced is told which, and when, under the same `unauthorized` code every other inbound refusal
   carries; a token the gateway never issued is told nothing more.
+- **Minting a lasting credential needs the owner here now, not just a live session**
+  (`dashboard/owner_presence.py`). A session lasts weeks, so a phone left unlocked or a copied
+  cookie would otherwise be enough to plant a way in that outlives it. Pairing a device, making a
+  device sign-in code, creating an integration or webhook token, pairing a channel's owner (who
+  can then ask that channel for a dashboard link), setting the first password, making sign-in
+  less strict (`auth.*` loosened) and storing a secret whose name changes who can sign in
+  (Settings → Secrets: the 2FA seed, an inbound surface's token, a channel owner's id, the
+  local-network bypass and the other sign-in settings the gateway reads from its environment,
+  `secrets_vault.is_sign_in_key`; a connector pack may not name one) each call
+  `require_owner_presence`, which accepts a sign-in from
+  the last 10 minutes, the local machine secret (`X-Local-Secret` from this computer), the
+  session the gateway handed the process that started it used from this computer (the desktop
+  app's own windows, `personalclaw run`, a harness), or authentication being off. Anything else
+  gets `401 fresh_sign_in_required` with the sentence saying how to sign in again; the dashboard
+  asks then (`POST /api/auth/confirm` with the password, which replaces this device's sign-in, or
+  a new `personalclaw token` link where password sign-in is off) and sends the write once more.
+  Changing an existing password asks for the current one, and the 2FA code when one is enrolled,
+  whatever the session; a wrong one is refused, logged and counted toward the sign-in lockout.
+  Containment never asks: signing devices out, replacing the key, revoking a token, turning
+  incident mode on, tightening sign-in. `tests/test_owner_presence_census.py` fails a route that
+  mints a credential without asking, and one that contains and does.
 - **The keys that are not sign-ins have a lifetime too, each the one its job allows.**
   - An app backend's proxy secret (`apps/<app>/.app_secret`, the HMAC key the reverse proxy signs
     with) is minted afresh each time the backend starts (`apps/app_secret.mint_app_secret`), so it

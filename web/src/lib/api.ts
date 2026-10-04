@@ -7,6 +7,7 @@ import { apiVersionHeaders } from './apiVersion'
 // Type only: the upload client itself is loaded on first use, by the three upload calls below.
 import type { UploadProgress } from './chunkedUpload'
 import { errEnvelope, errText } from './errText'
+import { withFreshSignIn } from './freshSignIn'
 import { withSecurityConsent } from './securityConsent'
 import { isSignedOutRefusal, reportSignedOut, signedOutState } from './signedOut'
 import { basedOn, type Revisioned } from './staleWrite'
@@ -120,15 +121,16 @@ const lookInQuery = (places: string[]) => {
 
 const get = <T>(p: string, opts: ReadOptions = {}) =>
   refuseIfSignedOut() ?? fetch(p, { headers: { ...SK }, ...(opts.signal ? { signal: opts.signal } : {}) }).then(j<T>)
-// `extra` carries a write's precondition — `basedOn(revision)` for a whole-document write
-// (`lib/staleWrite.ts`) — and nothing else rides it.
-const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
-const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? fetch(p, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
-const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) =>
-  refuseIfSignedOut() ?? fetch(p, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>)
-const del = (p: string) => refuseIfSignedOut() ?? fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) })
+// Every write may be answered "sign in again" — minting a credential, or making sign-in less strict,
+// from a device that signed in more than ten minutes ago — and `withFreshSignIn` asks the owner and
+// sends it once more (`lib/freshSignIn.ts`). `extra` carries a write's precondition —
+// `basedOn(revision)` for a whole-document write (`lib/staleWrite.ts`) — and nothing else rides it.
+const write = <T>(method: string, p: string, body?: unknown, extra?: Record<string, string>) =>
+  refuseIfSignedOut() ?? withFreshSignIn(() => fetch(p, { method, headers: { 'Content-Type': 'application/json', ...SK, ...ASKS_FOR_CONSENT, ...extra }, body: body == null ? undefined : JSON.stringify(body) }).then(j<T>))
+const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('POST', p, body, extra)
+const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('PUT', p, body, extra)
+const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('PATCH', p, body, extra)
+const del = (p: string) => refuseIfSignedOut() ?? withFreshSignIn(() => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }))
 
 /** A memory route asked about one folder's memory (`?partition=<id>`, an id
  *  `memoryPartitions` lists), or about the memory every chat shares when `partition` is "". */
@@ -8030,8 +8032,13 @@ export const api = {
     lockout_window: string
     user: string
   }>('/api/auth/session'),
-  setLoginPassword: (username: string, password: string) =>
-    post<{ ok: boolean; username: string }>('/api/auth/password', { username, password }),
+  // Changing a password that is already set needs the current one, and the authenticator code when
+  // one is set up; the first password needs neither (`handlers/auth.api_auth_set_password`).
+  setLoginPassword: (username: string, password: string, current?: { password: string; code?: string }) =>
+    post<{ ok: boolean; username: string }>('/api/auth/password', {
+      username, password,
+      ...(current ? { current_password: current.password, ...(current.code ? { totp: current.code } : {}) } : {}),
+    }),
   authLogout: () => post<{ ok: boolean; revoked: boolean }>('/api/auth/logout'),
 
   // ── External Access: the shared inbound seam ──

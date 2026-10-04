@@ -36,6 +36,7 @@ import logging
 
 from aiohttp import web
 
+from personalclaw.dashboard.owner_presence import ACTION_SIGN_IN_SECRET, require_owner_presence
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import require_string
 from personalclaw.secrets_vault import (
@@ -43,6 +44,7 @@ from personalclaw.secrets_vault import (
     SecretPresence,
     consumers_for,
     is_namespaced_key,
+    is_sign_in_key,
     list_presence,
     project_secret_key,
     valid_key_name,
@@ -172,6 +174,11 @@ async def api_secrets_put(request: web.Request) -> web.Response:
     A name in a namespace the store keeps for itself (a setting's own ``PCSECRET_…`` key, a
     project's stored ``PCPROJ_…`` key) is refused: storing it would overwrite a key another
     surface manages, or make a project's secret by its stored key past the ``project_id`` field.
+
+    A global secret whose name changes who can sign in (``secrets_vault.is_sign_in_key``: the
+    authenticator's seed, an inbound token, a channel owner's id, the local-network bypass…) asks
+    for the owner first (``owner_presence``): the gateway reads it from its environment, where it
+    lands as it is stored.
     """
     denied = _refuse_app(request)
     if denied is not None:
@@ -200,6 +207,10 @@ async def api_secrets_put(request: web.Request) -> web.Response:
         return json_error("secret_project_invalid", status=400)
     if not value:
         return json_error("secret_value_required", status=400)
+    if not project_id and is_sign_in_key(name):
+        refused = require_owner_presence(request, ACTION_SIGN_IN_SECRET)
+        if refused is not None:
+            return refused
 
     # Storing a name the host environment already supplies is ALLOWED, and is how a user takes
     # ownership of an inherited credential: `list_presence` subtracts vault names from the host
