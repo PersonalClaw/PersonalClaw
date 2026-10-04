@@ -119,14 +119,22 @@ granted the Doctor still reads its report, its fixes and its maintenance plan, a
 surfacing and automation simulators, which write nothing; an app you granted `/api/update`
 still reads the update status.
 
+Which of your tools your agents may call is yours as well. An app may not switch one of your
+tools, or a whole tool provider, on or off, any more than it may switch an MCP server's tool: a
+tool you switched off is left out of a native agent's tools and refused to a direct call. An app
+you granted `/api/tools` still reads the tool list, its groups and the savings summary, and runs a
+tool its manifest declares in `permissions.mcpTools`.
+
 What your agents are told is in the same class, because an agent carries out its
 instructions with your tools under your approval settings. An app may not create, edit,
 sync or delete one of your agents (its system prompt, tools, skills, model or approval
 mode), write an agent definition or make one of them your agent, install, write, accept
 or remove a skill, write a prompt or a snippet, change which system prompt your chats,
 unattended runs and judges start from, launch a prompt template (which starts a goal
-loop), or rewrite the routing notes your orchestrator reads. It may still read those, check
-a skill's integrity, and decline a proposed skill. An app ships its skills in its
+loop), rewrite the routing notes your orchestrator reads, or write a project's overview,
+which every session in the project is given as what the project now knows. It may still read
+those, check a skill's integrity, decline a proposed skill, and hide a Discover tip or bring
+the hidden ones back. An app ships its skills in its
 manifest, which install consent lists by name, and runs agent work through its own
 `agent` permission, at the tier it declares (`text`, `read` or `tools`). A lesson is memory that
 every agent is handed as a rule, so `/api/lessons` needs the `memory` grant, the same as

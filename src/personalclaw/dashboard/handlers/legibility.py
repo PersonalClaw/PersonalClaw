@@ -139,6 +139,10 @@ async def api_always_on_doc_write(request: web.Request) -> web.Response:
     Replacing a document that exists names the revision its read reported in ``If-Match``, and a
     stale one is refused with ``409 stale_write``. Creating the overview — a project with none
     yet, which no read can hand a revision for — needs none.
+
+    No app reaches this, whatever its manifest declares (``apps/permissions.ROUTE_AUTHZ``): every
+    session in the project is given the overview as what the project now knows, so writing it is
+    the owner's. The reads above stay an app's to call.
     """
     try:
         payload = await request.json()

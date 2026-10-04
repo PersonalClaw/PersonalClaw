@@ -203,6 +203,10 @@ def test_the_route_census_is_not_vacuous() -> None:
     assert ("POST", "/api/doctor/fix/{fix_id}") in routes
     assert ("POST", "/api/doctor/remediation/run") in routes
     assert ("POST", "/api/update") in routes
+    # So are the switches on your tools and the write of what a project's sessions are given.
+    assert ("POST", "/api/tools/toggle") in routes
+    assert ("POST", "/api/tools/provider-toggle") in routes
+    assert ("PUT", "/api/legibility/always-on/doc") in routes
 
 
 def test_the_read_census_is_not_vacuous() -> None:

@@ -591,6 +591,19 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD"})
 #: checking for one with automatic checks off, cancelling one and dismissing how one ended are yours
 #: too. Both families' reads stay the allowlist's: an app you granted the Doctor still reads its
 #: report, its fixes and its maintenance plan, and runs its two simulators, which write nothing.
+#:
+#: **Which of your tools your agents may call is yours, and so is what a project's sessions are
+#: given.** A tool you switched off, or a tool provider, is left out of a native agent's tools
+#: and refused to a direct call (``tool_providers.tool_prefs``), so an app that switched it back
+#: on would be undoing your choice; the switch for an MCP server's tool is owner-only for the
+#: same reason (``/api/mcp``). A project's overview is put before every session in the project
+#: as what the project now knows, unfenced, the way your own words are, so an app that wrote it
+#: would be writing what those sessions are told; no app needs to, and one reaches you about a
+#: project with an inbox proposal, which names it. The reads stay the allowlist's: an app you
+#: granted the tools still reads their list, groups and savings, and runs a tool its manifest
+#: declares in ``permissions.mcpTools``; one you granted the always-on viewer still reads what
+#: every session receives. Hiding a Discover tip, and bringing the hidden ones back, enable and
+#: configure nothing and stay an app's to call.
 SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     "/api/mcp": "MCP servers — commands the gateway launches",
     "/api/apps": "installing and switching on app code",
@@ -638,6 +651,10 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
     ),
     "/api/doctor": "the Doctor — its fixes and its maintenance change your setup",
     "/api/update": "updating PersonalClaw — the code this gateway runs",
+    "/api/tools": "your tools — which of them your agents may call, and running one",
+    "/api/legibility": (
+        "what every session is given, a project's overview among it, and the Discover tips"
+    ),
 }
 
 #: The families whose READS are declared route by route as well as their writes — your
@@ -1067,6 +1084,29 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "POST /api/update/simulate": OwnerOnly(
         "a simulated update — your dashboard shows the progress of an update that is not running"
+    ),
+    # ── your tools (the list, its groups and the savings summary stay the allowlist's) ──
+    "POST /api/tools/toggle": OwnerOnly(
+        "switching one of your tools on or off — a tool you switched off is left out of a native "
+        "agent's tools and refused to a direct call"
+    ),
+    "POST /api/tools/provider-toggle": OwnerOnly(
+        "switching one of your tool providers on or off — every tool it serves goes with it"
+    ),
+    "POST /api/tools/invoke": AppMay(
+        "runs a tool only when the app's manifest declares it in `permissions.mcpTools`, which "
+        "install consent lists; the handler refuses every other, and every tool you switched off"
+    ),
+    # ── what every session is given (the always-on reads stay the allowlist's) ──
+    "PUT /api/legibility/always-on/doc": OwnerOnly(
+        "writing a project's overview — every session in the project is given it as what the "
+        "project now knows"
+    ),
+    "POST /api/legibility/discover/dismiss": AppMay(
+        "hides a Discover tip, a suggestion of something to try; it enables and configures nothing"
+    ),
+    "DELETE /api/legibility/discover/dismiss": AppMay(
+        "brings back the Discover tips you hid; it enables and configures nothing"
     ),
     # ── packs ──
     "POST /api/packs/bundled/{name}/install": OwnerOnly(_INSTALLS_PACK),

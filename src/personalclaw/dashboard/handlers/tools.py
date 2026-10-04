@@ -782,6 +782,10 @@ async def api_tools_toggle(request: web.Request) -> web.Response:
     Core-locked tools are refused with 409. So is an MCP server's tool (``mcp/<server>/<tool>``),
     with the route that does switch it: ``POST /api/mcp/toggle-tool``, which writes that server's
     ``disabledTools`` in mcp.json, the one list an ACP agent and this gateway both read.
+
+    No app reaches this or the provider switch below, whatever its manifest declares
+    (``apps/permissions.ROUTE_AUTHZ``): which tools the owner's agents may call is hers to say, as
+    the MCP switch is.
     """
     from personalclaw.tool_providers import tool_prefs
     from personalclaw.tool_providers.registry import list_all_tools

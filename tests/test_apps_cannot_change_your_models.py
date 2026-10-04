@@ -305,10 +305,12 @@ class _Gateway:
         *,
         app_token: str = "",
         as_backend: bool = False,
+        headers: dict[str, str] | None = None,
     ) -> tuple[int, str]:
         """One request: yours (your cookie), or an app's with *app_token* — beside your cookie as
-        its SDK sends it, or, *as_backend*, as the only credential, the way its backend does."""
-        headers: dict[str, str] = {}
+        its SDK sends it, or, *as_backend*, as the only credential, the way its backend does.
+        *headers* ride along either way (the ``If-Match`` a whole-document write names)."""
+        headers = dict(headers or {})
         params: dict[str, str] = {}
         if app_token and as_backend:
             params["token"] = app_token

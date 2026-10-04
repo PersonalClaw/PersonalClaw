@@ -240,6 +240,8 @@ has cost someone a debugging session.
   and refuses an MCP server's tool with `409`. A tool switched off either way is left out
   of a native agent's tools, answers `403 tool_disabled` from `POST /api/tools/invoke` and
   reads `disabled: true` in `GET /api/tools`. An ACP agent reads the same `disabledTools`.
+  Every switch is the owner's: an app token is refused `POST /api/tools/toggle`,
+  `POST /api/tools/provider-toggle` and the MCP switch, whatever its manifest declares.
 
 ## The same surface, three ways
 
