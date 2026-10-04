@@ -173,7 +173,13 @@ def evaluate(
     this call site has no model to pay with — reporting the band honestly is better than promoting
     the candidate on a score the design said was inconclusive, and better than recording it as a
     skip it was not.
+
+    Refused first, for the work of an Incognito or Temporary chat (``lasting_work.Refused``): what
+    it records and what it files would keep the chat's procedure after the chat.
     """
+    from personalclaw import lasting_work
+
+    lasting_work.refuse(lasting_work.PROPOSAL, lasting_work.CREATE)
     decision = detectors.gate(candidate)
     outcome = GateOutcome(decision=decision)
     outcome.recorded = record_skip(decision, detail=candidate.run_id)

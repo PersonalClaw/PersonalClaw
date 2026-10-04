@@ -94,24 +94,6 @@ async def _cannot_use_tools(loop: object) -> ToolResult | None:
     )
 
 
-def refused(act: str) -> ToolResult | None:
-    """The answer to a call that would make (``lasting_work.CREATE``) or start
-    (``lasting_work.START``) a loop for the work of an Incognito or Temporary chat, or ``None``.
-    A loop is kept after the chat and works on by itself, on a model of its own, so the loop store
-    and the manager refuse it (:mod:`personalclaw.lasting_work`); the tools ask first, before
-    anyone is asked to allow the call."""
-    from personalclaw import lasting_work
-
-    why = lasting_work.refusal(lasting_work.LOOP, act)
-    if not why:
-        return None
-    return ToolResult(
-        success=False,
-        error=why,
-        recovery_hints=["Tell the user what this says: the loop can't be set up from this chat."],
-    )
-
-
 async def _launch(kind: str, lid: str, deep_path: str, label: str) -> ToolResult:
     """Shared launch path for both *_start tools: re-validate a fresh start (the
     launch gate), honor the kind's launch_blocker, then run via the unified manager."""

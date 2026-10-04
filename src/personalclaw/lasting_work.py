@@ -1,13 +1,18 @@
 """What work that lasts after the turn that made it keeps of that turn.
 
-Lasting work is kept after the chat that made it and goes on as work of its own. A loop or project
-works on by itself, cycle after cycle, on a model of its own; an automation or a scheduled task (a
-lifecycle trigger among them) runs later; a callback starts a turn of its own when an outside system
-calls it; a workflow run's steps go on after the turn that started it. Each runs as a session of its
-own, which keeps what it does and reaches the models it was given, so none of the turn's rules would
-hold for it unless it carries them.
+Two things outlast the chat that made them. Lasting work is kept after the chat and goes on as work
+of its own: a loop or project works on by itself, cycle after cycle, on a model of its own; an
+automation or a scheduled task (a lifecycle trigger among them) runs later; a callback starts a turn
+of its own when an outside system calls it; a workflow run's steps go on after the turn that started
+it. Each runs as a session of its own, which keeps what it does and reaches the models it was given,
+so none of the turn's rules would hold for it unless it carries them. A lasting record is read by
+other work later: a skill, or a draft of one, by the model of every chat; a proposal by you, and
+what you accept of it by the model of every chat; a task, a task list or a project on the Tasks
+page, its brief, instructions and overview among them, by your other chats and the loops that work
+on it; an Inbox item by the agents of your other chats; a loop's spec and plan by the worker and the
+planner that run it.
 
-**An Incognito or Temporary chat's work leaves none behind it.** What the chat put into it would
+**An Incognito or Temporary chat's work leaves neither behind it.** What the chat put into it would
 be kept, and read by other models. So work that derives from a session that keeps nothing
 (``memory_writes.writes_refused``: the chat's turn, a request its agent's tool makes, a subagent or
 a workflow run it started, a call the tool server of its agent CLI makes for it) makes none, hands
@@ -15,17 +20,30 @@ none its words, and sets no loop going. Each is refused at the one place every d
 before anything is written:
 
 * a loop or project made (``loop.store.create``), started or resumed (``loop.manager.start``), or
-  steered (``loop.manager.nudge``);
+  steered (``loop.manager.nudge``); its spec changed (``loop.store.update_spec``, ``rename``,
+  ``rebind_workspace``); its plan walked (``dashboard.handlers.loop_routes._refuse_replan``, the
+  precondition every plan route asks first);
 * an automation or a scheduled task made or changed (``triggers.tools.create``,
   ``triggers.tools.update``), and a lifecycle trigger made or changed (``hooks.ScriptHookStore``);
-* a callback registered (``webhook_callbacks.register``).
+* a callback registered (``webhook_callbacks.register``);
+* a skill drafted (``skills.ephemeral.remember``) or a draft kept (``skills.ephemeral.promote``);
+* a proposal filed for review (``learning.proposals.enqueue``, and
+  ``learning.template_gate.evaluate``, which records what it decided before it files);
+* a task made or changed, or a comment added to one (``tasks.registry``), a project or a task list
+  made or changed (``tasks.hierarchy.HierarchyStore``), and a project's overview or ledgers written
+  (``project_context``); a run that keeps nothing does not ask for either on its own, putting none
+  of its steps on the Tasks page (``workflows.task_projection``) and adding no line to its
+  project's overview (``workflows.run_finish``);
+* an Inbox item posted (``inbox_providers.native_source.post_to_inbox``).
 
-The rest of what such work does with lasting work is unchanged, since none of it hands lasting work
-anything of the chat's. It reads lasting work, and pauses, stops and deletes it; it switches an
+The rest of what such work does with lasting work and records is unchanged, since none of it hands
+them anything of the chat's. It reads them, and pauses, stops and deletes them; it switches an
 automation off or back on, and runs one now, a run held as the chat's own work
 (``trigger_runs._dispatch_store_action``). A workflow run or a subagent it starts keeps the chat's
 mode and stays on the chat's model (``workflows.restricted_calls``, ``memory_writes.hand_on``), and
-so does a General loop started through the loop door, which runs as a workflow.
+so does a General loop started through the loop door, which runs as a workflow. A run is the chat's
+own work, not work of its own, so a Temporary chat's runs end with it and are removed
+(``workflows.temporary_runs``).
 
 **Work someone other than the owner asked for keeps who asked, for as long as it lasts.** A turn a
 colleague in a shared channel thread asked for, a correspondent's, a program's through the
@@ -56,8 +74,10 @@ did.
 A refusal is :class:`Refused`, whose text says why and what to do instead, and whose
 :attr:`~Refused.code` says which rule refused it: :data:`CODE` for a private chat's work,
 :data:`ASKED` for someone else's say-so. It is audited where it is made. A tool answers with it
-before anyone is asked to allow the call (its preflight asks :func:`refused`); a route answers 403
-under its code (``dashboard.memory_write_gate``).
+before anyone is asked to allow the call: its preflight asks :func:`refused`, by the table of the
+tools it serves (``agents.native.lasting_tools`` for the native runtime's own tools;
+``mcp_core._LASTING`` and ``mcp_automation._LASTING_ACTS`` for the tool servers both runtimes run).
+A route answers 403 under its code (``dashboard.memory_write_gate``).
 """
 
 from __future__ import annotations
@@ -86,11 +106,18 @@ LOOP = "loop"
 AUTOMATION = "automation"
 CALLBACK = "callback"
 
+#: The kinds of lasting record.
+SKILL = "skill"
+PROPOSAL = "proposal"
+TASKS = "tasks"
+INBOX = "inbox"
+
 #: What may be done to them.
 CREATE = "create"
 START = "start"
 STEER = "steer"
 CHANGE = "change"
+PLAN = "plan"
 
 #: How each kind lasts after the chat, as a refusal says it.
 _LASTS = {
@@ -100,6 +127,16 @@ _LASTS = {
         "a callback is kept after the chat and starts a turn of its own when an outside system "
         "calls it"
     ),
+    SKILL: "a skill is kept after the chat and read by the model of every chat",
+    PROPOSAL: (
+        "a proposal is kept after the chat for your review, and what you accept is read by the "
+        "model of every chat"
+    ),
+    TASKS: (
+        "a task, task list or project on the Tasks page is kept after the chat and read by your "
+        "other chats and loops"
+    ),
+    INBOX: "an Inbox item is kept after the chat and read by the agents of your other chats",
 }
 
 #: What a refused act left undone, and where it can be done instead.
@@ -107,6 +144,8 @@ _UNDONE = {
     (LOOP, CREATE): "none was created. Create it from an ordinary chat.",
     (LOOP, START): "it was left as it is. Start or resume it from an ordinary chat or on its page.",
     (LOOP, STEER): "nothing was sent to it. Steer it on its page.",
+    (LOOP, CHANGE): "it was left as it is. Change it on its page.",
+    (LOOP, PLAN): "its plan was left as it is. Plan it on its page.",
     (AUTOMATION, CREATE): (
         "none was created. Create it from an ordinary chat or on the Triggers page."
     ),
@@ -114,6 +153,11 @@ _UNDONE = {
         "it was left as it is. Change it from an ordinary chat or on the Triggers page."
     ),
     (CALLBACK, CREATE): "none was registered. Register it from an ordinary chat.",
+    (SKILL, CREATE): "none was saved. Teach it from an ordinary chat or add it on the Skills page.",
+    (PROPOSAL, CREATE): "none was filed. Ask for it from an ordinary chat.",
+    (TASKS, CREATE): "none was created. Create it from an ordinary chat or on the Tasks page.",
+    (TASKS, CHANGE): "it was left as it is. Change it from an ordinary chat or on the Tasks page.",
+    (INBOX, CREATE): "nothing was posted. Post it from an ordinary chat.",
 }
 
 #: What someone else's say-so may not do: what was left undone, and why only the owner does it,
@@ -138,8 +182,9 @@ _NOT_ON_THEIR_WORD = {
 
 
 class Refused(Exception):
-    """The current work may not do this to lasting work (see the module docstring). Its text is
-    the sentence that says why, and what to do instead; :attr:`code` is the rule that refused it."""
+    """The current work may not do this to lasting work or a lasting record (see the module
+    docstring). Its text is the sentence that says why, and what to do instead; :attr:`code` is the
+    rule that refused it."""
 
     def __init__(self, why: str, *, code: str = CODE) -> None:
         super().__init__(why)
@@ -149,9 +194,9 @@ class Refused(Exception):
 def refused(
     kind: str, act: str, *, asked_for_by: Mapping[str, str] | None = None
 ) -> Refused | None:
-    """Why the current work may not *act* (``CREATE``, ``START``, ``STEER``, ``CHANGE``) lasting
-    work of *kind* (``LOOP``, ``AUTOMATION``, ``CALLBACK``), as the refusal it is, audited; ``None``
-    when it may.
+    """Why the current work may not *act* (``CREATE``, ``START``, ``STEER``, ``CHANGE``, ``PLAN``)
+    lasting work or a lasting record of *kind* (``LOOP``, ``AUTOMATION``, ``CALLBACK``, ``SKILL``,
+    ``PROPOSAL``, ``TASKS``, ``INBOX``), as the refusal it is, audited; ``None`` when it may.
 
     Work that derives from a session that keeps nothing may do none of it. Work someone other than
     the owner asked for (``memory_writes.asker``) may make or change no automation, and steer no
@@ -184,9 +229,9 @@ def refusal(kind: str, act: str, *, asked_for_by: Mapping[str, str] | None = Non
 
 
 def refuse(kind: str, act: str, *, asked_for_by: Mapping[str, str] | None = None) -> None:
-    """Raise :class:`Refused` when the current work may not *act* lasting work of *kind*
-    (:func:`refused`). Asked first, by each of the places named in the module docstring, so a
-    refused call writes nothing."""
+    """Raise :class:`Refused` when the current work may not *act* lasting work or a lasting record
+    of *kind* (:func:`refused`). Asked first, by each of the places named in the module docstring,
+    so a refused call writes nothing."""
     why = refused(kind, act, asked_for_by=asked_for_by)
     if why is not None:
         raise why

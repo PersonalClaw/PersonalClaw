@@ -95,6 +95,8 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
         ModelCallTimeout,
         PromptExceedsWindow,
     )
+    from personalclaw.lasting_work import ASKED
+    from personalclaw.lasting_work import Refused as LastingWorkRefused
     from personalclaw.llm.registry import CredentialMissing
     from personalclaw.llm.registry import ProviderResolutionError as RegistryResolutionError
     from personalclaw.loop.gates import CheckRefused
@@ -108,6 +110,19 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
             failure_class=FailureClass.USER,
             cause_plain=str(exc)[:500],
             remediation="turn on Generative UI, or drop this node",
+        )
+    if isinstance(exc, LastingWorkRefused):
+        # The run keeps nothing, as the Incognito or Temporary chat that started it does, or works
+        # on the say-so of someone other than the owner (`lasting_work`): no retry changes either,
+        # and the sentence says where it can be done.
+        return Failure(
+            failure_class=FailureClass.USER,
+            cause_plain=str(exc)[:500],
+            remediation=(
+                "ask the owner to do this, or they can do it themselves"
+                if exc.code == ASKED
+                else "start this workflow from an ordinary chat, or on the Workflows page"
+            ),
         )
     if isinstance(exc, CheckRefused):
         # The shell denylist's rule, which no retry changes. Its message names the rule.

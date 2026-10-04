@@ -964,7 +964,9 @@ async def deliver_to_owner(
     :func:`reach_owner` picks the channel, or tries the one ``only`` names and no other. When that
     channel, or every connected one, could not deliver, the notification goes to the Inbox (the
     native source, ``state`` or the one wired at startup), ending with the sentence saying why — it
-    is never dropped. With no channel connected at all and none named, nothing failed: the caller's
+    is never dropped, but for the work of an Incognito or Temporary chat, which posts nothing to the
+    Inbox (``lasting_work``): its notification reaches a channel or nothing, and the outcome says it
+    was not inboxed. With no channel connected at all and none named, nothing failed: the caller's
     dashboard delivery is the delivery, and the Inbox is left alone.
 
     ``title`` and ``text`` are what the Inbox item shows.
@@ -972,6 +974,7 @@ async def deliver_to_owner(
     outcome = await reach_owner(send, only=only)
     if outcome.delivered or outcome.no_channel:
         return outcome
+    from personalclaw import lasting_work
     from personalclaw.inbox_providers.native_source import post_to_inbox
 
     # The reason is part of the message, after it: the Inbox shows an item's `context` under
@@ -979,6 +982,11 @@ async def deliver_to_owner(
     message = "\n\n".join(part for part in (title, text, outcome.sentence()) if part)
     try:
         item = post_to_inbox(message, kind="notification", sender_name="PersonalClaw", state=state)
+    except lasting_work.Refused as refused:
+        # The work of an Incognito or Temporary chat posts nothing to the Inbox; the refusal
+        # is audited where it was made.
+        logger.info("owner notification %r was not posted to the Inbox: %s", title, refused)
+        return outcome
     except Exception:  # noqa: BLE001 - the log line below is then the only record left
         logger.exception("owner notification: posting it to the Inbox failed")
         item = None

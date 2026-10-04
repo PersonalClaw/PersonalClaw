@@ -684,7 +684,11 @@ Data leaving the running system:
   leaves nothing behind that lasts after it and runs as work of its own, on its
   own model: no loop or project is made, started or steered for it, no
   automation, scheduled task or lifecycle trigger made or changed, no callback
-  registered (`lasting_work.py`). Whether
+  registered (`lasting_work.py`). Nor in a record that other work reads later: no
+  skill drafted or kept, no proposal filed for review, no task, task list or
+  project made or changed on the Tasks page, no Inbox item posted, no loop's spec
+  or plan changed; and a Temporary chat's workflow runs are stopped and deleted
+  once it has ended (`workflows/temporary_runs.py`). Whether
   work may read memory at all is one answer, `memory_reads.reach_of`: a
   Temporary chat's work reads none (its subagents, theirs, and the steps of a run
   it started included), and neither does an app's (a conversation it started, an

@@ -18,6 +18,10 @@ deleted, and when cleanup evicts it as inactive:
   has ended, forgets it, and answers that it does not exist (:func:`forget_if_ended`) — so its
   page never opens again and a send to it cannot bring it back.
 
+The workflow runs a Temporary chat started are its own work and end with it: the workflow
+supervisor stops each once the chat has ended and then deletes it with what it produced
+(``workflows.temporary_runs``), however the session ended.
+
 What the owner kept elsewhere is hers and stays: a download, a file saved to Knowledge, an
 artifact. While the session runs, the transcript is written as any chat's is, so a reload keeps
 it; it stays out of the chat list and search, nothing learns from it, and no snapshot or shard
@@ -70,8 +74,9 @@ def purge_chat(
     keys: Iterable[str],
     attachments: Iterable[str] = (),
 ) -> int:
-    """Delete what the chat persisted under *history_key* keeps on disk, and the links it was
-    given (held in memory for web_fetch). Returns how many attached files were deleted.
+    """Delete what the chat persisted under *history_key* keeps on disk, the skills it was taught
+    and not yet kept, and the links it was given (held in memory for web_fetch). Returns how many
+    attached files were deleted.
 
     ``keys`` are every form of the chat's key the per-session stores may have been written under
     (a turn's tool results and checkpoints are keyed by the canonical ``dashboard:`` key, some
@@ -99,9 +104,19 @@ def purge_chat(
             turn_checkpoints.prune_session(sid)
     except Exception:
         logger.warning("forget: checkpoint purge failed for %s", history_key, exc_info=True)
+    from personalclaw.constants import dashboard_history_key
+
+    # The skills it was taught and not yet kept, under the key its tools saw: a chat named again
+    # after this one would otherwise be handed them as its own (`skills.ephemeral.context_block`).
+    try:
+        from personalclaw.skills import ephemeral
+
+        for sid in names | {dashboard_history_key(sid) for sid in names}:
+            ephemeral.clear_session(sid)
+    except Exception:
+        logger.warning("forget: skill draft removal failed for %s", history_key, exc_info=True)
     # Held in memory, not on disk, but kept by the chat all the same: the links the user gave it,
     # under the key its turns hand their runtime (a channel thread persists under another).
-    from personalclaw.constants import dashboard_history_key
     from personalclaw.web.fetch import clear_session
 
     for sid in names:

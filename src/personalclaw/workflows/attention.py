@@ -314,7 +314,9 @@ def _announce_workflow_end(state: Any, run: Any, status: Any) -> str:
     Said once, by whoever ends up telling the user: a run a TRIGGER started is reported on that
     trigger's route (``run_finish.report_to_its_trigger``), a subagent batch in the chat that
     started it (``run_finish.report_to_its_chat``), and a sub-run's ending is its parent's step, so
-    none of them raises a second note here. Deduped per run and ending.
+    none of them raises a second note here. A run a step started and left running is the exception
+    (``spawned_by_node_id``, a ``run-workflow`` step's): that step said only that it launched it, so
+    it raises its own. Deduped per run and ending.
     """
     from personalclaw.workflows.batch_start import reports_to_a_chat
     from personalclaw.workflows.models import OriginKind
@@ -326,7 +328,8 @@ def _announce_workflow_end(state: Any, run: Any, status: Any) -> str:
     origin = getattr(run, "origin", None)
     if getattr(origin, "kind", None) == OriginKind.HOOK and getattr(origin, "trigger_id", ""):
         return ""
-    if getattr(run, "parent_run_id", None) or reports_to_a_chat(run):
+    awaited = getattr(run, "parent_run_id", None) and not getattr(run, "spawned_by_node_id", None)
+    if awaited or reports_to_a_chat(run):
         return ""
     try:
         from personalclaw.inbox import ItemKind, emit_attention_item

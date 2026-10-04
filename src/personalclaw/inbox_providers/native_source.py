@@ -13,6 +13,10 @@ decision on Y", "heads up about Z" with no external channel connected.
 S4 pattern (shared, not a common base class): a native-always-on provider +
 external pluggable providers + per-item ``source`` attribution + per-provider
 health. This module owns the native half.
+
+The work of an Incognito or Temporary chat posts nothing here: an item is kept after the chat and
+read by the agents of your other chats, so :func:`post_to_inbox` refuses it before anything is
+written (``lasting_work``).
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import time
 import uuid
 from typing import Any
 
-from personalclaw import attachments
+from personalclaw import attachments, lasting_work
 from personalclaw.attachments import Attachment
 from personalclaw.inbox import (
     Classification,
@@ -226,8 +230,10 @@ def post_to_inbox(
     ``reply_target`` — the posting agent's session); the others are FYI heads-ups.
     That verdict is the posting agent's own word, so it carries no confidence and no
     maker to rate, and the sorter never reads the post (``inbox_sorting.wants_sorting``).
-    Returns the created item, or None if no dashboard state is wired.
+    Returns the created item, or None if no dashboard state is wired. Refused first, for the
+    work of an Incognito or Temporary chat (``lasting_work.Refused``).
     """
+    lasting_work.refuse(lasting_work.INBOX, lasting_work.CREATE)
     st = state or _dashboard_state
     if st is None:
         logger.debug("post_to_inbox: no dashboard state wired; dropping item")

@@ -21,8 +21,9 @@ import type { MemoryMode } from '../../lib/api'
  *  transcript is still saved, and a reopened one is restored from it.
  *  A Temporary chat's transcript lasts only while its session runs (a reload keeps it): when the gateway stops or
  *  restarts, however it stops, the transcript and the files attached to it are deleted and the
- *  chat never opens again (`dashboard/chat_forget.py`). `memoryModeNoticeIsTrue.test.ts` holds
- *  these words to those facts. */
+ *  chat never opens again (`dashboard/chat_forget.py`), and the workflow runs it started are
+ *  stopped and deleted with what they produced (`workflows/temporary_runs.py`).
+ *  `memoryModeNoticeIsTrue.test.ts` holds these words to those facts. */
 export const MEMORY_MODES: { id: MemoryMode; label: string; hint: string }[] = [
   { id: 'persistent', label: 'Persistent', hint: 'Remember across sessions' },
   { id: 'temporary', label: 'Temporary', hint: 'No memory read or written, and forgotten when the session ends' },
@@ -40,7 +41,7 @@ export const MEMORY_MODE_NOTICE: Record<Exclude<MemoryMode, 'persistent'>, strin
     + 'The chat stays out of your chat history and search, though PersonalClaw still keeps its transcript.',
   temporary:
     'Temporary — memory is neither read nor written, and this chat is forgotten when its session ends: '
-    + 'when PersonalClaw stops or restarts, its messages and the files attached to it are deleted. '
+    + 'when PersonalClaw stops or restarts, its messages, the files attached to it and the workflow runs it started are deleted. '
     + 'Until then it stays out of your chat history and search, and nothing from it is sent to any model but '
     + "the one it runs on: a tool that needs a model uses this one or says it can't, and no background model "
     + 'reads it for a title, follow-ups or suggestions. '

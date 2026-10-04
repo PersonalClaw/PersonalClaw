@@ -1,10 +1,17 @@
-"""Task provider registry — aggregates tasks across all registered backends."""
+"""Task provider registry — aggregates tasks across all registered backends.
+
+Every door that writes a task comes through the writes below, whichever provider holds it, so they
+are where the work of an Incognito or Temporary chat is refused a task or a comment: either is kept
+after the chat and read by your other chats and loops (``lasting_work``). Reading, and deleting a
+task or a comment, are unchanged.
+"""
 
 import asyncio
 import logging
 import time
 from typing import Any
 
+from personalclaw import lasting_work
 from personalclaw.tasks import reconcile
 from personalclaw.tasks.models import Task, TaskComment, TaskPriority
 from personalclaw.tasks.provider import TaskProvider
@@ -281,6 +288,7 @@ async def get_task(task_id: str, provider_name: str | None = None) -> Task | Non
 
 
 async def create_task(provider_name: str = "native", **fields: Any) -> Task:
+    lasting_work.refuse(lasting_work.TASKS, lasting_work.CREATE)
     prov = _resolve_one(provider_name)
     if prov.readonly:
         raise ValueError(f"Provider '{prov.name}' is read-only")
@@ -298,6 +306,7 @@ async def update_task(
 ) -> Task | None:
     """Apply ``fields`` to the task. ``base_revision`` is a whole-form save's precondition — see
     :meth:`TaskProvider.update_task`; every server-side writer omits it."""
+    lasting_work.refuse(lasting_work.TASKS, lasting_work.CHANGE)
     prov = await _routed(task_id, provider_name)
     if prov is None:
         return None
@@ -363,6 +372,7 @@ async def get_comments(task_id: str, provider_name: str | None = None) -> list[T
 async def add_comment(
     task_id: str, body: str, author: str = "", provider_name: str | None = None
 ) -> TaskComment | None:
+    lasting_work.refuse(lasting_work.TASKS, lasting_work.CHANGE)
     prov = await _routed(task_id, provider_name)
     if prov is None:
         return None

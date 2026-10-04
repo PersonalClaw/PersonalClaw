@@ -411,6 +411,27 @@ def active_runs() -> list[WorkflowRun]:
     return [_row_to_run(r) for r in rows]
 
 
+def runs_with_mode(mode: str) -> list[WorkflowRun]:
+    """Every run, live or ended, whose record names *mode* as the memory mode it inherited from
+    the chat that started it (``ownership.RUN_MODE_KEY`` in ``extra``).
+
+    The stored text is a prefilter, and each record it finds is read and asked: ``extra`` is JSON
+    this module writes, so the mode is one of its quoted values, and a run with nothing to match is
+    never parsed. JSON functions are not used, since not every platform's SQLite has them."""
+    from personalclaw.workflows.ownership import RUN_MODE_KEY
+
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM runs WHERE extra LIKE ? ORDER BY created_at, id",
+            (f'%"{mode}"%',),
+        ).fetchall()
+    finally:
+        conn.close()
+    runs = [_row_to_run(r) for r in rows]
+    return [run for run in runs if run.extra.get(RUN_MODE_KEY) == mode]
+
+
 def list_loop_runs(*, project_id: str = "", kind: str = "") -> list[WorkflowRun]:
     """Every run started as a LOOP (``loop_kind`` set), newest first — the run half of the ONE
     loop listing (``GET /api/loops``), which unions these with the loop-table rows.

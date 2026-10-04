@@ -22,6 +22,13 @@ secrets. So a step starts its run in its own run's project (``ActionContext.proj
 its dispatch states), and a step that names one is refused before anything is created, in the
 words its template is refused with when it is saved (``workflows.step_arguments``).
 
+**A workflow step's run is its run's work.** It records the run it was started from
+(``parent_run_id``, the tree's ``root_run_id``, and the step, ``spawned_by_node_id``) and keeps what
+that run keeps (``ownership.inherited_extra``), as a subworkflow node's child does: a run an
+Incognito or Temporary chat started starts only a run that keeps nothing as the chat does, on the
+chat's model, and a Temporary chat's ends with it (``workflows.temporary_runs``). A step whose run
+cannot be read starts nothing, since what that run keeps cannot be said.
+
 **`outcome: "launched"`, not success.** A background run has only STARTED when this
 returns; its real outcome lands in the run's own ledger. Reporting it as plain success
 would make an unverified run look verified — the honesty contract `ActionResult.outcome`
@@ -118,11 +125,23 @@ class RunWorkflowActionProvider(ActionProvider):
                     failure_class="user",
                 )
             project = str(getattr(ctx, "project_id", "") or "")
+            parent = _run_of_step(ctx)
+            if parent is None:
+                return ActionResult(
+                    success=False,
+                    error=(
+                        "run-workflow: the run this step belongs to could not be read, so the run "
+                        "it would start could not keep what that run keeps; nothing was started"
+                    ),
+                    stderr="the step's own run could not be read",
+                )
+        else:
+            parent = None
 
         try:
             from personalclaw.workflows import defs as defs_mod
             from personalclaw.workflows import overlap as overlap_mod
-            from personalclaw.workflows import store
+            from personalclaw.workflows import ownership, store
             from personalclaw.workflows.effects import START_DEDUPE
             from personalclaw.workflows.models import (
                 OriginKind,
@@ -312,9 +331,15 @@ class RunWorkflowActionProvider(ActionProvider):
                 # route when it ends (`run_finish.report_to_its_trigger`). This read the event's
                 # CONTEXT text, which is a file path or a message and never the trigger's id.
                 origin=RunOrigin(kind=OriginKind.HOOK, trigger_id=ctx.trigger_id),
+                # A step's run is its run's work: one tree, the step that started it, and what
+                # the run keeps (a Temporary or Incognito origin's mode, the model its work stays
+                # on, the app whose work it is).
+                parent_run_id=parent.id if parent is not None else None,
+                root_run_id=(parent.root_run_id or parent.id) if parent is not None else "",
+                spawned_by_node_id=_node_of_step(ctx) if parent is not None else None,
                 # The queued marker goes in the SAME insert as the row — marking after
                 # `create` would leave a window in which the row is an ordinary DRAFT.
-                extra=extra,
+                extra={**ownership.inherited_extra(parent), **extra} if parent else extra,
             )
         )
         store.write_spec(run.id, spec)
@@ -377,6 +402,24 @@ class RunWorkflowActionProvider(ActionProvider):
             # The run, so the fire's row says how it went when it ends (`triggers.settle`).
             work_id=run_work_id(run.id),
         )
+
+
+def _run_of_step(ctx: Any) -> Any:
+    """The run whose step *ctx* dispatches, or ``None`` when it cannot be read. Named by the
+    dispatch (``payload["run_id"]``, which the step's own payload cannot set)."""
+    from personalclaw.workflows import store
+
+    run_id = str((getattr(ctx, "payload", None) or {}).get("run_id", "") or "")
+    try:
+        return store.get(run_id) if run_id else None
+    except Exception:  # noqa: BLE001 - a run that cannot be read is answered as not read
+        logger.debug("run-workflow: the step's run %s could not be read", run_id, exc_info=True)
+        return None
+
+
+def _node_of_step(ctx: Any) -> str | None:
+    """The step *ctx* dispatches, as its dispatch names it (``payload["node_id"]``)."""
+    return str((getattr(ctx, "payload", None) or {}).get("node_id", "") or "") or None
 
 
 def _ahead(active: list[Any]) -> str:

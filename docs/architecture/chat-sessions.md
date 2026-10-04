@@ -331,13 +331,40 @@ chat, channel thread, loop worker, webhook, subagent).
     [knowledge-memory.md](knowledge-memory.md)); an automation is not made or
     changed on their say-so, nor a loop steered with their words unless they asked
     for it (`403 asked_by_someone_else`).
+  - Nor is anything of it left in a record that other work reads later, by the
+    same rule and in the same words (`lasting_work.py`): a skill draft, kept
+    after the chat and offered at its end as a skill the model of every chat
+    reads (`skills.ephemeral.remember`, `promote`); a proposal for review (a
+    skill, a workflow template, a change to a project's context, a knowledge
+    draft), which every chat's model reads once it is accepted
+    (`learning.proposals.enqueue`, and `learning.template_gate.evaluate`, which
+    records what it decided before it files); a task, a task list or a project
+    on the Tasks page, whose brief and instructions are put before every chat and
+    loop in the project (`tasks.registry`, `tasks.hierarchy.HierarchyStore`, and
+    `project_context`'s overview and ledgers; a run the chat started asks for
+    neither, putting none of its steps on the Tasks page and adding no line to
+    its project's overview as it ends); an Inbox item, which the agents of your other
+    chats read (`native_source.post_to_inbox`, a notification's Inbox fallback
+    included); and a loop's spec or plan, which its worker and its planner run
+    from (`loop.store.update_spec`, `rename`, `rebind_workspace`, and the
+    precondition every plan route asks first). The doors are the native agent's
+    `task_*`, `project_create`, `task_list_create` and `post_to_inbox` tools,
+    the core tools `skill_remember`, `skill_promote`,
+    `template_save_from_session`, `project_context_review` and
+    `propose_template_diff` in both runtimes, the tool route, and the Tasks,
+    skill-draft and loop routes. Each says so before anyone is asked to allow
+    the call, or answers `403 restricted_session`; a step of a run the chat
+    started that is refused fails as yours to change, never as a fault. Reading
+    any of it, and deleting a task or a comment, are unchanged.
 - **`chat_traces.py` / `dashboard/chat_forget.py` — what a chat keeps on disk,
   and forgetting it.** A chat leaves its transcript, its working folder
-  (`sessions/<key>/`), its turn checkpoints and the files attached to it
-  (`uploads/`, `screenshots/`); `chat_traces` reads that and `chat_forget` deletes it.
+  (`sessions/<key>/`), its turn checkpoints, the files attached to it
+  (`uploads/`, `screenshots/`) and the skills it was taught and not yet kept
+  (`skills/.ephemeral/`); `chat_traces` reads that and `chat_forget` deletes it.
   `purge_chat` deletes them for the Delete button (which keeps a kept chat's
   uploads, since Files lists them) and for a **temporary** chat's end, which
-  takes its attachments too. A temporary chat's session lives in the gateway
+  takes its attachments too; a chat named again after a deleted one is not
+  handed the deleted chat's skill drafts. A temporary chat's session lives in the gateway
   running it, so it ends when that gateway stops or restarts, when the chat is
   deleted, and when cleanup evicts it as inactive: the last save before a stop
   forgets each one instead of saving it, the next start forgets any a crash or
@@ -345,6 +372,16 @@ chat, channel thread, loop worker, webhook, subagent).
   send naming one that is not running here forgets it and answers 404. While
   it runs its transcript is written like any chat's (a reload keeps it); no
   snapshot or shard export copies it (`chat_traces.kept_by_temporary_chats`).
+  The workflow runs a temporary chat started are its own work and end with it,
+  and so do the runs they started in turn, a subworkflow's or a `run-workflow`
+  step's, each one more run of the same tree (`root_run_id`)
+  (`workflows/temporary_runs.py`): on each poll the workflow supervisor stops a
+  run whose tree's chat has ended, through a controller so it closes what it
+  holds, then, once every run of the tree has ended, deletes each with what it
+  produced (`service.delete_run`). A tree's chat has ended when its root run was
+  started before this gateway was, or when the chat at the top of the work the
+  root was started for is a dashboard chat the gateway no longer holds. An
+  incognito chat's runs are kept, as its transcript is.
 - **`session_workspace.py` / `session_pid.py`** — per-session working
   directory resolution and process-id tracking.
 

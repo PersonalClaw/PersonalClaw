@@ -16,6 +16,13 @@ without a chosen project) and ``Repeatable`` (home for resettable lists) — are
 seeded on first access and cannot be deleted. Task-list creation routes to a
 project by precedence: ``repeatable`` → the Repeatable project; an explicit
 ``project_id``; a ``project_name`` (find-or-create); else the Personal project.
+
+The work of an Incognito or Temporary chat makes or changes no project and no task list: each is
+kept after the chat, and a project's brief and instructions are put before every chat and loop in
+it (``project_context.context_block``), so :meth:`HierarchyStore.create_project`,
+``update_project``, ``create_task_list`` and ``update_task_list`` refuse it first
+(``lasting_work``). Reading, deleting, and seeding the protected defaults, which carry nothing of
+any chat, are unchanged.
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ import time
 import uuid
 from pathlib import Path
 
+from personalclaw import lasting_work
 from personalclaw.atomic_write import atomic_json_write
 from personalclaw.config import loader as config_loader
 from personalclaw.record_ids import UnsafeRecordId, is_safe_record_id, record_path
@@ -364,6 +372,7 @@ class HierarchyStore:
         name_locked: bool = False,
         brief: str = "",
     ) -> Project:
+        lasting_work.refuse(lasting_work.TASKS, lasting_work.CREATE)
         name = clean_name(name, field="project name")
         if self.get_project_by_name(name):
             raise ValueError(f"a project named '{name}' already exists")
@@ -384,6 +393,7 @@ class HierarchyStore:
         return project
 
     def update_project(self, project_id: str, **fields) -> Project | None:
+        lasting_work.refuse(lasting_work.TASKS, lasting_work.CHANGE)
         project = self.get_project(project_id)
         if not project:
             return None
@@ -502,6 +512,7 @@ class HierarchyStore:
         """Create a task list, routing to a project by precedence:
         repeatable → Repeatable; explicit project_id → must exist;
         project_name → find-or-create; else → Personal."""
+        lasting_work.refuse(lasting_work.TASKS, lasting_work.CREATE)
         name = clean_name(name, field="task list name")
         self.ensure_defaults()
         if repeatable:
@@ -549,6 +560,7 @@ class HierarchyStore:
                 raise ValueError(f"a task list named '{name}' already exists in this project")
 
     def update_task_list(self, list_id: str, **fields) -> TaskList | None:
+        lasting_work.refuse(lasting_work.TASKS, lasting_work.CHANGE)
         tl = self.get_task_list(list_id)
         if not tl:
             return None

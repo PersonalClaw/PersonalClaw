@@ -1295,11 +1295,26 @@ def _read_attachment(args: dict[str, Any]) -> bytes | tuple[str, ToolFailure]:
     return raw
 
 
+#: The tools that leave lasting work or a lasting record behind them, which the work of an
+#: Incognito or Temporary chat may not do (:mod:`personalclaw.lasting_work`): the store each reaches
+#: refuses it (a skill draft, the proposal queue, the callback store), and :func:`_preflight` says
+#: so before anyone is asked to allow the call.
+_LASTING = {
+    "skill_remember": (lasting_work.SKILL, lasting_work.CREATE),
+    "skill_promote": (lasting_work.PROPOSAL, lasting_work.CREATE),
+    "template_save_from_session": (lasting_work.PROPOSAL, lasting_work.CREATE),
+    "project_context_review": (lasting_work.PROPOSAL, lasting_work.CREATE),
+    "propose_template_diff": (lasting_work.PROPOSAL, lasting_work.CREATE),
+    "hook_register": (lasting_work.CALLBACK, lasting_work.CREATE),
+}
+
+
 def _preflight(name: str, raw_args: dict[str, Any]) -> ToolFailure | None:
     """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
     call and arguments the tool's schema refuses (``mcp_shared.admitted_arguments``), then for a
-    message or a file for the owner what its send refuses, asked without sending anything, and a
-    callback registered for the work of an Incognito or Temporary chat (``lasting_work``)."""
+    message or a file for the owner what its send refuses, asked without sending anything, and
+    lasting work or a lasting record left for the work of an Incognito or Temporary chat
+    (:data:`_LASTING`)."""
     from personalclaw.mcp_shared import admitted_arguments
 
     args = admitted_arguments(name, raw_args, _validate_args)
@@ -1310,10 +1325,21 @@ def _preflight(name: str, raw_args: dict[str, Any]) -> ToolFailure | None:
     if name == "notify_attachment":
         read = _read_attachment(args)
         return read[1] if isinstance(read, tuple) else None
-    if name == "hook_register":
-        why = lasting_work.refusal(lasting_work.CALLBACK, lasting_work.CREATE)
-        return tool_failure(why, code=lasting_work.CODE) if why else None
+    if name in _LASTING:
+        why = lasting_work.refused(*_LASTING[name])
+        return tool_failure(str(why), code=why.code) if why is not None else None
     return None
+
+
+def _answered(name: str, args: dict[str, Any]) -> str:
+    """A call, a store's refusal of it included: lasting work or a lasting record left for the
+    work of an Incognito or Temporary chat is answered as the tool's error, in the refusal's
+    words and under its code (``lasting_work.Refused``). The tool server an agent CLI runs asks no
+    preflight, so this is what such a call is told there."""
+    try:
+        return _call_tool_inner(name, args)
+    except lasting_work.Refused as refused:
+        return tool_failure(str(refused), code=refused.code)
 
 
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
@@ -1323,7 +1349,7 @@ def _call_tool(name: str, raw_args: dict[str, Any]) -> str:
         name,
         raw_args,
         _validate_args,
-        _call_tool_inner,
+        _answered,
         session_key="mcp_core",
         downstream_service="personalclaw-core",
     )
@@ -1494,11 +1520,9 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         # allowed to run: the turn a callback starts runs with the agent's tools from the context
         # saved here, so it waits for the owner's Allow on the Triggers page, like a trigger the
         # chat makes (`triggers.grants`). Refused for the work of an Incognito or Temporary chat,
-        # whose context would be kept and start a turn of its own (`lasting_work`).
-        try:
-            callback = webhook_callbacks.register(hook_id, context_summary)
-        except lasting_work.Refused as kept_nothing:
-            return tool_failure(str(kept_nothing), code=lasting_work.CODE)
+        # whose context would be kept and start a turn of its own (`lasting_work`, answered by
+        # `_answered`).
+        callback = webhook_callbacks.register(hook_id, context_summary)
         waiting = not webhook_callbacks.allowed(callback)
         # Resolve webhook URL. A refusal from the base owner is returned as the tool's
         # result: a hook URL naming the wrong port is worse than no hook URL, because the

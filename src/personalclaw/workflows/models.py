@@ -1144,8 +1144,8 @@ def run_work_id(run_id: str) -> str:
 
 @dataclass
 class WorkflowRun:
-    """One execution. `root_run_id` is propagated through subworkflow spawns and forks
-    and indexed with status, so the whole tree of a run is one query rather than a
+    """One execution. `root_run_id` is propagated through subworkflow spawns, forks and the runs a
+    step starts, and indexed with status, so the whole tree of a run is one query rather than a
     recursive walk (WF2-R13)."""
 
     id: str
@@ -1157,6 +1157,10 @@ class WorkflowRun:
     origin: RunOrigin = field(default_factory=RunOrigin)
     parent_run_id: str | None = None
     root_run_id: str = ""
+    #: The step of `parent_run_id` that started this run and left it running (a `run-workflow`
+    #: step's run): it is its parent's work, and its ending is its own to say, since the step said
+    #: only that it launched it. A subworkflow node's child, which the node waits on, names the
+    #: node in its origin instead.
     spawned_by_node_id: str | None = None
     branch_key: str | None = None
     forked_from: dict[str, Any] | None = None

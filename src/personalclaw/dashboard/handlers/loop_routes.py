@@ -114,7 +114,13 @@ def _refuse_replan(cid: str) -> web.Response | None:
     family would either advertise a PATCH action that does not exist or make PATCH accept
     ``{"action": "replan"}`` and silently no-op. One refusal shape, two admissible sets,
     each derived from the same phase map.
+
+    Asked first by every route in the family, so it is also where a plan is refused to the work of
+    an Incognito or Temporary chat, before anything is read or written: each route writes the plan
+    the loop's worker runs from or sets its planner going, on a model of its own
+    (:mod:`personalclaw.lasting_work`, answered ``403 restricted_session``).
     """
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.PLAN)
     loop = store.get(cid)
     if loop is None:
         return web.json_response({"error": "Not found"}, status=404)

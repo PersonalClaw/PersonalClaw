@@ -1,10 +1,10 @@
 """What a chat keeps on disk, read without touching it.
 
-A chat leaves four things behind: its transcript (``sessions/<key>.jsonl``, with what hangs off
+A chat leaves five things behind: its transcript (``sessions/<key>.jsonl``, with what hangs off
 it — its search rows, its background summary, any archive batch of it), its working folder
 (``sessions/<key>/``, the raw tool results kept for it), its turn checkpoints (pre-edit copies of
-the files it changed) and the files attached to its messages (``uploads/``, and ``screenshots/``
-for a native capture).
+the files it changed), the files attached to its messages (``uploads/``, and ``screenshots/``
+for a native capture) and the skills it was taught and not yet kept (``skills/.ephemeral/``).
 
 Core, beneath the dashboard that forgets a chat (``dashboard/chat_forget.py``), because the
 stores that copy the home read it too: a snapshot and a shard export leave out what a running

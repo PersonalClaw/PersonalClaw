@@ -274,6 +274,7 @@ async def test_a_step_handed_one_by_another_steps_output_does_nothing(
 
 async def test_a_run_workflow_step_starts_its_run_in_the_steps_own_project(launched) -> None:
     """🔴 Red before: a step's run belonged to no project, whatever project its own run is in."""
+    store.create(WorkflowRun(id="run-own", workflow_name="reach-probe", project_id="project-own"))
     result = await _dispatch("run-workflow", {"workflow": CHILD}, project_id="project-own")
 
     assert result.state == InstanceState.DEGRADED, result.failure

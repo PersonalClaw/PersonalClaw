@@ -643,7 +643,13 @@ def enqueue(
     The evidence floor applies to INFERRED proposals only. A human correction is
     evidence by itself; requiring three occurrences of it would mean ignoring the
     user twice before listening.
+
+    Refused first, for the work of an Incognito or Temporary chat (``lasting_work.Refused``): a
+    proposal is kept after the chat, and what is accepted of it is read by every chat's model.
     """
+    from personalclaw import lasting_work
+
+    lasting_work.refuse(lasting_work.PROPOSAL, lasting_work.CREATE)
     if not (kind and title and body):
         return Verdict.SKIP, None
     try:

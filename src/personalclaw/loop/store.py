@@ -633,7 +633,12 @@ def spec_revision(loop: Loop) -> str:
 def update_spec(loop_id: str, fields: dict) -> Loop | None:
     """Patch editable spec fields on a PRE-LAUNCH loop. Returns None if the loop
     is missing OR its spec is frozen (already started) — the caller routes a
-    name-only patch to :func:`rename` instead."""
+    name-only patch to :func:`rename` instead.
+
+    Refused, before anything is written, for the work of an Incognito or Temporary chat: the spec is
+    what the loop's worker runs from, on a model of its own (:mod:`personalclaw.lasting_work`), and
+    so are :func:`rebind_workspace` and :func:`rename`."""
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.CHANGE)
     loop = get(loop_id)
     if loop is None:
         return None
@@ -666,6 +671,7 @@ def rebind_workspace(loop_id: str, workspace_dir: str) -> Loop | None:
     the loop paused to NEEDS_INPUT/BLOCKED (see launch_blocker / reaper / nudge guards).
     Allowed in any non-terminal state EXCEPT running (a live worker holds the cwd);
     returns None if missing, running, or terminal. Path-safety is the caller's gate."""
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.CHANGE)
     loop = get(loop_id)
     if loop is None:
         return None
@@ -678,6 +684,7 @@ def rebind_workspace(loop_id: str, workspace_dir: str) -> Loop | None:
 def rename(loop_id: str, name: str) -> Loop | None:
     """Metadata-only rename, allowed in ANY state (the spec freeze doesn't cover
     the display name). Blank = no-op."""
+    lasting_work.refuse(lasting_work.LOOP, lasting_work.CHANGE)
     name = (name or "").strip()[:200]
     if not name or not files.valid_loop_id(loop_id):
         return get(loop_id)

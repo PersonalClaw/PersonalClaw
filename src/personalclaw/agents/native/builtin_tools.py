@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from personalclaw import cancellation, run_bounds, run_processes
-from personalclaw.agents.native import read_gate
+from personalclaw.agents.native import lasting_tools, read_gate
 from personalclaw.agents.native.decision_tool_defs import decision_tool_definitions
 from personalclaw.agents.native.inbox_tool_defs import (
     INBOX_LIST_DEFAULT,
@@ -863,6 +863,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             if handler is None:
                 return ToolResult(success=False, error=f"unknown builtin tool {tool_name!r}")
             gated = self._read_gate_refusal(tool_name, arguments)
+            if gated is None:
+                gated = lasting_tools.refusal(tool_name)
             if gated is not None:
                 return gated
             result = await handler(arguments)
@@ -873,9 +875,10 @@ class NativeBuiltinToolProvider(ToolProvider):
 
     async def preflight(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult | None:
         """What :meth:`invoke` refuses before anything is touched, in its order: where a path
-        reaches (``file_scope.refusal``, the check every file tool makes), the read gate, then the
-        tool's own check (``_p_<tool>``, which its handler runs first too). A path refused gets the
-        tool's sentence and hint, an argument left out invoke's answer; else no verdict."""
+        reaches (``file_scope.refusal``, the check every file tool makes), the read gate, lasting
+        work or a lasting record left for an Incognito or Temporary chat (``lasting_tools``), then
+        the tool's own check (``_p_<tool>``, which its handler runs first too). A path refused gets
+        the tool's sentence and hint, an argument left out invoke's answer; else no verdict."""
         check = getattr(self, f"_p_{tool_name}", None)
         if getattr(self, f"_t_{tool_name}", None) is None:
             return None
@@ -890,6 +893,8 @@ class NativeBuiltinToolProvider(ToolProvider):
             if outside is not None:
                 return self._failure(tool_name, outside)
             gated = self._read_gate_refusal(tool_name, arguments)
+            if gated is None:
+                gated = lasting_tools.refusal(tool_name)
             return gated if gated is not None or check is None else check(arguments)
         except (ValueError, KeyError) as exc:
             return self._failure(tool_name, exc)
@@ -984,34 +989,14 @@ class NativeBuiltinToolProvider(ToolProvider):
         )
 
     # ── SDLC: create/launch a Code project or Goal Loop from chat (sdlc_tools.py) ──
-    def _p_project_run_create(self, a: dict) -> ToolResult | None:
-        """What ``project_run_create`` refuses first (:meth:`preflight`): a loop made for the work
-        of an Incognito or Temporary chat."""
-        from personalclaw.agents.native import sdlc_tools
-        from personalclaw.lasting_work import CREATE
-
-        return sdlc_tools.refused(CREATE)
-
     async def _t_project_run_create(self, a: dict) -> ToolResult:
         from personalclaw.agents.native import sdlc_tools
 
-        if (refused := self._p_project_run_create(a)) is not None:
-            return refused
         return await sdlc_tools.project_create(a)
-
-    def _p_project_run_start(self, a: dict) -> ToolResult | None:
-        """What ``project_run_start`` refuses first (:meth:`preflight`): a loop started for the work
-        of an Incognito or Temporary chat."""
-        from personalclaw.agents.native import sdlc_tools
-        from personalclaw.lasting_work import START
-
-        return sdlc_tools.refused(START)
 
     async def _t_project_run_start(self, a: dict) -> ToolResult:
         from personalclaw.agents.native import sdlc_tools
 
-        if (refused := self._p_project_run_start(a)) is not None:
-            return refused
         return await sdlc_tools.project_start(a)
 
     async def _t_project_run_status(self, a: dict) -> ToolResult:

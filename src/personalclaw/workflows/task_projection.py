@@ -219,7 +219,16 @@ def project_task(ctl: RunController, item: Any, inst: Any, result: Any) -> None:
     succeeded and its output is already journaled, so turning a board-row problem into a run
     failure would lose real work over a presentation concern. The projection is idempotent by
     construction (fingerprint dedup), so the next tick or a rebuild recovers it.
+
+    A run that keeps nothing (an Incognito or Temporary chat's work) is put on no board: a task is
+    a lasting record your other chats and loops read, which its store refuses (``lasting_work``),
+    so none is planned, written or verified, and no refusal is recorded for a write the run's work
+    never asked for.
     """
+    from personalclaw import memory_writes
+
+    if memory_writes.writes_refused():
+        return
     try:
         from personalclaw.workflows import materialize as _materialize
 

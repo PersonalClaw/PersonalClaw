@@ -12,6 +12,10 @@ clean SKILL.md into the chosen tier via ``SkillsLoader.create_skill`` (global) o
 ``SkillsLoader(agent=...).create_skill`` (agent-local, from skill-agent-local-tier),
 then clears the draft. Nothing lands in the library without the user's explicit
 choice — a higher-trust path than background extraction, not a replacement for it.
+
+An Incognito or Temporary chat's work drafts no skill and keeps none (``lasting_work``): a draft is
+kept after the chat, and a skill is read by the model of every chat, so :func:`remember` and
+:func:`promote` refuse it before anything is written, saying why.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from personalclaw import lasting_work
 from personalclaw.atomic_write import atomic_write
 from personalclaw.skills.loader import SkillsLoader, agent_skills_dir, skills_dir
 
@@ -77,7 +82,10 @@ def remember(
     session_key: str, title: str, body: str, *, created_at: str = ""
 ) -> EphemeralSkill | None:
     """Write (or overwrite) a session-live draft. Returns the draft, or None on
-    invalid input. Idempotent per (session, slug): re-remembering a title updates it."""
+    invalid input. Idempotent per (session, slug): re-remembering a title updates it.
+
+    Refused first, for the work of an Incognito or Temporary chat (``lasting_work.Refused``)."""
+    lasting_work.refuse(lasting_work.SKILL, lasting_work.CREATE)
     title = (title or "").strip()
     body = (body or "").strip()[:_MAX_BODY]
     if not title or not body:
@@ -206,7 +214,9 @@ def promote(
     ``title``/``body`` override the draft (in-modal edits). Returns the written
     skill name. Raises ``PromotionError`` on a refused target / write failure.
     Defence-in-depth: an 'agent' scope with no agent, or a slug that would resolve
-    under the bundled (read-only) tier, is refused."""
+    under the bundled (read-only) tier, is refused. Refused first, for the work of an Incognito or
+    Temporary chat (``lasting_work.Refused``)."""
+    lasting_work.refuse(lasting_work.SKILL, lasting_work.CREATE)
     draft = _load(session_key, slug)
     if draft is None:
         raise PromotionError(f"no session draft {slug!r}")

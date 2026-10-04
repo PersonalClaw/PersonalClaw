@@ -247,9 +247,14 @@ def revise_project_overview(ctl: RunController) -> None:
 
     Best-effort and fully guarded: `_finish` is the single terminal writer and MUST
     NOT raise, so a failure here costs the overview line, never the terminal status.
+
+    A run that keeps nothing (an Incognito or Temporary chat's work) adds nothing: the overview
+    and the ledgers are put before every session in the project, and their store refuses such
+    work (``project_context``), so neither is written and no refusal is recorded for a write the
+    run's work never asked for.
     """
     pid = ctl.run.project_id
-    if not pid:
+    if not pid or memory_writes.writes_refused():
         return
     try:
         name = ctl.run.workflow_name or "run"

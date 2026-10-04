@@ -169,7 +169,7 @@ under Subagents in the chat's Activity panel by their step names. An ask still w
 PersonalClaw restarts is asked again, or, if its window passed meanwhile, the chat is told the
 batch never started.
 
-### Loops and automations from a private chat
+### What a private chat leaves behind
 
 In a **Temporary** or **Incognito** chat the agent sets up no work that lasts after the chat: it
 creates, starts or steers no loop or project, creates or changes no automation or scheduled task,
@@ -177,6 +177,18 @@ and registers no callback. Each of those is kept after the chat and works on by 
 of its own, so what you said there would leave the chat. The agent tells you so, and you can set it
 up from an ordinary chat, or on the Loops or Triggers page. A workflow the agent starts from such a
 chat keeps the chat's mode and runs on its model.
+
+Nor does it save anything that other chats read later. It keeps no skill you teach it (there is
+no skill to review at the chat's end), files no proposal for review, creates or changes no task,
+task list or project on the Tasks page, posts nothing to the Inbox, and changes no loop's task or
+plan. The agent says so instead; you can do any of it from an ordinary chat, or on the Skills,
+Tasks or Loops page. It still reads your tasks, skills and loops as before. A workflow it starts
+puts none of its steps on the Tasks page, and a run one of its steps starts keeps what that run
+keeps.
+
+A **Temporary** chat's workflow runs end with it: once the chat has ended, a run still working is
+stopped, and the run, any run it started, and what they produced are deleted. An **Incognito**
+chat's runs are kept, as its transcript is.
 
 ## 5. Find in the conversation
 
