@@ -401,6 +401,7 @@ def _serialize_store(row: Any, *, owner: str = "") -> dict[str, Any]:
         "needs_review": _needs_review(trigger),
         "needs_grant": _needs_grant(trigger),
         "held_back": _held_back(trigger),
+        "workflow_version": _workflow_version(trigger),
         # Where the snapshot came from, when a restore holds it (`triggers.restore_hold`).
         "restore_hold": trigger.restore_hold,
         # A webhook automation's address and its sender tokens; null for another kind.
@@ -472,6 +473,7 @@ def _schedule_row_for(state: DashboardState, row: Any, *, owner: str = "") -> di
     projected["needs_review"] = _needs_review(trigger)
     projected["needs_grant"] = _needs_grant(trigger)
     projected["held_back"] = _held_back(trigger)
+    projected["workflow_version"] = _workflow_version(trigger)
     projected.update(_attribution(trigger, owner=owner))
     return trigger_revisions.with_revision(projected, schedule=True)
 
@@ -499,6 +501,14 @@ def _held_back(trigger: Any) -> dict[str, str] | None:
     from personalclaw.triggers.grants import held_back
 
     return held_back(trigger)
+
+
+def _workflow_version(trigger: Any) -> dict[str, Any] | None:
+    """Which version of its workflow the row runs, and whether a newer one waits for the owner's
+    "Use vN" (`triggers.grants.workflow_version`); None for an action that runs no workflow."""
+    from personalclaw.triggers.grants import workflow_version
+
+    return workflow_version(trigger)
 
 
 def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
@@ -538,6 +548,8 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
         "needs_grant": _needs_grant(hook),
         # Why the agent its action starts may do less than its step asks, as a store trigger says.
         "held_back": _held_back(hook),
+        # Which version of its workflow it runs, as a store trigger says.
+        "workflow_version": _workflow_version(hook),
     }
     return trigger_revisions.with_revision(row, schedule=False)
 
@@ -1946,6 +1958,82 @@ def _audit_grant(caller: str, outcome: str, resources: str) -> None:
     )
 
 
+async def api_trigger_workflow_version(request: web.Request) -> web.Response:
+    """POST /api/triggers/{id}/workflow-version {version, steps} — Use vN: run newer versions.
+
+    An automation runs the version of its workflow its owner allowed, and a newer one only when she
+    saves it in the workflow's editor (`workflows.automation_version`), and so for each workflow it
+    runs as a step: a newer version anything else saved waits for this. Without ``confirm: true``
+    it answers the consent question, which says who saved each version since the one it runs; with
+    it, the automation runs ``version`` and its steps the versions ``steps`` names (its row's
+    ``use``), which must be what it would run now — what the owner was shown — or nothing changes
+    and it answers ``409 stale_write``. Answers the automation's row.
+    """
+    from personalclaw.safety_flags import confirm_granted
+    from personalclaw.triggers import grants
+
+    state: DashboardState = request.app["state"]
+    kind, raw = _split_id(request.match_info["id"])
+    body = await json_object_body(request)
+    try:
+        version = int(str(body.get("version", "")).strip())
+    except ValueError:
+        return json_error("invalid_request", message="'version' must be a number", status=400)
+    shown = body.get("steps", {})
+    if not isinstance(shown, dict) or not all(
+        isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool)
+        for k, v in shown.items()
+    ):
+        return json_error(
+            "invalid_request", message="'steps' must map workflow names to versions", status=400
+        )
+    if kind == _LIFECYCLE:
+        hooks = _hook_store(state)
+        trigger: Any = hooks.get(raw)
+
+        def persist() -> dict[str, Any]:
+            hook = hooks.update(raw, {"capabilities": trigger.capabilities})
+            return _serialize_lifecycle(hook, _used_by_index().get(raw, []))
+
+    elif kind in (_STORE, _SCHEDULE):
+        store = _trigger_store()
+        row = store.get(raw)
+        trigger = row.trigger if row is not None else None
+
+        def persist() -> dict[str, Any]:
+            store.upsert(trigger)
+            saved = store.get(raw)
+            if kind == _SCHEDULE:
+                return _schedule_row_for(state, saved)
+            return _serialize_store(saved)
+
+    else:
+        trigger = None
+    if trigger is None:
+        return json_error("not_found", message="no such automation", status=404)
+    asked = grants.use_version_question(trigger)
+    if asked is None:
+        return json_error(
+            "invalid_request",
+            message="it already runs each workflow it runs as it is now",
+            status=400,
+        )
+    caller = request.get("user", "dashboard")
+    field = f"triggers.{request.match_info['id']}.workflow_version"
+    if not confirm_granted(body):
+        _audit_grant(caller, "denied", f"{field}: using v{version} without confirm")
+        return consent_required(
+            field, asked.sentence, title=asked.title, change=grants.use_version_change(trigger)
+        )
+    why = grants.use_current_version(trigger, version, shown)
+    if why:
+        return json_error("stale_write", message=f"Nothing was changed: {why}.", status=409)
+    out = persist()
+    _audit_grant(caller, "success", f"trigger:{trigger.id}: {grants.RUNS_A_WORKFLOW} v{version}")
+    state.push_refresh("crons")
+    return web.json_response({"ok": True, "trigger": out})
+
+
 async def api_trigger_toggle(request: web.Request) -> web.Response:
     """POST /api/triggers/{id}/toggle — enable/disable.
 
@@ -2540,6 +2628,7 @@ def register_trigger_routes(app: web.Application) -> None:
     app.router.add_put("/api/triggers/{id}", api_trigger_detail)
     app.router.add_delete("/api/triggers/{id}", api_trigger_detail)
     app.router.add_post("/api/triggers/{id}/toggle", api_trigger_toggle)
+    app.router.add_post("/api/triggers/{id}/workflow-version", api_trigger_workflow_version)
     app.router.add_post("/api/triggers/{id}/run", trigger_runs.api_trigger_run)
     app.router.add_post("/api/triggers/{id}/answer", trigger_runs.api_trigger_answer)
     # The external webhook fire endpoint. Beside `/run`, same `{id}` shape, so it needs

@@ -1010,7 +1010,7 @@ class WorkflowDef:
     spec_semver: str = SPEC_SEMVER
     description: str = ""
     source: str = "user"  # user | bundled
-    provenance: str = "user"  # authoring actor: chat | user
+    provenance: str = "user"  # who saved this version (`versions.SAVERS`), as its door says
     inputs: dict[str, InputParam] = field(default_factory=dict)
     defaults: RunDefaults = field(default_factory=RunDefaults)
     metadata: DefMetadata = field(default_factory=DefMetadata)

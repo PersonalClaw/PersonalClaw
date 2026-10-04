@@ -520,13 +520,13 @@ class TestDeepNesting:
         await service.author_def(
             name="leaf",
             root={"kind": "transform", "id": "l", "config": {"expr": "leaf"}},
-            provenance="user",
+            saved_by="owner",
             strict=False,
         )
         await service.author_def(
             name="mid",
             root={"kind": "subworkflow", "id": "down", "config": {"ref": "leaf"}},
-            provenance="user",
+            saved_by="owner",
             strict=False,
         )
         spec = {
@@ -544,13 +544,13 @@ class TestDeepNesting:
         await service.author_def(
             name="leaf",
             root={"kind": "transform", "id": "l", "config": {"expr": "leaf"}},
-            provenance="user",
+            saved_by="owner",
             strict=False,
         )
         await service.author_def(
             name="mid",
             root={"kind": "subworkflow", "id": "down", "config": {"ref": "leaf"}},
-            provenance="user",
+            saved_by="owner",
             strict=False,
         )
         spec = {
@@ -571,7 +571,7 @@ class TestDeepNesting:
         await service.author_def(
             name="loopy",
             root={"kind": "subworkflow", "id": "again", "config": {"ref": "loopy"}},
-            provenance="user",
+            saved_by="owner",
             strict=False,
         )
         spec = {

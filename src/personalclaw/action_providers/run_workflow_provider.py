@@ -35,6 +35,16 @@ would make an unverified run look verified — the honesty contract `ActionResul
 exists for. The result names the run (`work_id`, launched or queued), so the trigger's own run
 says how it went when it ends and counts toward its pause (`triggers.settle`).
 
+**It runs the version of the workflow its automation was allowed** (`workflows.automation_version`).
+The owner's Allow of the automation records the version of the workflow it was given for
+(`triggers.grants`), and a fire runs that version, or a newer one she saved herself in the
+workflow's editor, whatever else saved one since: an agent's tool, a sync, an import or an app. A
+version it may run that is no longer kept is refused, in words, and nothing starts. The run carries
+the versions of the workflows its steps may start, allowed with it, and a step of such a run that
+starts a workflow here starts the version allowed with it, by the same rule. A run no automation
+its owner allowed started — the Run button's, an agent's, a step of one of those — runs the
+workflow as it is.
+
 **Its inputs are checked where the trigger is SAVED, and again when it fires.** `config_problem`
 asks the question `service.start_run` asks before it spends anything — the workflow exists, every
 required input is given and every input is its declared type (`contracts.start_problem`) — so a
@@ -139,7 +149,6 @@ class RunWorkflowActionProvider(ActionProvider):
             parent = None
 
         try:
-            from personalclaw.workflows import defs as defs_mod
             from personalclaw.workflows import overlap as overlap_mod
             from personalclaw.workflows import ownership, store
             from personalclaw.workflows.effects import START_DEDUPE
@@ -175,21 +184,53 @@ class RunWorkflowActionProvider(ActionProvider):
                     ),
                 )
 
-        definition = await _load_def(defs_mod, name)
-        if definition is None:
+        from personalclaw.triggers.grants import allowed_for_fire
+        from personalclaw.workflows import automation_version
+
+        now = await automation_version.current(name)
+        if now is None:
             return ActionResult(
                 success=False,
                 error=f"unknown workflow {name!r}",
                 stderr="no workflow definition by that name is registered",
             )
-
-        spec = _spec_of(definition)
-        if not isinstance(spec, dict) or not spec.get("root"):
+        if not now.spec.get("root"):
             return ActionResult(
                 success=False,
                 error=f"workflow {name!r} has no usable spec",
                 stderr="the definition carries no root node",
             )
+        # The version this fire may run: the one its automation was allowed, or a newer one its
+        # owner saved herself; for a step of a run such an automation started, the version allowed
+        # with it. Read as things are now, and refused in words when it cannot be run, rather than
+        # run as some other version. The run carries on the versions its own steps may start.
+        bound = None
+        if is_workflow_step(ctx):
+            parent_id = str((getattr(ctx, "payload", None) or {}).get("run_id") or "")
+            bound = automation_version.bound_in(store.get(parent_id) if parent_id else None)
+        carried: dict[str, Any] | None = None
+        fire: automation_version.Runs | None
+        if bound is not None:
+            refused = ""
+            fire = automation_version.step_runs(bound, now)
+            if fire.spec is not None:
+                carried = automation_version.step_versions(bound, name, fire)
+        else:
+            allowed, refused = allowed_for_fire(str(getattr(ctx, "trigger_id", "") or ""), now)
+            fire = automation_version.runs(allowed, now) if not refused else None
+            if allowed is not None and fire is not None and fire.spec is not None:
+                carried = automation_version.step_versions(
+                    automation_version.bound_of(allowed), name, fire
+                )
+        if fire is None or fire.spec is None:
+            why = refused or (fire.problem if fire is not None else "")
+            return ActionResult(
+                success=False,
+                error=f"workflow {name!r}: {why}",
+                stderr="the version of the workflow this automation may run cannot be run",
+                failure_class="user",
+            )
+        spec = fire.spec
         from personalclaw.workflows.contracts import start_problem
         from personalclaw.workflows.service import with_declared_defaults
 
@@ -227,9 +268,9 @@ class RunWorkflowActionProvider(ActionProvider):
                 failure_class="user",
             )
 
-        # on_overlap — the def's declared policy, applied before a second run exists. The
+        # on_overlap — the policy of the version that runs, applied before a second run exists. The
         # branch lives in `overlap.decide`, exhaustive over the enum with a raising tail.
-        overlap = _overlap_of(definition, OverlapPolicy)
+        overlap = _overlap_of(spec, OverlapPolicy)
         active = [r for r in store.active_runs() if r.workflow_name == name]
         queued = overlap_mod.queued_runs(name)
         action = overlap_mod.decide(overlap, active=len(active), queued=len(queued))
@@ -263,6 +304,7 @@ class RunWorkflowActionProvider(ActionProvider):
                         "dry_run": True,
                         "would": action.value,
                         "would_start": name,
+                        "version": fire.version,
                         "inputs": run_inputs,
                     }
                 ),
@@ -314,16 +356,16 @@ class RunWorkflowActionProvider(ActionProvider):
             extra = {**extra, CHAIN_EXTRA_KEY: chain_state}
         # Which inputs the run was handed a reference in, so it fills them where they are used.
         extra = input_secrets.stamp(extra, coerced, handed)
+        if carried is not None:
+            extra = automation_version.stamp(extra, carried)
         run = store.create(
             WorkflowRun(
                 id="",
                 workflow_name=name,
                 status=RunStatus.DRAFT,
-                # A run pins the def VERSION it executed (reproducibility). Every
-                # other creation site does this (service.py:516); the trigger-fired path did
-                # not, so a hook-launched run always recorded spec_version=1 regardless of the
-                # def's real version — a refiner run could not be traced to the spec it read.
-                spec_version=int(spec.get("version", 1) or 1),
+                # The version it executes, which is the one its automation may run: a run is
+                # traced to the spec it read, an older version included.
+                spec_version=fire.version,
                 inputs=run_inputs,
                 mode=str((action_config or {}).get("mode", "background") or "background"),
                 project_id=project,
@@ -441,56 +483,24 @@ async def config_problem(action_config: dict[str, Any] | None) -> str:
     provided = config.get("inputs") or {}
     if not isinstance(provided, dict):
         return "the workflow's inputs must be an object of input names to values"
-    from personalclaw.workflows import defs as defs_mod
+    from personalclaw.workflows import automation_version
     from personalclaw.workflows.contracts import start_problem
 
-    definition = await _load_def(defs_mod, name)
-    if definition is None:
+    now = await automation_version.current(name)
+    if now is None:
         return f"there is no workflow named {name!r}"
-    spec = _spec_of(definition)
-    if not isinstance(spec, dict) or not spec.get("root"):
+    if not now.spec.get("root"):
         return f"workflow {name!r} has no usable spec"
-    _coerced, problem = start_problem(spec, provided, name=name)
+    _coerced, problem = start_problem(now.spec, provided, name=name)
     return f"workflow {name!r}: {problem}" if problem else ""
 
 
-async def _load_def(defs_mod: Any, name: str) -> Any | None:
-    """Find a def across every registered provider. Never raises on a miss — a bad name
-    is a user error with an actionable message, not a traceback."""
-    for provider_name in defs_mod.list_providers():
-        provider = defs_mod.get_provider(provider_name)
-        if provider is None:
-            continue
-        try:
-            found = await provider.get_def(name)
-        except Exception:
-            logger.debug("workflow def provider %s failed on %s", provider_name, name)
-            continue
-        if found is not None:
-            return found
-    return None
-
-
-def _spec_of(definition: Any) -> dict[str, Any]:
-    if isinstance(definition, dict):
-        return definition
-    to_dict = getattr(definition, "to_dict", None)
-    if callable(to_dict):
-        result = to_dict()
-        return result if isinstance(result, dict) else {}
-    return {}
-
-
-def _overlap_of(definition: Any, policy_cls: Any) -> Any:
-    raw = getattr(definition, "on_overlap", None)
-    if raw is not None:
-        return raw
-    if isinstance(definition, dict):
-        try:
-            return policy_cls(str(definition.get("on_overlap", "skip") or "skip"))
-        except ValueError:
-            return policy_cls.SKIP
-    return policy_cls.SKIP
+def _overlap_of(spec: dict[str, Any], policy_cls: Any) -> Any:
+    """The overlap policy *spec* declares, ``skip`` when it declares none it knows."""
+    try:
+        return policy_cls(str(spec.get("on_overlap", "skip") or "skip"))
+    except ValueError:
+        return policy_cls.SKIP
 
 
 async def _launch(run: Any, spec: dict[str, Any]) -> bool:

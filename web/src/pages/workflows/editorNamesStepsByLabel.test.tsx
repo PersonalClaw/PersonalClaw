@@ -31,7 +31,7 @@ vi.mock('../../lib/api', async (importActual) => {
       ...actual.api,
       workflowDef: async () => ({ definition: structuredClone(DEF), provider: 'native' }),
       workflowDefs: async () => ({ defs: [], total: 0 }),
-      workflowVersions: async () => ({ versions: [], pinned: 1, maturity: null }),
+      workflowVersions: async () => ({ versions: [], maturity: null }),
     },
   }
 })

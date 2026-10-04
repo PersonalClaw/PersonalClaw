@@ -160,7 +160,16 @@ relative to `PersonalClaw/src/personalclaw/`.
   owner allowed it "to use the “Invoke Agent” action when it runs", so the
   agent's start does not ask again (`grants.allows_its_agent`, bounded by the
   operator ceiling like every grant), and the agent's own calls ask as any
-  agent's do. PersonalClaw's own triggers
+  agent's do. An action that runs a workflow (`run-workflow`) runs the version
+  of the workflow its grant was given for: the owner's yes records that
+  version, its number and a digest of what it runs, in the grant, and a fire
+  runs it, or a newer one she saved in the workflow's editor, never a newer one
+  anything else saved, which waits for her "Use vN" on the trigger's panel
+  (`POST /api/triggers/{id}/workflow-version`, asked first;
+  `workflows.automation_version`); the workflows it starts as steps are held to
+  the versions recorded with that yes, by the same rule. The wire carries
+  `workflow_version`, the version a fire runs and any newer one waiting, its
+  steps' too, and what Use vN sends back. PersonalClaw's own triggers
   are granted by the code that makes them, since each runs an action it fixes
   behind a switch the owner holds (an app's crons, the `system:*` singletons, a
   research report's schedule, the triage digest, the Self-QA watch, a logged
@@ -603,8 +612,12 @@ synced folder
 (`agents/personalclaw.json`), which lists what this machine's owner lets it run
 without asking and the servers it starts, each runner's health as this machine
 measured it (`agent-metadata/*.runner.json`), which picks the runner a second
-opinion fires, and the template nudges' counters and candidates
-(`workflows/template_nudges.json`, `workflows/template_candidates.json`).
+opinion fires, the template nudges' counters and candidates
+(`workflows/template_nudges.json`, `workflows/template_candidates.json`), and
+each workflow's version history (`workflows/versions/*`): a version is what an
+automation here may run, with the steps its owner allowed here, and who saved it
+here decides whether an automation follows it, so another machine's history
+would run here as written, its saves read as this one's.
 
 **What ran on a machine stays on it too.** A workflow run's records (the run
 ledger `workflows/runs.db` and each run's folder in `workflows/runs`), a

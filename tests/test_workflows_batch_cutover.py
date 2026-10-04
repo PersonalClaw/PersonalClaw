@@ -363,7 +363,7 @@ def test_the_workspace_block_SURVIVES_persistence(tmp_path, monkeypatch):
             name="batch-ws",
             root=result.spec["root"],
             strict=False,
-            provenance="user",
+            saved_by="owner",
             workspace=result.spec[batch_compile.WORKSPACE_KEY],
         )
     )

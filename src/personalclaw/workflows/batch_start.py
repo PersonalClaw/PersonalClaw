@@ -72,6 +72,7 @@ from personalclaw.workflows.models import (
     valid_name,
     walk,
 )
+from personalclaw.workflows.versions import AGENT
 
 if TYPE_CHECKING:
     from personalclaw.approval_grants import ToolDecision
@@ -449,7 +450,9 @@ def _starter(
             # The compiled tree is machine-generated and lint-clean by construction; `strict` would
             # refuse it on a convention WARNING the compiler already approved.
             strict=False,
-            provenance="user",
+            # The batch is the agent's, compiled from its tasks: her Allow below covers what they
+            # may change, not a version of a workflow an automation of hers runs.
+            saved_by=AGENT,
             workspace=fields["workspace"] or None,
             # Her Allow of the ask that named each task and what it may change. A grant that
             # started a batch that only reads is no yes of hers, and that batch needs none: it

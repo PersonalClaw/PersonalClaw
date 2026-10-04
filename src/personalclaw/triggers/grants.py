@@ -34,6 +34,13 @@ action as it stood when they gave it; and nothing but that yes gives one.
 * **The agent an allowed action starts starts on that yes** (:func:`allows_its_agent`). The owner
   who allowed a trigger "to use the “Invoke Agent” action when it runs" was asked whether its agent
   may start, so its start does not ask again. What the agent then does asks as any agent's calls do.
+* **A yes to run a workflow is a yes to the version it saw** (:func:`allowed_workflow`). The
+  workflow changes after the yes, and what a ``run-workflow`` action runs is the workflow, so the
+  grant records the version it was given for, and a fire runs that one
+  (`workflows.automation_version`): a newer version the owner saves in the workflow's editor is
+  followed, since that save is her yes; a newer one anything else saves — an agent's tool, a sync,
+  an import, an app — is not, until she chooses "Use vN" (:func:`use_current_version`), which asks.
+  The workflows it runs as steps are held to the versions they were at the yes, by the same rule.
 * **A restart gives nothing.** The capability backfill that granted every ungranted row whatever
   it ran, on every start, is gone: by the time it ran, the edit it rewarded was nobody's decision.
 
@@ -46,9 +53,28 @@ the Self-QA watch and a logged decision's review card. None of them takes an act
 from __future__ import annotations
 
 import logging
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+if TYPE_CHECKING:
+    from personalclaw.workflows.automation_version import Allowed, Current
 
 logger = logging.getLogger(__name__)
+
+#: The action that runs a workflow, whose grant records the version of the workflow it allows.
+RUNS_A_WORKFLOW = "run-workflow"
+#: Where in a grant's block that version is kept (`automation_version.Allowed`).
+_ALLOWED_WORKFLOW = "workflow"
+#: What a version's saver is called where the owner reads it (`versions.SAVERS`).
+_SAVED_BY_WORDS = {
+    "owner": "you, in the workflow's editor",
+    "publish": "the publish switch",
+    "agent": "an agent",
+    "refiner": "the refiner",
+    "import": "an import",
+    "app": "an app",
+    "shipped": "PersonalClaw",
+    "brought_in": "another machine, a restore or a pack",
+}
 
 
 class Question(NamedTuple):
@@ -186,6 +212,9 @@ def narrow(trigger: Any, before: Any) -> list[str]:
             block["providers"] = kept
         else:
             block.pop("providers")
+        if RUNS_A_WORKFLOW not in kept:
+            # The version of the workflow a yes was given for goes with the yes.
+            block.pop(_ALLOWED_WORKFLOW, None)
         trigger.capabilities = block
     return changed
 
@@ -282,8 +311,41 @@ def consent(
         said = f"Allowing “{name}” lets it use {uses}, as it is now, when it runs."
     else:
         said = f"Switching “{name}” on allows it to use {uses}, as it is now, when it runs."
-    reach = what_its_agent_may_do(trigger)
+    reach = what_its_agent_may_do(trigger) or _which_version(trigger)
     return f"{said} {reach}" if reach else said
+
+
+def _which_version(trigger: Any) -> str:
+    """Which version of its workflow a yes to `trigger` lets it run, in the consent's words, or
+    ``""`` when its action runs no workflow (or none by that name exists, which its save refuses).
+    """
+    name = _workflow_of(trigger)
+    if not name:
+        return ""
+    from personalclaw.workflows.automation_version import called, current_now
+
+    now = current_now(name)
+    if now is None or not now.spec:
+        return ""
+    by = _SAVED_BY_WORDS.get(now.saved_by) if now.saved_by != "owner" else ""
+    version = f"version {now.version} now, saved by {by}" if by else f"version {now.version} now"
+    started = [n for n in called(now.spec) if n != name]
+    if not started:
+        return (
+            f"It runs “{name}” as it is when you allow it ({version}), and a newer version only "
+            "once you save one in the workflow's editor."
+        )
+    return (
+        f"It runs “{name}” as it is when you allow it ({version}), and {_quoted(started)}, "
+        "which it runs as steps, as they are then too; and a newer version of any of them only "
+        "once you save one in its editor."
+    )
+
+
+def _quoted(names: list[str]) -> str:
+    """Workflow names as a sentence lists them: “a”, “b” and “c”."""
+    quoted = [f"“{n}”" for n in names]
+    return quoted[0] if len(quoted) == 1 else f"{', '.join(quoted[:-1])} and {quoted[-1]}"
 
 
 def _action_of(trigger: Any) -> tuple[str, dict[str, Any]]:
@@ -434,6 +496,472 @@ def give(trigger: Any) -> list[str]:
     from personalclaw.triggers.legacy_import import adopt
     from personalclaw.triggers.screen import grant_action
 
+    name = _workflow_of(trigger)
+    if not name:
+        granted = grant_action(trigger)
+        adopt(trigger)
+        return granted
+    from personalclaw.workflows.automation_version import current_now
+
+    now = current_now(name)
+    if now is None or not now.spec:
+        # A yes to a workflow that is not there would be a yes to whatever is saved under its name
+        # next, so it gives nothing: its fire says the workflow is missing.
+        adopt(trigger)
+        return []
     granted = grant_action(trigger)
+    _allow(trigger, now)
     adopt(trigger)
     return granted
+
+
+def _workflow_of(trigger: Any) -> str:
+    """The workflow `trigger`'s own action runs, or ``""`` when its action runs none."""
+    provider, config = _action_of(trigger)
+    if provider != RUNS_A_WORKFLOW:
+        return ""
+    return str(config.get("workflow") or "").strip()
+
+
+def allowed_workflow(trigger: Any) -> "Allowed | None":
+    """The version of its workflow `trigger`'s grant allows it to run, or None: its action runs no
+    workflow, its grant does not cover that action, or the grant records no version of it."""
+    from personalclaw.workflows.automation_version import Allowed
+
+    name = _workflow_of(trigger)
+    block = getattr(trigger, "capabilities", None)
+    if not name or not isinstance(block, dict):
+        return None
+    held = block.get("providers")
+    if not isinstance(held, (list, tuple)) or RUNS_A_WORKFLOW not in held:
+        return None
+    allowed = Allowed.from_dict(block.get(_ALLOWED_WORKFLOW))
+    return allowed if allowed is not None and allowed.workflow == name else None
+
+
+def _allow(trigger: Any, now: "Current", *, calls: Any = None) -> None:
+    """Record in `trigger`'s grant that it may run `now`, its workflow as it is, and each workflow
+    `now` runs as a step as it is too (*calls*, `automation_version.closure`, read here when not
+    given), in place. The version history keeps each first (`automation_version.keep`), so the
+    versions allowed can still run once the workflows move on."""
+    from personalclaw.workflows.automation_version import Allowed, closure_now, keep
+
+    keep(now)
+    if calls is None:
+        calls = closure_now(now.spec, root=now.name)
+    current = getattr(trigger, "capabilities", None)
+    block = dict(current) if isinstance(current, dict) else {}
+    block[_ALLOWED_WORKFLOW] = Allowed(now.name, now.version, now.digest, calls).to_dict()
+    trigger.capabilities = block
+
+
+def made_by_personalclaw(trigger: Any) -> bool:
+    """Whether `trigger` is one of the automations PersonalClaw's own code makes and grants (an
+    app's job, a settings-driven singleton, a logged decision's review card): it runs a template
+    PersonalClaw or the app ships, as it is. Every other automation's grant came from its owner's
+    yes, and runs the version that yes was given for."""
+    by = str(getattr(trigger, "created_by", "") or "")
+    return by == "system" or by.startswith(("system:", "app:"))
+
+
+def allowed_for_fire(trigger_id: str, now: "Current") -> tuple["Allowed | None", str]:
+    """The version of its workflow, *now*, the automation *trigger_id* may run at this fire:
+    ``(allowed, "")``, ``(None, "")`` when the fire runs the workflow as it is, or ``(None, why)``
+    when it may run nothing.
+
+    Read from the store as it is at the fire, as every grant is (:func:`allows_its_agent`). As it is
+    runs: a run no automation started (no *trigger_id*), one an action of another kind started
+    through this one, an automation PersonalClaw's own code made (:func:`made_by_personalclaw`),
+    and one no store holds any more — a fire that raced its own deletion, which said so in the log.
+    An owner's Allow from before allowed versions were recorded covered every version, and is bound
+    here, at its first fire, to the version it runs (:func:`_allow`). A store that cannot be read
+    runs nothing."""
+    if not trigger_id:
+        return None, ""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX
+
+    home = config_dir()
+    try:
+        if trigger_id.startswith(LIFECYCLE_TRIGGER_PREFIX):
+            from personalclaw.hooks import ScriptHookStore
+
+            hooks = ScriptHookStore(config_dir=home)
+            trigger: Any = hooks.get(trigger_id.removeprefix(LIFECYCLE_TRIGGER_PREFIX))
+
+            def keep() -> None:
+                hooks.update(trigger.id, {"capabilities": trigger.capabilities})
+
+        else:
+            from personalclaw.triggers.routing import routed
+            from personalclaw.triggers.store import TriggerStore
+
+            store = routed(TriggerStore(base_dir=home))
+            row = store.get(trigger_id)
+            trigger = row.trigger if row is not None else None
+
+            def keep() -> None:
+                store.upsert(trigger)
+
+    except Exception:  # noqa: BLE001 - an automation that cannot be read runs nothing
+        logger.warning("could not read trigger %s for its workflow's version", trigger_id)
+        return None, (
+            "the automation that fired could not be read, so it is not known which version of "
+            f"“{now.name}” it may run, and it did not run"
+        )
+    if trigger is None:
+        logger.warning("trigger %s is in no store at its fire: %s runs as is", trigger_id, now.name)
+        return None, ""
+    if _workflow_of(trigger) != now.name:
+        return None, ""
+    allowed = allowed_workflow(trigger)
+    if allowed is not None or made_by_personalclaw(trigger):
+        return allowed, ""
+    if missing(trigger):
+        return None, refusal(trigger, missing(trigger))
+    _allow(trigger, now)
+    try:
+        keep()
+    except Exception:  # noqa: BLE001 - this fire runs the version it was bound to either way
+        logger.warning("could not record which version of %s trigger %s runs", now.name, trigger_id)
+    return allowed_workflow(trigger), ""
+
+
+def use_current_version(trigger: Any, version: int, steps: dict[str, int] | None = None) -> str:
+    """Let `trigger` run its workflow's version *version*, and the workflows its steps start at the
+    versions *steps* names: the owner's "Use vN" on its row, after its consent question
+    (:func:`use_version_question`). Both must be what its row offered (``use``), as things are now,
+    or nothing is changed: a version saved after she looked is not one she was asked about. Done in
+    place: ``""``, or why not."""
+    name = _workflow_of(trigger)
+    if not name:
+        return "its action runs no workflow"
+    if missing(trigger):
+        return "it is not allowed to run yet: allow it first, which asks you"
+    from personalclaw.workflows.automation_version import closure_now
+
+    read = _read(trigger)
+    now = read[1] if read is not None else None
+    if read is None or now is None or not now.spec:
+        return f"there is no workflow named “{name}” now"
+    if now.version != version:
+        return f"“{name}” is version {now.version} now, not {version}: look at it again"
+    calls = closure_now(now.spec, root=name)
+    offered = _use_of(read[0], _moves(read[0], now, calls), now)
+    if offered is None or offered["steps"] != dict(steps or {}):
+        return "what its steps would run has changed since you looked: look at it again"
+    _allow(trigger, now, calls=calls)
+    return ""
+
+
+def _saved(version: int, saved_by: str) -> str:
+    """One version and who saved it, as the consent question says it."""
+    words = _SAVED_BY_WORDS.get(saved_by)
+    if words:
+        return f"v{version} by {words}"
+    return f"v{version}, from before PersonalClaw recorded who saved each version"
+
+
+def _since(since: list[tuple[int, str]]) -> str:
+    """Who saved each version since, as the consent question says it."""
+    return "; ".join(_saved(version, saver) for version, saver in since) or "nothing recorded"
+
+
+class _Move(NamedTuple):
+    """One version "Use vN" changes: the workflow, the version it runs now (0 for none), the one
+    it would run, and who saved each version since."""
+
+    workflow: str
+    was: int
+    to: int
+    since: list[tuple[int, str]]
+
+
+def _moves(described: dict[str, Any], now: "Current | None", calls: Any = None) -> list[_Move]:
+    """What "Use vN" would change on the automation `described` says, its workflow being *now*: its
+    own workflow first when its version moves, then each workflow the steps of *now* start whose
+    version moves with it (*calls*, `automation_version.closure`, read here when not given). Empty
+    for an automation it would change nothing on, or one it does not apply to: not allowed yet, or
+    one PersonalClaw's own code made."""
+    if described["follows"] or not described["allowed"] or now is None or not now.spec:
+        return []
+    from personalclaw.workflows.automation_version import closure_now, current_now, saved_since
+
+    name = described["workflow"]
+    out: list[_Move] = []
+    if described["newer"]:
+        since = [(row["version"], row["saved_by"]) for row in described["since"]]
+        out.append(_Move(name, described["runs"], described["newer"], since))
+    if calls is None:
+        calls = closure_now(now.spec, root=name, keeping=False)
+    before = {row["workflow"]: row["runs"] for row in described["steps"]}
+    for call in calls:
+        was = before.get(call.workflow, 0)
+        if call.workflow in before and was == call.version:
+            continue
+        child = current_now(call.workflow)
+        since = saved_since(call.workflow, was, child) if child is not None else []
+        out.append(_Move(call.workflow, was, call.version, since))
+    return out
+
+
+def _use_of(
+    described: dict[str, Any], moves: list[_Move], now: "Current | None"
+) -> dict[str, Any] | None:
+    """What the row's "Use vN" sends back (``use``): the workflow's version now, and the version of
+    each workflow its steps start that moves with it; None when it would change nothing."""
+    if not moves or now is None:
+        return None
+    name = described["workflow"]
+    return {
+        "version": now.version,
+        "steps": {m.workflow: m.to for m in moves if m.workflow != name},
+    }
+
+
+def use_version_question(trigger: Any) -> Question | None:
+    """What "Use vN" on `trigger`'s row asks the owner (:class:`Question`, its ``providers`` the
+    workflow action), or None when it runs every workflow it runs, its own and each its steps
+    start, as it is now. It names each version that would change, and who saved each since."""
+    read = _read(trigger)
+    if read is None:
+        return None
+    described, now = read
+    moves = _moves(described, now)
+    if not moves:
+        return None
+    name, who = described["workflow"], _name(trigger)
+    own = [m for m in moves if m.workflow == name]
+    steps = [m for m in moves if m.workflow != name]
+    said: list[str] = []
+    if own:
+        runs = own[0].was
+        if runs:
+            head = f"“{who}” runs version {runs} of “{name}”."
+        else:
+            runs = described["allowed"]
+            head = (
+                f"“{who}” was allowed to run version {runs} of “{name}”, which is no longer "
+                "kept here, so it runs nothing."
+            )
+        said.append(
+            f"{head} Allowing this lets it run version {own[0].to} instead, when it runs, "
+            f"unattended included. Saved since version {runs}: {_since(own[0].since)}."
+        )
+    else:
+        said.append(
+            f"“{who}” runs version {described['runs']} of “{name}”, its newest. Allowing this lets "
+            "the workflows it runs as steps run their newest versions instead, when it runs, "
+            "unattended included."
+        )
+    for move in steps:
+        if move.was:
+            said.append(
+                f"Its steps start “{move.workflow}” at version {move.to} instead of version "
+                f"{move.was}. Saved since version {move.was}: {_since(move.since)}."
+            )
+        else:
+            said.append(
+                f"Its steps start “{move.workflow}” at version {move.to}, which they do not start "
+                f"now. Saved: {_since(move.since)}."
+            )
+    if own:
+        title = f"Run version {own[0].to} of “{name}”?"
+    elif len(steps) == 1:
+        title = f"Run the newest version of “{steps[0].workflow}”?"
+    else:
+        title = f"Run the newest versions of what “{name}” runs?"
+    return Question([RUNS_A_WORKFLOW], " ".join(said), title)
+
+
+def use_version_change(trigger: Any) -> str:
+    """What "Use vN" changes on `trigger`, from and to, one line per workflow (``"v4 → v5"`` for
+    its own, ``"“part” v1 → v2"`` for one its steps start), for its consent dialog."""
+    read = _read(trigger)
+    if read is None:
+        return ""
+    described, now = read
+    lines = []
+    for move in _moves(described, now):
+        if move.workflow == described["workflow"]:
+            lines.append(f"v{move.was or described['allowed']} → v{move.to}")
+        elif move.was:
+            lines.append(f"“{move.workflow}” v{move.was} → v{move.to}")
+        else:
+            lines.append(f"“{move.workflow}” v{move.to}")
+    return "\n".join(lines)
+
+
+def workflow_version(trigger: Any) -> dict[str, Any] | None:
+    """What `trigger`'s row says about the version of its workflow it runs, or None when its action
+    runs no workflow. The Triggers page shows it with the trigger, and the workflow's page with its
+    other automations.
+
+    * ``workflow``, and ``runs``: the version a fire runs now (0 when it would run none), with
+      ``saved_by``, who saved that version;
+    * ``allowed``: the version its owner's yes was given for, 0 when it records none — not allowed
+      yet, or allowed before versions were recorded, which its next fire binds to the version then;
+    * ``follows``: whether it runs the workflow as it is (:func:`made_by_personalclaw`);
+    * ``newer``: the workflow's version now, when that is not what runs (0 otherwise), with
+      ``since``, who saved each version after the one it runs;
+    * ``problem``: why a fire would run nothing (``""`` when it would run);
+    * ``steps``: each workflow its steps start, at every depth, as the same fields say it
+      (``workflow``, ``via`` — the workflow whose step starts it —, ``runs``, ``saved_by``,
+      ``newer``, ``since``, ``problem``); ``[]`` when a fire would run nothing;
+    * ``use``: what its "Use vN" sends (``{version, steps}``, :func:`use_current_version`), or None
+      when it runs every workflow it runs as it is now."""
+    read = _read(trigger)
+    if read is None:
+        return None
+    described, now = read
+    try:
+        described["use"] = _use_of(described, _moves(described, now), now)
+    except Exception:  # noqa: BLE001 - a row must render when what it starts cannot be read
+        logger.debug("could not read what Use vN changes on trigger %s", getattr(trigger, "id", ""))
+        described["use"] = None
+    return described
+
+
+def _read(trigger: Any) -> "tuple[dict[str, Any], Current | None] | None":
+    """`trigger`'s row on the version of its workflow it runs (:func:`workflow_version`, less
+    ``use``), and the workflow as it is now; None when its action runs no workflow."""
+    name = _workflow_of(trigger)
+    if not name:
+        return None
+    from personalclaw.workflows.automation_version import (
+        Allowed,
+        bound_of,
+        current_now,
+        runs,
+        saved_since,
+        steps_now,
+    )
+
+    try:
+        now = current_now(name)
+    except Exception:  # noqa: BLE001 - a row must render when its workflow cannot be read
+        logger.debug("could not read workflow %s for trigger %s", name, getattr(trigger, "id", ""))
+        now = None
+    described: dict[str, Any] = {
+        "workflow": name,
+        "runs": 0,
+        "saved_by": "",
+        "allowed": 0,
+        "follows": made_by_personalclaw(trigger),
+        "newer": 0,
+        "since": [],
+        "problem": "",
+        "steps": [],
+    }
+    if now is None or not now.spec:
+        described["problem"] = f"there is no workflow named “{name}” that can run"
+        return described, now
+    pinned = allowed_workflow(trigger)
+    allowed = pinned
+    if pinned is not None:
+        described["allowed"] = pinned.version
+    elif not described["follows"]:
+        # Not allowed yet, or allowed before versions were recorded: either way, the yes it is
+        # given (or its next fire) binds it to the workflow as it is now.
+        allowed = Allowed(name, now.version, now.digest)
+    fire = runs(allowed, now)
+    described["runs"] = fire.version if fire.spec is not None else 0
+    described["saved_by"] = fire.saved_by
+    described["problem"] = fire.problem
+    if fire.newer is not None:
+        described["newer"] = fire.newer.version
+        described["since"] = [
+            {"version": number, "saved_by": saver}
+            for number, saver in saved_since(name, fire.version, fire.newer)
+        ]
+    if fire.spec is not None:
+        try:
+            found = steps_now(name, fire, bound_of(pinned) if pinned is not None else None)
+        except Exception:  # noqa: BLE001 - see above: the row renders without its steps
+            logger.debug("could not read the steps of workflow %s for trigger %s", name, trigger)
+            found = []
+        described["steps"] = [_step_row(step) for step in found]
+    return described, now
+
+
+def _step_row(step: Any) -> dict[str, Any]:
+    """One workflow an automation's steps start, as its row says it (:func:`workflow_version`)."""
+    from personalclaw.workflows.automation_version import saved_since
+
+    ran = step.runs
+    row: dict[str, Any] = {
+        "workflow": step.workflow,
+        "via": step.via,
+        "runs": ran.version if ran.spec is not None else 0,
+        "saved_by": ran.saved_by,
+        "newer": 0,
+        "since": [],
+        "problem": ran.problem,
+    }
+    if ran.newer is not None:
+        row["newer"] = ran.newer.version
+        if ran.version:
+            row["since"] = [
+                {"version": number, "saved_by": saver}
+                for number, saver in saved_since(step.workflow, ran.version, ran.newer)
+            ]
+    return row
+
+
+def running(name: str) -> list[dict[str, Any]]:
+    """The automations that run the workflow *name*, as the workflow's page lists them: its stored
+    triggers (an app's served rows included) and lifecycle hooks whose own action runs it, and those
+    whose workflow runs it as a step (``via``, the workflow whose step starts it; ``""`` for its
+    own action), each with the version of its workflow it runs (:func:`workflow_version`). ``id``
+    is the one the Triggers page opens it by, ``name`` masked as that page shows it. A store that
+    cannot be read lists nothing.
+    """
+    from personalclaw.config.loader import config_dir
+    from personalclaw.hooks import LIFECYCLE_TRIGGER_PREFIX, ScriptHookStore
+    from personalclaw.triggers.delivery import status_url
+    from personalclaw.triggers.routing import routed
+    from personalclaw.triggers.store import TriggerStore
+
+    home = config_dir()
+    found: list[tuple[str, Any]] = []
+    try:
+        found.extend(
+            (str(t.id), t)
+            for t in routed(TriggerStore(base_dir=home)).list_triggers(include_broken=False)
+        )
+    except Exception:  # noqa: BLE001 - an unreadable store costs its rows, not the page
+        logger.warning("could not read the triggers that run workflow %s", name)
+    try:
+        found.extend(
+            (f"{LIFECYCLE_TRIGGER_PREFIX}{hook.id}", hook)
+            for hook in ScriptHookStore(config_dir=home).list_all()
+        )
+    except Exception:  # noqa: BLE001 - see above
+        logger.warning("could not read the lifecycle triggers that run workflow %s", name)
+    out: list[dict[str, Any]] = []
+    for ident, trigger in found:
+        own = _workflow_of(trigger)
+        if not own:
+            continue
+        described = workflow_version(trigger)
+        if own == name:
+            via = ""
+        else:
+            step = next(
+                (row for row in (described or {}).get("steps", []) if row["workflow"] == name), None
+            )
+            if step is None:
+                continue
+            via = step["via"]
+        out.append(
+            {
+                "id": ident,
+                "name": _name(trigger),
+                "enabled": bool(getattr(trigger, "enabled", False)),
+                "needs_grant": labels(trigger),
+                "workflow_version": described,
+                "via": via,
+                "status_url": status_url(trigger_id=ident),
+            }
+        )
+    return out

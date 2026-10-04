@@ -228,7 +228,9 @@ async def test_your_allow_saves_what_you_were_shown(gateway):
 
     saved = gateway.provider.saved[NAME]
     assert saved["root"] == LOOSE
-    assert saved["provenance"] == "chat"
+    # Her Allow covers what its steps would do; the version is still the agent's save, which an
+    # automation of the workflow does not follow until she says to.
+    assert saved["_saved_by"] == "agent"
     assert _asks(gateway.state) == []
 
 

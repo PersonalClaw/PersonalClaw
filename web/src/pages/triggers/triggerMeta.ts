@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CalendarClock, Webhook, Bell, MessageSquare, ListPlus, Users, TerminalSquare, FileCode2, Zap, Anchor, Bot, Workflow, FolderClock, Globe, Moon, FileText, Inbox, Database, Plug, Play, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern, type CallbackRow, type ActionProviderName, type RestoreHold } from '../../lib/api'
+import { api, type ScheduleJob, type HookItem, type HookEnforcement, type LifecycleEventInfo, type TriggerVariables, type Trigger as WireTrigger, type EventPattern, type CallbackRow, type ActionProviderName, type RestoreHold, type AutomationWorkflowVersion } from '../../lib/api'
 import { dispatchedProvider } from '../../lib/rungs'
 import { deriveKind, deriveMode, kindMeta as schedKindMeta, modeMeta as schedModeMeta } from '../schedule/scheduleMeta'
 import { epochSeconds } from '../../lib/epoch'
@@ -291,6 +291,9 @@ export interface Trigger {
   /** The actions it is not allowed to use (`needs_grant`), by display name — nothing runs it until
    *  the owner allows it. The server's verdict, passed through. */
   needsGrant?: string[]
+  /** Which version of its workflow a "Run workflow" automation runs, and the newer one waiting for
+   *  the owner's Use vN (`workflow_version`): the server's verdict, passed through. */
+  workflowVersion?: AutomationWorkflowVersion | null
   /** Switched off by a restore until it is resumed, and where the snapshot came from
    *  (`restore_hold`): the server's verdict, passed through. Only a schedule or a store row can
    *  carry one, and never one that is switched on. */
@@ -371,6 +374,7 @@ export function scheduleToTrigger(j: ScheduleJob): Trigger {
     author: j.author, readOnly: j.read_only === true,
     needsReview: j.needs_review === true,
     needsGrant: j.needs_grant ?? [],
+    workflowVersion: j.workflow_version ?? null,
     restoreHold: j.enabled ? '' : (j.restore_hold ?? ''),
   }
 }
@@ -396,6 +400,7 @@ export function hookToTrigger(h: HookItem): Trigger {
     runCount: h.run_count, usedBy: h.used_by,
     blocking: h.blocking, enforcement: h.enforcement,
     needsGrant: h.needs_grant ?? [],
+    workflowVersion: h.workflow_version ?? null,
     schedule: undefined, hook: h,
   }
 }
@@ -443,6 +448,7 @@ export function storeToTrigger(t: WireTrigger): Trigger {
     author: t.author, readOnly: t.read_only === true,
     needsReview: t.needs_review === true,
     needsGrant: t.needs_grant ?? [],
+    workflowVersion: t.workflow_version ?? null,
     restoreHold: t.enabled ? '' : (t.restore_hold ?? ''),
   }
 }

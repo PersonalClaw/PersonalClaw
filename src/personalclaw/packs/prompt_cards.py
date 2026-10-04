@@ -370,6 +370,7 @@ def _save_def_sync(spec: dict[str, Any]) -> str:
     import asyncio
 
     from personalclaw.workflows import service
+    from personalclaw.workflows.versions import IMPORT
 
     async def _go() -> dict[str, Any]:
         return await service.author_def(
@@ -377,7 +378,7 @@ def _save_def_sync(spec: dict[str, Any]) -> str:
             root=dict(spec.get("root") or {}),
             description=str(spec.get("description") or ""),
             tags=[str(t) for t in (spec.get("tags") or [])],
-            provenance="user",
+            saved_by=IMPORT,
         )
 
     try:

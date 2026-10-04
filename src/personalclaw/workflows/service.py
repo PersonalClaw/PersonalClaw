@@ -73,6 +73,7 @@ from personalclaw.workflows.models import (
     walk,
 )
 from personalclaw.workflows.validator import Issue, validate_spec
+from personalclaw.workflows.versions import AGENT, PUBLISH
 
 logger = logging.getLogger(__name__)
 
@@ -361,7 +362,7 @@ async def author_def(
     tags: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
     save: bool = True,
-    provenance: str = "chat",
+    saved_by: str = AGENT,
     strict: bool = True,
     workspace: dict[str, Any] | None = None,
     runtime_hints: dict[str, Any] | None = None,
@@ -377,6 +378,11 @@ async def author_def(
     an author can iterate before committing anything. Validating only at save time would
     mean every failed attempt leaves a broken def on disk. A dry run of a spec whose save needs
     the owner's own yes says which steps it is for (``needs_owner_allow``), asking nobody.
+
+    `saved_by` is the door the save comes through (``versions.SAVERS``): the owner's editor, an
+    agent's tool, an import. The door says it, never what it was handed, and it is what the version
+    records as who saved it, which decides whether an automation follows it
+    (`workflows.automation_version`); a door that says nothing is an agent's.
 
     `owner_allowed` is the owner's own yes to what the save lets its steps do: her ``confirm`` on
     her editor's save, or her Allow of an ask that named each step (`batch_start`,
@@ -440,7 +446,6 @@ async def author_def(
         "root": root or {},
         "inputs": inputs or {},
         "tags": tags or [],
-        "provenance": provenance,
     }
     if isinstance(workspace, dict) and workspace:
         # The `workspace:` declaration, carried through authoring so it reaches the persisted
@@ -540,18 +545,18 @@ async def author_def(
     # findings are ATTACHED, not fatal: a template referencing a credential the user has not
     # added yet is a legitimate thing to save.
     dry_run_report: dict[str, Any] | None = None
-    if provenance == "chat":
+    if saved_by == AGENT:
         from personalclaw.workflows.preflight import preflight as run_preflight
 
         dry_run_report = run_preflight(spec).to_dict()
 
-    raw, refused = await _write_definition(spec, owner_allowed=owner_allowed)
+    raw, refused = await _write_definition(spec, saved_by=saved_by, owner_allowed=owner_allowed)
     if refused is not None:
         return refused
     return _ok(
         saved=True,
         definition=secrets.strip_secrets(raw),
-        provenance=provenance,
+        saved_by=saved_by,
         preflight=dry_run_report,
         **body,
     )
@@ -573,8 +578,17 @@ async def _loosenings(spec: dict[str, Any]) -> list[Any]:
     )
 
 
+#: What a definition's writer sets, never the spec it is handed: who saved the version and the ops
+#: it records (the provider's hints), and the label of who saved it the definition carries.
+_SET_BY_THE_WRITER: frozenset[str] = frozenset({"_saved_by", "_version_ops", "provenance"})
+
+
 async def _write_definition(
-    spec: dict[str, Any], *, owner_allowed: bool = False, **hints: Any
+    spec: dict[str, Any],
+    *,
+    saved_by: str,
+    owner_allowed: bool = False,
+    ops: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Write *spec* to the writable provider: the one write of a definition there is, behind the
     posture screen. Returns ``(the definition as stored, None)``, or ``({}, the failure)``.
@@ -586,7 +600,12 @@ async def _write_definition(
     ``WF_DEF_NEEDS_OWNER_YES``, naming each such step and what it would then do, unless
     *owner_allowed* says her yes covers it; nothing is written. The screen reads the spec as it
     is written (macros expanded, hidden values restored), and compares it with the definition it
-    replaces. *hints* are the provider's own (``_version_source`` and ``_version_ops``).
+    replaces.
+
+    *saved_by* is the door the write comes through (``versions.SAVERS``), and the version records
+    it as who saved it, with *ops* (an accepted diff's): handed to the provider as its hints, and
+    never taken from *spec*, whose own keys of that name are dropped. A writer that names no door is
+    refused, since who saved a version decides whether an automation follows it.
 
     Every door that writes a definition comes through here (``author_def``, the A2A toggle, an
     accepted refiner diff), and ``tests/test_workflow_definition_writer_census.py`` fails a new
@@ -609,6 +628,10 @@ async def _write_definition(
             caution=loosened[0].caution,
             steps=[step.to_dict() for step in loosened],
         )
+    from personalclaw.workflows.versions import SAVERS
+
+    if saved_by not in SAVERS:
+        raise ValueError(f"a definition's write names who saved it, not {saved_by!r}")
     writable = [
         p
         for p in (defs_mod.get_provider(n) for n in defs_mod.list_providers())
@@ -619,8 +642,11 @@ async def _write_definition(
             "WF_DEF_NO_WRITABLE_PROVIDER",
             "no writable workflow definition provider is registered",
         )
+    fields = {k: v for k, v in spec.items() if k not in _SET_BY_THE_WRITER}
     try:
-        saved = await writable[0].save_def(**spec, **hints)
+        saved = await writable[0].save_def(
+            **fields, _saved_by=saved_by, _version_ops=list(ops or [])
+        )
     except Exception as exc:
         return {}, _service_failure("WF_DEF_SAVE_FAILED", f"could not save the definition: {exc}")
     raw = saved if isinstance(saved, dict) else getattr(saved, "to_dict", lambda: {})()
@@ -631,23 +657,27 @@ async def save_accepted_diff(
     candidate: dict[str, Any], *, ops: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Save an accepted refiner diff's result, *candidate*, as a new version of its definition,
-    the version recording its *ops* as the refiner's (``versions.SOURCE_REFINER``).
+    the version recording its *ops* as the refiner's (``versions.REFINER``): a model's proposal,
+    which an automation of the workflow does not follow until its owner says to.
 
     The refiner is a model, and accepting its proposal is no yes to a step doing more: a diff that
     would let a step approve its own tool calls or change things is refused, naming the step, and
     nothing is written. The owner allows that where she is asked, in the workflow's editor."""
-    from personalclaw.workflows.versions import SOURCE_REFINER
+    from personalclaw.workflows.versions import REFINER
 
-    raw, refused = await _write_definition(
-        dict(candidate), _version_source=SOURCE_REFINER, _version_ops=list(ops)
-    )
+    raw, refused = await _write_definition(dict(candidate), saved_by=REFINER, ops=list(ops))
     if refused is not None:
         return refused
     return _ok(saved=True, version=int(raw.get("version") or 0))
 
 
-async def set_a2a_published(name: str, published: bool) -> dict[str, Any]:
-    """Flip one template's ``metadata.a2a_published`` (EXTERNAL-ACCESS §5, EA-8).
+async def set_a2a_published(
+    name: str, published: bool, *, saved_by: str = PUBLISH
+) -> dict[str, Any]:
+    """Flip one template's ``metadata.a2a_published`` (EXTERNAL-ACCESS §5, EA-8), as a new version
+    saved by *saved_by*: the publish switch (``versions.PUBLISH``), unless the request that pressed
+    it proved an app or an agent. No automation follows the version it writes, which re-saves the
+    steps of the one before it without showing them.
 
     A DEDICATED write path rather than routing the toggle through :func:`author_def`: it mutates
     the RAW stored def and never round-trips the definition through the client, and it declines
@@ -669,7 +699,7 @@ async def set_a2a_published(name: str, published: bool) -> dict[str, Any]:
     metadata["a2a_published"] = bool(published)
     spec["metadata"] = metadata
     # Its steps are the stored definition's own, so the posture screen asks nobody here.
-    raw, refused = await _write_definition(spec)
+    raw, refused = await _write_definition(spec, saved_by=saved_by)
     if refused is not None:
         return refused
     return _ok(

@@ -295,6 +295,39 @@ missed time.
 - `src/personalclaw/triggers/restore_hold.py` — what is paused, Resume all, and what the restore
   says.
 
+## When the workflow it runs changes
+
+**In your words:** *"I allowed my weekly report to run on Fridays. If an agent rewrites the
+workflow, I want to see what changed before Friday's run uses it."*
+
+An automation whose action is **Run workflow** runs the version of the workflow you allowed: Allow
+(the create dialog, the switch, the editor) records the version the workflow is at then, and says
+which. When you save a newer version yourself, in the workflow's editor, the automation runs it,
+since that save is your yes. A newer version saved any other way — an agent's `workflow_author`, a
+chat's batch, an accepted refiner proposal, a prompt card, another machine's sync or a restore — is
+not used: the automation keeps running the version you allowed.
+
+The automation's panel on the **Triggers** page then says it runs vN and that vM is newer, with who
+saved each version since, and the row is badged *vM waits for you*. **Use vM** asks first, naming
+them, and moves the automation to the workflow as it is now. The workflow's own page lists, on its
+**Versions** tab, who saved each version and every automation that runs it, with the version each
+runs. A version an automation may run that is no longer kept here stops its runs, saying so and
+offering Use vM; it is never swapped for another.
+
+The same holds for the workflows yours starts as steps (a *subworkflow* step, or a *Run workflow*
+action step): each runs the version it was when you allowed the automation, or a newer one you saved
+in its editor, and the panel says when one has a newer version, with **Use the newest versions** to
+move them, which asks first. A step that starts a workflow the automation was not allowed with does
+not run, and says why. A workflow's **Versions** tab lists the automations that run it as a step too.
+
+| | |
+|---|---|
+| **Checked on** | the automation's panel and its row on the **Triggers** page, and the workflow's **Versions** tab |
+| **The setting** | none: the version you allowed is part of the automation's Allow, which stays on this machine |
+
+- `src/personalclaw/workflows/automation_version.py` — which version a fire runs.
+- `src/personalclaw/workflows/versions.py` — the history, and who saved each version.
+
 ## When a program starts one: webhooks
 
 **In your words:** *"When my build server finishes, I want PersonalClaw to tell me what it said."*

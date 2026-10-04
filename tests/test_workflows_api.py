@@ -333,12 +333,30 @@ class TestDefRoutes:
         assert (await H.api_def_delete(req)).status == 200
         assert await provider.get_def("doomed") is None
 
-    async def test_an_api_save_is_user_provenance(self, provider) -> None:
-        """A def saved through the API is the USER acting, so it skips the agent dry run —
-        that check exists for specs a model generated."""
-        import inspect
+    async def test_an_api_save_is_saved_by_who_the_request_proved(self, provider) -> None:
+        """The owner's own session saves as the owner, which skips the dry run a spec a model
+        generated gets; the gateway's internal credential, which an agent's tools present, saves
+        as an agent, whatever the body says it is."""
+        hers = _req(
+            "POST", "/api/workflows", state=_State(), body={"name": "hers", "root": SPEC_ROOT}
+        )
+        hers["user"] = "owner"
+        saved = _body(await H.api_def_save(hers))
+        assert saved["saved_by"] == "owner" and saved["preflight"] is None, saved
+        assert provider._defs["hers"]["_saved_by"] == "owner"
 
-        assert 'provenance="user"' in inspect.getsource(H._save_def)
+        claimed = {"name": "theirs", "root": SPEC_ROOT, "saved_by": "owner", "provenance": "owner"}
+        theirs = _req(
+            "POST",
+            "/api/workflows",
+            state=_State(),
+            body=claimed,
+            headers={"X-Internal-Secret": "the-gateway-s-own"},
+        )
+        theirs["user"] = "owner"
+        saved = _body(await H.api_def_save(theirs))
+        assert saved["saved_by"] == "agent" and saved["preflight"] is not None, saved
+        assert provider._defs["theirs"]["_saved_by"] == "agent"
 
 
 # ── runs ─────────────────────────────────────────────────────────────────────

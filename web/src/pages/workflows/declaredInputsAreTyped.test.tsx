@@ -35,7 +35,7 @@ function makeApi(overrides: Record<string, unknown> = {}, inputs: unknown = INPU
       provider: 'bundled',
     }),
     startWorkflowRun: vi.fn(() => Promise.resolve({ run_id: 'r1' })),
-    workflowVersions: () => Promise.resolve({ versions: [], pinned: null, maturity: null }),
+    workflowVersions: () => Promise.resolve({ versions: [], maturity: null }),
     workflowLedger: () => Promise.resolve({ name: 'knowledge-lint', runs: [], total: 0 }),
     refineWorkflow: vi.fn(() => Promise.resolve({ run_id: 'x' })),
     publishWorkflowToA2A: vi.fn(() => Promise.resolve({ a2a_published: false })),

@@ -46,7 +46,7 @@ from personalclaw.validation import decode_json_text
 from personalclaw.workflows import grill_protocol as grill_mod
 from personalclaw.workflows import intent as intent_mod
 from personalclaw.workflows import rigor as rigor_mod
-from personalclaw.workflows import service, template_pipeline
+from personalclaw.workflows import service, template_pipeline, versions
 from personalclaw.workflows.context_block import needs_staging, staged_spec_echo
 
 logger = logging.getLogger(__name__)
@@ -851,7 +851,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
         # nothing, so what it declares is what it does (a check only reads, and asks nobody).
         save = name == "workflow_author"
         fields = definition_fields(args)
-        result = _run(service.author_def(**fields, save=save))
+        result = _run(service.author_def(**fields, save=save, saved_by=versions.AGENT))
         if save and result.get("code") == "WF_DEF_NEEDS_OWNER_YES":
             return saved_by_the_gateway(fields, needs_her_allow=True)
         if not save and result.get("ok") and result.get("valid"):

@@ -172,4 +172,4 @@ def test_a_cards_template_is_saved_through_the_one_save(stored):
     written = prompt_cards.install_accepted_prompt_card({"kind": "template", "body": body})
 
     assert written == "template:card-template"
-    assert stored.saved["card-template"]["provenance"] == "user"
+    assert stored.saved["card-template"]["_saved_by"] == "import"

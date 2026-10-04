@@ -64,7 +64,7 @@ CHILD_ROOT = {"kind": "transform", "id": "c", "config": {"expr": "child got {{in
 
 async def _author_child(name: str = "child", root: dict | None = None) -> None:
     result = await service.author_def(
-        name=name, root=root or CHILD_ROOT, provenance="user", strict=False
+        name=name, root=root or CHILD_ROOT, saved_by="owner", strict=False
     )
     assert result.get("ok"), result
 

@@ -51,7 +51,7 @@ let refuseWith: ApiError | null = null
 
 function versionsOf(name: string) {
   const def = store.get(name)
-  return { versions: def ? [{ version: def.version ?? 1, source: 'user', created_at: '', note: '', run_ids: [], ops_count: 0 }] : [], pinned: def?.version ?? 1, maturity: null }
+  return { versions: def ? [{ version: def.version ?? 1, saved_by: 'owner', created_at: '', note: '', run_ids: [], ops_count: 0 }] : [], maturity: null }
 }
 
 vi.mock('../../lib/api', async (importActual) => {
@@ -69,7 +69,7 @@ vi.mock('../../lib/api', async (importActual) => {
       workflowVersion: async (name: string, version: number) => {
         const def = store.get(`${name}@v${version}`)
         if (!def) throw new actual.ApiError('no such version', 404, 'not_found')
-        return { version, source: 'user', created_at: '', note: '', definition: structuredClone(def) }
+        return { version, saved_by: 'owner', created_at: '', note: '', definition: structuredClone(def) }
       },
       workflowVersions: async (name: string) => versionsOf(name),
       workflowVersionDiff: async () => ({ a: 0, b: 0, ops: [] }),

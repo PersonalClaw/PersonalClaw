@@ -23,13 +23,13 @@ vi.mock('../../lib/api', async (importActual) => {
       workflowDef: async (name: string) => ({ definition: DEFS[name], provider: DEFS[name].source === 'user' ? 'native' : 'bundled' }),
       workflowVersions: async (name: string) => ({
         versions: name === 'mine'
-          ? [1, 2, 3].map((version) => ({ version, source: 'user', created_at: '', note: '', run_ids: [], ops_count: 0 }))
-          : [{ version: 1, source: 'user', created_at: '', note: '', run_ids: [], ops_count: 0 }],
-        pinned: DEFS[name].version,
+          ? [1, 2, 3].map((version) => ({ version, saved_by: 'owner', created_at: '', note: '', run_ids: [], ops_count: 0 }))
+          : [{ version: 1, saved_by: 'shipped', created_at: '', note: '', run_ids: [], ops_count: 0 }],
         maturity: null,
       }),
       workflowVersionDiff: async () => ({ a: 0, b: 0, ops: [] }),
       workflowLedger: async (name: string) => ({ name, runs: [], total: 0 }),
+      workflowAutomations: async (name: string) => ({ name, automations: [] }),
     },
   }
 })

@@ -70,6 +70,7 @@ def _json_payload(obj: dict[str, Any]):
     ("handler_name", "path"),
     [
         ("api_def_ledger", "/api/workflows/qa-parent-does-not-exist-2940/ledger"),
+        ("api_def_automations", "/api/workflows/qa-parent-does-not-exist-2940/automations"),
         ("api_template_trajectory", "/api/workflows/qa-parent-does-not-exist-2940/trajectory"),
         (
             "api_def_version_diff",

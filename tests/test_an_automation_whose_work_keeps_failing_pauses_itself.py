@@ -431,7 +431,7 @@ def workflows(home, monkeypatch):
 
     _trigger(home, provider="run-workflow")
     orch, _on = _on_done()
-    holder: dict[str, Any] = {"spec": _spec("fail")}
+    holder: dict[str, Any] = {"spec": _spec("fail"), "version": 0}
 
     class _Defs(defs_mod.WorkflowDefProvider):
         @property
@@ -467,11 +467,14 @@ def workflows(home, monkeypatch):
 
 async def _workflow_runs(wf: SimpleNamespace, endings: list[str]) -> None:
     """Fire once per ending, and let the run it started end: ``fail``, ``ok``, or ``stop`` (its
-    owner cancels it, as the run page's Cancel does)."""
-    from personalclaw.workflows import service
+    owner cancels it, as the run page's Cancel does). The owner saves each change to the workflow
+    in its editor, so the automation runs it (`workflows.automation_version`)."""
+    from personalclaw.workflows import service, versions
 
     for how in endings:
-        wf.holder["spec"] = _spec(how)
+        wf.holder["version"] += 1
+        wf.holder["spec"] = {**_spec(how), "version": wf.holder["version"]}
+        versions.record_version(WORKFLOW, wf.holder["spec"], saved_by=versions.OWNER)
         await wf.orch._fire_store_trigger(_live(wf.home), {"trigger_id": TRIGGER_ID})
         run_id = _rows(wf.home)[0]["work_id"].removeprefix("workflow:")
         controller = wf.supervisor._controllers.get(run_id)

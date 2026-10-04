@@ -1,24 +1,32 @@
-"""Monotonic template version store — WF2LEA-6 (§3.1 "Accept → new template VERSION").
+"""The version history of a workflow definition: one immutable snapshot per save, and who saved it.
 
-Every save of a writable definition — and so every accepted refiner ``template_diff`` that
-applies through ``save_def`` — appends an immutable version snapshot; a run pins the version
-it executed (``WorkflowRun.spec_version``); re-pin/rollback only moves the pinned pointer and
-NEVER rewrites history.
+Every save of a writable definition (``service._write_definition``, the one writer) appends a
+snapshot keyed by the definition's own monotonic ``version`` (``v001.json``, ``v002.json``, …), and
+never rewrites one: each version is its own file, so a concurrent writer cannot corrupt a prior
+entry. A run records the version it executed (``WorkflowRun.spec_version``), so
+``get_version(name, run.spec_version)`` is the exact spec a past run read.
 
-Append-only by construction: each version is its own file (``v001.json``, ``v002.json``, …),
-so a concurrent writer cannot corrupt a prior entry — the exact shape the run-local
-``spec_history/`` store (``store.write_spec_history``) uses. Lives under the already-inventoried
-``workflows/`` tree (claimed by the ``workflows`` json_entity_dir StateEntry, longest-prefix),
-beside ``workflows/runs/`` — no new durability entry and no ``.db``.
+**What a run executes.** A run started by hand (the Run button, an agent's ``workflow_start``)
+executes the definition as it is now. A run an automation starts executes the version its owner
+allowed (``workflows.automation_version``), which can be an older one, read from here. A restore is
+an edit of a recorded version, saved as the newest one: nothing moves what runs without a save.
 
-The pinned pointer (``pinned.json``) is what a NEW run executes; ``repin`` is rollback. The
-version number is the definition's own monotonic ``version`` field, so
-``get_version(name, run.spec_version)`` returns the exact spec a past run executed —
-reproducibility, which is the whole point.
+**Who saved it** (``saved_by``) is set by the door the save came through, never by what that door
+was handed (:data:`SAVERS`): an automation follows a newer version only when the owner saved it
+herself, so a label a caller could write would be a yes anyone could give. A version the owner
+saved also keeps the versions of the workflows it runs as steps, as they were at her save
+(``calls``): her save is her yes to those too, and an automation that follows it runs them.
+
+**Each machine's own.** The history lives under ``workflows/versions/``, beside the definitions,
+and a sync never carries it (``durability.inventory``'s ``workflows`` entry): a version is what an
+automation here may run, with the steps its owner allowed here, and another machine's history says
+who saved each version THERE. A definition from another machine arrives as the current one, saved
+by nobody here.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -27,13 +35,37 @@ from typing import Any
 from personalclaw.atomic_write import atomic_write
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows import store
-from personalclaw.workflows.models import valid_name
+from personalclaw.workflows.models import WorkflowDef, valid_name
 
 logger = logging.getLogger(__name__)
 
-#: Sources that may author a template version (metadata only — never a gate).
-SOURCE_USER = "user"
-SOURCE_REFINER = "refiner"
+# ── who saved a version: set by the door it came through ─────────────────────────
+
+#: The owner, in the workflow's editor on this machine, where she is shown every step she saves.
+OWNER = "owner"
+#: The owner's switch that publishes a workflow to A2A. It changes no step and shows none: what it
+#: writes is the steps of the version before it, so it is no yes to them.
+PUBLISH = "publish"
+#: An agent's tool: ``workflow_author`` (saved at once, or on the owner's Allow of what its steps
+#: would then do), or a chat's batch.
+AGENT = "agent"
+#: An accepted refiner proposal: a model's diff, accepted in the Inbox.
+REFINER = "refiner"
+#: An import: a prompt card the owner accepted.
+IMPORT = "import"
+#: An app: a template an installed app provides, or a save made with an app's token.
+APP = "app"
+#: A template PersonalClaw ships, as the installed release has it.
+SHIPPED = "shipped"
+#: A definition no door on this machine saved — another machine's sync, a restore, a pack —
+#: recorded when an automation here is allowed to run it.
+BROUGHT_IN = "brought_in"
+
+#: Every door's name. A save that names none is refused: who saved it is what an automation's
+#: owner reads before she lets it run a version.
+SAVERS: frozenset[str] = frozenset(
+    {OWNER, PUBLISH, AGENT, REFINER, IMPORT, APP, SHIPPED, BROUGHT_IN}
+)
 
 
 def _versions_root():
@@ -44,58 +76,67 @@ def _template_dir(name: str):
     return _versions_root() / name
 
 
-def _pin_path(name: str):
-    return _template_dir(name) / "pinned.json"
-
-
 def _version_path(name: str, version: int):
     return _template_dir(name) / f"v{version:03d}.json"
 
 
 @dataclass
 class VersionRecord:
-    """One immutable snapshot of a template's full spec, plus why it was written."""
+    """One immutable snapshot of a definition's full spec, who saved it, and why it was written.
+
+    ``saved_by`` is ``""`` for a version recorded before the history said who saved each one.
+    ``calls`` is, for a version the owner saved, each workflow it runs as a step and the version of
+    it as it was at her save (``{name: {"version", "digest"}}``); ``{}`` for any other."""
 
     version: int
     spec: dict[str, Any]
-    source: str = SOURCE_USER
+    saved_by: str = ""
     created_at: str = ""
     ops: list[dict[str, Any]] = field(default_factory=list)
     run_ids: list[str] = field(default_factory=list)
     note: str = ""
+    calls: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": self.version,
             "spec": self.spec,
-            "source": self.source,
+            "saved_by": self.saved_by,
             "created_at": self.created_at,
             "ops": self.ops,
             "run_ids": self.run_ids,
             "note": self.note,
+            "calls": self.calls,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "VersionRecord":
+        calls = d.get("calls")
         return cls(
             version=int(d.get("version", 0) or 0),
             spec=dict(d.get("spec") or {}),
-            source=str(d.get("source", SOURCE_USER) or SOURCE_USER),
+            saved_by=str(d.get("saved_by", "") or ""),
             created_at=str(d.get("created_at", "") or ""),
             ops=[o for o in (d.get("ops") or []) if isinstance(o, dict)],
             run_ids=[str(r) for r in (d.get("run_ids") or [])],
             note=str(d.get("note", "") or ""),
+            calls={
+                str(k): dict(v)
+                for k, v in (calls.items() if isinstance(calls, dict) else ())
+                if isinstance(v, dict)
+            },
         )
 
 
-def _existing_versions(name: str) -> list[int]:
+def recorded_numbers(name: str) -> list[int]:
+    """The version numbers recorded for *name*, ascending."""
     tdir = _template_dir(name)
     if not tdir.is_dir():
         return []
     out: list[int] = []
     for child in tdir.iterdir():
         stem = child.name
-        if stem.startswith("v") and stem.endswith(".json") and stem != "pinned.json":
+        if stem.startswith("v") and stem.endswith(".json"):
             try:
                 out.append(int(stem[1:-5]))
             except ValueError:
@@ -105,7 +146,7 @@ def _existing_versions(name: str) -> list[int]:
 
 def latest_version(name: str) -> int:
     """The highest recorded version on disk, or 0 when none has been recorded."""
-    existing = _existing_versions(name)
+    existing = recorded_numbers(name)
     return existing[-1] if existing else 0
 
 
@@ -113,20 +154,24 @@ def record_version(
     name: str,
     spec: dict[str, Any],
     *,
-    source: str = SOURCE_USER,
+    saved_by: str,
     ops: list[dict[str, Any]] | None = None,
     run_ids: list[str] | None = None,
     note: str = "",
+    calls: dict[str, dict[str, Any]] | None = None,
 ) -> int:
-    """Append an immutable snapshot and pin it. Returns the version number written.
+    """Append an immutable snapshot of *spec*, saved by *saved_by* (one of :data:`SAVERS`), with the
+    versions of the workflows it runs as steps when the owner saved it (*calls*). Returns the
+    version number it is recorded under.
 
-    The number is the spec's own ``version`` (monotonic because ``save_def`` advances it on
-    every save); a non-positive or missing value falls back to ``latest+1``. If a file for
-    that version already exists it is NOT overwritten — history is append-only, so a repeat
-    record is a no-op that still (re-)pins, never a rewrite.
+    The number is the spec's own ``version`` (monotonic because ``save_def`` advances it past every
+    recorded one); a non-positive or missing value falls back to ``latest+1``. A file already there
+    for that number is NOT overwritten: history is append-only, so a repeat record is a no-op.
     """
     if not valid_name(name):
         raise ValueError(f"{name!r} is not a valid definition name")
+    if saved_by not in SAVERS:
+        raise ValueError(f"a version names who saved it, one of {sorted(SAVERS)}: not {saved_by!r}")
     n = int(spec.get("version", 0) or 0)
     if n <= 0:
         n = latest_version(name) + 1
@@ -135,15 +180,15 @@ def record_version(
         record = VersionRecord(
             version=n,
             spec=dict(spec),
-            source=source,
+            saved_by=saved_by,
             created_at=str(spec.get("updated_at") or spec.get("created_at") or ""),
             ops=[o for o in (ops or []) if isinstance(o, dict)],
             run_ids=[str(r) for r in (run_ids or [])],
             note=note,
+            calls={str(k): dict(v) for k, v in (calls or {}).items() if isinstance(v, dict)},
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(path, json.dumps(record.to_dict(), indent=2, ensure_ascii=False))
-    _write_pin(name, n)
     return n
 
 
@@ -161,49 +206,56 @@ def get_version(name: str, version: int) -> VersionRecord | None:
 def list_versions(name: str) -> list[VersionRecord]:
     """Every recorded version, ascending. Empty when nothing has been recorded yet."""
     out: list[VersionRecord] = []
-    for n in _existing_versions(name):
+    for n in recorded_numbers(name):
         rec = get_version(name, n)
         if rec is not None:
             out.append(rec)
     return out
 
 
-def _write_pin(name: str, version: int) -> None:
-    path = _pin_path(name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(path, json.dumps({"pinned": int(version)}, indent=2, ensure_ascii=False))
+# ── what a version runs ──────────────────────────────────────────────────────────
+
+#: What a digest leaves out: when and under which number a version was saved, which store holds
+#: it, and who saved it. None of them changes what a run of it does.
+_NOT_WHAT_RUNS: frozenset[str] = frozenset(
+    {"version", "created_at", "updated_at", "source", "provenance"}
+)
+#: And the one key of its ``metadata`` that only says whether an outside agent may start it (the
+#: publish switch's), so a version that only flips it runs as the one before it.
+_NOT_WHAT_RUNS_IN_METADATA: frozenset[str] = frozenset({"a2a_published"})
 
 
-def pinned_version(name: str) -> int | None:
-    """The version a NEW run executes. Defaults to the latest recorded when unset."""
-    path = _pin_path(name)
-    if path.is_file():
+def runnable(spec: Any) -> dict[str, Any]:
+    """*spec* — a definition as a provider returns it, or a recorded version's spec — as a run reads
+    it: through the definition model and back (``WorkflowDef``), which every run start does, so a
+    definition read now and the same version read from here are the same document."""
+    raw = spec if isinstance(spec, dict) else getattr(spec, "to_dict", lambda: {})()
+    return WorkflowDef.from_dict(dict(raw or {})).to_dict()
+
+
+def digest(spec: dict[str, Any]) -> str:
+    """What a run of *spec* (:func:`runnable`) does, as one string: a sha-256 over every field but
+    :data:`_NOT_WHAT_RUNS`, as canonical JSON. Two versions with one digest run alike, which is what
+    binds an automation's Allow to the version it was given for."""
+    body = {k: v for k, v in runnable(spec).items() if k not in _NOT_WHAT_RUNS}
+    metadata = body.get("metadata")
+    if isinstance(metadata, dict):
+        body["metadata"] = {
+            k: v for k, v in metadata.items() if k not in _NOT_WHAT_RUNS_IN_METADATA
+        }
+    text = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def holding(name: str, wanted: str) -> VersionRecord | None:
+    """The newest recorded version of *name* whose digest is *wanted*, or None."""
+    for record in reversed(list_versions(name)):
         try:
-            pinned = int(json.loads(path.read_text(encoding="utf-8")).get("pinned", 0) or 0)
-        except (OSError, ValueError):
-            pinned = 0
-        if pinned and _version_path(name, pinned).is_file():
-            return pinned
-    latest = latest_version(name)
-    return latest or None
-
-
-def repin(name: str, version: int) -> bool:
-    """Move the pinned pointer to an EXISTING version (rollback / re-pin).
-
-    Never touches a version file: the whole monotonic guarantee is that history survives a
-    rollback and only the pointer moves. Returns False when the target version was never
-    recorded — you cannot pin a version that does not exist.
-    """
-    if get_version(name, version) is None:
-        return False
-    _write_pin(name, version)
-    return True
-
-
-#: ``rollback`` is exactly ``repin`` — pinning an older version IS the rollback. Named so the
-#: FE/CLI reads the way a user thinks about it.
-rollback = repin
+            if digest(record.spec) == wanted:
+                return record
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 # ── typed-op diff (the Versions tab renders this) ────────────────────────────────
@@ -279,8 +331,8 @@ def diff(name: str, a: int, b: int) -> list[dict[str, Any]]:
 
 
 #: Static spec signals that raise a template's maturity (a check that never rejects is not a
-#: check; a template with none of these is a first draft). Read off the pinned spec's node tree
-#: plus its runtime hints.
+#: check; a template with none of these is a first draft). Read off the current definition's node
+#: tree plus its runtime hints.
 def _static_signals(spec: dict[str, Any]) -> dict[str, bool]:
     _, by_id = _flatten(dict(spec.get("root") or {}))
 

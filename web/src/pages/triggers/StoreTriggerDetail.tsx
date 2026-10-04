@@ -12,6 +12,7 @@ import { watchCheckMeta } from './watchCheck'
 import { DryRunResult } from './DryRunResult'
 import { ConfigReadout, GrantNote, ReviewNote } from './ReviewNote'
 import { HeldBackNote } from './HeldBackNote'
+import { WorkflowVersionNote } from './WorkflowVersionNote'
 import { RestoreHoldNote } from './RestoreHold'
 import { WebhookDoorSection } from './WebhookDoorSection'
 import { reportingWrite } from '../../app/reportingWrite'
@@ -229,6 +230,12 @@ export function StoreTriggerDetail({ trigger, providers = [], onChanged, onDelet
       )}
       {trigger.held_back && (
         <HeldBackNote heldBack={trigger.held_back} onTrusted={onChanged} readOnly={readOnly} busy={busy} />
+      )}
+      {trigger.workflow_version && (
+        <WorkflowVersionNote
+          triggerId={`store:${trigger.raw_id}`} version={trigger.workflow_version} onChanged={onChanged}
+          readOnly={readOnly} busy={busy}
+        />
       )}
       {/* Resume is the switch sent on, so a row whose action needs your yes asks first. */}
       {restoreHold && !readOnly && <RestoreHoldNote hold={restoreHold} busy={busy} onResume={allow} />}

@@ -1064,6 +1064,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "DELETE /api/triggers/{id}": OwnerOnly("deleting your automations"),
     # Arming is the owner's: a pack stages its automations switched off so that only you arm them.
     "POST /api/triggers/{id}/toggle": OwnerOnly("switching your automations on and off"),
+    "POST /api/triggers/{id}/workflow-version": OwnerOnly(
+        "which version of a workflow an automation runs — a newer one can hold an agent's steps"
+    ),
     # Resume all: every automation a restore switched off goes back on, so it is the owner's too.
     "POST /api/triggers/restore-hold/resume": OwnerOnly("switching your automations on and off"),
     "POST /api/triggers/{id}/run": OwnerOnly(_FIRES_AUTOMATION),
@@ -1093,9 +1096,6 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "publishing a workflow to outside A2A clients — a new way into this gateway"
     ),
     "POST /api/workflows/{name}/refine": OwnerOnly(_STARTS_AGENT_WORK),
-    "POST /api/workflows/{name}/versions/repin": OwnerOnly(
-        "which version of a workflow runs — an older one can carry steps you removed"
-    ),
     "POST /api/workflows/runs": OwnerOnly(_STARTS_AGENT_WORK),
     "POST /api/workflows/batches": OwnerOnly(_STARTS_AGENT_WORK),
     "POST /api/workflows/agent-saves": OwnerOnly(_DEFINES_AUTOMATION),

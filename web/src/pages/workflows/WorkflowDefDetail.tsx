@@ -3,6 +3,7 @@ import { ArrowLeft, Pencil, Play, Sparkles, RotateCcw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Loading, LoadError, InlineLoadError } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
+import { TextLink } from '../../ui/TextLink'
 import { Button } from '../../ui/Button'
 import { HeaderActions } from '../../ui/HeaderActions'
 import { Segmented } from '../../ui/Segmented'
@@ -25,8 +26,10 @@ import {
   type WorkflowVersionOp,
   type WorkflowMaturity,
   type WorkflowLedgerRow,
+  type WorkflowAutomation,
 } from '../../lib/api'
 import { notify } from '../../app/appSdk'
+import { savedByWords } from './savedBy'
 
 interface FlatNode { depth: number; kind: string; id: string; label: string; summary: string }
 
@@ -78,6 +81,24 @@ function MaturityBadge({ maturity }: { maturity: WorkflowMaturity }) {
   )
 }
 
+/** Which version of the workflow `name` an automation runs, in one line for its page: as the
+ *  automation's own action, or as a step of the workflow `a.via` names. */
+export function automationVersionLine(a: WorkflowAutomation, name: string): string {
+  if (a.needs_grant.length > 0) return 'not allowed to run yet'
+  const v = a.workflow_version
+  if (!v) return ''
+  if (a.via) {
+    const step = v.steps.find((s) => s.workflow === name)
+    if (!step) return `runs it as a step of “${a.via}”`
+    if (step.problem) return step.problem
+    const line = `runs v${step.runs} as a step of “${a.via}”`
+    return step.newer ? `${line} · v${step.newer} waits for you on the automation` : line
+  }
+  if (v.problem) return v.problem
+  if (v.follows) return `runs v${v.runs}, the workflow as it is`
+  return v.newer ? `runs v${v.runs} · v${v.newer} waits for you on the automation` : `runs v${v.runs}`
+}
+
 /** One workflow definition — its tree, its declared inputs, its version history and run ledger,
  *  and a way to run, refine or edit it.
  *
@@ -113,6 +134,10 @@ export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
   // `versions` starts `[]` and cannot distinguish "no versions" from "we could not read them", so a
   // failed `workflowVersions` rendered "No version history yet." for a template with a dozen.
   const [versionsErr, setVersionsErr] = useState<unknown>(null)
+  // The automations that run it, each with the version it runs: loaded with the Versions tab, and
+  // `null` until then, so "none" is never said of a list nobody read.
+  const [automations, setAutomations] = useState<WorkflowAutomation[] | null>(null)
+  const [automationsErr, setAutomationsErr] = useState<unknown>(null)
   const [refining, setRefining] = useState(false)
   // Named for the census's in-flight vocabulary (`disabledReasonCensus`'s BUSY list): the
   // switch is only ever unavailable while its OWN write is in flight, which is the one class
@@ -163,6 +188,11 @@ export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
       api.workflowLedger(name).then((l) => setLedger(l.runs)).catch(setLedgerErr)
     }
   }, [tab, ledger, ledgerErr, name])
+  useEffect(() => {
+    if (tab === 'versions' && automations === null && automationsErr === null) {
+      api.workflowAutomations(name).then((a) => setAutomations(a.automations)).catch(setAutomationsErr)
+    }
+  }, [tab, automations, automationsErr, name])
 
   const rows = useMemo(() => (def ? flatten(def.root) : []), [def])
   // The declared inputs as the JSON Schema the shared renderer speaks. One schema drives all
@@ -420,7 +450,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
                       <div key={v.version} className="flex items-baseline gap-m py-2xs">
                         <span data-type="body-s" className="shrink-0 font-mono text-on-surface">v{v.version}</span>
                         <div className="min-w-0 flex-1">
-                          <span data-type="caption" className="text-on-surface-low">{v.source}</span>
+                          <span data-type="caption" className="text-on-surface-low">{savedByWords(v.saved_by)}</span>
                           {v.created_at && <span data-type="caption" className="ml-s text-on-surface-low">{v.created_at}</span>}
                         </div>
                         {/* "current" is the definition's own version — the one a run executes. A
@@ -433,6 +463,27 @@ export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
                             <RotateCcw size={12} /> Restore
                           </QuietButton>
                         )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* What each automation of it runs: the version its owner allowed, or a newer one
+                    she saved here in the editor. A newer version anything else saved waits for her
+                    Use vN on the automation itself. */}
+                <div className="flex flex-col gap-xs">
+                  <span data-type="title-m" className="text-on-surface">Automations</span>
+                  {automationsErr !== null ? (
+                    <InlineLoadError what="the automations that run it" error={automationsErr} onRetry={() => setAutomationsErr(null)} />
+                  ) : automations === null ? (
+                    <Loading what="the automations that run it" />
+                  ) : automations.length === 0 ? (
+                    <p data-type="caption" className="text-on-surface-low">No automation runs this workflow.</p>
+                  ) : (
+                    automations.map((a) => (
+                      <div key={a.id} className="flex items-baseline gap-m py-2xs">
+                        <TextLink href={a.status_url} ink="emphasis" size="sm" className="min-w-0 truncate">{a.name}</TextLink>
+                        <span data-type="caption" className="min-w-0 flex-1 text-on-surface-low">{automationVersionLine(a, name)}</span>
                       </div>
                     ))
                   )}

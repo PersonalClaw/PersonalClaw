@@ -114,7 +114,7 @@ class TestTimeoutPair:
         await service.author_def(
             name="slowchild",
             root={"kind": "wait", "id": "w", "config": {"duration_secs": 2}},
-            provenance="user",
+            saved_by="owner",
             strict=False,
         )
         spec = {
@@ -251,7 +251,7 @@ class TestDispatcherWaitBudget:
         await service.author_def(
             name="slowchild",
             root={"kind": "wait", "id": "w", "config": {"duration_secs": 30}},
-            provenance="user",
+            saved_by="owner",
             strict=False,
         )
         spec = {

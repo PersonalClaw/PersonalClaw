@@ -50,6 +50,7 @@ PARENT_READ_COVERED = {
     "/api/skills/ephemeral/{session}": "api_ephemeral_skills_list",
     "/api/tasks/{task_id}/comments": "api_tasks_comments_get",
     "/api/triggers/{id}/history": "api_trigger_history",
+    "/api/workflows/{name}/automations": "api_def_automations",
     "/api/workflows/{name}/ledger": "api_def_ledger",
     "/api/workflows/{name}/trajectory": "api_template_trajectory",
     "/api/workflows/{name}/versions/diff": "api_def_version_diff",
@@ -291,9 +292,9 @@ def _directly_named_handlers() -> set[str]:
 
 def test_all_src_get_census_is_fully_adjudicated():
     selected, nonterminal, deep_terminal = _census()
-    assert len(nonterminal) == 89
+    assert len(nonterminal) == 90
     assert len(deep_terminal) == 19
-    assert len(selected) == 108
+    assert len(selected) == 109
 
     covered = set(PARENT_READ_COVERED)
     excluded = set(PARENT_READ_EXCLUDE)

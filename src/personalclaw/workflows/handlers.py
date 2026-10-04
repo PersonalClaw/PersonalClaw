@@ -54,6 +54,7 @@ from personalclaw.workflows import (
     run_cockpit,
     service,
     store,
+    versions,
 )
 from personalclaw.workflows.models import RUN_PHASES, LifecyclePhase
 from personalclaw.workflows.review_service import apply_triage, review_findings
@@ -240,6 +241,21 @@ def _guard(request: web.Request, operation: str, *, run_id: str = "") -> web.Res
     )
 
 
+def _saved_by(request: web.Request, *, owners: str = versions.OWNER) -> str:
+    """Who a definition saved through *request* is saved by (``versions.SAVERS``): what the request
+    proved (``approval_answer.of_request``), never what its body says. The owner's own session is
+    *owners* — the editor's save is hers, the publish switch's its own (``versions.PUBLISH``); an
+    app's token is an app; anything else — the gateway's internal credential, which an agent's tools
+    present — is an agent. An automation of the workflow follows only the owner's editor save
+    (`workflows.automation_version`)."""
+    by = approval_answer.of_request(request)
+    if by == approval_answer.YOU:
+        return owners
+    if by.kind == approval_answer.APP:
+        return versions.APP
+    return versions.AGENT
+
+
 def _audit(request: web.Request, operation: str, outcome: str, resources: str = "") -> None:
     try:
         sel().log_api_access(
@@ -406,9 +422,9 @@ async def _save_def(
         tags=[str(t) for t in (body.get("tags") or [])],
         metadata=body.get("metadata") if isinstance(body.get("metadata"), dict) else None,
         save=save,
-        # A def saved through the API is the USER acting, not an agent — so it skips the
-        # agent-provenance dry run, which exists for specs a model generated.
-        provenance="user",
+        # Who saves it is who the request proved: the owner at her editor, whose save an automation
+        # of the workflow follows, and who skips the dry run a spec a model generated gets.
+        saved_by=_saved_by(request),
         strict=strict,
         # The `workspace:` block. Threaded so a caller that declares isolation actually gets
         # it: without this the key is dropped before the save and the run-start applier finds
@@ -462,7 +478,11 @@ async def api_def_a2a_publish(request: web.Request) -> web.Response:
     # Under the definition save lock like every write to a stored definition here, so it never
     # lands between a save's revision check and that save's write.
     async with _get_def_save_lock():
-        result = await service.set_a2a_published(name, bool_field(body, "published", default=False))
+        result = await service.set_a2a_published(
+            name,
+            bool_field(body, "published", default=False),
+            saved_by=_saved_by(request, owners=versions.PUBLISH),
+        )
     _audit(request, "workflow_def_a2a_publish", "success" if result.get("ok") else "failure", name)
     return _reply(result)
 
@@ -630,11 +650,14 @@ async def api_attention(request: web.Request) -> web.Response:
 
 
 async def api_def_versions(request: web.Request) -> web.Response:
-    """GET /api/workflows/{name}/versions — the monotonic version history + pin + maturity.
+    """GET /api/workflows/{name}/versions — the version history, who saved each, and the maturity.
 
-    When the store has no recorded versions yet (a bundled template nobody has refined), the
-    current def stands in as the single version so the tab is never empty."""
-    from personalclaw.workflows import versions
+    Each row says who saved it (``saved_by``, ``versions.SAVERS``; ``""`` for one recorded before
+    the history said). When the definition as it is now has no recorded version — a shipped
+    template, or one brought in from elsewhere — it stands in as a row of its own, said to be
+    whoever's it is (`automation_version.current`), so the tab is never empty and never names a
+    saver it cannot know."""
+    from personalclaw.workflows import automation_version
 
     name = request.match_info.get("name", "")
     detail = await service.get_def(name)
@@ -642,37 +665,34 @@ async def api_def_versions(request: web.Request) -> web.Response:
         return _reply(detail)
     spec = detail.get("definition") or {}
 
-    records = versions.list_versions(name)
-    if not records:
-        current = int(spec.get("version", 1) or 1)
-        rows = [
+    rows: list[dict[str, Any]] = [
+        {
+            "version": r.version,
+            "saved_by": r.saved_by,
+            "created_at": r.created_at,
+            "note": r.note,
+            "run_ids": r.run_ids,
+            "ops_count": len(r.ops),
+        }
+        for r in versions.list_versions(name)
+    ]
+    now = await automation_version.current(name)
+    if now is not None and not any(row["version"] == now.version for row in rows):
+        rows.append(
             {
-                "version": current,
-                "source": versions.SOURCE_USER,
+                "version": now.version,
+                "saved_by": now.saved_by,
                 "created_at": str(spec.get("updated_at") or spec.get("created_at") or ""),
                 "note": "",
                 "run_ids": [],
                 "ops_count": 0,
             }
-        ]
-        pinned = current
-    else:
-        rows = [
-            {
-                "version": r.version,
-                "source": r.source,
-                "created_at": r.created_at,
-                "note": r.note,
-                "run_ids": r.run_ids,
-                "ops_count": len(r.ops),
-            }
-            for r in records
-        ]
-        pinned = versions.pinned_version(name) or records[-1].version
+        )
+    rows.sort(key=lambda row: int(row["version"]))
 
     stats = _template_run_stats(name)
     maturity = versions.template_maturity(spec, **stats)
-    return web.json_response({"versions": rows, "pinned": pinned, "maturity": maturity})
+    return web.json_response({"versions": rows, "maturity": maturity})
 
 
 def _version_number(raw: Any) -> int:
@@ -691,7 +711,7 @@ async def api_def_version_detail(request: web.Request) -> web.Response:
     one of them WAS. Stripped exactly like `GET /api/workflows/{name}`, because a snapshot holds
     the same values the current definition does, and saving an edit of it restores them through
     `based_on_version`."""
-    from personalclaw.workflows import secrets, versions
+    from personalclaw.workflows import secrets
 
     name = request.match_info.get("name", "")
     refusal = await _parent_def_refusal(name)
@@ -718,7 +738,7 @@ async def api_def_version_detail(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "version": record.version,
-            "source": record.source,
+            "saved_by": record.saved_by,
             "created_at": record.created_at,
             "note": record.note,
             "definition": secrets.strip_secrets(record.spec),
@@ -728,8 +748,6 @@ async def api_def_version_detail(request: web.Request) -> web.Response:
 
 async def api_def_version_diff(request: web.Request) -> web.Response:
     """GET /api/workflows/{name}/versions/diff?a=&b= — the typed-op diff between two versions."""
-    from personalclaw.workflows import versions
-
     name = request.match_info.get("name", "")
     # The parent FIRST, before the query is parsed (#2940's "Suggested fix" wording): the name
     # addresses the resource, so a bogus template is a 404 whatever `a`/`b` say. Validating the
@@ -748,33 +766,19 @@ async def api_def_version_diff(request: web.Request) -> web.Response:
     return web.json_response({"a": a, "b": b, "ops": versions.diff(name, a, b)})
 
 
-async def api_def_repin(request: web.Request) -> web.Response:
-    """POST /api/workflows/{name}/versions/repin {version} — rollback / re-pin the active version.
+async def api_def_automations(request: web.Request) -> web.Response:
+    """GET /api/workflows/{name}/automations — the automations that run it, and each one's version.
 
-    Moves only the pinned pointer; history is never rewritten. A version that was never recorded
-    is a 404 rather than a silent no-op — you cannot pin what does not exist."""
-    denied = _guard(request, "workflow_version_repin")
-    if denied is not None:
-        return denied
-    from personalclaw.workflows import versions
+    Each with any newer version waiting for its owner's "Use vN" (`triggers.grants.running`)."""
+    from personalclaw.triggers import grants
 
     name = request.match_info.get("name", "")
-    body = await json_object_body(request)
-    try:
-        version = int(str(body.get("version", "")).strip())
-    except ValueError:
-        return web.json_response(
-            {"error": {"code": "invalid_request", "message": "'version' must be an integer"}},
-            status=400,
-        )
-    if not versions.repin(name, version):
-        _audit(request, "workflow_version_repin", "failure", f"{name}:v{version}")
-        return web.json_response(
-            {"error": {"code": "not_found", "message": f"no version {version} for {name!r}"}},
-            status=404,
-        )
-    _audit(request, "workflow_version_repin", "success", f"{name}:v{version}")
-    return web.json_response({"ok": True, "name": name, "pinned": version})
+    refusal = await _parent_def_refusal(name)
+    if refusal is not None:
+        return refusal
+    # Off the loop: each row reads the workflow and its history from disk.
+    rows = await asyncio.to_thread(grants.running, name)
+    return web.json_response({"name": name, "automations": rows})
 
 
 async def api_def_ledger(request: web.Request) -> web.Response:
@@ -991,7 +995,7 @@ async def api_agent_save(request: web.Request) -> web.Response:
         "tags": [str(t) for t in (body.get("tags") or [])],
     }
     if not bool_field(body, "save", default=True):
-        return _reply(await service.author_def(**fields, save=False, provenance="chat"))
+        return _reply(await service.author_def(**fields, save=False, saved_by=versions.AGENT))
     denied = _guard(request, "workflow_agent_save")
     if denied is not None:
         return denied
@@ -1919,8 +1923,8 @@ def register_workflow_routes(app: web.Application) -> None:
     app.router.add_get("/api/workflows/{name}/versions/diff", api_def_version_diff)
     # AFTER `/diff`: routes match in registration order, and `{version}` would swallow it.
     app.router.add_get("/api/workflows/{name}/versions/{version}", api_def_version_detail)
-    app.router.add_post("/api/workflows/{name}/versions/repin", api_def_repin)
     app.router.add_get("/api/workflows/{name}/ledger", api_def_ledger)
+    app.router.add_get("/api/workflows/{name}/automations", api_def_automations)
     app.router.add_post("/api/workflows/{name}/refine", api_def_refine)
     app.router.add_post("/api/workflows/{name}/a2a-publish", api_def_a2a_publish)
     app.router.add_get("/api/workflows/{name}", api_def_detail)

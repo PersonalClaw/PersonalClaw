@@ -79,7 +79,7 @@ vi.mock('../../lib/api', async (importActual) => {
       workflowVersion: async (name: string, version: number) => {
         const def = store.get(`${name}@v${version}`)
         if (!def) throw new actual.ApiError('no such version', 404, 'not_found')
-        return { version, source: 'user', created_at: '', note: '', definition: structuredClone(def) }
+        return { version, saved_by: 'owner', created_at: '', note: '', definition: structuredClone(def) }
       },
       saveWorkflowDef: async (body: Record<string, unknown>, base?: string) => {
         saves.push({ body: structuredClone(body), base })

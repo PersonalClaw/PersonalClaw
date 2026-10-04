@@ -51,7 +51,7 @@ async function mount(hands_off_to: unknown[] | undefined) {
       }),
       startWorkflowRun: () => Promise.resolve({ run_id: 'r1' }),
       workflowVersions: () => Promise.resolve({
-        versions: [], pinned: 0,
+        versions: [],
         maturity: { level: 0, label: 'draft', signals: {}, clean_runs: 0, evaluator_rejected: false },
       }),
     },

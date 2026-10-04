@@ -897,7 +897,6 @@ def create(
     (:mod:`personalclaw.lasting_work`, raised as its ``Refused`` for each door to answer).
     """
     from personalclaw.triggers import grants
-    from personalclaw.triggers import screen as _screen
     from personalclaw.triggers.models import Trigger
     from personalclaw.triggers.nl_kind import route
 
@@ -1106,10 +1105,12 @@ def create(
         # in `say` are their own delivery, and a resume target's run reports on its own trigger.
         trigger.delivery = INBOX_ROUTE
     # 🔴 FREEZE THE CAPABILITY SET AT SAVE (decision 7 / R3), when the owner said yes to
-    # this action. A read-only action gets an empty block either way: the fence permits those
-    # without one, and a written-out grant would imply an opt-in nobody had to make.
+    # this action, through the one door her yes takes (`grants.give`): it grants what the action
+    # runs and, for an action that runs a workflow, records the version she allowed. A read-only
+    # action gets an empty block either way: the fence permits those without one, and a
+    # written-out grant would imply an opt-in nobody had to make.
     if owner_consented:
-        trigger.capabilities = _screen.capabilities_for_action(trigger)
+        grants.give(trigger)
     # 🔴 ARM A CLOCK TRIGGER ON CREATION. `create` persisted `next_fire_at=""`, and
     # `service.due_ids` only surfaces rows that HAVE one — so every cron created through this
     # function (the chat tools, and the API from this session) would never fire. Arming at

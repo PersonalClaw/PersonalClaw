@@ -69,7 +69,8 @@ while not terminal:
 | `journal.py` | the resume cache and the Run Ledger (one append-only file, read two ways) |
 | `replay.py` | `workflow replay <run_id>` — re-drives the PURE `frontier()` against a run's OWN recorded responses (keyed by `output_ref`) and its recorded clock (the `clock_read` envelope), and diffs the resulting trajectory against the one the run took, reporting the first divergent node. Divergence is a first-class outcome, not a failure |
 | `store.py` | persistence — runs, specs, state, outputs, and the sticky intents a request leaves in a run's folder for its controller (pause, cancel, steering) |
-| `versions.py` | the monotonic template version store: append-only per-version snapshots + a pinned pointer, re-pin/rollback, the typed-op diff, and the L0–L3 maturity computation |
+| `versions.py` | the monotonic template version store: append-only per-version snapshots, each saying who saved it (set by the door the save came through), a digest of what a version runs, the typed-op diff, and the L0–L3 maturity computation. Each machine keeps its own history: a sync never carries it |
+| `automation_version.py` | which version of a workflow an automation runs: the one its owner's Allow recorded (kept in the automation's grant), or a newer one she saved in the workflow's editor — never a newer one an agent's tool, a sync, an import or an app saved, which waits for her "Use vN". A version it may run that is no longer kept is refused, never swapped |
 | `mutations.py` | the typed edit grammar and its structural rules |
 | `checkpoints.py` | fork, revert, prune |
 | `human_input.py` | typed asks and durable resume tokens |
@@ -1164,8 +1165,64 @@ flag — `defaults.budget.max_tokens` matches the `token` hint — so this is th
 common path, not an edge case.
 
 A restore is an edit of a recorded version (`GET
-/api/workflows/{name}/versions/{version}`), and its save is a new version. The
-pinned pointer `versions/repin` moves is read by nothing that starts a run.
+/api/workflows/{name}/versions/{version}`), and its save is a new version: no
+pointer moves what runs without a save.
+
+Every version records who saved it (`saved_by`), set by the door the save came
+through and never by what that door was handed (`service._write_definition`
+drops a spec's own `provenance`): the owner in the editor (`owner`, from her
+signed-in session — the internal credential an agent's tools present saves as
+`agent` at the same route), the publish switch (`publish`), an agent's
+`workflow_author` or a chat's batch (`agent`), an accepted refiner proposal
+(`refiner`), a prompt card (`import`), an app's token (`app`). A version no door
+here saved — a template PersonalClaw ships (`shipped`) or an app provides
+(`app`), or a definition another machine's sync, a restore or a pack brought
+in (`brought_in`) — is recorded when an automation is allowed to run it. Version
+numbers continue past every recorded one, so a workflow deleted and made again
+never reuses a number its old history holds.
+
+**Which version an automation runs** (`automation_version`). A `run-workflow`
+automation's Allow (`triggers.grants.give`) records the workflow's version then
+— its number and a digest of what it runs (`versions.digest`: everything but
+when, under which number and by whom it was saved, and the publish flag) — in the
+automation's grant, which stays on its machine like every grant. A fire runs:
+
+* that version: the definition as it is now while it still runs alike, else the
+  recorded version;
+* a newer version the owner saved in the editor, the newest one, since her save
+  is her yes — an agent's version she then saved over in the editor included,
+  which the editor showed her;
+* never a newer version anything else saved. The Triggers page says the
+  automation runs vN and that vM is newer, with who saved each version since;
+  **Use vM** (`POST /api/triggers/{id}/workflow-version`) asks first, naming
+  them, and moves it to the workflow as it is now (a stale `version` is `409
+  stale_write`).
+
+**What it runs as steps is held too.** A `subworkflow` step and a `run-workflow`
+action step look their workflow up by name when they run, so the Allow also
+records each workflow the allowed version starts, at every depth a subworkflow
+can nest, as it was then (`automation_version.closure`, kept in the history like
+the workflow itself), and a version the owner saves records the workflows it
+starts as they were at her save (`VersionRecord.calls`). The run a fire starts
+carries those versions on its record (`extra["step_versions"]`), and each step
+starts the version allowed with the automation, or a newer one the owner saved
+herself, by the same rule (`automation_version.step_runs`, read by
+`engine.dispatch_subworkflow` and the `run-workflow` provider); the run it starts
+carries them on to its own steps. A step that starts a workflow the automation
+was not allowed with — one made later under the name it starts, or one it names
+from a value it is handed — does not run, and says why. The automation's row
+lists each workflow its steps start (`steps`), and Use vM moves those too: it
+sends back what the row offered (`use`), and a version saved after the owner
+looked is `409 stale_write`.
+
+A version it may run that is no longer kept refuses the fire in words, naming
+Use vM. An Allow from before allowed versions were recorded is bound, at its
+first fire, to the version it runs then. PersonalClaw's own automations (its
+`system` triggers, which run templates it ships) record no version and run the
+template as it is; a run no automation its owner allowed started — the Run
+button, an agent's `workflow_start`, a step of one of those — runs the definition
+as it is. The workflow's page lists the automations that run it, as their own
+action or as a step, each with its version (`GET /api/workflows/{name}/automations`).
 
 Authoring conventions, the lint that enforces them, and the macro/block
 libraries are documented in

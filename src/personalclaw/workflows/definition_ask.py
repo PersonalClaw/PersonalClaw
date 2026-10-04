@@ -30,6 +30,7 @@ import uuid
 from typing import Any
 
 from personalclaw.workflows import owner_allow, service
+from personalclaw.workflows.versions import AGENT
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ async def save(state: Any, *, session_key: str, fields: dict[str, Any]) -> dict[
     Returns the service envelope: the save's own result when it needed no Allow (saved, or why
     not), ``awaiting_approval`` with the ask's id and the steps it is for, or a failure saying why
     nobody can be asked."""
-    first = await service.author_def(**fields, provenance="chat")
+    first = await service.author_def(**fields, saved_by=AGENT)
     if first.get("code") != "WF_DEF_NEEDS_OWNER_YES":
         return first
     name = str(fields.get("name") or "")
@@ -164,7 +165,7 @@ async def _save_allowed(fields: dict[str, Any], shown: set[tuple[str, str]]) -> 
     from personalclaw.workflows.handlers import _get_def_save_lock
 
     async with _get_def_save_lock():
-        again = await service.author_def(**fields, provenance="chat")
+        again = await service.author_def(**fields, saved_by=AGENT)
         if again.get("code") != "WF_DEF_NEEDS_OWNER_YES":
             return again
         now = {
@@ -178,7 +179,9 @@ async def _save_allowed(fields: dict[str, Any], shown: set[tuple[str, str]]) -> 
                 "the workflow changed while you were asked, and the save would now let a step do "
                 "more than your Allow named; ask the agent to save it again",
             )
-        return await service.author_def(**fields, provenance="chat", owner_allowed=True)
+        # Her Allow covers what its steps would then do, and it is still the agent's save: an
+        # automation of the workflow does not follow it until she says to.
+        return await service.author_def(**fields, saved_by=AGENT, owner_allowed=True)
 
 
 def _note_unsaved(state: Any, name: str, ask_id: str, why: str) -> None:

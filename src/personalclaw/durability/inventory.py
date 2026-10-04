@@ -255,7 +255,8 @@ def _report_compared(row: dict) -> dict:
 def _workflow_definition(row: dict) -> dict | None:
     """What *row* — one file of ``workflows/``, as the entity-dir exporter names it — holds when it
     is a definition (``defs/<name>/workflow``): the one file a run here starts from. ``None`` for
-    any other file: a version snapshot, which nothing runs, or a run's own record."""
+    any other file: a run's own record. (A version snapshot never syncs: each machine keeps its
+    own history, ``machine_local_within``.)"""
     parts = str(row.get("id", "")).split("/")
     data = row.get("data")
     if len(parts) == 3 and parts[0] == "defs" and parts[2] == "workflow" and isinstance(data, dict):
@@ -791,8 +792,10 @@ INVENTORY: tuple[StateEntry, ...] = (
             "you first."
         ),
         # The template nudges' counters and the session's candidate templates: this machine's
-        # own account of its chats.
-        machine_local_within=("template_nudges.json", "template_candidates.json"),
+        # own account of its chats. And each workflow's version history (`workflows.versions`):
+        # what an automation here may run, saved by whom here, with the steps allowed here.
+        # Another machine's would run here as written, with its owner's saves read as this one's.
+        machine_local_within=("template_nudges.json", "template_candidates.json", "versions/*"),
     ),
     # ── platform ──
     StateEntry(

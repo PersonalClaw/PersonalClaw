@@ -6,7 +6,7 @@
      tests/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **926 registrations** over **751 distinct paths** — 919 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **927 registrations** over **752 distinct paths** — 920 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -34,7 +34,7 @@ The 128 families the surface divides into, largest first.
 | `/api/inbox` | 24 | 23 |
 | `/api/apps` | 23 | 15 |
 | `/api/mcp` | 21 | 16 |
-| `/api/triggers` | 20 | 17 |
+| `/api/triggers` | 21 | 18 |
 | `/api/skills` | 19 | 15 |
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
@@ -155,7 +155,7 @@ The 128 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 919 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 920 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -993,6 +993,7 @@ The 919 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/triggers/{id}/test` | execute a lifecycle trigger's action once. |
 | `POST` | `/api/triggers/{id}/to-chat` | open a schedule trigger as a chat session. |
 | `POST` | `/api/triggers/{id}/toggle` | enable/disable. |
+| `POST` | `/api/triggers/{id}/workflow-version` | {version, steps} — Use vN: run newer versions. |
 | `POST` | `/api/update` | move this install to its release, the way it was installed. |
 | `POST` | `/api/update/cancel` | stop the update in progress, and say what that left. |
 | `GET` | `/api/update/check` | the update status, checking only when an automatic check is due. |
@@ -1071,12 +1072,12 @@ The 919 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `DELETE` | `/api/workflows/{name}` | _(no summary)_ |
 | `GET` | `/api/workflows/{name}` | one definition, and the ``revision`` a save over it names. |
 | `POST` | `/api/workflows/{name}/a2a-publish` | the template detail UI's publish toggle. |
+| `GET` | `/api/workflows/{name}/automations` | the automations that run it, and each one's version. |
 | `GET` | `/api/workflows/{name}/ledger` | recent runs of this template with their ledger totals. |
 | `POST` | `/api/workflows/{name}/refine` | fire the refiner over this template on demand. |
 | `GET` | `/api/workflows/{name}/trajectory` | The trajectory-signature distribution and regression signal for one template (PP-7). |
-| `GET` | `/api/workflows/{name}/versions` | the monotonic version history + pin + maturity. |
+| `GET` | `/api/workflows/{name}/versions` | the version history, who saved each, and the maturity. |
 | `GET` | `/api/workflows/{name}/versions/diff` | the typed-op diff between two versions. |
-| `POST` | `/api/workflows/{name}/versions/repin` | {version} — rollback / re-pin the active version. |
 | `GET` | `/api/workflows/{name}/versions/{version}` | one recorded version's full definition. |
 
 ## Websocket and internal routes

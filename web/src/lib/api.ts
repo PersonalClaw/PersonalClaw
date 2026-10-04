@@ -1871,6 +1871,8 @@ export interface ScheduleJob {
   report_id?: string | null
   // Why its agent may do less than its step asks, now — see `Trigger`.
   held_back?: HeldBack | null
+  // Which version of its workflow it runs — see `Trigger`.
+  workflow_version?: AutomationWorkflowVersion | null
   // Switched off by a restore until it is resumed — see `Trigger`.
   restore_hold?: RestoreHold
   schedule: string                          // human-rendered cadence string
@@ -2192,11 +2194,15 @@ export interface WorkflowHandoff {
   context_fields?: string[]
   requires_user_request?: boolean
 }
-/** One recorded template version. Immutable once written; a run pins the number it
- *  executed, and re-pin/rollback moves only the active pointer. */
+/** Who saved a workflow version, as the door it came through says (`workflows/versions.py`
+ *  `SAVERS`); `''` for a version recorded before the history said. */
+export type WorkflowSaver =
+  | 'owner' | 'publish' | 'agent' | 'refiner' | 'import' | 'app' | 'shipped' | 'brought_in' | ''
+/** One recorded template version. Immutable once written; a run records the number it
+ *  executed, and a restore is an edit saved as the newest version. */
 export interface WorkflowVersionRow {
   version: number
-  source: string // 'user' | 'refiner'
+  saved_by: WorkflowSaver | string
   created_at: string
   note: string
   run_ids: string[]
@@ -3114,6 +3120,8 @@ export interface HookItem {
   needs_grant?: string[]
   // Why its agent may do less than its step asks, now — see `Trigger`.
   held_back?: HeldBack | null
+  // Which version of its workflow it runs — see `Trigger`.
+  workflow_version?: AutomationWorkflowVersion | null
 }
 // The wired data-event patterns (event_triggers.EVENT_PATTERNS). Each belongs to exactly one
 // source (event_triggers.PATTERN_SOURCE), which the backend derives — the wire never supplies it.
@@ -3131,6 +3139,51 @@ export interface TriggerAction { provider: string; config: Record<string, unknow
  *  or its agent runs on an agent CLI no files to change can be held to. `folder` is the working
  *  folder to trust for it, `''` when no folder holds it back. */
 export interface HeldBack { why: string; folder: string }
+/** Which version of its workflow a "Run workflow" automation runs (`triggers/grants.py`
+ *  `workflow_version`): the one its owner allowed, or a newer one she saved in the workflow's
+ *  editor — never a newer one anything else saved, which waits for her Use vN. `runs` is the
+ *  version a fire runs now (0 when it would run none, and `problem` says why) and `saved_by` who
+ *  saved it; `allowed` the version her yes was given for (0 when it records none); `follows` is
+ *  PersonalClaw's own automation, which runs the template it ships as it is; `newer` the workflow's
+ *  version now when that is not what runs (0 otherwise), with `since`, who saved each version
+ *  after the one it runs. `steps` says the same of each workflow its steps start, held to the
+ *  versions allowed with it. `use` is what its Use vN sends back (`allowWorkflowVersion`), null
+ *  when it runs every workflow it runs as it is now. Every `saved_by` is a `WorkflowSaver`. */
+export interface AutomationWorkflowVersion {
+  workflow: string
+  runs: number
+  saved_by: string
+  allowed: number
+  follows: boolean
+  newer: number
+  since: Array<{ version: number; saved_by: string }>
+  problem: string
+  steps: AutomationWorkflowStep[]
+  use: { version: number; steps: Record<string, number> } | null
+}
+/** A workflow an automation's workflow starts as a step (`via` is the workflow whose step starts
+ *  it), and which version of it that step runs, in `AutomationWorkflowVersion`'s terms. */
+export interface AutomationWorkflowStep {
+  workflow: string
+  via: string
+  runs: number
+  saved_by: string
+  newer: number
+  since: Array<{ version: number; saved_by: string }>
+  problem: string
+}
+/** One automation that runs a workflow, as the workflow's page lists it
+ *  (`GET /api/workflows/{name}/automations`): `id` opens it on the Triggers page; `via` is the
+ *  workflow whose step runs this one, `''` when the automation's own action runs it. */
+export interface WorkflowAutomation {
+  id: string
+  name: string
+  enabled: boolean
+  needs_grant: string[]
+  workflow_version: AutomationWorkflowVersion | null
+  via: string
+  status_url: string
+}
 /** A callback the agent registered with `hook_register` (`webhook_callbacks.py`): an outside
  *  program's post to `url` (`/api/hooks/agent`) with `session_key` starts an agent turn, with the
  *  agent's tools, from `context_summary`; `reach` is the server's sentence for where `url` answers.
@@ -3206,6 +3259,9 @@ export interface Trigger {
   // Why its agent may do less than its step asks, now, and the folder to trust for it (`HeldBack`);
   // null when nothing holds it back.
   held_back?: HeldBack | null
+  // Which version of its workflow a "Run workflow" automation runs, and whether a newer one waits
+  // for the owner's Use vN (`AutomationWorkflowVersion`); null when its action runs no workflow.
+  workflow_version?: AutomationWorkflowVersion | null
   // A replace restore switched it off until it is resumed here, because it ran on its own where
   // the snapshot was taken (`triggers/restore_hold.py`): where that was, as the restore could tell.
   // `''` (or absent) when no restore holds it, and always on a row that is switched on.
@@ -3306,6 +3362,7 @@ function _triggerToHook(t: Trigger): HookItem {
     revision: t.revision,
     needs_grant: t.needs_grant,
     held_back: t.held_back,
+    workflow_version: t.workflow_version,
   }
 }
 // An action provider (renamed from "hook provider" in the Triggers vision) —
@@ -9746,6 +9803,14 @@ export const api = {
   // itself <kind>:<slug>, so the namespaced route is `store:<raw_id>`.
   storeTriggers: () => get<{ triggers: Trigger[] }>('/api/triggers?type=store').then((d) => d.triggers),
   // Asks first when switching ON grants what the action runs — see `enableSchedule`.
+  /** Use vN: let the automation `id` (the Triggers page's namespaced id) run what its row's `use`
+   *  offered — its workflow's `version`, the one the workflow is at now, and the versions `steps`
+   *  names of the workflows its steps start. The gateway asks first, naming who saved each version
+   *  since the one it runs; any that is no longer what it offers now is `409 stale_write`. */
+  allowWorkflowVersion: (id: string, use: { version: number; steps: Record<string, number> }) =>
+    withSecurityConsent((c) => post<{ ok: boolean; trigger: Trigger }>(
+      `/api/triggers/${encodeURIComponent(id)}/workflow-version`,
+      c ? { ...use, confirm: true } : { ...use })),
   toggleStoreTrigger: (rawId: string, enabled: boolean) =>
     withSecurityConsent((c) => post(`/api/triggers/store:${encodeURIComponent(rawId)}/toggle`,
       c ? { enabled, confirm: true } : { enabled })),
@@ -10584,10 +10649,15 @@ export const api = {
   deleteWorkflowDef: (name: string) => del(`/api/workflows/${encodeURIComponent(name)}`),
 
   // ── template versions + refiner ──
-  /** The monotonic version history, the pinned (active) version, and the maturity badge. */
+  /** The monotonic version history, who saved each version, and the maturity badge. */
   workflowVersions: (name: string) =>
-    get<{ versions: WorkflowVersionRow[]; pinned: number; maturity: WorkflowMaturity }>(
+    get<{ versions: WorkflowVersionRow[]; maturity: WorkflowMaturity }>(
       `/api/workflows/${encodeURIComponent(name)}/versions`,
+    ),
+  /** The automations that run this workflow, each with the version of it it runs. */
+  workflowAutomations: (name: string) =>
+    get<{ name: string; automations: WorkflowAutomation[] }>(
+      `/api/workflows/${encodeURIComponent(name)}/automations`,
     ),
   /** The typed-op diff between two versions (add/remove/reorder/update-node ops). */
   workflowVersionDiff: (name: string, a: number, b: number) =>
@@ -10597,7 +10667,7 @@ export const api = {
   /** One recorded version's full definition — stripped like every definition read. The editor
    *  opens it to restore that version: saving it makes a NEW version, which is what runs execute. */
   workflowVersion: (name: string, version: number) =>
-    get<{ version: number; source: string; created_at: string; note: string; definition: WorkflowDef }>(
+    get<{ version: number; saved_by: string; created_at: string; note: string; definition: WorkflowDef }>(
       `/api/workflows/${encodeURIComponent(name)}/versions/${version}`,
     ),
   /** Recent runs of this template with their ledger totals — the Run Ledger tab. */

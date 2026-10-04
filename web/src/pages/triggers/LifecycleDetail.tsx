@@ -10,6 +10,7 @@ import { Toggle } from '../../ui/Toggle'
 import { ActionConfig, editedActionConfig, seedActionConfig } from './ActionConfig'
 import { GrantNote } from './ReviewNote'
 import { HeldBackNote } from './HeldBackNote'
+import { WorkflowVersionNote } from './WorkflowVersionNote'
 import { useTriggerVariables, lifecycleEventMeta, eventTakesToolMatcher, relPast, eventIsDormant, eventDormancyReason } from './triggerMeta'
 import { accentChip } from '../../design/accent'
 import { HeldChange, StaleWriteNotice } from '../../ui/StaleWriteNotice'
@@ -192,6 +193,9 @@ export function LifecycleDetail({ hook, providers, onSaved, onDeleted, editing, 
         <GrantNote labels={needsGrant} enabled={hook.enabled} busy={busy} onAllow={allow} />
       )}
       {hook.held_back && <HeldBackNote heldBack={hook.held_back} onTrusted={onSaved} busy={busy} />}
+      {hook.workflow_version && (
+        <WorkflowVersionNote triggerId={`lifecycle:${hook.id}`} version={hook.workflow_version} onChanged={onSaved} busy={busy} />
+      )}
 
       <div className="flex flex-wrap items-center gap-s">
         <span className="inline-flex items-center rounded-pill px-m h-7 text-[0.8125rem]" style={accentChip}>{em.label}</span>

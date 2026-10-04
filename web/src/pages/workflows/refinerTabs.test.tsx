@@ -15,8 +15,8 @@ import { act, render, fireEvent } from '@testing-library/react'
 
 const MATURITY = { level: 3, label: 'mature', signals: {}, clean_runs: 5, evaluator_rejected: true }
 const VERSIONS = [
-  { version: 1, source: 'user', created_at: '2026-08-15T00:00:00Z', note: '', run_ids: [], ops_count: 0 },
-  { version: 2, source: 'refiner', created_at: '2026-08-15T01:00:00Z', note: '', run_ids: ['r1'], ops_count: 1 },
+  { version: 1, saved_by: 'owner', created_at: '2026-08-15T00:00:00Z', note: '', run_ids: [], ops_count: 0 },
+  { version: 2, saved_by: 'refiner', created_at: '2026-08-15T01:00:00Z', note: '', run_ids: ['r1'], ops_count: 1 },
 ]
 
 function makeApi(overrides: Record<string, unknown> = {}) {
@@ -26,7 +26,8 @@ function makeApi(overrides: Record<string, unknown> = {}) {
       provider: 'bundled',
     }),
     startWorkflowRun: () => Promise.resolve({ run_id: 'r1' }),
-    workflowVersions: () => Promise.resolve({ versions: VERSIONS, pinned: 2, maturity: MATURITY }),
+    workflowVersions: () => Promise.resolve({ versions: VERSIONS, maturity: MATURITY }),
+    workflowAutomations: () => Promise.resolve({ name: 'code-project', automations: [] }),
     workflowVersionDiff: () => Promise.resolve({ a: 1, b: 2, ops: [{ op: 'update_node', node_id: 'build', fields: ['retries'] }] }),
     workflowLedger: () => Promise.resolve({ name: 'code-project', runs: [
       { run_id: 'run-abc', status: 'complete', spec_version: 2, totals: { steps_completed: 3, steps_failed: 0 } },

@@ -840,6 +840,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/triggers/{id}/test` — execute a lifecycle trigger's action once.
 - `POST /api/triggers/{id}/to-chat` — open a schedule trigger as a chat session.
 - `POST /api/triggers/{id}/toggle` — enable/disable.
+- `POST /api/triggers/{id}/workflow-version` — {version, steps} — Use vN: run newer versions.
 - `POST /api/update` — move this install to its release, the way it was installed.
 - `POST /api/update/cancel` — stop the update in progress, and say what that left.
 - `GET /api/update/check` — the update status, checking only when an automatic check is due.
@@ -918,12 +919,12 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/workflows/{name}` — _(no summary)_
 - `GET /api/workflows/{name}` — one definition, and the ``revision`` a save over it names.
 - `POST /api/workflows/{name}/a2a-publish` — the template detail UI's publish toggle.
+- `GET /api/workflows/{name}/automations` — the automations that run it, and each one's version.
 - `GET /api/workflows/{name}/ledger` — recent runs of this template with their ledger totals.
 - `POST /api/workflows/{name}/refine` — fire the refiner over this template on demand.
 - `GET /api/workflows/{name}/trajectory` — The trajectory-signature distribution and regression signal for one template (PP-7).
-- `GET /api/workflows/{name}/versions` — the monotonic version history + pin + maturity.
+- `GET /api/workflows/{name}/versions` — the version history, who saved each, and the maturity.
 - `GET /api/workflows/{name}/versions/diff` — the typed-op diff between two versions.
-- `POST /api/workflows/{name}/versions/repin` — {version} — rollback / re-pin the active version.
 - `GET /api/workflows/{name}/versions/{version}` — one recorded version's full definition.
 
 ## Websocket / internal routes

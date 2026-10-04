@@ -374,6 +374,14 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
                               until the owner allows it on its panel. An imported row already says
                               so as "waiting for your review". */}
                           {!t.needsReview && (t.needsGrant?.length ?? 0) > 0 && <span data-type="caption" className="shrink-0 text-warn">· not allowed to run</span>}
+                          {/* A newer version of the workflow it runs, or of one its steps start,
+                              waits for your Use vN on its panel: it keeps running the versions
+                              you allowed. */}
+                          {t.workflowVersion?.use && (
+                            <span data-type="caption" className="shrink-0 text-warn">
+                              · {t.workflowVersion.newer > 0 ? `v${t.workflowVersion.newer} waits for you` : 'a newer version waits for you'}
+                            </span>
+                          )}
                           {/* The row's WARNING-severity issues, which reached no surface at all
                               before issue 531 — the store computed them on every load and the wire
                               projection dropped them. Rendered ONLY when there is no error: a row

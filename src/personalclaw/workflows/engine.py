@@ -1065,8 +1065,7 @@ async def dispatch_subworkflow(
             "this is an engine wiring problem — the controller must pass its supervisor",
         )
 
-    from personalclaw.workflows import defs as defs_mod
-    from personalclaw.workflows import store
+    from personalclaw.workflows import automation_version, store
     from personalclaw.workflows.models import (
         TERMINAL_RUN_STATUSES,
         OriginKind,
@@ -1075,31 +1074,23 @@ async def dispatch_subworkflow(
         WorkflowRun,
     )
 
-    definition = None
-    for provider_name in defs_mod.list_providers():
-        provider = defs_mod.get_provider(provider_name)
-        if provider is None:
-            continue
-        try:
-            found = await provider.get_def(name)
-        except Exception:
-            continue
-        if found is not None:
-            definition = found
-            break
-    if definition is None:
+    found = await automation_version.find(name)
+    if found is None:
         return _fail(
             FailureClass.USER,
             f"no workflow definition named {name!r}",
             "check the name, or list the available definitions",
         )
-
-    spec = definition if isinstance(definition, dict) else definition.to_dict()
+    # A run an owner-allowed automation started starts the child's version allowed with it, and the
+    # child carries them on to its steps; any other run's starts it as it is (`child_spec`).
+    parent = store.get(run_id) if run_id else None
+    spec, carried, refused = automation_version.child_spec(parent, name, *found)
+    if refused:
+        return _fail(FailureClass.USER, refused, automation_version.ASK_THE_AUTOMATION)
 
     # Inputs are RESOLVED against the parent's context before the child is created, so the child
     # receives values rather than bindings it has no way to interpret — its own `{{nodes.…}}`
     # namespace is a different graph's — but a secret reference, which the child fills itself.
-    parent = store.get(run_id) if run_id else None
     project = parent.project_id if parent else ""
     child_inputs, handed, failure = input_secrets.hand_to_child(cfg.get("inputs"), ctx, project)
     if failure is not None:
@@ -1128,8 +1119,10 @@ async def dispatch_subworkflow(
             root_run_id=(parent.root_run_id if parent else "") or run_id or "",
             project_id=project,
             origin=RunOrigin(kind=OriginKind.SUBAGENT_TOOL, trigger_id=node.id),
+            # The version it executes, a version from the history included.
+            spec_version=int(spec.get("version", 1) or 1),
             # Its parent's work: what a Temporary or Incognito origin's run keeps, it keeps.
-            extra={**(ownership.inherited_extra(parent) if parent else {}), **handed},
+            extra={**(ownership.inherited_extra(parent) if parent else {}), **handed, **carried},
         )
     )
     store.write_spec(child.id, spec)

@@ -15,6 +15,7 @@ import { actionLabel, actionIcon } from '../triggers/triggerMeta'
 import { ActionFieldList, DryRunResult, actionFields } from '../triggers/DryRunResult'
 import { GrantNote, ReviewNote } from '../triggers/ReviewNote'
 import { HeldBackNote } from '../triggers/HeldBackNote'
+import { WorkflowVersionNote } from '../triggers/WorkflowVersionNote'
 import { RestoreHoldNote } from '../triggers/RestoreHold'
 import { HeartbeatQueue } from '../triggers/HeartbeatQueue'
 import {
@@ -379,6 +380,13 @@ export function ScheduleDetail({ job, providers = [], onSaved, onDeleted, onChan
           panel shows, with the folder to trust when a folder in Preview is why. */}
       {job.held_back && (
         <HeldBackNote heldBack={job.held_back} onTrusted={onChanged} readOnly={job.read_only === true} busy={busy} />
+      )}
+      {/* The version of its workflow it runs, when a newer one waits for your Use vN. */}
+      {job.workflow_version && (
+        <WorkflowVersionNote
+          triggerId={`schedule:${job.id}`} version={job.workflow_version} onChanged={onChanged}
+          readOnly={job.read_only === true} busy={busy}
+        />
       )}
       {/* Switched off by a restore until it is resumed. Resume is the switch sent on, so a schedule
           whose action needs your yes asks first. */}

@@ -214,7 +214,7 @@ async def test_the_dry_run_and_the_save_answer_with_the_refusal(save: bool) -> N
     """🔴 Red before: the dry run passed, and the definition saved."""
     root = _spec(_step("run-workflow", {"workflow": CHILD, "project_id": "project-elsewhere"}))
     result = await service.author_def(
-        name="reach-probe", root=root["root"], save=save, provenance="user", owner_allowed=True
+        name="reach-probe", root=root["root"], save=save, saved_by="owner", owner_allowed=True
     )
 
     assert result["ok"] is False

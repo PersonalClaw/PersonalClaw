@@ -10,9 +10,12 @@ how apps and prompts are stored. A directory rather than a flat file because a d
 will grow siblings (spec history, bundled prompt blocks), and moving to a directory later
 would be a migration.
 
-**Versioning is on every save**, and it is load-bearing: a run pins the spec version it
-started from, and a mutation diffs against its predecessor. A save that reused the version
-would make `expect_version` meaningless.
+**Versioning is on every save**, and it is load-bearing: a run records the spec version it
+started from, an automation runs the version its owner allowed (`workflows.automation_version`),
+and a mutation diffs against its predecessor. A save that reused a version number would make
+`expect_version` meaningless, and would let a new definition answer for an old one an automation
+was allowed: so the number continues past every recorded version (`versions.latest_version`),
+a workflow deleted and made again included.
 
 Reads are tolerant — a corrupt or hand-edited file is skipped in a listing rather than
 breaking every other definition — because the listing is how a user finds the broken one to
@@ -86,17 +89,25 @@ class NativeWorkflowDefProvider(WorkflowDefProvider):
         # into a Node would fail at every future run start instead of here, once.
         Node.from_dict(root_raw)
 
+        from personalclaw.workflows import versions
+
         prior = _read(name)
+        # Who saved it, as the door it came through says (`service._write_definition`, the one
+        # caller): a hint, never a field of the definition it was handed. A save that names no door
+        # is no owner's, so an automation does not follow it.
+        saved_by = str(fields.get("_saved_by") or versions.AGENT)
         payload = {
             "name": name,
             "root": root_raw,
-            # A save always advances the version — a run pins the version it started from,
-            # and reusing one would make `expect_version` meaningless.
-            "version": (prior.version + 1) if prior is not None else 1,
+            # A save always advances the version, past every one recorded: a run records the
+            # version it started from and an automation runs the one it was allowed, so a number
+            # must never name two definitions.
+            "version": max(prior.version if prior is not None else 0, versions.latest_version(name))
+            + 1,
             "spec_semver": str(fields.get("spec_semver", SPEC_SEMVER) or SPEC_SEMVER),
             "description": str(fields.get("description", "") or ""),
             "source": "user",
-            "provenance": str(fields.get("provenance", "user") or "user"),
+            "provenance": saved_by,
             "inputs": dict(fields.get("inputs") or {}),
             "tags": [str(t) for t in (fields.get("tags") or [])],
             "metadata": dict(fields.get("metadata") or {}),
@@ -125,21 +136,28 @@ class NativeWorkflowDefProvider(WorkflowDefProvider):
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(path, json.dumps(payload, indent=2, ensure_ascii=False))
 
-        # Append an immutable version snapshot keyed by the def's own monotonic
-        # `version`, and pin it. Best-effort — the def is already on disk, so a failure to
-        # record history must never fail the save. `_version_source`/`_version_ops` are control
-        # hints (not persisted in the def) that let an accepted refiner diff mark its provenance.
+        # Append an immutable version snapshot keyed by the def's own monotonic `version`, with
+        # who saved it, and for the owner's own save the versions of the workflows it runs as steps
+        # as they are now: an automation that follows her save runs those. Best-effort — the def is
+        # already on disk, so a failure to record history must never fail the save — and loud,
+        # since a version with no record is one no automation follows (it cannot tell whose it is).
+        # `_saved_by`/`_version_ops` are the writer's hints, never persisted as fields of the def.
         try:
-            from personalclaw.workflows import versions
+            calls: dict[str, dict[str, Any]] = {}
+            if saved_by == versions.OWNER:
+                from personalclaw.workflows.automation_version import owners_calls
 
+                calls = await owners_calls(payload, root=name)
             versions.record_version(
                 name,
                 payload,
-                source=str(fields.get("_version_source") or versions.SOURCE_USER),
+                saved_by=saved_by,
                 ops=[o for o in (fields.get("_version_ops") or []) if isinstance(o, dict)],
+                calls=calls,
             )
         except Exception:
-            logger.debug("versions: could not record snapshot for %s", name, exc_info=True)
+            logger.warning("versions: could not record v%s of %s", payload["version"], name)
+            logger.debug("versions: record failed", exc_info=True)
         return WorkflowDef.from_dict(payload)
 
     async def delete_def(self, name: str) -> bool:
