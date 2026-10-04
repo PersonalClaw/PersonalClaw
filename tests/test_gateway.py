@@ -1482,7 +1482,6 @@ class TestSubagentDone:
         session.task = None
         session.key = "test-session"
         session.mode = ""
-        session._recovery_chat_triggered = False
         session._pending_subagent_failures = []
         orch.dashboard_state.get_session = MagicMock(return_value=session)
 
@@ -1525,7 +1524,6 @@ class TestSubagentDone:
         session.running = True
         session.key = "busy-session"
         session.mode = ""
-        session._recovery_chat_triggered = False
         session._pending_subagent_failures = []
         session.queue_append = MagicMock()
         orch.dashboard_state.get_session = MagicMock(return_value=session)
@@ -2660,12 +2658,12 @@ class TestInitDashboardWiring:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Tests: _retrigger_recovery
+# Tests: subagent events
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class TestRetriggerRecovery:
-    """Recovery retrigger for queued subagent failures."""
+class TestSubagentEvents:
+    """Subagent events: a delivery that failed is queued for the chat's next turn."""
 
     def _setup(self):
         orch = _make_orchestrator()

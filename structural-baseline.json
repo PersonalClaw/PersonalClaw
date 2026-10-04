@@ -273,10 +273,9 @@
         ]
       },
       "src/personalclaw/gateway.py": {
-        "edges": 18,
+        "edges": 16,
         "violations": [
           "core-must-not-import-the-http-surface -> personalclaw.dashboard",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
@@ -290,7 +289,6 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.updates",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.session_lifecycle",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.state",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
         ]
@@ -427,10 +425,10 @@
     "totals": {
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 5,
-        "core-must-not-import-the-http-surface": 48,
+        "core-must-not-import-the-http-surface": 46,
         "ledger-is-a-leaf": 0
       },
-      "edges": 53,
+      "edges": 51,
       "files": 26
     }
   },

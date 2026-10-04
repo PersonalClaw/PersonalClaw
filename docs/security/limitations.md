@@ -1114,6 +1114,27 @@ process, run shared threads on the native agent or on an agent CLI that asks bef
 and keep the vaults one-way, and out of the folders the agent's tools reach, if such work's commands
 could reach them.
 
+## 20. Work someone else asked for is held by its own record, not by everything handed to it
+
+A turn someone other than you asked for (a colleague in a shared thread) changes none of your memory
+on its own, and neither does the work it starts that lasts after it: a workflow run, a loop and a
+callback record who asked when they are made, and their steps, cycles and turns are held to that for
+as long as they last, after a restart too (`lasting_work.py`). An automation is not made or changed
+on someone else's say-so, and a loop takes the words of whoever asked for it alone.
+
+What this does not hold:
+
+- **Words handed to work you asked for by other doors.** An answer a colleague's turn gives to a
+  question your run is waiting on, or an edit it makes to the plan of a loop of yours before it
+  starts, goes into your work: the work's record says you asked for it, so what it does next is
+  judged as yours.
+- **How the work's calls are approved.** The record decides whose memory a change is held for, not
+  who approves the work's other calls: a loop made Unattended in a colleague's turn runs its calls
+  on its standing grant, as one you made Unattended would.
+
+**What this means for you:** answer your runs' questions yourself, and check the Mode of a loop
+someone else asked for before it runs.
+
 ## Why these are listed, not fixed
 
 Per the project's lifecycle discipline, a control *gap* discovered while writing
@@ -1137,7 +1158,9 @@ out, for #17; a proxy the guard answers for, through which a run's commands reac
 tier lists, and a network fence, enforced by the OS, around an app's own requests, an MCP server's
 program and an agent CLI's own tools, for #18; a fence, enforced by the OS, around every store of
 long-term memory a private chat's commands could reach, an agent CLI's process kept to one private
-chat and to one person's turns, and a vault that reads back no edit made by such a chat's commands, for #19). This page will
+chat and to one person's turns, and a vault that reads back no edit made by such a chat's commands, for #19;
+the same record on every door that hands words to lasting work, and a Mode only you may loosen on
+work someone else asked for, for #20). This page will
 shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

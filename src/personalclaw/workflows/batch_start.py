@@ -56,6 +56,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import lasting_work, memory_writes
 from personalclaw.apps import app_work
 from personalclaw.apps.app_work import AppWork
 from personalclaw.automation_posture import WHAT_IT_MAY_DO
@@ -367,6 +368,9 @@ async def start(
     from personalclaw.approval_grants import ToolDecision
 
     work = app_work.of_session(state, session_key)
+    # Who asked for the turn that asks for the batch, when the owner did not: its run keeps that
+    # as it was asked for, not as its session reads once she allows it (`lasting_work`).
+    asked = memory_writes.asker()
     asking = _asking(
         name, session_key, root=root, workspace=workspace, inputs=inputs, writes=writes, work=work
     )
@@ -382,6 +386,7 @@ async def start(
         description=description,
         session_key=session_key,
         work=work,
+        asked=asked,
     )
     changing = [task.label for task in asking.tasks if task.changes]
     if not changing and (grant := _start_grant(state, session_key, name, work)):
@@ -400,6 +405,7 @@ async def start(
             "asked_at": time.time(),
             "tasks": len(asking.tasks),
             **({app_work.RUN_KEY: work.to_dict()} if work is not None else {}),
+            **({lasting_work.ASKED_BY: asked} if asked else {}),
             "start": {
                 "root": root,
                 "workspace": workspace,
@@ -420,11 +426,18 @@ async def start(
 
 
 def _starter(
-    supervisor: Any, *, name: str, root: dict[str, Any], work: AppWork | None, **fields: Any
+    supervisor: Any,
+    *,
+    name: str,
+    root: dict[str, Any],
+    work: AppWork | None,
+    asked: dict[str, str],
+    **fields: Any,
 ) -> Any:
     """The save-and-start of one batch, given what allowed it (:data:`CONSENT_KEY`). An app's
-    batch's run records whose work it is as the batch was asked for (`app_work.stamp`), not as its
-    session reads when it starts: the agent that asked may have ended while it waited."""
+    batch's run records whose work it is as the batch was asked for (`app_work.stamp`), and one
+    someone other than the owner asked for records who did (*asked*, `lasting_work.ASKED_BY`), not
+    as its session reads when it starts: the turn that asked may have ended while it waited."""
 
     async def _begin(consent: dict[str, Any]) -> dict[str, Any]:
         from personalclaw.approval_grants import YOU
@@ -452,7 +465,9 @@ def _starter(
             supervisor=supervisor,
             origin_kind=OriginKind.SUBAGENT_TOOL,
             session_key=fields["session_key"],
-            extra=app_work.stamp({CONSENT_KEY: consent}, work),
+            extra=app_work.stamp(
+                {CONSENT_KEY: consent, **({lasting_work.ASKED_BY: asked} if asked else {})}, work
+            ),
         )
 
     return _begin
@@ -746,6 +761,7 @@ def resume(state: Any, supervisor: Any) -> int:
             description=str(start.get("description") or ""),
             session_key=session_key,
             work=work,
+            asked=lasting_work.recorded(record.get(lasting_work.ASKED_BY)),
         )
         _waiting(state, _ask_then_start(state, supervisor, asking, begin))
         asked += 1

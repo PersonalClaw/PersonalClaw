@@ -320,6 +320,10 @@ class Loop:
     task_list_ids: dict = field(default_factory=dict)  # {phase_key: task_list_id}
     linked_task_ids: list[str] = field(default_factory=list)  # decomposed Tasks (flat)
     session_key: str = ""  # the worker session (loop-<id>)
+    #: Who asked for the loop when someone other than the owner did (``lasting_work.ASKED_BY``):
+    #: the source of the message that started the turn it was made in, recorded when it is made
+    #: (``store.create``) and never edited. ``{}`` for the owner's own.
+    asked_by: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

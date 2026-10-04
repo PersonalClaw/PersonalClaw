@@ -17,6 +17,7 @@ the gateway runs dashboard-only.
 """
 
 import asyncio
+import contextlib
 import functools
 import json
 import logging
@@ -34,6 +35,7 @@ from personalclaw import (
     approval_answer,
     approval_grants,
     gateway_base,
+    memory_writes,
     notification_kinds,
     run_bounds,
     session_keys,
@@ -105,6 +107,7 @@ from personalclaw.subagent import (
     SubagentLimits,
     SubagentManager,
     ToolApprovalCallback,
+    agent_work_id,
     approval_subagent_id,
     resolve_max_subagents,
 )
@@ -130,7 +133,6 @@ if TYPE_CHECKING:
     from personalclaw.channel_delivery import ChannelDelivery
     from personalclaw.channel_transports.base import ChannelMessage
     from personalclaw.channel_trust import TrustVerdict
-    from personalclaw.dashboard.state import _ChatSession
     from personalclaw.guardrails.policy import SafetyProfile
     from personalclaw.inbox_service import InboxService
     from personalclaw.llm_helpers import ToolApprovalPolicy
@@ -3797,71 +3799,6 @@ class GatewayOrchestrator:
             except Exception:
                 logger.info("Failed to broadcast subagent %s status", info.id, exc_info=True)
 
-        def _retrigger_recovery(session: "_ChatSession", parent_key: str) -> None:
-            """Drain queued failures into a new recovery run_chat turn.
-
-            Called from _on_done callbacks after resetting the guard, so
-            failures that arrived while the previous recovery was running
-            get processed without waiting for user input.
-            """
-            if session._recovery_chat_triggered or not session._pending_subagent_failures:
-                return
-            if not self.dashboard_state:
-                return
-            _max_retrigger = 3
-            if session._recovery_retrigger_count >= _max_retrigger:
-                logger.warning(
-                    "Recovery retrigger cap (%d) reached for %s, dropping %d queued failures",
-                    _max_retrigger,
-                    parent_key,
-                    len(session._pending_subagent_failures),
-                )
-                session._pending_subagent_failures.clear()
-                return
-            session._recovery_retrigger_count += 1
-            session._recovery_chat_triggered = True
-            from personalclaw.dashboard.chat import run_chat
-
-            failures = session._pending_subagent_failures[:]
-            session._pending_subagent_failures.clear()
-            msg = "\n\n".join(failures)
-            msg, _ = redact_exfiltration_urls(msg)
-            msg, _ = redact_credentials(msg)
-            session.append("user", msg, "msg msg-u auto-go")
-            logger.info(
-                "Re-triggering recovery run_chat for %s (%d queued failures)",
-                parent_key,
-                len(failures),
-            )
-
-            def _done(t: "asyncio.Task") -> None:  # type: ignore[type-arg]
-                if t.cancelled():
-                    logger.warning("Re-triggered recovery cancelled for %s", parent_key)
-                    session._recovery_chat_triggered = False
-                    return
-                elif t.exception():
-                    logger.error(
-                        "Re-triggered recovery failed for %s",
-                        parent_key,
-                        exc_info=t.exception(),
-                    )
-                session._recovery_chat_triggered = False
-                if session._pending_subagent_failures:
-                    _retrigger_recovery(session, parent_key)
-
-            _task = asyncio.create_task(
-                turn_deadline.run_within(
-                    self.dashboard_state,
-                    session,
-                    run_chat(self.dashboard_state, session, msg),
-                    CHAT_TURN_TIMEOUT,
-                ),
-            )
-            session.task = _task
-            self._background_tasks.add(_task)
-            _task.add_done_callback(self._background_tasks.discard)
-            _task.add_done_callback(_done)
-
         # What this gateway's notes said about failed agent work, so a failure is told once.
         failure_notes = subagent_notes.FailureNotes()
 
@@ -4015,6 +3952,17 @@ class GatewayOrchestrator:
             parent_key = info.parent_session_key
             for _member in batch:
                 await _broadcast_subagent_status(_member, "done")
+            # Who asked for the work the report hands back, when the owner did not: a subagent
+            # keeps who asked for the turn that started it (`memory_writes.hand_on`), so the turn
+            # its report starts runs as asked for by them, after that turn has ended too.
+            asked = next(
+                (
+                    who
+                    for who in (memory_writes.asked_for_work(agent_work_id(m.id)) for m in batch)
+                    if who
+                ),
+                {},
+            )
 
             # The run of the trigger that started each member says how it went, on its history
             # row: the fire recorded only that it launched (`triggers.settle`).
@@ -4197,7 +4145,7 @@ class GatewayOrchestrator:
                             )
                             # Bounded by CHAT_TURN_TIMEOUT (~600s): run_chat's
                             # finally block drains session._queue on any exit path.
-                            _injection_session.queue_append(announce)
+                            _injection_session.queue_append(announce, asked_for_by=asked)
                             self.dashboard_state.push_sessions_update()
                             logger.info("Subagent %s → queued in %s", info.id, _session_name)
                             if not told:
@@ -4214,7 +4162,12 @@ class GatewayOrchestrator:
                         turn_deadline.run_within(
                             self.dashboard_state,
                             _injection_session,
-                            run_chat(self.dashboard_state, _injection_session, announce),
+                            run_chat(
+                                self.dashboard_state,
+                                _injection_session,
+                                announce,
+                                asked_for_by=asked,
+                            ),
                             CHAT_TURN_TIMEOUT,
                         )
                     )
@@ -4295,16 +4248,25 @@ class GatewayOrchestrator:
                             )
                         else:
                             msg = announce
-                        response = await asyncio.wait_for(
-                            _inject_with_retry(
-                                client,
-                                msg,
-                                parent_key,
-                                _announce_source,
-                                thread_channel=_thread_channel,
-                            ),
-                            timeout=INJECTION_TIMEOUT,
+                        # The report's turn, as asked for by whoever asked for its work when the
+                        # owner did not: the requests its tools make name the thread, and the gate
+                        # its calls are put to runs here (`memory_writes.turn_asked_by`).
+                        asked_here = (
+                            memory_writes.turn_asked_by(parent_key, asked)
+                            if asked
+                            else contextlib.nullcontext()
                         )
+                        with asked_here:
+                            response = await asyncio.wait_for(
+                                _inject_with_retry(
+                                    client,
+                                    msg,
+                                    parent_key,
+                                    _announce_source,
+                                    thread_channel=_thread_channel,
+                                ),
+                                timeout=INJECTION_TIMEOUT,
+                            )
                         _injected = True  # LLM processed result; channel posting is best-effort
 
                         # Post only the LLM's synthesized response to the channel

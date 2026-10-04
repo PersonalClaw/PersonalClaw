@@ -141,13 +141,18 @@ def stamp_run_mode(extra: dict[str, Any], mode: MemoryMode, *, model: str = "") 
 
 def inherited_extra(parent: Any) -> dict[str, Any]:
     """The `extra` a run started from *parent*'s work (a subworkflow it runs, a fork of it) starts
-    with: *parent*'s restricted mode and the model its work stays on, and the app whose work it is
-    (`apps.app_work`), so the new run keeps each on its own record, after a restart as before it.
-    `{}` for a parent of the owner's own that inherited no mode."""
+    with: *parent*'s restricted mode and the model its work stays on, the app whose work it is
+    (`apps.app_work`), and who asked for it when the owner did not (`lasting_work.ASKED_BY`), so the
+    new run keeps each on its own record, after a restart as before it. `{}` for a parent of the
+    owner's own that inherited no mode."""
+    from personalclaw import lasting_work
     from personalclaw.apps import app_work
 
     mode = run_mode(parent)
     kept = {} if mode is MemoryMode.NORMAL else stamp_run_mode({}, mode, model=run_model(parent))
+    asked = lasting_work.recorded((getattr(parent, "extra", None) or {}).get(lasting_work.ASKED_BY))
+    if asked:
+        kept[lasting_work.ASKED_BY] = asked
     return app_work.stamp(kept, app_work.of_run(parent))
 
 

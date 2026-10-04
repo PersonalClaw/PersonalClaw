@@ -62,6 +62,12 @@ DASHBOARD_SOURCE: Mapping[str, str] = MappingProxyType(
     {"source_thread": DASHBOARD, "source_user": DASHBOARD}
 )
 
+#: Who asked, where nothing can say who did: a record of lasting work that is there and cannot be
+#: read (``lasting_work.recorded``), an answer the gateway did not give the tool server an agent
+#: CLI runs (``memory_writes.asker``). It names no one the owner is known to be, so what it asked
+#: for is not hers, and it is named as "a sender no record names" (:func:`named`).
+UNNAMED: Mapping[str, str] = MappingProxyType({"source_thread": "unnamed"})
+
 
 def source_of(row: object) -> dict[str, str]:
     """The source *row* records, each field as it has it: a row may record a thread and no sender,

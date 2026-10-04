@@ -1519,6 +1519,11 @@ make and the subagents it starts read it (`memory_writes.asker`), the stores
 refuse their changes saying who asked, as do the file tools, the shell and the
 gate an agent CLI's own tools ask (`screen_tool_call`), and what the memory tools ask for is held
 for your own Allow (`dashboard/memory_holds`, through the approval registry, no
-standing grant answering it). Details in
+standing grant answering it). Work such a turn starts that outlives it (a
+workflow run, a loop, a callback) records who asked on its own record
+(`lasting_work.py`), so its steps, cycles and turns are held the same way after
+the turn has ended and after a restart, as is the turn that hands a subagent's
+report back to its chat; an automation is not made or changed on someone else's
+say-so, and a loop takes the words of whoever asked for it alone. Details in
 [chat-sessions.md](chat-sessions.md#session-model) and
 [knowledge-memory.md](knowledge-memory.md#recall--the-privacy-guard).

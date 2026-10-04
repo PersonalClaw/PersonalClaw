@@ -122,7 +122,6 @@ async def test_a_chat_hears_every_failure_and_the_bell_one_note(home):
 
     orch, on_done = _on_done()
     session = MagicMock(running=False, task=None, key="kitchen", mode="")
-    session._recovery_chat_triggered = False
     session._pending_subagent_failures = []
     orch.dashboard_state.get_session = MagicMock(return_value=session)
 

@@ -217,7 +217,12 @@ relative to `PersonalClaw/src/personalclaw/`.
   switching it on, which asks first and names the context the page read (its
   seal), so a callback registered again with other context waits again. A post
   naming a callback the owner has not allowed answers `403 not_allowed`; a
-  session key nobody registered is the owner's own integration.
+  session key nobody registered is the owner's own integration. One registered
+  in a turn someone other than the owner asked for records who did
+  (`lasting_work.ASKED_BY`), its Allow says so, and its turn runs as its own work,
+  held to them: what it would change of her memory waits for her word
+  (`lasting_work.py`). No automation, scheduled task or lifecycle trigger is
+  made or changed on someone else's say-so (`403 asked_by_someone_else`).
 - **A `when` is one time or a cadence, never a cron for one time**
   (`triggers/tools._read_when`). An explicit time — "at 5pm", "in 20 minutes",
   "tomorrow at 9am", "2026-10-01 14:00", "at 9am Europe/London" — is read with

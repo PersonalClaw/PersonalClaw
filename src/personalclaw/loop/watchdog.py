@@ -908,25 +908,34 @@ class LoopWatchdog:
         cadence, and the service is resolved best-effort. The positive-path + inversion producers
         run with no vector store; similarity is inert without one. Fully guarded — never raises into
         `_complete`.
+
+        Asked as the loop's own work (``memory_writes.as_work_of`` its worker's session), so a loop
+        someone other than the owner asked for teaches her nothing, as its record says
+        (``lasting_work``): the gate refuses it, and so would the stores.
         """
         try:
             from types import SimpleNamespace
 
+            from personalclaw import memory_writes
             from personalclaw.learning import loop_end
             from personalclaw.learning.gate import Cadence, LearningGate
+            from personalclaw.loop.manager import session_key
 
             loop = store.get(loop_id)
             if loop is None:
                 return
             cfg = AppConfig.load().learning
             session = SimpleNamespace(key=loop.session_key, is_restricted=False, _ephemeral=False)
-            decision = LearningGate.for_session(session, cfg).decide(
-                Cadence.RUN_END, cadence_enabled=bool(getattr(cfg, "run_end_enabled", True))
-            )
-            if not decision.allowed:
-                logger.debug("loop %s: loop-end capture gated (%s)", loop_id, decision.reason.value)
-                return
-            loop_end.capture(loop, self._memory_service())
+            with memory_writes.as_work_of(session_key(loop.id)):
+                decision = LearningGate.for_session(session, cfg).decide(
+                    Cadence.RUN_END, cadence_enabled=bool(getattr(cfg, "run_end_enabled", True))
+                )
+                if not decision.allowed:
+                    logger.debug(
+                        "loop %s: loop-end capture gated (%s)", loop_id, decision.reason.value
+                    )
+                    return
+                loop_end.capture(loop, self._memory_service())
         except Exception:
             logger.debug("loop %s: loop-end capture failed", loop_id, exc_info=True)
 

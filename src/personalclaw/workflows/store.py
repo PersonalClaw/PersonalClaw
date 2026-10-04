@@ -280,6 +280,16 @@ def create(run: WorkflowRun) -> WorkflowRun:
         from personalclaw.durability.shards import machine_id
 
         run.origin_harness = machine_id(config_dir())
+    # Who asked for it, when someone other than the owner did (`memory_writes.asker`): its work
+    # keeps that for as long as it lasts, after the turn that started it has ended and after a
+    # restart (`lasting_work`). A caller that recorded it already keeps its own: a sub-run or a
+    # fork (its parent's), a batch the owner allowed (the turn that asked for it).
+    from personalclaw import lasting_work, memory_writes
+
+    if lasting_work.ASKED_BY not in (run.extra or {}):
+        someone = memory_writes.asker()
+        if someone:
+            run.extra = {**(run.extra or {}), lasting_work.ASKED_BY: someone}
     conn = _connect()
     try:
         cols = ", ".join(_COLUMNS)

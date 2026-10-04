@@ -220,6 +220,12 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "This change cannot be made for an Incognito or Temporary chat, or for one whose memory "
         "setting cannot be read; the message says why and where it can be made."
     ),
+    # ── work someone other than the owner asked for (lasting_work.py): an automation is the
+    # owner's own, and a loop takes the words of whoever asked for it alone ──
+    "asked_by_someone_else": (
+        "Someone other than the owner asked for this, and only the owner makes this change; the "
+        "message says who asked and where the owner can make it."
+    ),
     # ── a lifetime asked of the token endpoint (dashboard/handlers/core.py) — the limit is
     # 90 days, and the message is the sentence that says so ──
     "token_ttl_invalid": "The requested lifetime is not a duration like 30m, 20h or 7d.",

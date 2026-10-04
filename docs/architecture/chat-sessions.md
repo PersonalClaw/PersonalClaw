@@ -325,7 +325,12 @@ chat, channel thread, loop worker, webhook, subagent).
     Reading such work, pausing, stopping or deleting it, switching an automation
     off or back on, and running one now (a run held as the chat's own work) are
     unchanged, and a workflow run the chat starts keeps its mode and its model as
-    above, a General loop started through the loop door included.
+    above, a General loop started through the loop door included. Work a turn
+    someone other than the owner asked for makes through the same doors records
+    who asked instead, and is held to them for as long as it lasts (see
+    [knowledge-memory.md](knowledge-memory.md)); an automation is not made or
+    changed on their say-so, nor a loop steered with their words unless they asked
+    for it (`403 asked_by_someone_else`).
 - **`chat_traces.py` / `dashboard/chat_forget.py` — what a chat keeps on disk,
   and forgetting it.** A chat leaves its transcript, its working folder
   (`sessions/<key>/`), its turn checkpoints and the files attached to it

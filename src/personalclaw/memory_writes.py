@@ -40,14 +40,18 @@ door (``turn_source.asked_by``, the rule memory reads her words by). The turn na
 it once it knows its message (:func:`asked_for`, said by the turn engine; a channel that runs a
 conversation itself says it with :func:`turn_asked_by`), and :func:`asker` is then the answer for
 the turn's work, the requests its tools make while it runs, and a subagent it starts (handed on
-when it is spawned, :func:`hand_on`). The stores refuse such work's changes
-(:func:`refuse_memory_write`, the memory database's statement check) saying who asked, so do the
-file tools, the shell and the gate an agent CLI's own tools ask (``file_scope``), a read leaves no
-mark on memory, and the turn's own learning takes nothing. A change the agent's memory tools ask
-for in such a turn is held for her own word instead (``dashboard.memory_holds``): she is asked, and
-what she allows is written as hers (:func:`on_the_owners_word`). Memory consolidation is
-PersonalClaw's own pass over the whole conversation, which takes only her words from it, so it
-runs as the session's own (:func:`as_its_session`), whoever asked for the turn it follows.
+when it is spawned, :func:`hand_on`). Work the turn starts that outlives it (a workflow run, a loop,
+a callback) records who asked on its own record (``lasting_work``), which :func:`asker` reads for
+it after the turn has ended and after a restart, and a turn of such work (a loop's cycle, a
+subagent's report handed back to its chat) runs as asked for by them. The stores refuse such
+work's changes (:func:`refuse_memory_write`, the memory database's statement check) saying who
+asked, so do the file tools, the shell and the gate an agent CLI's own tools ask (``file_scope``),
+a read leaves no mark on memory, and the turn's own learning takes nothing. A change the agent's
+memory tools ask for in such a turn is held for her own word instead (``dashboard.memory_holds``):
+she is asked, and what she allows is written as hers (:func:`on_the_owners_word`). Memory
+consolidation is PersonalClaw's own pass over the whole conversation, which takes only her words
+from it, so it runs as the session's own (:func:`as_its_session`), whoever asked for the turn it
+follows.
 
 Nothing of such a session is handed to a background model either: its title, tags and suggested
 follow-ups, a condensed copy of its history, the suggestions built from recent chats. Each of those
@@ -593,13 +597,17 @@ def asked_for(source: Mapping[str, str]) -> None:
     for the rest of the scope it is said in, and while that scope lasts for every request the
     turn's tools make, which name its session (:func:`asker` reads the marks it leaves here), so
     none of them changes your memory on someone else's say-so. Outside any scope it does nothing.
+
+    A turn of lasting work someone else asked for (a loop's cycle, which its own nudge starts) runs
+    as asked for by them whatever its message: when *source* is yours, or the turn has none, the
+    work's own record decides (``lasting_work.asker_of``).
     """
     scope = _SCOPE.get()
     if scope is None:
         return
     from personalclaw import session_restrictions
 
-    named = dict(source)
+    named = dict(source) or _asked_for_its_work(scope.keys)
     _unmark(scope)
     marks = tuple(
         (key, session_restrictions.mark_asked_by(key, named)) for key in scope.keys if key
@@ -623,16 +631,33 @@ def _spellings(key: str) -> tuple[str, ...]:
     return (key, key.removeprefix(_DASHBOARD)) if key.startswith(_DASHBOARD) else (key,)
 
 
+def _asked_for_its_work(keys: tuple[str, ...]) -> dict[str, str]:
+    """Who asked for the lasting work the session *keys* name runs, when someone other than you
+    did (``lasting_work.asker_of``), ``{}`` otherwise."""
+    from personalclaw import lasting_work
+
+    for key in keys:
+        for spelling in _spellings((key or "").strip()):
+            recorded = lasting_work.asker_of(spelling) if spelling else None
+            if recorded:
+                return recorded
+    return {}
+
+
 def asker() -> dict[str, str]:
     """Who asked for the turn the current work is done for, when it was not you: the source of the
     message that started that turn (``{}`` when you did, or when no turn did).
 
-    The turn's own work says it (:func:`asked_for`). Work that does not, a request the turn's tools
-    make and a subagent it started, reads the mark the running turn left for each session the work
-    is done for, its own first and then the chain up to the chat at the top
-    (``memory_reads.reach_of``). Work in no scope at all, a call the built-in agent makes for a
-    conversation a channel runs itself, reads the mark of the session the call names."""
-    from personalclaw import session_restrictions
+    The turn's own work says it (:func:`asked_for`). Work that does not (a request the turn's tools
+    make, a subagent it started, a run, a loop or a callback it made, at any time after) reads, for
+    each session the work is done for, its own first and then the chain up to the chat at the top
+    (``memory_reads.reach_of``), the mark the running turn left for it, else what the lasting work
+    that session runs records (``lasting_work.asker_of``: the run whose step it is, the loop whose
+    worker it is, the callback whose turn it is), which outlives the turn and a restart. Work in no
+    scope at all, a call the built-in agent makes for a conversation a channel runs itself, reads
+    the same for the session the call names. The tool server an agent CLI runs holds no turn: it
+    asks the gateway, which runs the turn (``mcp_core.asker_from_the_gateway``)."""
+    from personalclaw import lasting_work, session_restrictions
 
     scope = _SCOPE.get()
     if scope is not None and scope.asker is not None:
@@ -640,15 +665,30 @@ def asker() -> dict[str, str]:
     if scope is not None:
         keys = list(scope.keys) + list(scope.whose.chain() if scope.whose is not None else ())
     else:
-        from personalclaw.mcp_core import get_current_session_key
+        from personalclaw import mcp_core
 
-        keys = [get_current_session_key()]
+        if mcp_core.serves_an_agent_cli():
+            return mcp_core.asker_from_the_gateway()
+        keys = [mcp_core.get_current_session_key()]
     for key in keys:
         for spelling in _spellings((key or "").strip()):
-            marked = session_restrictions.asked_by(spelling) if spelling else None
+            if not spelling:
+                continue
+            marked = session_restrictions.asked_by(spelling)
             if marked is not None:
                 return marked
+            recorded = lasting_work.asker_of(spelling)
+            if recorded is not None:
+                return recorded
     return {}
+
+
+def asked_for_work(session_key: str) -> dict[str, str]:
+    """Who asked for the work the session *session_key* runs, when it was not you, read from
+    outside it as the work reads it (:func:`asker`): the turn that hands a subagent's report back
+    to its chat runs as asked for by them."""
+    with as_work_of(session_key):
+        return asker()
 
 
 def others_refusal(source: Mapping[str, str]) -> str:

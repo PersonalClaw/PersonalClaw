@@ -737,9 +737,13 @@ async def nudge(state, svc, loop_id: str, text: str, task_id: str = "") -> Loop 
 
     Refused, before anything is written, for the work of an Incognito or Temporary chat: the
     words would go into work that is kept and runs on its own model
-    (:mod:`personalclaw.lasting_work`)."""
-    lasting_work.refuse(lasting_work.LOOP, lasting_work.STEER)
+    (:mod:`personalclaw.lasting_work`). Refused too on the say-so of someone other than the owner
+    who did not ask for the loop: a loop is the work of whoever asked for it, and takes no one
+    else's words."""
     loop = store.get(loop_id)
+    lasting_work.refuse(
+        lasting_work.LOOP, lasting_work.STEER, asked_for_by=loop.asked_by if loop else None
+    )
     if loop is None:
         return None
     answering_question = loop.status == LoopStatus.NEEDS_INPUT.value

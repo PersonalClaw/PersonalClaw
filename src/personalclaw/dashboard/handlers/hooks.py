@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from personalclaw import notification_kinds, session_keys
+from personalclaw import memory_writes, notification_kinds, session_keys
 from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.guardrails.failure import BudgetExceededError
@@ -579,9 +579,12 @@ async def _run_hook_agent(
     result_text = ""
     outcome = "completed"
     try:
-        result_text = await asyncio.wait_for(
-            _run_hook_inner(state, session_key, message, agent), timeout=timeout_secs
-        )
+        # The callback's own work: one registered for a turn someone other than you asked for is
+        # held to them in everything it does, as its registration says (`lasting_work`).
+        with memory_writes.as_work_of(session_key):
+            result_text = await asyncio.wait_for(
+                _run_hook_inner(state, session_key, message, agent), timeout=timeout_secs
+            )
     except asyncio.TimeoutError:
         outcome = "timeout"
         result_text = f"Hook agent timed out after {timeout_secs}s"

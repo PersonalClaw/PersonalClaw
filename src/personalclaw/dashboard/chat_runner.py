@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +48,7 @@ from personalclaw.dashboard.chat_persistence import (
     prior_turns_transcript,
     save_session_to_history,
 )
+from personalclaw.dashboard.chat_queue import ASKED_FOR_BY
 from personalclaw.dashboard.chat_session_map import (
     build_turn_telemetry,
     stamp_context_fed,
@@ -2155,6 +2156,7 @@ async def run_chat(
     _prompt_depth: int = 0,
     regenerate_hint: str = "",
     arrived_from_channel: bool = False,
+    asked_for_by: Mapping[str, str] | None = None,
     _retry: bool = False,
 ) -> None:
     """Stream LLM response into *session*.  Survives browser disconnect.
@@ -2171,6 +2173,10 @@ async def run_chat(
     ``arrived_from_channel`` says *message* came from the chat channel the session is linked
     to. The mirror shows that channel what was typed anywhere else; this message is already
     there, so it is not sent back. The answer is mirrored either way.
+
+    ``asked_for_by`` is who asked for the work this turn carries on, when someone other than the
+    owner did and no message of theirs starts it: the turn that hands a subagent's report back to
+    its chat (the gateway's delivery). It runs as asked for by them (``memory_writes.asked_for``).
 
     ``_retry`` says this run sends the turn that just ended again (``_send_again`` below, drained
     by the queue): the same message, whose row is already in the transcript, and the same turn,
@@ -2196,9 +2202,12 @@ async def run_chat(
     # That row itself: what its sender typed is read off it once the turn is done (`own_words`).
     _turn_row = session.messages[_started_at] if _started_at is not None else None
     _asked_by_person = _turn_row is None or _turn_row.get("role") == "user"
-    # Who asked for the turn, when the owner did not (`turn_source.asked_by`): what the turn, its
-    # tools and the work it starts would change of her memory waits for her own word.
-    memory_writes.asked_for(asked_by(_turn_row) if _turn_row is not None else {})
+    # Who asked for the turn, when the owner did not (`turn_source.asked_by`), or for the work it
+    # carries on (`asked_for_by`): what the turn, its tools and the work it starts would change of
+    # her memory waits for her own word.
+    memory_writes.asked_for(
+        (asked_by(_turn_row) if _turn_row is not None else {}) or dict(asked_for_by or {})
+    )
     # What this attempt takes from the session that rides one turn only, as the way to put each
     # back: a retry of the turn (`_send_again`) is handed the same context the first attempt was.
     _taken_once: list[Callable[[], None]] = []
@@ -2215,7 +2224,10 @@ async def run_chat(
             put_back()
         _taken_once.clear()
         session.queue_retry(
-            _in_flight_text, from_channel=arrived_from_channel, regenerate_hint=regenerate_hint
+            _in_flight_text,
+            from_channel=arrived_from_channel,
+            regenerate_hint=regenerate_hint,
+            asked_for_by=asked_for_by,
         )
 
     # Phase 1 of the turn checkpoint: open a numbered turn and
@@ -5659,6 +5671,7 @@ async def run_chat(
                     next_msg,
                     regenerate_hint=consumed[0].get("hint", ""),
                     arrived_from_channel=retry == "channel",
+                    asked_for_by=consumed[0].get(ASKED_FOR_BY),
                     _retry=True,
                 )
             else:
@@ -5713,7 +5726,15 @@ async def run_chat(
                 # A message the channel sent while this turn ran is not sent back to it. Merged
                 # with one typed here, the merged text is new to the channel, so it is.
                 from_channel = all(item.get("channel") for item in consumed)
-                next_turn = run_chat(state, session, next_msg, arrived_from_channel=from_channel)
+                # A subagent's report runs alone, as asked for by whoever asked for its work.
+                carried = next((i[ASKED_FOR_BY] for i in consumed if i.get(ASKED_FOR_BY)), None)
+                next_turn = run_chat(
+                    state,
+                    session,
+                    next_msg,
+                    arrived_from_channel=from_channel,
+                    asked_for_by=carried,
+                )
             task = asyncio.create_task(
                 turn_deadline.run_within(state, session, next_turn, CHAT_TURN_TIMEOUT)
             )

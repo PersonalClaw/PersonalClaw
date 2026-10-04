@@ -14,6 +14,11 @@ from typing import Any
 from personalclaw.own_words import OWN_WORDS
 from personalclaw.turn_source import DASHBOARD_SOURCE, source_of
 
+#: The item key of who asked for the work a queued message carries on, when someone other than
+#: the owner did and no message of theirs is in it: a subagent's report (``run_chat``'s
+#: ``asked_for_by``, which its turn runs as).
+ASKED_FOR_BY = "asked_for_by"
+
 
 class ChatQueue:
     """The queue helpers of a chat session, over the session's own ``_queue``."""
@@ -30,6 +35,7 @@ class ChatQueue:
         files: list[str] | None = None,
         own_words: str | None = None,
         source: Mapping[str, str] = DASHBOARD_SOURCE,
+        asked_for_by: Mapping[str, str] | None = None,
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -38,6 +44,7 @@ class ChatQueue:
         ``files`` are its attached files, which the message carries when it runs. ``own_words``
         are the words of it its sender typed, when it holds more than them (``own_words``).
         ``source`` is where it came from (``turn_source``), which its row records when it runs.
+        ``asked_for_by`` is who asked for the work it carries on (:data:`ASKED_FOR_BY`).
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
@@ -47,11 +54,18 @@ class ChatQueue:
             item["files"] = list(files)
         if own_words is not None:
             item[OWN_WORDS] = own_words
+        if asked_for_by:
+            item[ASKED_FOR_BY] = dict(asked_for_by)
         self._queue.append(item)
         return qid
 
     def queue_retry(
-        self, content: str, *, from_channel: bool = False, regenerate_hint: str = ""
+        self,
+        content: str,
+        *,
+        from_channel: bool = False,
+        regenerate_hint: str = "",
+        asked_for_by: Mapping[str, str] | None = None,
     ) -> str:
         """Queue the turn that just ended to run again, ahead of everything. Returns the queue ID.
 
@@ -60,12 +74,19 @@ class ChatQueue:
         with a message queued behind it, and it runs as the same turn (`run_chat(_retry=True)`).
         ``retry`` records where the message came from (``channel``: the chat channel the session is
         linked to, which already shows it; ``here``: anywhere else), and ``hint`` a regenerate's
-        hint, so the retry is asked the same way.
+        hint, so the retry is asked the same way, and ``asked_for_by`` who asked for the work it
+        carries on (:data:`ASKED_FOR_BY`), so it runs as asked for by them again.
         """
         qid = uuid.uuid4().hex[:12]
-        item = {"id": qid, "content": content, "retry": "channel" if from_channel else "here"}
+        item: dict[str, Any] = {
+            "id": qid,
+            "content": content,
+            "retry": "channel" if from_channel else "here",
+        }
         if regenerate_hint:
             item["hint"] = regenerate_hint
+        if asked_for_by:
+            item[ASKED_FOR_BY] = dict(asked_for_by)
         self._queue.insert(0, item)
         return qid
 

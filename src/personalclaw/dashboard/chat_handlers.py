@@ -374,7 +374,6 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
 
     task = asyncio.create_task(_run_chat_scoped(state, session, message))
     session.task = task
-    session._recovery_retrigger_count = 0
     state._background_tasks.add(task)
     task.add_done_callback(state._background_tasks.discard)
     state.push_sessions_update()
@@ -903,22 +902,22 @@ async def api_chat_session_model_reach(request: web.Request) -> web.Response:
     first and runs under the answer: ``{"memory_mode": "incognito"}`` (or ``"temporary"``, or
     ``"unreadable"`` when no record says which) for a session that keeps nothing, whose work no
     model but its own may read and whose writes the stores refuse, and ``{"memory_mode":
-    "persistent"}`` for any other. ``asked_by`` names who asked for the turn the session is running
-    when someone other than the owner did (``memory_writes.asker``), ``""`` when she did: a tool
-    that writes a skill from the turn writes none then. The request runs as deriving from the
-    session it names (``memory_write_gate``), so this is the answer the gateway's own stores give.
+    "persistent"}`` for any other. ``asked_by`` is the source of who asked for the work the session
+    runs when someone other than the owner did (``memory_writes.asker``: the turn it is running, or
+    the lasting work it is), ``{}`` when she did: the tool process holds no turn, so it asks here
+    whenever who asked decides what a call does (a skill drafted, an automation made, a callback's
+    record). The request runs as deriving from the session it names (``memory_write_gate``), so
+    this is the answer the gateway's own stores give.
 
     Keyed off the ``X-Session-Key`` header, never off a path segment or a query parameter: the
     caller asks about the session it is. No header, or the dashboard's own, is no session.
     """
     from personalclaw import memory_writes
-    from personalclaw.turn_source import named
 
-    someone = memory_writes.asker()
     return web.json_response(
         {
             "memory_mode": memory_writes.restricted_mode() or memory_writes.PERSISTENT,
-            "asked_by": named(someone) if someone else "",
+            "asked_by": memory_writes.asker(),
         }
     )
 

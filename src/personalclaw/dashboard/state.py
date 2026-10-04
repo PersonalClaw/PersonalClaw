@@ -239,7 +239,6 @@ class _ChatSession(ChatQueue):
         "_rebinding",
         "_takes_steers",
         "_dirty",
-        "_recovery_chat_triggered",
         "_stage_titles",
         "_stage_descriptions",
         "_plan_goal",
@@ -251,7 +250,6 @@ class _ChatSession(ChatQueue):
         "last_activity_at",
         "never_archive",
         "_pending_subagent_failures",
-        "_recovery_retrigger_count",
         "_prompt_busy_retries",
         "_acp_pipe_death_retries",
         "_empty_response_retries",
@@ -423,7 +421,6 @@ class _ChatSession(ChatQueue):
         self._rebinding: "Rebinding | None" = None
         self._takes_steers: bool = False
         self._dirty: bool = False  # True when messages changed since last flush
-        self._recovery_chat_triggered: bool = False  # guard against concurrent failure recovery
         self._stage_titles: list[str] = []  # stage titles extracted from plan
         self._stage_descriptions: list[list[str]] = []  # bullet points per stage
         self._plan_goal: str = ""  # goal from 📋 Plan for: header
@@ -447,7 +444,6 @@ class _ChatSession(ChatQueue):
         # wanting it exempt from cleanup are different intents.
         self.never_archive: bool = False
         self._pending_subagent_failures: list[str] = []
-        self._recovery_retrigger_count: int = 0
         self._prompt_busy_retries: int = 0
         self._acp_pipe_death_retries: int = 0
         self._empty_response_retries: int = 0  # consecutive empty turns (silent-retry guard)

@@ -662,6 +662,9 @@ Data leaving the running system:
   its own (`memory_writes.asker`, read by the stores, the turn's own learning,
   every request its tools make and the gate an agent CLI's own tools ask), and
   what its memory tools ask for waits for your own Allow (`dashboard/memory_holds.py`).
+  Nor through work that turn starts that outlives it: a workflow run, a loop and
+  a callback record who asked on their own record and are held to it for as long
+  as they last, and an automation is not made on their say-so (`lasting_work.py`).
 
 ## OWASP Agentic Security (ASI) Top-10 mapping
 

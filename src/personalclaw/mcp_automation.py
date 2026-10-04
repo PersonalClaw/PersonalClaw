@@ -473,8 +473,9 @@ def _resolve_resume_target(args: dict[str, Any]) -> tuple[dict[str, Any] | None,
 
 
 #: The tools that make an automation or change one, which the work of an Incognito or Temporary
-#: chat may not do (:mod:`personalclaw.lasting_work`): `triggers.tools` refuses it, and these say
-#: so before anyone is asked to allow the call (:func:`_preflight`).
+#: chat may not do, nor work someone other than the owner asked for
+#: (:mod:`personalclaw.lasting_work`): `triggers.tools` refuses it, and these say so before anyone
+#: is asked to allow the call (:func:`_preflight`).
 _LASTING_ACTS = {
     "automation_create": lasting_work.CREATE,
     "set_onetime_task": lasting_work.CREATE,
@@ -598,24 +599,25 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
 def _preflight(name: str, raw_args: dict[str, Any]) -> Any:
     """What these tools refuse before anyone is asked to approve a call: a tool this leaf may not
     call, and arguments the tool's schema refuses (``mcp_shared.preflight_refusal``), then an
-    automation made or changed for the work of an Incognito or Temporary chat
-    (:data:`_LASTING_ACTS`)."""
+    automation made or changed for the work of an Incognito or Temporary chat, or on someone
+    else's say-so (:data:`_LASTING_ACTS`)."""
     from personalclaw.mcp_shared import preflight_refusal
 
     refused = preflight_refusal(name, raw_args, _validate_args)
     if refused is not None or name not in _LASTING_ACTS:
         return refused
-    why = lasting_work.refusal(lasting_work.AUTOMATION, _LASTING_ACTS[name])
-    return tool_failure(why, code=lasting_work.CODE) if why else None
+    why = lasting_work.refused(lasting_work.AUTOMATION, _LASTING_ACTS[name])
+    return tool_failure(str(why), code=why.code) if why is not None else None
 
 
 def _answered(name: str, args: dict[str, Any]) -> str:
     """A call, its refusal by `triggers.tools` included: an automation made or changed for the work
-    of an Incognito or Temporary chat is answered as the tool's error, in the refusal's words."""
+    of an Incognito or Temporary chat, or on someone else's say-so, is answered as the tool's error,
+    in the refusal's words and under its code."""
     try:
         return _call_tool_inner(name, args)
     except lasting_work.Refused as refused:
-        return tool_failure(str(refused), code=lasting_work.CODE)
+        return tool_failure(str(refused), code=refused.code)
 
 
 def _call_tool(name: str, raw_args: dict[str, Any]) -> str:

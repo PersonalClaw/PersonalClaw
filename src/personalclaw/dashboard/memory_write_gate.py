@@ -9,7 +9,9 @@ security-log row. Such a session's request also runs on the one model its work s
 (``memory_writes.as_work_of``): the model its turn named, so a subagent its agent starts here runs
 on it, and nothing the request does reaches another. Nor does it leave work behind that lasts after
 the chat (:mod:`personalclaw.lasting_work`: a loop, an automation, a callback): that refusal is
-answered ``403 restricted_session``, in its own words.
+answered ``403 restricted_session``, in its own words, and a request on someone else's say-so that
+would make or change an automation, or steer a loop they did not ask for, ``403
+asked_by_someone_else``.
 
 The scope also names the app whose work the request is: the app whose own token made it, or the
 one whose conversation, agent, agent run or scheduled job the session names
@@ -109,8 +111,10 @@ def memory_write_middleware() -> Any:
                 )
                 return web.json_response({"error": refused.reason}, status=403)
             except lasting_work.Refused as refused:
-                # Audited where it was refused. The code is `lasting_work.CODE`, written out for
-                # the wire-code registry's rail.
+                # Audited where it was refused. The codes are `lasting_work.ASKED` and
+                # `lasting_work.CODE`, written out for the wire-code registry's rail.
+                if refused.code == lasting_work.ASKED:
+                    return json_error("asked_by_someone_else", message=str(refused), status=403)
                 return json_error("restricted_session", message=str(refused), status=403)
 
     _mw._is_memory_write_gate = True  # type: ignore[attr-defined]

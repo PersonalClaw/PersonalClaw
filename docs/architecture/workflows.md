@@ -660,6 +660,16 @@ step that would start an agent of its own (`invoke-agent`, `run-prompt`,
 `run-workflow`) is refused in such a run (`engine.dispatch_action`): its agents
 start only as the run's own steps.
 
+A run started in a turn someone other than the owner asked for (a colleague in a
+shared thread) records who asked from its create (`lasting_work.ASKED_BY` in its
+`extra`, written by `store.create` from `memory_writes.asker`; a sub-run and a
+fork keep it, `ownership.inherited_extra`, and a batch keeps it while it waits
+for her Allow, `batch_start`). Its tick loop runs as its own work wherever it is
+resumed from (`run_start.run_context`), and every step, stage and request of it
+reads that record (`lasting_work.asker_of`), so what the run would change of her
+memory is held for her word after the turn has ended and after a restart, and its
+run-end learning takes nothing.
+
 ## Mid-flight mutation
 
 A typed op grammar (`update_node`, `insert`, `delete`, `move`, `skip`, `rewind`,

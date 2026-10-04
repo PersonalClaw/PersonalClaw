@@ -325,11 +325,17 @@ def run_context(run: WorkflowRun) -> contextvars.Context:
     `ownership.run_model`): its nodes reach no other model, its stages are marked and handed that
     model when they are spawned, and the stores refuse its writes. A loop started inside the chat's
     own request had that from the request; one resumed after a restart had nothing, so its stages
-    started unmarked and on any model. Any other run runs in the context that starts it.
+    started unmarked and on any model. So does a run someone other than the owner asked for
+    (`lasting_work.ASKED_BY`): its own work and the stages it starts are held to who asked, as its
+    record says, whoever resumes it. Any other run runs in the context that starts it.
     """
-    mode = ownership.run_mode(run)
-    if mode is ownership.MemoryMode.NORMAL:
-        return contextvars.copy_context()
-    from personalclaw import memory_writes
+    from personalclaw import lasting_work, memory_writes
 
-    return memory_writes.work_context(ownership.owned_key(run.id, "run"), memory_mode=mode.value)
+    mode = ownership.run_mode(run)
+    restricted = mode is not ownership.MemoryMode.NORMAL
+    asked = (getattr(run, "extra", None) or {}).get(lasting_work.ASKED_BY)
+    if not restricted and not lasting_work.recorded(asked):
+        return contextvars.copy_context()
+    return memory_writes.work_context(
+        ownership.owned_key(run.id, "run"), memory_mode=mode.value if restricted else None
+    )

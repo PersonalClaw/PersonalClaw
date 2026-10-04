@@ -64,7 +64,7 @@ STOP_SENTINEL = "STOP"
 
 # JSON-encoded columns (lists/dicts) vs scalar columns. kind_config is a dict blob.
 _LIST_COLS = ("plan", "roster", "skill_ids", "workflow_ids", "linked_task_ids")
-_DICT_COLS = ("phase_status", "strategy_config", "task_list_ids", "kind_config")
+_DICT_COLS = ("phase_status", "strategy_config", "task_list_ids", "kind_config", "asked_by")
 
 
 class TransitionError(RuntimeError):
@@ -160,7 +160,8 @@ def _connect() -> sqlite3.Connection:
             tasks_project_id TEXT NOT NULL DEFAULT '',
             task_list_ids TEXT NOT NULL DEFAULT '{}',
             linked_task_ids TEXT NOT NULL DEFAULT '[]',
-            session_key TEXT NOT NULL DEFAULT ''
+            session_key TEXT NOT NULL DEFAULT '',
+            asked_by TEXT NOT NULL DEFAULT '{}'
         )""")
     # Idempotent column migrations for DBs created before a field was added (the
     # CREATE above is IF NOT EXISTS, so an existing table won't gain new columns).
@@ -184,6 +185,9 @@ def _connect() -> sqlite3.Connection:
             "max_cost_usd": "REAL NOT NULL DEFAULT 0",
             "deadline_secs": "REAL NOT NULL DEFAULT 0",
             "stop_reason": "TEXT NOT NULL DEFAULT ''",
+            # Who asked for it, when the owner did not (`lasting_work.ASKED_BY`): a row made
+            # before it was recorded is the owner's, as `{}` says.
+            "asked_by": "TEXT NOT NULL DEFAULT '{}'",
         },
     )
     conn.commit()
@@ -283,10 +287,16 @@ def create(loop: Loop) -> Loop:
     """Insert a new loop (assigning an id + created_at if unset). Validates kind.
 
     Refused, before anything is written, for the work of an Incognito or Temporary chat: a loop is
-    kept after the chat and works on by itself (:mod:`personalclaw.lasting_work`)."""
+    kept after the chat and works on by itself (:mod:`personalclaw.lasting_work`). One made for a
+    turn someone other than the owner asked for records who did (``asked_by``), so its cycles are
+    held to them for as long as it lasts."""
     lasting_work.refuse(lasting_work.LOOP, lasting_work.CREATE)
     if loop.kind not in KINDS:
         raise ValueError(f"unknown loop kind: {loop.kind!r}")
+    if not loop.asked_by:
+        from personalclaw import memory_writes
+
+        loop.asked_by = memory_writes.asker()
     if not loop.id:
         import uuid
 

@@ -1810,14 +1810,26 @@ def _resolve_review_project_id(explicit: str) -> str:
 
 def _asked_by_someone_else() -> str:
     """Who asked for the turn this call serves, named, when it was not the owner; ``""`` when she
-    did. The gateway's answer for the session the call names (``GET
-    /api/chat/sessions/model-reach``), which reads the turn that session is running: a call made in
-    this process, an agent CLI's tool server, holds no turn of its own. A gateway that does not
-    answer cannot say the owner asked, so the call is not made on her word either."""
+    did (``memory_writes.asker``, which in an agent CLI's tool server is the gateway's answer)."""
+    from personalclaw import memory_writes
+    from personalclaw.turn_source import named
+
+    someone = memory_writes.asker()
+    return named(someone) if someone else ""
+
+
+def asker_from_the_gateway() -> dict[str, str]:
+    """Who asked for the turn the session this call names is running, when the owner did not, as
+    the gateway answers for it (``GET /api/chat/sessions/model-reach``, read by
+    ``lasting_work.recorded``): this process, an agent CLI's tool server, holds no turn of its own,
+    so ``memory_writes.asker`` asks here. A gateway that does not answer cannot say the owner asked,
+    so nothing is done on her word either: the answer names someone no record names."""
+    from personalclaw import lasting_work
+    from personalclaw.turn_source import UNNAMED
+
     reply = _get("/api/chat/sessions/model-reach")
-    if reply.get("error"):
-        return "someone PersonalClaw could not name (the gateway did not say who asked)"
-    return str(reply.get("asked_by") or "")
+    asked = reply.get("asked_by") if not reply.get("error") else None
+    return lasting_work.recorded(asked) if isinstance(asked, dict) else dict(UNNAMED)
 
 
 def _review_transcript(session_key: str) -> list[dict]:

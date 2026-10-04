@@ -1031,6 +1031,32 @@ item vector).
   takes only the owner's words from it, so it runs as before, whoever asked for
   the turn it follows: its gate is asked as the session's own pass, never as that
   turn's work (`chat_utils._maybe_consolidate`).
+- Work such a turn starts that outlives it keeps who asked, for as long as it
+  lasts (`lasting_work.py`). A workflow run, a loop and a callback record the
+  source of whoever asked on their own record when they are made
+  (`lasting_work.ASKED_BY`: a run's `extra`, written where every run is made,
+  `workflows.store.create`, and carried by a sub-run and a fork,
+  `ownership.inherited_extra`; a loop's row, `loop.store.create`; a callback's
+  registration, `webhook_callbacks.register`), and a batch keeps it while it
+  waits for her Allow (`workflows.batch_start`). `memory_writes.asker` reads that
+  record (`lasting_work.asker_of`) for each session along the chain of work it
+  walks, after the turn has ended and after a restart: a run's steps and its own
+  work (which runs as its own, `run_start.run_context`), a loop's workers and
+  planner, a callback's turn, and the run-end and loop-end learners. A turn of
+  such work whose message is the owner's, or that has none (a loop's cycle,
+  started by its nudge), runs as asked for by whoever the record names
+  (`memory_writes.asked_for`), and so does the turn that hands a subagent's
+  report back to its chat, which reads the subagent's mark
+  (`memory_writes.asked_for_work`; a report that waits behind a turn carries it
+  in the queue, `chat_queue.ASKED_FOR_BY`). What any of it would change of her
+  memory is held for her word, or refused where nobody can be asked (an
+  Unattended loop's cycle). A record that cannot be read names someone no record
+  names (`turn_source.UNNAMED`), so its work is held as someone else's. The tool
+  server an agent CLI runs holds no turn, so it asks the gateway who asked
+  (`GET /api/chat/sessions/model-reach`, its `asked_by`). An automation is not
+  made or changed on someone else's say-so at all, and a loop is steered only
+  with the words of whoever asked for it: a tool says so in its error and a route
+  answers `403 asked_by_someone_else`, as a private chat's work is refused them.
 - Every history a model is handed of a conversation names who said each line, by
   the same rule (`turn_source.turn_line`): the owner's line as `User:`, anyone
   else's shown as consolidation shows it, whole and fenced as

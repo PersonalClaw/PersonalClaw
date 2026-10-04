@@ -23,7 +23,7 @@ import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from personalclaw import lasting_work
@@ -44,11 +44,14 @@ RUNS_LABEL = "Agent turn"
 
 @dataclass
 class Callback:
-    """One registration: its id, the context its turn starts from, and when it was saved."""
+    """One registration: its id, the context its turn starts from, when it was saved, and who
+    asked for it when the owner did not (``lasting_work.ASKED_BY``: the source of the message that
+    started the turn that registered it, ``{}`` for the owner's own)."""
 
     id: str
     context_summary: str = ""
     registered_at: float = 0.0
+    asked_by: dict[str, str] = field(default_factory=dict)
 
     @property
     def session_key(self) -> str:
@@ -65,6 +68,8 @@ class Callback:
             id=cid,
             context_summary=context if isinstance(context, str) else "",
             registered_at=float(registered) if isinstance(registered, (int, float)) else 0.0,
+            # Read fail-closed: a record that cannot be read names someone no record names.
+            asked_by=lasting_work.recorded(data.get(lasting_work.ASKED_BY)),
         )
 
 
@@ -113,7 +118,14 @@ def _read() -> dict[str, Callback]:
 def _write(callbacks: dict[str, Callback]) -> None:
     from personalclaw.atomic_write import atomic_json_write
 
-    atomic_json_write(_path(), {"version": 1, "callbacks": [asdict(c) for c in callbacks.values()]})
+    def _entry(callback: Callback) -> dict:
+        entry = asdict(callback)
+        # The owner's own registration records nobody (`lasting_work.ASKED_BY`).
+        if not entry.get(lasting_work.ASKED_BY):
+            entry.pop(lasting_work.ASKED_BY, None)
+        return entry
+
+    atomic_json_write(_path(), {"version": 1, "callbacks": [_entry(c) for c in callbacks.values()]})
 
 
 def list_all() -> list[Callback]:
@@ -131,12 +143,21 @@ def register(callback_id: str, context_summary: str) -> Callback:
     and one re-registered with other context no longer matches the yes it had (`allowed`).
 
     Refused, before anything is written, for the work of an Incognito or Temporary chat: the
-    context would be kept after the chat and start a turn of its own (`lasting_work`)."""
+    context would be kept after the chat and start a turn of its own (`lasting_work`). One
+    registered for a turn someone other than the owner asked for records who did
+    (``memory_writes.asker``), so its turn is held to them, and its Allow says so (:func:`consent`).
+    """
     lasting_work.refuse(lasting_work.CALLBACK, lasting_work.CREATE)
+    from personalclaw import memory_writes
+
+    asked = memory_writes.asker()
     with _locked():
         callbacks = _read()
         callback = Callback(
-            id=callback_id, context_summary=context_summary, registered_at=time.time()
+            id=callback_id,
+            context_summary=context_summary,
+            registered_at=time.time(),
+            asked_by=asked,
         )
         callbacks[callback_id] = callback
         _write(callbacks)
@@ -170,11 +191,20 @@ def disallow(callback: Callback) -> None:
 
 
 def consent(callback: Callback) -> str:
-    """The sentence the owner agrees to when they allow *callback* — product copy."""
-    return (
+    """The sentence the owner agrees to when they allow *callback* — product copy. One registered
+    for a turn someone else asked for says who: its turn is held to them."""
+    allowing = (
         f"Allowing “{callback.id}” lets an outside system that holds your webhook token start an "
         "agent turn with its tools, from the context the agent saved for this callback, as it is "
         "now."
+    )
+    if not callback.asked_by:
+        return allowing
+    from personalclaw.turn_source import named
+
+    return (
+        f"{allowing} It was registered in a turn {named(callback.asked_by)} asked for, so its turn "
+        "changes none of your memory without your own word."
     )
 
 
