@@ -18,18 +18,22 @@ import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryS
 import { useQuery, invalidateKeys } from '../../lib/data'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useVisiblePoll } from '../../lib/useVisiblePoll'
-import { api, type ActionProvider } from '../../lib/api'
+import { api, type ActionProvider, type TriggerSourceUnreadable } from '../../lib/api'
 import { ScheduleDetail } from '../schedule/ScheduleDetail'
 import { LifecycleDetail } from './LifecycleDetail'
 import { StoreTriggerDetail } from './StoreTriggerDetail'
 import { CallbackDetail } from './CallbackDetail'
 import { TriggerReview } from './TriggerReview'
 import { RestoreHoldNotice } from './RestoreHold'
+import { UnreadableNotice } from './UnreadableNotice'
 import { scheduleToTrigger, hookToTrigger, storeToTrigger, callbackToTrigger, relPast, useTriggerVariables, eventIsDormant, eventIsAgentScoped, resolveOpenTrigger, type Trigger } from './triggerMeta'
 import { RungChip } from '../../ui/RungChip'
 import { providerRungIndex, useAutonomyLadder } from '../../lib/rungs'
 import { triggerStatusMeta, explainsCause, relFuture, runSourceMeta } from '../schedule/scheduleMeta'
 import { PageTitle } from '../../ui/PageTitle'
+
+/** No file the page lists from is unreadable: one array, so the memo inputs keep their identity. */
+const NONE_UNREADABLE: TriggerSourceUnreadable[] = []
 
 // One chip per kind `GET /api/triggers` can return: schedule · lifecycle · event · store · callback.
 // `Data events` was missing, so an event trigger — creatable from this page's own form — had no
@@ -87,7 +91,12 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // Schedules carry live next-run/running state → persist:false (instant in-app
   // revisit, but never stale across a hard reload). Hooks + action providers are
   // lifecycle config that rarely changes → persist:true so they survive a reload.
-  const { data: schedules, error: schedulesErr, refresh: refreshSchedules } = useQuery('triggers:schedules', () => api.schedules().then((d) => d.jobs), { persist: false })
+  const { data: scheduleList, error: schedulesErr, refresh: refreshSchedules } = useQuery('triggers:schedules', () => api.schedules(), { persist: false })
+  const schedules = scheduleList?.jobs
+  // The files this page lists from that cannot be read, said above the list: a list read from one
+  // as empty is not "no triggers". Every `/api/triggers` read names them; the schedules read is the
+  // one taken here.
+  const unreadable = scheduleList?.unreadable ?? NONE_UNREADABLE
   const { data: hooks, error: hooksErr, refresh: refreshHooks } = useQuery('triggers:hooks', () => api.hooks(), { persist: true })
   // Issue 610: the badge reads each event's fire path from the server catalog (module-cached).
   const catalog = useTriggerVariables()
@@ -141,6 +150,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // whichever view you last left it in. So does the restore's "Resume them on the Triggers page".
   const reviewPanel = (
     <>
+      <UnreadableNotice sources={unreadable} />
       <RestoreHoldNotice holds={restoreHolds} onResumed={() => { loadSchedules(); loadStores() }} />
       <TriggerReview cards={review} error={reviewErr} onRetry={loadReview}
         onDecided={() => { loadReview(); loadSchedules(); loadStores() }}
@@ -240,7 +250,7 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
     >
       {view === 'week' ? (
         <>
-          {(review.length > 0 || reviewErr != null || restoreHolds.length > 0) && (
+          {(review.length > 0 || reviewErr != null || restoreHolds.length > 0 || unreadable.length > 0) && (
             <div className="mx-auto px-l pt-l" style={{ maxWidth: 'var(--content-width)' }}>{reviewPanel}</div>
           )}
           {/* Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell
@@ -254,7 +264,10 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
           <LoadError what="triggers" error={schedulesErr || hooksErr || storesErr || callbacksErr}
             onRetry={() => { loadSchedules(); refreshHooks(); loadStores(); loadCallbacks() }} />
         ) : triggers === null ? <ListSkeleton rows={6} what="triggers" /> : triggers.length === 0 ? (
-              !q && filter === 'all' ? (
+              // Nothing listed because a file could not be read is not an empty list: the notice
+              // above says what it stops and what to do, and a "No triggers" here would say the
+              // opposite.
+              unreadable.length > 0 ? null : !q && filter === 'all' ? (
                 // GENUINELY EMPTY — the one moment a newcomer has no model of what a trigger is.
                 // A blank create form here opens on the full ontology (four trigger kinds, ~15
                 // lifecycle events, every action provider), so the empty state offers finished

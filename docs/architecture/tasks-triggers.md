@@ -618,6 +618,29 @@ boards, the folders, the dashboard's views and the hooks each have one lock thei
 store and those paths hold — and a store that holds its records in memory keeps,
 when it writes, what another writer put there since it last read the file.
 
+**A file of records that cannot be read is never written over.** Each of those stores reads
+its file through `record_files` (`records`, `read`), which takes one that is there and holds
+no document of its own — not JSON, not UTF-8, not the store's shape, or not openable — as
+unreadable, never as empty: every write refuses with `record_files.Unreadable`, and the file
+stays exactly as it was. A copy of it as it was is kept beside it,
+`<name>.broken-<UTC instant>`; the first read to find it says so in the gateway log, once; and
+the Doctor names it (`automations.store` for `triggers.json`, `durability.store_files` for the
+rest). A read for a list lists nothing, and the Triggers page says why (`GET /api/triggers`'
+`unreadable`), where a list read as empty used to offer "No triggers". A read that would act on
+a row's absence — a fire by id, a review card's automation, an import's list of the rows it
+already has — refuses too, so nothing is decided from a guess: no legacy file is retired as
+imported while none of its rows could be written. A refused write answers `409 store_unreadable`
+over HTTP (`500` for a read it cannot answer), and a tool call answers it as its failure, in the
+same words; a webhook automation's caller is told only that nothing fired (`503`), never where
+the file is or why. A store that holds its records in memory takes a refused change back, so
+what was refused is neither listed nor run; the inbox instead holds an item that arrives
+meanwhile and writes it with what the file holds once it can be read. A writer that runs on its
+own (a hook's status after a tool call, an inbound sender's count, a boot's review card, a
+routing proposal) writes nothing and fails nothing. Absent is safe to write over, and so is a
+file holding nothing. The same rule holds for the grant books (`owner_grants`, the MCP trust
+records), every file under `entity_settings/`, the review cards, the callbacks, and the routing,
+re-benchmark, app-message, pending-edit and learning-decision queues.
+
 A store whose every record is a grant never takes another machine's in by a
 sync: which projects run their scripts (`project_trust.json`), which actions run
 without asking and their undo handles (`autonomy_rungs.json`,

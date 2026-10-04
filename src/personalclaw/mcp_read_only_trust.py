@@ -62,6 +62,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from personalclaw import record_files
+
 logger = logging.getLogger(__name__)
 
 #: The record of the owner's trust, by name under ``grants/``.
@@ -162,29 +164,34 @@ def _identity(path: Path) -> tuple[int, int, int]:
     return (st.st_mtime_ns, st.st_size, st.st_ino)
 
 
-def _servers(record: str) -> dict[str, Any]:
+def _servers(record: str, *, strict: bool = False) -> dict[str, Any]:
     """The ``servers`` a record holds, read again only when the file changed. A record that is
-    absent holds nothing; one that cannot be read is read as holding nothing too, and said: for the
-    trust that fails closed, since a record nobody can read trusts nobody."""
+    absent holds nothing; one that cannot be read is read as holding nothing too, and said (the
+    read keeps a copy of it and says so once): for the trust that fails closed, since a record
+    nobody can read trusts nobody. A write reads it *strict*, and is refused with
+    ``record_files.Unreadable`` rather than replace every other server's record with its one."""
     path = _path(record)
     try:
-        seen = _identity(path)
+        seen: tuple[int, int, int] | None = _identity(path)
     except FileNotFoundError:
         return {}
     except OSError:
-        logger.warning("MCP tool record %s is unreadable; read as holding nothing", path)
-        return {}
+        seen = None
     cached = _reads.get(record)
-    if cached is not None and cached[0] == str(path) and cached[1] == seen:
+    if seen is not None and cached is not None and cached[0] == str(path) and cached[1] == seen:
         return cached[2]
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        logger.warning("MCP tool record %s is unreadable; read as holding nothing", path)
+        data = record_files.read(path, dict)
+        servers = data.get("servers") if data is not None else None
+        if servers is not None and not isinstance(servers, dict):
+            raise record_files.not_the_store(path, 'it is JSON, but its "servers" is not an object')
+    except record_files.Unreadable:
+        if strict:
+            raise
         return {}
-    servers = data.get("servers") if isinstance(data, dict) else None
-    held = dict(servers) if isinstance(servers, dict) else {}
-    _reads[record] = (str(path), seen, held)
+    held = dict(servers or {})
+    if seen is not None:
+        _reads[record] = (str(path), seen, held)
     return held
 
 
@@ -351,7 +358,7 @@ def seal(server: str, tools: Iterable[Any], seen: Mapping[str, str]) -> Sealed:
     from personalclaw.instants import utc_now_iso
 
     with _locked(TRUST_RECORD):
-        servers = dict(_servers(TRUST_RECORD))
+        servers = dict(_servers(TRUST_RECORD, strict=True))
         servers[server] = {"at": utc_now_iso(), "tools": kept}
         _write(TRUST_RECORD, servers)
     return Sealed(sealed=tuple(sorted(kept)), changed_since=tuple(changed_since))
@@ -362,7 +369,7 @@ def _drop(record: str, server: str) -> bool:
     if server not in _servers(record):
         return False
     with _locked(record):
-        servers = dict(_servers(record))
+        servers = dict(_servers(record, strict=True))
         if servers.pop(server, None) is None:
             return False
         _write(record, servers)
@@ -465,13 +472,17 @@ def _note_descriptions(server: str, defs: list[Definition]) -> tuple[str, ...]:
     tools whose description differs from the one seen before. A tool seen for the first time has
     nothing to differ from; one no longer listed keeps what was seen of it."""
     current = {d.name: _sha256(_canonical(d.description)) for d in defs}
-    held = _servers(SEEN_RECORD).get(server)
+    try:
+        held = _servers(SEEN_RECORD, strict=True).get(server)
+    except record_files.Unreadable:
+        # Nothing seen before can be compared, and the record is never written over: no notice.
+        return ()
     before = held if isinstance(held, dict) else {}
     changed = tuple(sorted(n for n, h in current.items() if n in before and before[n] != h))
     if all(before.get(n) == h for n, h in current.items()):
         return changed
     with _locked(SEEN_RECORD):
-        seen = dict(_servers(SEEN_RECORD))
+        seen = dict(_servers(SEEN_RECORD, strict=True))
         entry = seen.get(server)
         merged = dict(entry) if isinstance(entry, dict) else {}
         merged.update(current)

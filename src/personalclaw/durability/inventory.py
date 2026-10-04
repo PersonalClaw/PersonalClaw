@@ -494,7 +494,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         domain=DOMAIN_KNOWLEDGE,
         merge=MERGE_UNION_BY_ID,
         help="comments anchored to file, artifact and planning-doc passages",
-        records=Shape(key="comments"),
+        records=Shape(key="comments", bare=True),
     ),
     # ── work ──
     StateEntry(
@@ -664,7 +664,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         # Synced one automation at a time. A peer's arrive switched off, with nothing of what
         # happened to them there and no grant its owner gave there: its armed fires, run counts,
         # health, alert dedupe and yes are the peer's, not this home's.
-        records=Shape(key="triggers"),
+        records=Shape(key="triggers", bare=True),
         arrives=_trigger_arrives,
         compared=_trigger_compared,
         edit_arrives=_trigger_edit_arrives,
@@ -2377,6 +2377,11 @@ IGNORED: tuple[str, ...] = (
     # search index, rebuilt from the memory files, and a working folder's copy holds memories no
     # store has any more. The Doctor's memory check names each one until the owner removes it,
     # which is where a set-aside copy is reported, rather than here as a path nothing claims.
+    # The same mark is on the copy kept of a store file that could not be read
+    # (`record_files.SET_ASIDE_MARK`): `triggers.json.broken-<UTC instant>` and its kind, beside
+    # the file, which stays where it is and is never written over until it can be read. A copy of
+    # what the file held then, not what any store keeps now; the Doctor names it
+    # (`automations.store`, `durability.store_files`).
     "*.broken-*",
     # The record that this home already settled what an earlier release left OUTSIDE it on this
     # machine (`outside_home.settle_previous_locations`: skills copied home from ~/.agents/skills,

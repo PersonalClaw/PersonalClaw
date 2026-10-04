@@ -67,6 +67,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import record_files
 from personalclaw.triggers import provider, run_source
 from personalclaw.triggers.models import (
     INERT_OUTCOMES,
@@ -813,7 +814,13 @@ async def admit_fire(
 
     count_fire(trigger, at=now)
     if persist:
-        store.upsert(trigger)
+        try:
+            store.upsert(trigger)
+        except record_files.Unreadable:
+            # The store cannot be read, so the grant's write is refused and the fire does not go
+            # ahead: its claim goes too, or the trigger would read as running a run that never ran.
+            claims.release_claim(trigger.id, base_dir=base_dir)
+            raise
     return Admission(decision=decision, row=row)
 
 

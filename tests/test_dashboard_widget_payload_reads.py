@@ -93,7 +93,7 @@ def history_app(tmp_path, monkeypatch):
     live = hooks.get(ran.id)
     # `update()`'s allowlist is CONFIG fields only; the runtime fields are written by `_fire`.
     live.run_count, live.last_run, live.last_status = 7, NOW - 300, "ok"
-    hooks._save()
+    hooks._save_snapshot([h.to_dict() for h in hooks.list_all()])
 
     # The NAME JOIN's real source. `_trigger_names` reads the unified TriggerStore, not
     # `state.crons` — S110 made it store-only — so a fixture that only faked `list_jobs` would leave

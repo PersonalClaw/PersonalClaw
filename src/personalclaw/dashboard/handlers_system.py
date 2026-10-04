@@ -14,7 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 import personalclaw
-from personalclaw import home_gateway
+from personalclaw import home_gateway, record_files
 from personalclaw.config import loader as config_loader
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.stats import Stats
@@ -861,6 +861,10 @@ async def api_onboarding_state(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
     try:
         state = merge_onboarding_state(body)
+    except record_files.Unreadable:
+        # The stored progress cannot be read, so nothing was written: the request boundary says
+        # so (409), where this would call it a malformed request.
+        raise
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     return web.json_response({"ok": True, "state": state})

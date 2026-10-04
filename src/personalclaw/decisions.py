@@ -135,6 +135,19 @@ def _triggers(trigger_store: Any = None) -> Any:
     return TriggerStore(base_dir=config_dir())
 
 
+def _reminders_writable(trigger_store: Any = None) -> None:
+    """Refuse with ``record_files.Unreadable``, before anything is written, while the automations
+    file cannot be read: a decision's review reminder is written there after the decision itself,
+    and refused only then it would leave a decision logged with no reminder, or resolved with its
+    reminder still standing and no lesson, which a second try could not complete."""
+    from personalclaw.triggers.store import TriggerStore, unreadable
+
+    store = _triggers(trigger_store)
+    found = unreadable(store) if isinstance(store, TriggerStore) else None
+    if found is not None:
+        raise found
+
+
 def _memory(memory: Any = None) -> Any:
     """A :class:`MemoryService` over the record store, or *memory* if supplied.
 
@@ -396,6 +409,7 @@ def log_decision(
     # Validating only at the mint would persist a decision and then refuse — leaving an entry
     # with no reminder and no way for the caller to tell that from a successful log.
     _parse_horizon(horizon, now=now)
+    _reminders_writable(trigger_store)
 
     ks = _knowledge_store(store)
     # The ONE true create path: the same call the native provider makes, so a decision is
@@ -588,6 +602,7 @@ def resolve_decision(
             now=now,
         )
 
+    _reminders_writable(trigger_store)
     # An instant with its offset; a naive ``now`` is this machine's local time, as ever.
     captured = (now or datetime.now()).astimezone(timezone.utc).isoformat()
     _write_meta(

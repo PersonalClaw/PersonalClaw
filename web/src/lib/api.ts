@@ -3240,6 +3240,15 @@ export interface HeartbeatTask { text: string; deliver: string; allowed: boolean
  *  does; or a snapshot that does not say. `''` when no restore holds it. */
 export type RestoreHold = '' | 'another_home' | 'this_home' | 'unknown'
 
+/** One file the Triggers page lists from that could not be read (`GET /api/triggers`' `unreadable`,
+ *  `triggers.store.unreadable_said`): which (`file`, from `~`), what that stops and where its copy is
+ *  kept (`said`), and what to do (`remedy`). Nothing is written to such a file until it can be read. */
+export interface TriggerSourceUnreadable {
+  file: string
+  said: string
+  remedy: string
+}
+
 /** One check a web watch made of its page (`triggers/web_poll.py::last_check`). `outcome` is the
  *  backend's `WatchCheck`, `said` the server's sentence for it, and `checks` how many checks in a row
  *  came to it since `since` (UTC instants). `can_fire` is the server's verdict: false while the watch,
@@ -9337,7 +9346,7 @@ export const api = {
   // below speak the schedule wire shape the shared Schedule* components already
   // use; the api layer namespaces the id (schedule:<id>) and routes to /api/triggers.
   triggers: (type?: 'schedule' | 'lifecycle' | 'store') =>
-    get<{ triggers: Trigger[]; server_tz: string; owner?: string }>(
+    get<{ triggers: Trigger[]; server_tz: string; owner?: string; unreadable?: TriggerSourceUnreadable[] }>(
       `/api/triggers${type ? `?type=${type}` : ''}`,
     ),
   // The week-grid projection (AUTO-A3). `start`/`until` are offset-qualified local datetimes; the
@@ -9375,8 +9384,14 @@ export const api = {
     { trigger_type: 'run_completed', ...body, ...(c ? { confirm: true } : {}) })),
   // schedule trigger helpers (id is the bare schedule raw id — the shared
   // Schedule* components mutate by bare id, which the helpers re-namespace).
-  schedules: () => get<{ triggers: Trigger[]; server_tz: string }>('/api/triggers?type=schedule')
-    .then((d) => ({ jobs: d.triggers.map((t) => ({ ...t, id: t.raw_id })) as unknown as ScheduleJob[], server_tz: d.server_tz })),
+  // `unreadable` rides along: every `/api/triggers` read names the files the page lists from that
+  // cannot be read, and this is the read the page makes first.
+  schedules: () => get<{ triggers: Trigger[]; server_tz: string; unreadable?: TriggerSourceUnreadable[] }>('/api/triggers?type=schedule')
+    .then((d) => ({
+      jobs: d.triggers.map((t) => ({ ...t, id: t.raw_id })) as unknown as ScheduleJob[],
+      server_tz: d.server_tz,
+      unreadable: d.unreadable ?? [],
+    })),
   // "Auto-approve tools" is an automation's approval posture: turning it on is asked for in the
   // gateway's words, like a looser config field (`securityConsent.ts`).
   createSchedule: (body: Record<string, unknown>) =>

@@ -39,6 +39,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from personalclaw.config import loader as config_loader
 from personalclaw.resilience.core_server import probe_core_server
+from personalclaw.resilience.store_files import store_file_probes
 from personalclaw.security import redact_or_withhold
 from personalclaw.sqlite_compat import sqlite3
 
@@ -2665,6 +2666,8 @@ def _register_builtin_probes() -> None:
             "Wall-clock timezone for timed triggers",
         )
     )
+    for probe in store_file_probes():
+        register_probe(probe)
     register_probe(
         Probe(
             "automations.legacy_files",

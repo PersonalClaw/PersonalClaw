@@ -1,6 +1,7 @@
 """Dashboard shared state — ChatSession and DashboardState."""
 
 import asyncio
+import copy
 import functools
 import json
 import logging
@@ -1023,6 +1024,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         self._kept_folders = record_files.Kept()
         self._kept_tags = record_files.Kept()
         self._kept_tag_boards = record_files.Kept()
+        self._listed_as_kept: dict[str, list[dict[str, Any]]] = {}  # what a refused write restores
         self._background_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
         # Why the gateway is stopping (`restart_request.stopping_for`), or "" while it serves. Set
         # by `end_running_turns`; a turn that ends after it says it was interrupted.
@@ -2403,46 +2405,41 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
     ]
 
     def load_folders(self) -> None:
-        """Load folder definitions from disk."""
+        """Load folder definitions from disk (one that cannot be read loads none)."""
         path = config_dir() / self._FOLDERS_FILE
         try:
             if path.exists():
-                at = record_files.stamp(path)
-                self._folders = json.loads(path.read_text(encoding="utf-8"))
-                self._kept_folders.took(at, self._folders)
+                self._folders = record_files.loaded(path, self._LISTED, self._kept_folders)
         except Exception:
             logger.warning("Failed to load folders", exc_info=True)
+        self._listed_kept("_folders")
 
     def save_folders(self) -> None:
         """Persist folder definitions to disk (atomic write)."""
-        self._save_listed(config_dir() / self._FOLDERS_FILE, self._kept_folders, self._folders)
+        self._save_listed(config_dir() / self._FOLDERS_FILE, "_folders")
 
     def refresh_folders(self) -> None:
         """Take in what another writer put in ``folders.json`` since this state last read or
         wrote it (:meth:`_take_in_listed`)."""
-        self._take_in_listed(config_dir() / self._FOLDERS_FILE, self._kept_folders, self._folders)
+        self._take_in_listed(config_dir() / self._FOLDERS_FILE, "_folders")
 
     def load_tags(self) -> None:
         """Load tag vocabulary and sidebar columns from disk; seed defaults if missing.
 
         Only seed when ``tags.json`` does not exist. An explicitly-empty file
         is left as-is (so a user who deletes every tag stays at zero tags
-        across restarts), and a parse failure is left untouched (so a
-        transient I/O error never silently overwrites saved data).
+        across restarts), and one that cannot be read loads no tag and is
+        never written over (``record_files.loaded``).
         """
         tags_path = config_dir() / self._TAGS_FILE
         file_existed = tags_path.exists()
         try:
             if file_existed:
-                at = record_files.stamp(tags_path)
-                raw = json.loads(tags_path.read_text(encoding="utf-8"))
-                if isinstance(raw, list):
-                    self._tags = [t for t in raw if isinstance(t, dict) and t.get("id")]
-                    self._kept_tags.took(at, self._tags)
+                raw = record_files.loaded(tags_path, self._LISTED, self._kept_tags)
+                self._tags = [t for t in raw if isinstance(t, dict) and t.get("id")]
         except Exception:
             logger.warning("Failed to load tags", exc_info=True)
-            # Treat a parse error like a present file: do not re-seed.
-            file_existed = True
+        self._listed_kept("_tags")
         if not file_existed and not self._tags:
             # Fresh install (no tags.json on disk) — seed the default vocabulary.
             self._tags = [dict(t) for t in self._DEFAULT_TAGS]
@@ -2453,59 +2450,62 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
         columns_path = config_dir() / self._TAG_BOARDS_FILE
         try:
             if columns_path.exists():
-                at = record_files.stamp(columns_path)
-                raw = json.loads(columns_path.read_text(encoding="utf-8"))
-                if isinstance(raw, list):
-                    self._tag_boards = [c for c in raw if isinstance(c, dict) and c.get("id")]
-                    self._kept_tag_boards.took(at, self._tag_boards)
+                raw = record_files.loaded(columns_path, self._LISTED, self._kept_tag_boards)
+                self._tag_boards = [c for c in raw if isinstance(c, dict) and c.get("id")]
         except Exception:
             logger.warning("Failed to load sidebar columns", exc_info=True)
+        self._listed_kept("_tag_boards")
 
     def save_tags(self) -> None:
         """Persist tag vocabulary to disk (atomic write)."""
-        self._save_listed(config_dir() / self._TAGS_FILE, self._kept_tags, self._tags)
+        self._save_listed(config_dir() / self._TAGS_FILE, "_tags")
 
     def save_tag_boards(self) -> None:
         """Persist sidebar column layout to disk (atomic write)."""
-        self._save_listed(
-            config_dir() / self._TAG_BOARDS_FILE, self._kept_tag_boards, self._tag_boards
-        )
+        self._save_listed(config_dir() / self._TAG_BOARDS_FILE, "_tag_boards")
 
     def refresh_tags(self) -> None:
         """Take in what another writer put in ``tags.json`` since this state last read or wrote
         it (:meth:`_take_in_listed`)."""
-        self._take_in_listed(config_dir() / self._TAGS_FILE, self._kept_tags, self._tags)
+        self._take_in_listed(config_dir() / self._TAGS_FILE, "_tags")
 
     def refresh_tag_boards(self) -> None:
         """Take in what another writer put in ``tag_boards.json`` since this state last read or
         wrote it (:meth:`_take_in_listed`)."""
-        self._take_in_listed(
-            config_dir() / self._TAG_BOARDS_FILE, self._kept_tag_boards, self._tag_boards
-        )
+        self._take_in_listed(config_dir() / self._TAG_BOARDS_FILE, "_tag_boards")
 
     #: The three files are each a bare list of records with an ``id``.
     _LISTED = record_files.Shape()
 
-    def _save_listed(
-        self, path: Path, kept: record_files.Kept, records: list[dict[str, Any]]
-    ) -> None:
-        """Write *records* — the folders, the tags or the boards this state holds — to *path*
-        under its lock, with what another writer put there since this state last read or wrote it
-        kept (``record_files.written``): a sync or a restore's merge writes the same file, and
-        writing the list read before put back the file as it was then."""
+    def _listed_kept(self, name: str) -> None:
+        """The list this state holds as *name* is as its file has it (:meth:`_save_listed`)."""
+        self._listed_as_kept[name] = copy.deepcopy(getattr(self, name))
+
+    def _save_listed(self, path: Path, name: str) -> None:
+        """Write the records this state holds as *name* (its folders, tags or boards, their file
+        known as ``_kept<name>``) to *path* under its lock, with what another writer put there
+        since this state last read or wrote it kept (``record_files.written``): writing the list
+        read before put back the file as it was then. Refused for a file that cannot be read
+        (``record_files.Unreadable``), and the change is taken back too."""
+        kept: record_files.Kept = getattr(self, f"_kept{name}")
+        records = getattr(self, name)
         try:
             record_files.written(
                 path, self._LISTED, kept, records, lambda out: self._atomic_write_json(path, out)
             )
+        except record_files.Unreadable:
+            setattr(self, name, copy.deepcopy(self._listed_as_kept.get(name, [])))
+            raise
         except OSError:
             logger.warning("Failed to write %s", path.name, exc_info=True)
+        self._listed_kept(name)
 
-    def _take_in_listed(
-        self, path: Path, kept: record_files.Kept, records: list[dict[str, Any]]
-    ) -> None:
-        """Bring into *records*, in place, what another writer put in *path* since this state
-        last read or wrote it — a folder, tag or board another machine made, one a restore's merge
-        brought back — unless this state changed the same one since."""
+    def _take_in_listed(self, path: Path, name: str) -> None:
+        """Bring into the records this state holds as *name*, in place, what another writer put
+        in *path* since this state last read or wrote it — a folder, tag or board another machine
+        made, one a restore's merge brought back — unless this state changed the same one since."""
+        kept: record_files.Kept = getattr(self, f"_kept{name}")
+        records = getattr(self, name)
         if not isinstance(records, list):
             return
         held = {r["id"]: r for r in records if isinstance(r, dict) and isinstance(r.get("id"), str)}
@@ -2516,6 +2516,7 @@ class DashboardState(DashboardWebSocketState, DashboardApprovalState):
             return
         if moves:
             records[:] = record_files.with_moves(records, moves)
+            self._listed_kept(name)
 
     @staticmethod
     def _atomic_write_json(path: Path, data: Any) -> None:

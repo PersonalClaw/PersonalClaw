@@ -67,9 +67,11 @@ def _held(row: Any, *, owner: str) -> Any:
 
 
 def _rows(doc: Any) -> list[Any]:
-    """The rows of a trigger store's document, either shape it is written in."""
-    rows = doc.get("triggers") if isinstance(doc, dict) else doc
-    return rows if isinstance(rows, list) else []
+    """The rows of a trigger store's document, either shape it is written in
+    (``triggers.store.STORE_SHAPE``); none for no document."""
+    from personalclaw.triggers.store import STORE_SHAPE
+
+    return (STORE_SHAPE.records(doc) if doc is not None else None) or []
 
 
 def hold(home: Path, held_from: str) -> list[str]:
@@ -79,11 +81,12 @@ def hold(home: Path, held_from: str) -> list[str]:
 
     Reads and writes *home*'s own store, not the active home's: the restore names the home it
     wrote. Under the store's lock, re-read under it, by its one writer (`record_files.rewrite`).
-    An unreadable store is left as it is: this home loads it as empty, so nothing in it runs.
+    An unreadable store is left as it is: this home lists nothing in it, so nothing in it runs,
+    and every write to it is refused until it can be read.
     """
     from personalclaw import record_files
     from personalclaw.triggers.ownership import owner_username
-    from personalclaw.triggers.store import STORE_FILENAME
+    from personalclaw.triggers.store import STORE_FILENAME, STORE_SHAPE
 
     owner = owner_username()
     ids: list[str] = []
@@ -100,7 +103,7 @@ def hold(home: Path, held_from: str) -> list[str]:
         return doc if ids else None
 
     try:
-        record_files.rewrite(Path(home) / STORE_FILENAME, _hold)
+        record_files.rewrite(Path(home) / STORE_FILENAME, _hold, STORE_SHAPE)
     except record_files.Unreadable:
         logger.warning("restore: %s/%s is unreadable; nothing in it is held", home, STORE_FILENAME)
         return []

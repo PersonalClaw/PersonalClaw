@@ -56,6 +56,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.learning.hygiene import MIN_EVIDENCE_DEFAULT, fingerprint
 from personalclaw.record_ids import record_path
@@ -331,10 +332,16 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def load_decisions() -> dict[str, Decision]:
+def load_decisions(*, strict: bool = False) -> dict[str, Decision]:
+    """Every accept and reject remembered, by the content's fingerprint. A file that cannot be
+    read holds none for a lookup (the read keeps a copy of it and says so once); a write reads it
+    *strict*, and is refused with ``record_files.Unreadable`` rather than replace every decision
+    and cooldown it could not read with its one."""
     try:
-        raw = json.loads(_decisions_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = record_files.read(_decisions_path(), dict)
+    except record_files.Unreadable:
+        if strict:
+            raise
         return {}
     out: dict[str, Decision] = {}
     for fp, data in (raw or {}).items():
@@ -361,7 +368,7 @@ def record_decision(prop: Proposal, verdict: str) -> None:
     A repeat rejection escalates the cooldown rather than resetting it: the second
     "no" to the same idea means more than the first.
     """
-    decisions = load_decisions()
+    decisions = load_decisions(strict=True)
     existing = decisions.get(prop.fingerprint)
     rejections = (existing.rejections if existing else 0) + (1 if verdict == "rejected" else 0)
     cooldown = 0.0
@@ -1101,6 +1108,9 @@ def accept(pid: str, *, installer=None, actor: str = "user") -> Proposal:
         from personalclaw.learning import installers
 
         installer = installers.installer_for()
+    # The decision is written after the install, so the store must be writable first: refused
+    # here, nothing is installed, where refused after it the change would be in and still waiting.
+    load_decisions(strict=True)
     try:
         installer(prop)
     except NoProposalInstallerError:

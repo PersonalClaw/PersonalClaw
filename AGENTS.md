@@ -257,7 +257,9 @@ re-invents a shape another touches:
   `resolve_config_dir()` where creating the home would be wrong,
   `uses_default_home()` for a "not against the real home" rail — and it is asked
   when the home is used, never at import);
-  writes via `atomic_write`/`atomic_write_bytes`; reads tolerate missing/corrupt;
+  writes via `atomic_write`/`atomic_write_bytes`; reads tolerate missing/corrupt, and a
+  write never replaces a file it could not read (`record_files.read`/`records` refuse with
+  `Unreadable`, keep a `<name>.broken-<instant>` copy and say so once);
   secrets `mode=0o600`; append-only JSONL trims at 2× cap, keeping the newest rows by
   each row's own time and never by their place in the file, and a merge writes a log in
   time order (`bounded_log`; `test_bounded_log_rail_trims_by_time.py` fails a trim by

@@ -45,6 +45,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.routing import policy
 
@@ -135,22 +136,34 @@ def _resolve_home(home: Path | None) -> Path | None:
     return Path(home) if home is not None else _default_home()
 
 
-def load_queue(home: Path | None = None) -> dict[str, Any]:
-    """Read the queue. A missing/corrupt file reads as an empty queue (never fatal)."""
+def load_queue(home: Path | None = None, *, strict: bool = False) -> dict[str, Any]:
+    """Read the queue. A missing file reads as an empty queue (never fatal), and so does one that
+    cannot be read — not JSON, or ``proposals`` not a list, or ``rejections`` not an object — the
+    read keeping a copy of it and saying so once. Every write, and the Routing tab, read it
+    *strict*: refused with ``record_files.Unreadable`` rather than replace the proposals and the
+    rejections' cooldowns it could not read, or show them as none."""
     resolved = _resolve_home(home)
     if resolved is None:
         return _empty_queue()
+    path = _queue_path(resolved)
     try:
-        data = json.loads(_queue_path(resolved).read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError, TypeError, ValueError):
-        return _empty_queue()
-    if not isinstance(data, dict):
+        data = record_files.read(path, dict)
+        if data is None:
+            return _empty_queue()
+        if not isinstance(data.get("proposals", []), list) or not isinstance(
+            data.get("rejections", {}), dict
+        ):
+            raise record_files.not_the_store(
+                path,
+                'it is JSON, but its "proposals" is not a list or its "rejections" not an object',
+            )
+    except record_files.Unreadable:
+        if strict:
+            raise
         return _empty_queue()
     data.setdefault("version", QUEUE_VERSION)
-    if not isinstance(data.get("proposals"), list):
-        data["proposals"] = []
-    if not isinstance(data.get("rejections"), dict):
-        data["rejections"] = {}
+    data.setdefault("proposals", [])
+    data.setdefault("rejections", {})
     return data
 
 
@@ -318,7 +331,10 @@ def propose(
     if proposed == current:
         return None  # nothing to decide
 
-    queue = load_queue(resolved)
+    try:
+        queue = load_queue(resolved, strict=True)
+    except record_files.Unreadable:
+        return None  # the queue cannot be read, and is never written over (said once, by the read)
     key = suppression_key(use_case, query_class, proposed)
     stamp = _now(now)
     parsed_now = _parse_ts(stamp) or datetime.now(tz=timezone.utc)
@@ -352,9 +368,10 @@ def propose(
     return prop
 
 
-def pending(*, home: Path | None = None) -> list[RoutingProposal]:
-    """Every undecided proposal, oldest first. The inspectable queue a human reviews."""
-    props = [p for p in _records(load_queue(home)) if p.status == "pending"]
+def pending(*, home: Path | None = None, strict: bool = False) -> list[RoutingProposal]:
+    """Every undecided proposal, oldest first. The inspectable queue a human reviews: *strict*
+    for the Routing tab, which says a queue it could not read rather than show it as empty."""
+    props = [p for p in _records(load_queue(home, strict=strict)) if p.status == "pending"]
     return sorted(props, key=lambda p: (p.created_at, p.id))
 
 
@@ -402,7 +419,7 @@ def accept(proposal_id: str, *, home: Path | None = None) -> bool:
     resolved = _resolve_home(home)
     if resolved is None:
         return False
-    queue = load_queue(resolved)
+    queue = load_queue(resolved, strict=True)
     found = _find_pending(queue, proposal_id)
     if found is None:
         return False
@@ -450,7 +467,7 @@ def reject(proposal_id: str, *, home: Path | None = None) -> bool:
     resolved = _resolve_home(home)
     if resolved is None:
         return False
-    queue = load_queue(resolved)
+    queue = load_queue(resolved, strict=True)
     found = _find_pending(queue, proposal_id)
     if found is None:
         return False

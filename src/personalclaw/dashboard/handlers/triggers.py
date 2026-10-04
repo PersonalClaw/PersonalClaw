@@ -24,6 +24,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import record_files
 from personalclaw.config import loader as config_loader
 from personalclaw.config.edit_spec import LOOSEN_TITLE, LooseningAsk
 from personalclaw.dashboard.handlers import trigger_callbacks, trigger_revisions, trigger_runs
@@ -757,8 +758,31 @@ async def api_triggers(request: web.Request) -> web.Response:
     # `owner` mirrors the tasks seam's list response: the page labels a foreign row with its
     # author, and needs to know whose name is not worth showing.
     return web.json_response(
-        {"triggers": triggers, "server_tz": tz_name, "owner": owner_username()}
+        {
+            "triggers": triggers,
+            "server_tz": tz_name,
+            "owner": owner_username(),
+            "unreadable": _unreadable_sources(),
+        }
     )
+
+
+def _unreadable_sources() -> list[dict[str, str]]:
+    """Each file the page lists from that cannot be read — the automations file, the lifecycle
+    triggers', the callbacks' — with what that stops and what to do (``store.unreadable_said``).
+
+    Whatever ``?type=`` asked for: the notice is about the page, and a list that read such a file
+    as empty would otherwise offer the newcomer's "No triggers" over automations that are there.
+    """
+    from personalclaw import hooks, webhook_callbacks
+    from personalclaw.triggers.store import unreadable, unreadable_said
+
+    found = (
+        unreadable(_trigger_store()),
+        hooks.unreadable_file(config_dir()),
+        webhook_callbacks.unreadable(),
+    )
+    return [unreadable_said(f) for f in found if f is not None]
 
 
 # ── create ──
@@ -1522,6 +1546,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         saving = _saving_action(state, kind, raw, body)
     except MaskConflict as exc:
         return web.json_response({"error": str(exc)}, status=409)
+    except record_files.Unreadable:
+        raise  # the store, not the request: answered 409 by the request boundary
     except ValueError as exc:
         return json_error("invalid_request", message=str(exc), status=400)
     # 🔴 Anything that awaits runs BEFORE the revision check (`trigger_revisions`), never after.
@@ -1547,6 +1573,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
         saving = _saving_action(state, kind, raw, body)
     except MaskConflict as exc:
         return web.json_response({"error": str(exc)}, status=409)
+    except record_files.Unreadable:
+        raise  # the store, not the request: answered 409 by the request boundary
     except ValueError as exc:
         return json_error("invalid_request", message=str(exc), status=400)
     # One question for everything this save needs the owner's yes for, so a single "Allow" is never
@@ -1658,6 +1686,8 @@ def _update_lifecycle(
     before = copy.deepcopy(stored) if stored is not None else None
     try:
         hook = store.update(raw, validated)
+    except record_files.Unreadable:
+        raise  # the store, not the request: answered 409 by the request boundary
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     if not hook:

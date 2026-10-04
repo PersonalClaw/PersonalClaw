@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from personalclaw import record_files
 from personalclaw.routing import policy, proposals
 
 USE_CASE = "chat"
@@ -353,14 +354,30 @@ def test_a_missing_queue_reads_as_empty(tmp_path, monkeypatch):
     assert proposals.pending(home=tmp_path) == []
 
 
-@pytest.mark.parametrize("blob", ["{not json", "[]", '{"proposals": 4, "rejections": "no"}', ""])
-def test_a_corrupt_queue_reads_as_empty_and_never_raises(tmp_path, monkeypatch, blob):
+@pytest.mark.parametrize("blob", ["{not json", "[]", '{"proposals": 4, "rejections": "no"}'])
+def test_a_corrupt_queue_reads_as_empty_and_is_never_written_over(tmp_path, monkeypatch, blob):
+    """A queue that cannot be read lists no proposal and is never written over: the proposals in
+    it and every rejection's cooldown would go with a write built without them. An accept or a
+    reject is refused with the reason (the owner's own act); a learned stage's proposal waits."""
     monkeypatch.setattr(proposals, "_default_home", lambda: tmp_path)
-    (tmp_path / "routing_proposals.json").write_text(blob, encoding="utf-8")
+    path = tmp_path / "routing_proposals.json"
+    path.write_text(blob, encoding="utf-8")
+    assert proposals.pending(home=tmp_path) == []
+    with pytest.raises(record_files.Unreadable):
+        proposals.accept("rp-x", home=tmp_path)
+    with pytest.raises(record_files.Unreadable):
+        proposals.reject("rp-x", home=tmp_path)
+    assert _propose(tmp_path) is None
+    assert path.read_text(encoding="utf-8") == blob
+
+
+def test_an_empty_queue_file_is_written_as_no_queue(tmp_path, monkeypatch):
+    """Zero bytes hold nothing to lose: read as no queue, and the next proposal is filed."""
+    monkeypatch.setattr(proposals, "_default_home", lambda: tmp_path)
+    (tmp_path / "routing_proposals.json").write_text("", encoding="utf-8")
     assert proposals.pending(home=tmp_path) == []
     assert proposals.accept("rp-x", home=tmp_path) is False
     assert proposals.reject("rp-x", home=tmp_path) is False
-    # …and a corrupt store still accepts a new proposal rather than wedging.
     assert _propose(tmp_path) is not None
 
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from personalclaw import record_files
 from personalclaw.workflows import attention
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import mutations, store
@@ -48,9 +49,13 @@ def queue_mutation(ctl: RunController, result: mutations.BatchResult, actor: str
     edit held only in the controller's memory with it — the run resumed without it and said
     nothing. The record is the ops as submitted and who submitted them; a new controller prepares
     them again against the spec it meets (`reload_mutations`), as the drain re-verifies anyway.
+
+    Written before it is queued in memory: a run whose queue on disk cannot be read refuses the
+    edit (``record_files.Unreadable``) rather than write it over the edits the file holds, and an
+    edit refused there is not applied either.
     """
+    _save_queue(ctl.run.id, [*ctl._pending_mutations, (result, actor)])
     ctl._pending_mutations.append((result, actor))
-    _save_queue(ctl)
 
 
 def _raw_ops(result: mutations.BatchResult) -> list[dict[str, Any]]:
@@ -58,10 +63,9 @@ def _raw_ops(result: mutations.BatchResult) -> list[dict[str, Any]]:
     return [op.raw or op.to_dict() for op in result.ops]
 
 
-def _save_queue(ctl: RunController) -> None:
+def _save_queue(run_id: str, pending: list[tuple[mutations.BatchResult, str]]) -> None:
     store.write_pending_mutations(
-        ctl.run.id,
-        [{"ops": _raw_ops(result), "actor": actor} for result, actor in ctl._pending_mutations],
+        run_id, [{"ops": _raw_ops(result), "actor": actor} for result, actor in pending]
     )
 
 
@@ -163,8 +167,14 @@ def drain_mutations(ctl: RunController) -> None:
     if not ctl._pending_mutations:
         return
     queued = list(ctl._pending_mutations)
+    try:
+        _save_queue(ctl.run.id, [])
+    except record_files.Unreadable:
+        # The queue on disk cannot be read now, so it is neither cleared nor drained: an edit
+        # applies at most once, and one the file still holds would apply again once it is read.
+        # They wait, in memory, for a drain that can clear it.
+        return
     ctl._pending_mutations.clear()
-    _save_queue(ctl)
     for submitted, actor in queued:
         result = mutations.prepare_batch(
             _raw_ops(submitted), ctl.spec, ctl.instances, effects=ctl._effects

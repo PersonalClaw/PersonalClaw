@@ -10,6 +10,7 @@ import logging
 
 from aiohttp import web
 
+from personalclaw import record_files
 from personalclaw.dashboard import views_store as store
 from personalclaw.request_validation import (
     MISSING,
@@ -47,6 +48,8 @@ async def api_dashboard_views(request: web.Request) -> web.Response:
         icon = string_field(body, "icon")
         try:
             view = store.create_view(name, icon=icon or None)
+        except record_files.Unreadable:
+            raise  # the store, not the request: answered 409 by the request boundary
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
         from dataclasses import asdict
@@ -115,6 +118,8 @@ async def api_dashboard_view_tiles(request: web.Request) -> web.Response:
         view = store.add_tile(view_id, ref, size=size, added_by="user")
     except store.ViewNotFoundError:
         return web.json_response({"error": "view not found"}, status=404)
+    except record_files.Unreadable:
+        raise  # the store, not the request: answered 409 by the request boundary
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     from dataclasses import asdict

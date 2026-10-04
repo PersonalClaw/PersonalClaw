@@ -321,21 +321,19 @@ def _store_path() -> Path:
     return config_dir() / _REPORTS_FILE
 
 
-def load_reports() -> list[ReportDefinition]:
+#: The store's document is the list of definitions itself.
+_REPORTS = record_files.Shape()
+
+
+def load_reports(*, strict: bool = False) -> list[ReportDefinition]:
     """Every persisted definition. A corrupt, truncated or absent file loads as an
     empty list — the scheduler and the API both read this, and an unreadable store
-    must degrade to "no reports", never to a 500 or a dead gateway."""
+    must degrade to "no reports", never to a 500 or a dead gateway. A write reads it
+    *strict*: it refuses with ``record_files.Unreadable`` rather than replace the
+    definitions it could not read."""
     path = _store_path()
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return []
-    except (OSError, json.JSONDecodeError, ValueError):
-        logger.warning("Unreadable research-report store at %s, treating as empty", path)
-        return []
-    if not isinstance(raw, list):
-        logger.warning("Research-report store at %s is not a list, treating as empty", path)
-        return []
+    read = record_files.records if strict else record_files.records_or_empty
+    raw = read(path, _REPORTS)
     out: list[ReportDefinition] = []
     for row in raw:
         if isinstance(row, dict) and _as_str(row.get("id")):
@@ -382,7 +380,7 @@ def save_report(defn: ReportDefinition) -> ReportDefinition:
         defn.created_ts = time.time()
     defn.iteration_cap = _clamp_iteration_cap(defn.iteration_cap)
     with record_files.locked(_store_path()):
-        defns = [d for d in load_reports() if d.id != defn.id]
+        defns = [d for d in load_reports(strict=True) if d.id != defn.id]
         defns.append(defn)
         _write(defns)
     # The schedule is attached HERE rather than in the handler, because this is the one home
@@ -395,7 +393,7 @@ def save_report(defn: ReportDefinition) -> ReportDefinition:
 
 def delete_report(report_id: str) -> bool:
     with record_files.locked(_store_path()):
-        defns = load_reports()
+        defns = load_reports(strict=True)
         kept = [d for d in defns if d.id != report_id]
         if len(kept) == len(defns):
             return False
@@ -474,7 +472,7 @@ def record_run(
     runner's bookkeeping raise.
     """
     with record_files.locked(_store_path()):
-        defns = load_reports()
+        defns = load_reports(strict=True)
         target = next((d for d in defns if d.id == report_id), None)
         if target is None:
             logger.warning("record_run for unknown research report %s, ignoring", report_id)

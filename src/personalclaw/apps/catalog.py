@@ -1854,17 +1854,25 @@ def updates_available() -> list[dict[str, Any]]:
     return out
 
 
-def _load_notified() -> dict[str, str]:
+def _load_notified() -> dict[str, str] | None:
     """The per-app high-water mark of the latest version we've already notified about
-    (``entity_settings/app_updates.json`` → ``{"notified": {name: version}}``). Tolerant:
-    an unreadable/corrupt file means we've announced nothing (fail open — a duplicate
-    notification is a lesser evil than a silently-swallowed one)."""
-    try:
-        from personalclaw.providers.entity_routes import _load_entity_settings
+    (``entity_settings/app_updates.json`` → ``{"notified": {name: version}}``). Tolerant: a
+    read that fails another way means we've announced nothing (fail open — a duplicate
+    notification is a lesser evil than a silently-swallowed one).
 
-        # Fail-OPEN on a discarded read (`or {}`) — the choice the docstring above states.
-        data = _load_entity_settings(_APP_UPDATES_ENTITY) or {}
-        notified = data.get("notified")
+    None when the file is there and cannot be read. It is never written over then
+    (``_save_entity_settings`` refuses), so no mark could be kept and every read of the Apps page
+    would announce each update again: none is announced until it can be read. The Apps page
+    still lists every update. A file holding nothing holds no mark, and is written over."""
+    try:
+        from personalclaw import record_files
+        from personalclaw.providers.entity_routes import _entity_settings_path
+
+        try:
+            data = record_files.read(_entity_settings_path(_APP_UPDATES_ENTITY), dict)
+        except record_files.Unreadable:
+            return None
+        notified = (data or {}).get("notified")
         return {str(k): str(v) for k, v in notified.items()} if isinstance(notified, dict) else {}
     except Exception:
         logger.debug("app-update notified state unreadable", exc_info=True)
@@ -1899,6 +1907,8 @@ def surface_app_updates(state: Any) -> list[dict[str, Any]]:
         notified = _load_notified()
     except Exception:
         notified = {}
+    if notified is None:
+        return updates
     changed = False
     for u in updates:
         name = u["name"]

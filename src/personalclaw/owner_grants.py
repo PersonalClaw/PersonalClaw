@@ -11,21 +11,20 @@ edit to what a granted trigger runs is (`triggers.grants.narrow`).
 🔴 ONLY THE OWNER'S SURFACES WRITE A BOOK, and each asks first (`http_errors.consent_required`).
 `grants/` is an owner-only path (`owner_only`): the OS sandbox around the agent's shell refuses
 the write, the tool-call screen refuses a call that names it, and no file root reaches into it.
-A book that cannot be read grants nothing.
+A book that cannot be read grants nothing, and is never written over: a give is refused until it
+can be read.
 """
 
 from __future__ import annotations
 
 import fcntl
 import hashlib
-import json
-import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from personalclaw import record_files
 
 #: The directory under the home the books live in (an `owner_only.OWNER_ONLY_DIRS` entry).
 GRANTS_DIR = "grants"
@@ -55,20 +54,28 @@ class GrantBook:
 
         return record_path(grants_dir(), self._name, kind="grant book")
 
-    def _read(self) -> dict[str, dict]:
+    def _read(self, *, strict: bool = False) -> dict[str, dict]:
+        """The book's grants, by key.
+
+        Fail closed: a book that cannot be read holds nothing for a question, so nothing it
+        recorded runs until it can be read. And never written over: a write reads it *strict* and
+        is refused with ``record_files.Unreadable``, because writing one yes over it would replace
+        every other yes it holds. The failed read keeps a copy of it and says so, once.
+        """
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
+            data = record_files.read(self.path, dict)
+            grants = data.get("grants") if data is not None else None
+            if grants is not None and not isinstance(grants, dict):
+                raise record_files.not_the_store(
+                    self.path, 'it is JSON, but its "grants" is not an object'
+                )
+        except record_files.Unreadable:
+            if strict:
+                raise
             return {}
-        except (OSError, ValueError):
-            # Fail closed: an unreadable book is read as holding nothing, so nothing it recorded
-            # runs until the owner allows it again.
-            logger.warning("grants: %s is unreadable; nothing in it is allowed", self.path)
-            return {}
-        grants = data.get("grants") if isinstance(data, dict) else None
-        if not isinstance(grants, dict):
-            return {}
-        return {k: v for k, v in grants.items() if isinstance(k, str) and isinstance(v, dict)}
+        return {
+            k: v for k, v in (grants or {}).items() if isinstance(k, str) and isinstance(v, dict)
+        }
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
@@ -97,12 +104,13 @@ class GrantBook:
         """Record the owner's yes to *key* as *content* stands. Only an owner surface calls this,
         after its question."""
         with self._locked():
-            grants = self._read()
+            grants = self._read(strict=True)
             grants[key] = {"seal": seal(content), "at": datetime.now(timezone.utc).isoformat()}
             self._write(grants)
 
     def revoke(self, key: str) -> None:
-        """Forget the yes recorded under *key* (the thing it was for is gone)."""
+        """Forget the yes recorded under *key* (the thing it was for is gone). A book that cannot
+        be read is left as it is: nothing in it is allowed meanwhile, and nothing is written."""
         with self._locked():
             grants = self._read()
             if grants.pop(key, None) is not None:

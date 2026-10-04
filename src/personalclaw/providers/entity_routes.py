@@ -18,6 +18,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.http_errors import json_error
@@ -61,33 +62,33 @@ def _load_entity_settings(entity: str) -> dict[str, Any] | None:
     Every call site states its own choice in code (AGENTS.md §"Shared conventions"):
     availability surfaces read a discard as empty (``… or {}``), and a surface whose default
     performs something irreversible refuses instead — see :func:`load_inbox_settings`, the
-    one such surface today.
+    one such surface today. Either way the discard is never written over: a caller that saves
+    what it built on ``None`` is refused by :func:`_save_entity_settings`, so the file stays as
+    it is, with a copy of it kept, until it can be read.
     """
     path = _entity_settings_path(entity)
     if not path.is_file():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
-        logger.warning(
-            "Discarding unreadable entity settings for %s at %s: %s",
-            entity,
-            path,
-            exc,
-        )
+        data = record_files.read(path, dict)
+    except record_files.Unreadable:
+        # Kept, and said once in the log, by the read itself.
         return None
-    if not isinstance(data, dict):
-        logger.warning(
-            "Discarding non-object entity settings for %s at %s",
-            entity,
-            path,
-        )
-        return None
+    # A file holding nothing records no choice either, so nothing is known: unusable, not absent.
     return data
 
 
 def _save_entity_settings(entity: str, settings: dict[str, Any]) -> None:
+    """Write *entity*'s settings, the whole document.
+
+    Refused with ``record_files.Unreadable``, writing nothing, while the file there cannot be
+    read: the *settings* were built on a read that saw none of it (``_load_entity_settings``
+    answered ``None``, which every caller reads as its defaults), so writing them would replace
+    whatever it holds. The one writer every store under ``entity_settings/`` writes through, so
+    each gets the rule once.
+    """
     path = _entity_settings_path(entity)
+    record_files.read(path, dict)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(settings, indent=2) + "\n")
 

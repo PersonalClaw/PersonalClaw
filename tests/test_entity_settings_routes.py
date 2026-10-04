@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from personalclaw import record_files
 from personalclaw.agents import routing
 from personalclaw.providers import entity_routes as er
 
@@ -56,6 +57,11 @@ async def _json(resp):
 # distinction the loader now publishes.
 
 
+def _found_unreadable(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """What the store-file reader said of a file it could not read (``record_files``)."""
+    return [r for r in caplog.records if r.name == "personalclaw.record_files"]
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -69,20 +75,20 @@ def test_corrupt_agent_routing_settings_read_as_empty_with_one_warning(payload, 
     path = er._entity_settings_path(entity)
     path.write_bytes(payload)
 
-    # The loader says only "this file was there and is unusable" — it does not answer the
-    # question with a permissive default on the caller's behalf.
-    assert er._load_entity_settings(entity) is None
-    caplog.clear()  # that probe warned too; the count below is about the routing read
-
-    # `agents/routing.py` reads that as empty, ON PURPOSE: a suppression store it cannot read
-    # means nothing is suppressed, and the cost of that is one extra routing notice.
-    with caplog.at_level(logging.WARNING, logger=er.__name__):
+    with caplog.at_level(logging.WARNING, logger="personalclaw.record_files"):
+        # The loader says only "this file was there and is unusable" — it does not answer the
+        # question with a permissive default on the caller's behalf.
+        assert er._load_entity_settings(entity) is None
+        # `agents/routing.py` reads that as empty, ON PURPOSE: a suppression store it cannot
+        # read means nothing is suppressed, and the cost of that is one extra routing notice.
         assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
 
-    warnings = [record for record in caplog.records if record.name == er.__name__]
+    # Said once, however often the file is read, naming it; and a copy of it as it was is kept.
+    warnings = _found_unreadable(caplog)
     assert len(warnings) == 1
     assert entity in warnings[0].getMessage()
     assert str(path) in warnings[0].getMessage()
+    assert [c.read_bytes() for c in record_files.kept_copies(path)] == [payload]
 
 
 def test_non_object_agent_routing_settings_read_as_empty_with_one_warning(caplog):
@@ -90,13 +96,11 @@ def test_non_object_agent_routing_settings_read_as_empty_with_one_warning(caplog
     path = er._entity_settings_path(entity)
     path.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
 
-    assert er._load_entity_settings(entity) is None
-    caplog.clear()  # that probe warned too; the count below is about the routing read
-
-    with caplog.at_level(logging.WARNING, logger=er.__name__):
+    with caplog.at_level(logging.WARNING, logger="personalclaw.record_files"):
+        assert er._load_entity_settings(entity) is None
         assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
 
-    warnings = [record for record in caplog.records if record.name == er.__name__]
+    warnings = _found_unreadable(caplog)
     assert len(warnings) == 1
     assert entity in warnings[0].getMessage()
     assert str(path) in warnings[0].getMessage()
@@ -111,10 +115,10 @@ def test_absent_entity_settings_read_as_empty_without_warning(caplog):
     """
     assert er._load_entity_settings("agent_routing") == {}
 
-    with caplog.at_level(logging.WARNING, logger=er.__name__):
+    with caplog.at_level(logging.WARNING, logger="personalclaw.record_files"):
         assert routing.is_suppressed("dba", now=0.0, cooldown_hours=24.0) is False
 
-    assert [record for record in caplog.records if record.name == er.__name__] == []
+    assert _found_unreadable(caplog) == []
 
 
 # ── inbox: a discarded read must never resolve to a MORE DESTRUCTIVE value than the stored ──

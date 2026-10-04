@@ -47,6 +47,7 @@ from typing import Any
 
 from personalclaw import bounded_log, notification_addressing
 from personalclaw import notification_kinds as nk
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.safety_flags import strict_bool
@@ -348,15 +349,9 @@ def load_rules() -> dict[str, Any]:
     reflects the keyword/name-mention alerts the user had configured.
     """
     _backfill_inbox_alerts()
-    path = _rules_path()
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        logger.warning("notification_rules.json unreadable — using registry defaults")
-        return {}
-    return data if isinstance(data, dict) else {}
+    # An unreadable file reads as the registry defaults; the read keeps a copy of it and says so
+    # once, and no save writes over it (:func:`save_rules`).
+    return record_files.read_or_none(_rules_path(), dict) or {}
 
 
 def _backfill_inbox_alerts() -> None:
@@ -414,7 +409,11 @@ def _backfill_inbox_alerts() -> None:
 
 
 def save_rules(doc: dict[str, Any]) -> None:
+    """Write the rules document. Refused (``record_files.Unreadable``), writing nothing, while the
+    file there cannot be read: *doc* was built on a read that saw none of it (:func:`load_rules`),
+    so writing it would replace every rule and the digest schedule."""
     path = _rules_path()
+    record_files.read(path, dict)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(doc, indent=2) + "\n")
 

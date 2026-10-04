@@ -35,6 +35,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
@@ -124,17 +125,16 @@ def _locked(base_dir: Path | str | None) -> Iterator[None]:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def _read(base_dir: Path | str | None) -> list[ReviewCard]:
-    path = _path(base_dir)
-    if not path.exists():
-        return []
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        logger.warning("trigger review %s is unreadable; starting it empty", path)
-        return []
-    cards = raw.get("cards") if isinstance(raw, dict) else None
-    return [ReviewCard.from_dict(c) for c in cards or [] if isinstance(c, dict)]
+#: Where the file keeps its cards.
+_CARDS = record_files.Shape(key="cards")
+
+
+def _read(base_dir: Path | str | None, *, strict: bool = False) -> list[ReviewCard]:
+    """The cards pending. A file that cannot be read lists none (the read keeps a copy of it and
+    says so once); a write reads it *strict*, and is refused with ``record_files.Unreadable``
+    rather than replace every card waiting in it with its own."""
+    read = record_files.records if strict else record_files.records_or_empty
+    return [ReviewCard.from_dict(c) for c in read(_path(base_dir), _CARDS) if isinstance(c, dict)]
 
 
 def _write(cards: list[ReviewCard], base_dir: Path | str | None) -> None:
@@ -364,7 +364,7 @@ def record(cards: list[ReviewCard], *, base_dir: Path | str | None = None) -> li
     """
     try:
         with _locked(base_dir):
-            held = _read(base_dir)
+            held = _read(base_dir, strict=True)
             for card in cards:
                 _merge(held, card)
             if cards:
@@ -388,7 +388,7 @@ def take_unannounced(*, base_dir: Path | str | None = None) -> list[ReviewCard]:
     """
     try:
         with _locked(base_dir):
-            held = _read(base_dir)
+            held = _read(base_dir, strict=True)
             owed = [card for card in held if card.unannounced]
             if not owed:
                 return []
@@ -404,7 +404,7 @@ def take_unannounced(*, base_dir: Path | str | None = None) -> list[ReviewCard]:
 def take(trigger_id: str, kind: str, *, base_dir: Path | str | None = None) -> ReviewCard | None:
     """Remove and return the card for `trigger_id`/`kind`, or None when there is none."""
     with _locked(base_dir):
-        held = _read(base_dir)
+        held = _read(base_dir, strict=True)
         found = next((c for c in held if c.trigger_id == trigger_id and c.kind == kind), None)
         if found is None:
             return None
@@ -416,7 +416,7 @@ def forget(trigger_id: str, *, base_dir: Path | str | None = None) -> None:
     """Drop every card about a trigger that no longer exists. Never raises."""
     try:
         with _locked(base_dir):
-            held = _read(base_dir)
+            held = _read(base_dir, strict=True)
             kept = [c for c in held if c.trigger_id != trigger_id]
             if len(kept) != len(held):
                 _write(kept, base_dir)

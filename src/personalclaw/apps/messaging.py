@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from personalclaw import bounded_log
+from personalclaw import bounded_log, record_files
 from personalclaw.apps.manager import _validate_app_name
 from personalclaw.apps.permissions import checker_for
 from personalclaw.atomic_write import atomic_write
@@ -94,16 +94,16 @@ def _queue_path(app_name: str) -> Path:
     return config_dir() / _QUEUE_DIRNAME / f"{_validate_app_name(app_name)}.json"
 
 
-def read_queue(target: str) -> list[dict[str, str]]:
-    """The target's queued messages (empty list if none / unreadable)."""
-    path = _queue_path(target)
-    if not path.is_file():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-    return data if isinstance(data, list) else []
+#: A target's inbox file is the list of its messages itself.
+_QUEUE = record_files.Shape()
+
+
+def read_queue(target: str, *, strict: bool = False) -> list[dict[str, str]]:
+    """The target's queued messages (empty list if none / unreadable; the read keeps a copy of a
+    file that cannot be read and says so once). A write reads it *strict*, and is refused with
+    ``record_files.Unreadable`` rather than replace every message waiting in it with its one."""
+    read = record_files.records if strict else record_files.records_or_empty
+    return read(_queue_path(target), _QUEUE)
 
 
 def drain_queue(target: str) -> list[dict[str, str]]:
@@ -122,7 +122,7 @@ def drain_queue(target: str) -> list[dict[str, str]]:
 def _append_to_queue(target: str, msg: AppMessage) -> None:
     path = _queue_path(target)
     path.parent.mkdir(parents=True, exist_ok=True)
-    queue = read_queue(target)
+    queue = read_queue(target, strict=True)
     queue.append(msg.to_dict())
     # Retain the newest N by each message's own time, so a target's inbox can't grow without bound.
     if len(queue) > _MAX_QUEUE:

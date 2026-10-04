@@ -417,7 +417,7 @@ def app_with_all_kinds(tmp_path, monkeypatch):
     # `update()`'s allowlist is CONFIG fields only — the runtime fields are written by `_fire`
     # (hooks.py:712), so a fixture has to set them the way the runtime does.
     live.run_count, live.last_run, live.last_status = 7, NOW - 300, "ok"
-    hooks._save()
+    hooks._save_snapshot([h.to_dict() for h in hooks.list_all()])
     hooks.create({"name": "never", "event": "Stop", "provider": "run-prompt"})
 
     # A data-event trigger: a row in the one store, whose fire (`r3` below) is a ledger row.

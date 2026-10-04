@@ -40,6 +40,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from personalclaw import record_files
 from personalclaw.config import loader as config_loader
 
 
@@ -65,7 +66,7 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
     cron has no `next_fire_at`, and `due_ids` only surfaces rows that have one), and arming before
     importing has nothing to arm.
     """
-    from personalclaw.triggers.store import TriggerStore
+    from personalclaw.triggers.store import TriggerStore, unreadable
 
     # Resolved through THIS module's `config_dir` so there is exactly one place to redirect the
     # boot migration's home — which is what `tests/conftest.py::_isolate_trigger_store` patches.
@@ -75,6 +76,11 @@ def migrate_and_arm(base_dir: Path | str | None = None, *, now: float = 0.0) -> 
     except Exception:  # noqa: BLE001 - boot must survive an unusable home
         logger.warning("trigger store unavailable; skipping cron migration", exc_info=True)
         return {"ok": False, "reason": "store unavailable", "converted": 0, "armed": []}
+    if unreadable(store) is not None:
+        # Every step below writes the store, which refuses while it cannot be read (the read has
+        # said why, once, in the log). Nothing is imported or armed, and no legacy file is retired:
+        # one renamed as imported while none of its rows landed would never be read again.
+        return {"ok": False, "reason": "triggers.json cannot be read", "converted": 0, "armed": []}
 
     # Before the cron import, and independent of it: a home can hold a legacy `event_triggers.json`
     # with no `crons.json`, and a cron import that fails must not strand the user's event triggers.
@@ -220,7 +226,12 @@ def absorb_event_triggers(store: Any, *, now: float = 0.0) -> int:
 
     absorbed = 0
     waiting = 0
-    existing = {row.trigger.id for row in store.load()}
+    try:
+        existing = {row.trigger.id for row in store.load(strict=True)}
+    except record_files.Unreadable:
+        # Every row would be refused, and the file then retired as imported: left as it is.
+        logger.warning("%s is left unread: the automations file cannot be read", legacy)
+        return 0
     for item in rows:
         if not isinstance(item, dict) or not str(item.get("id") or "").strip():
             continue

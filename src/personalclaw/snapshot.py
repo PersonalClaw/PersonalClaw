@@ -16,7 +16,7 @@ import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 from personalclaw import bounded_log
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes, private_file
@@ -1127,22 +1127,20 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
     meanwhile is neither lost nor written over.
     """
     from personalclaw import record_files
-    from personalclaw.triggers.store import arrived_from_another_home
+    from personalclaw.triggers.store import STORE_SHAPE, arrived_from_another_home
 
-    src = json.loads(src_path.read_text())
+    src = record_files.read(src_path)
+    arriving = [t for t in record_files.records(src_path, STORE_SHAPE) if isinstance(t, dict)]
     imported = 0
 
-    def _bring(dst: dict | None) -> dict | None:
+    def _bring(dst: Any) -> Any:
         nonlocal imported
         here = dst is not None
-        doc: dict = (
-            dst
-            if dst is not None
-            else {**{key: value for key, value in src.items() if key != "triggers"}, "triggers": []}
-        )
-        existing_names = {str(t.get("name") or "") for t in doc.get("triggers", [])}
-        existing_ids = {str(t.get("id") or "") for t in doc.get("triggers", [])}
-        for trigger in src.get("triggers", []):
+        held = STORE_SHAPE.records(dst) if here else None
+        rows = [t for t in held or [] if isinstance(t, dict)]
+        existing_names = {str(t.get("name") or "") for t in rows}
+        existing_ids = {str(t.get("id") or "") for t in rows}
+        for trigger in arriving:
             name = str(trigger.get("name") or "")
             if not name or name in existing_names:
                 continue
@@ -1156,12 +1154,15 @@ def _merge_triggers(src_path: Path, dst_path: Path) -> None:
             row["id"] = candidate
             existing_ids.add(candidate)
             existing_names.add(name)
-            doc.setdefault("triggers", []).append(row)
+            rows.append(row)
             imported += 1
-        return doc if imported or not here else None
+        if here and not imported:
+            return None
+        outside = {k: v for k, v in src.items() if k != "triggers"} if isinstance(src, dict) else {}
+        return STORE_SHAPE.document(dst if here else outside, rows)
 
-    record_files.rewrite(dst_path, _bring)
-    total = len(src.get("triggers", []))
+    record_files.rewrite(dst_path, _bring, STORE_SHAPE)
+    total = len(arriving)
     print(
         f"  Automations imported: {imported} (skipped {total - imported} duplicates) "
         f"— imported rows arrive PAUSED; review and enable them"

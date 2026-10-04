@@ -1357,6 +1357,19 @@ def _hook_form(record: dict) -> dict:
     return ScriptHook.from_dict(record).to_dict()
 
 
+def unreadable_file(config_dir: Path | None = None) -> record_files.Unreadable | None:
+    """Why ``hooks.json`` cannot be read now, or None when it can (or is not there): what the
+    Triggers page says in place of a list of lifecycle triggers that would read as none. While it
+    cannot be read, none of them is loaded and none is written (:class:`ScriptHookStore`)."""
+    from personalclaw.config.loader import config_dir as _cfg_dir
+
+    try:
+        record_files.records((config_dir or _cfg_dir()) / _HOOKS_FILE, _HOOKS)
+    except record_files.Unreadable as found:
+        return found
+    return None
+
+
 class ScriptHookStore:
     """Persist script hooks to ~/.personalclaw/hooks.json.
 
@@ -1385,28 +1398,17 @@ class ScriptHookStore:
         ``AttributeError`` here, the store never loaded, and no lifecycle trigger ran. Callbacks
         have their own file now (`webhook_callbacks`), and nothing but hooks is written to this
         one: by this store, and by a sync or a restore's merge bringing hooks in.
+
+        A file that cannot be read loads no hook, and is never written over: every write refuses
+        until it can be read (``record_files.loaded``), and :func:`unreadable_file` says why.
         """
-        if not self._path.exists():
-            return
-        at = record_files.stamp(self._path)
-        try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to load hooks: %s", exc)
-            return
-        entries = data.get("hooks") if isinstance(data, dict) else None
-        if not isinstance(entries, list):
-            if entries is not None or not isinstance(data, dict):
-                logger.warning("hooks.json holds no list of lifecycle triggers; none loaded")
-            return
-        for entry in entries:
+        for entry in record_files.loaded(self._path, _HOOKS, self._kept):
             try:
                 hook = ScriptHook.from_dict(entry)
             except (AttributeError, TypeError, ValueError):
                 logger.warning("hooks.json: skipping an entry that is not a lifecycle trigger")
                 continue
             self._hooks[hook.id] = hook
-        self._kept.took(at, self._held())
 
     def _held(self) -> list[dict]:
         return [h.to_dict() for h in self._hooks.values()]
@@ -1425,8 +1427,12 @@ class ScriptHookStore:
             except (AttributeError, TypeError, ValueError):
                 logger.warning("hooks.json: skipping an entry that is not a lifecycle trigger")
 
-    def _save(self) -> None:
-        self._save_snapshot(self._held())
+    def _commit(self, hooks: dict[str, ScriptHook]) -> None:
+        """Write *hooks* as the lifecycle triggers, and hold them once they are written. A write
+        refused because ``hooks.json`` cannot be read (``record_files.Unreadable``) leaves the store
+        holding what it held: a trigger whose save was refused is neither listed nor run."""
+        self._save_snapshot([h.to_dict() for h in hooks.values()])
+        self._hooks = hooks
 
     def list_all(self) -> list[ScriptHook]:
         self._take_in()
@@ -1445,8 +1451,7 @@ class ScriptHookStore:
         hook = ScriptHook.from_dict(data)
         if not hook.id:
             hook.id = str(uuid.uuid4())[:8]
-        self._hooks[hook.id] = hook
-        self._save()
+        self._commit({**self._hooks, hook.id: hook})
         return hook
 
     def update(self, hook_id: str, data: dict) -> ScriptHook | None:
@@ -1454,8 +1459,8 @@ class ScriptHookStore:
         Incognito or Temporary chat, as :meth:`create` is."""
         lasting_work.refuse(lasting_work.AUTOMATION, lasting_work.CHANGE)
         self._take_in()
-        hook = self._hooks.get(hook_id)
-        if not hook:
+        held = self._hooks.get(hook_id)
+        if not held:
             return None
         if "event" in data and data["event"] not in HOOK_EVENTS:
             raise ValueError(f"invalid event: {data['event']}")
@@ -1465,6 +1470,7 @@ class ScriptHookStore:
                 raise ValueError("timeout must be an integer between 1 and 300")
         if "provider_config" in data and not isinstance(data["provider_config"], dict):
             raise ValueError("provider_config must be an object")
+        hook = ScriptHook.from_dict(held.to_dict())
         # `capabilities` is written by the grant path alone (`triggers.grants`): the handler builds
         # this patch from the fields a save may change, and the grant is not one of them.
         for k in (
@@ -1479,24 +1485,23 @@ class ScriptHookStore:
         ):
             if k in data:
                 setattr(hook, k, data[k])
-        self._save()
+        self._commit({**self._hooks, hook_id: hook})
         return hook
 
     def delete(self, hook_id: str) -> bool:
         self._take_in()
         if hook_id in self._hooks:
-            del self._hooks[hook_id]
-            self._save()
+            self._commit({k: h for k, h in self._hooks.items() if k != hook_id})
             return True
         return False
 
     def toggle(self, hook_id: str) -> ScriptHook | None:
         self._take_in()
-        hook = self._hooks.get(hook_id)
-        if not hook:
+        held = self._hooks.get(hook_id)
+        if not held:
             return None
-        hook.enabled = not hook.enabled
-        self._save()
+        hook = replace(ScriptHook.from_dict(held.to_dict()), enabled=not held.enabled)
+        self._commit({**self._hooks, hook_id: hook})
         return hook
 
     async def fire(
@@ -1663,8 +1668,17 @@ class ScriptHookStore:
                 result.duration_ms,
                 result.exit_code,
             )
+        if not results:
+            # Nothing ran, so nothing of a hook changed: no write.
+            return results
         hooks_snapshot = [h.to_dict() for h in self._hooks.values()]
-        await asyncio.to_thread(self._save_snapshot, hooks_snapshot)
+        try:
+            await asyncio.to_thread(self._save_snapshot, hooks_snapshot)
+        except record_files.Unreadable:
+            # The hooks ran; only their last status is not recorded, because hooks.json cannot be
+            # read now and is never written over (the read said why, once). Never the fire's
+            # outcome: a gating hook's verdict stands whether or not its status lands.
+            logger.debug("hooks.json cannot be read; the hooks' status is not recorded")
         return results
 
     def _save_snapshot(self, hooks_data: list[dict]) -> None:

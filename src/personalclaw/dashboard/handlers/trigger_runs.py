@@ -38,7 +38,7 @@ from typing import Any
 
 from aiohttp import web
 
-from personalclaw import approval_answer
+from personalclaw import approval_answer, record_files
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import bool_field, json_object_body, require_bool
@@ -114,6 +114,20 @@ async def api_trigger_run(request: web.Request) -> web.Response:
 
 #: Inbound answers may carry the user's own data; never cache them (mirrors `inbound.mcp_http`).
 _NO_STORE = {"Cache-Control": "no-store"}
+
+
+def _unreadable_fire(route: str, client_id: str) -> web.Response:
+    """A fire refused because ``triggers.json`` cannot be read: nothing fired, and the caller is
+    told only that (503), never where the file is or why. The owner is told both by the Triggers
+    page and the Doctor; the audit row says which refusal it was."""
+    from personalclaw.inbound import webhook as door
+
+    return door.answer(
+        json_error("service_unavailable", message=door.CANNOT_READ, status=503, headers=_NO_STORE),
+        route=route,
+        refused="the automations file cannot be read",
+        client_id=client_id,
+    )
 
 
 async def api_trigger_fire(request: web.Request) -> web.Response:
@@ -335,7 +349,10 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
                 bytes_in=len(body_bytes),
             )
         store = _trigger_store()
-        row = store.get(raw) if kind == _STORE else None
+        try:
+            row = store.get(raw) if kind == _STORE else None
+        except record_files.Unreadable:
+            return _unreadable_fire(route, client_id)
         if row is None or row.trigger.kind != "webhook":
             why = "unknown or non-webhook trigger"
         elif not is_owner_authored(row.trigger):
@@ -380,9 +397,12 @@ async def api_trigger_fire(request: web.Request) -> web.Response:
                 client_id=client_id,
             )
         now = _time.time()
-        admission = await admit_fire(
-            store, row.trigger, now=now, base_dir=store.base_dir, holder=f"webhook:{int(now)}"
-        )
+        try:
+            admission = await admit_fire(
+                store, row.trigger, now=now, base_dir=store.base_dir, holder=f"webhook:{int(now)}"
+            )
+        except record_files.Unreadable:
+            return _unreadable_fire(route, client_id)
         if not admission.allowed:
             return door.answer(
                 door.held(admission.decision.gate, headers=_NO_STORE),

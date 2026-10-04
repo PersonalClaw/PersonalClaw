@@ -663,26 +663,36 @@ class InboxStore:
         self._kept = record_files.Kept(normalize=_item_form)
 
     def load(self) -> None:
-        if self._path.exists():
-            try:
-                at = record_files.stamp(self._path)
-                data = json.loads(self._path.read_text())
-                self.items.clear()
-                for d in data.get("items", []):
-                    item = InboxItem.from_dict(d)
-                    self.items[item.id] = item
-                self._dirty = False
-                self._kept.took(at, self._held())
-            except (json.JSONDecodeError, OSError):
-                logger.warning("Failed to load inbox items, starting fresh")
+        """Read ``inbox.json``. A file that cannot be read loads no item and is never written
+        over: every save refuses until it can be read (``record_files.Kept.could_not_read``)."""
+        if not self._path.exists():
+            return
+        at = record_files.stamp(self._path)
+        try:
+            records = record_files.records(self._path, _ITEMS)
+        except record_files.Unreadable as found:
+            self._kept.could_not_read(at, found)
+            return
+        self.items.clear()
+        for d in records:
+            item = InboxItem.from_dict(d)
+            self.items[item.id] = item
+        self._dirty = False
+        self._kept.took(at, self._held())
 
     def _held(self) -> list[dict]:
         return [item.to_dict() for item in self.items.values()]
 
     def save(self) -> None:
+        """Write the items held. Over a file that cannot be read nothing is written and the items
+        stay pending: an arriving item is not lost, and lands with what the file holds at the
+        first save after it can be read again (which the refusal, logged once, says how to do)."""
         try:
             record_files.written(self._path, _ITEMS, self._kept, self._held(), self._write)
             self._dirty = False
+        except record_files.Unreadable:
+            self._dirty = True
+            logger.debug("inbox items kept pending: %s cannot be read", self._path)
         except OSError:
             logger.warning("Failed to save inbox items")
 

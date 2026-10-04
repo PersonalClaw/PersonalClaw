@@ -601,7 +601,8 @@ def test_a_crons_file_that_comes_back_is_not_read_and_the_doctor_says_so(home):
     assert "already imported" in report["reason"]
     doctor = asyncio.run(run_capability("automations", DoctorContext(home=home)))
     assert doctor["ok"] is False
-    assert "crons.json is back in your home" in doctor["probes"][0]["detail"]
+    (probe,) = [p for p in doctor["probes"] if p["id"] == "automations.legacy_files"]
+    assert "crons.json is back in your home" in probe["detail"]
 
 
 def test_verify_migration_reads_the_copy_the_import_kept(home):

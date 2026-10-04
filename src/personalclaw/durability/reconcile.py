@@ -237,16 +237,12 @@ def is_record(entry: inv.StateEntry, row: object) -> bool:
 
 
 def _here(entry: inv.StateEntry, document: Any) -> list:
-    """This home's records, in its file's order — none when it has no file. Raises when the file
-    holds another shape: a write built without it would replace records it could not see, so the
-    file is left for its owner to inspect, as the store's own reader leaves it."""
+    """This home's records, in its file's order — none when it has no file. Only ever handed a
+    document of *entry*'s shape: every write through here passes that shape to
+    ``record_files.rewrite``, which refuses a file holding any other before anything is written —
+    a write built without it would replace records it could not see."""
     assert entry.records is not None
-    if document is None:
-        return []
-    held = entry.records.records(document)
-    if held is None:
-        raise ValueError(f"{entry.path} holds no records here, so it is left as it is")
-    return held
+    return (entry.records.records(document) if document is not None else None) or []
 
 
 def _merged_document(
@@ -341,7 +337,7 @@ def take_in(
             items.append(row)
         return shape.document(document, items)
 
-    wrote = record_files.rewrite(dest, change)
+    wrote = record_files.rewrite(dest, change, shape)
     return writeback.ApplyResult(written=1 if wrote else 0), edited
 
 
@@ -362,7 +358,7 @@ def _delete_here(
         kept = [item for item in here if record_files.record_id(item) != entity_id]
         return None if len(kept) == len(here) else shape.document(document, kept)
 
-    wrote = record_files.rewrite(dest, change)
+    wrote = record_files.rewrite(dest, change, shape)
     return writeback.ApplyResult(removed=1 if wrote else 0)
 
 
@@ -449,7 +445,7 @@ def bring_in(home: Path, entry: inv.StateEntry, archived: Path) -> int:
             return None
         return shape.document(document if document is not None else archived_document, here + added)
 
-    record_files.rewrite(dest, change)
+    record_files.rewrite(dest, change, shape)
     return came
 
 
@@ -597,7 +593,7 @@ def reconcile_entry(
                 arrived_order = [conflicts_mod.row_id(r) for r in outcome["effective_remote"]]
                 return _merged_document(entry, document, peer_document, arrived_order, merged.rows)
 
-            record_files.rewrite(dest, change)
+            record_files.rewrite(dest, change, entry.records)
             removed, moved, refused = outcome["merged"].tombstoned, [], []
             linked: dict[str, LinkInTheWay] = {}
         else:

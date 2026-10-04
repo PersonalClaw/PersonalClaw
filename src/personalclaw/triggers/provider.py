@@ -97,7 +97,9 @@ class TriggerStoreProvider(ABC):
 
     @abstractmethod
     def get(self, trigger_id: str) -> "LoadedTrigger | None":
-        """One row by id, or None."""
+        """One row by id, or None when the store holds none. A store that cannot be read raises
+        rather than answer None, since a caller acts on absence (the native store raises
+        ``record_files.Unreadable``)."""
 
     @abstractmethod
     def upsert(self, trigger: "Trigger") -> "Trigger":

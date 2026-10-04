@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.evals import pinning, store
 
@@ -208,16 +209,17 @@ def queue_path() -> Path:
     return store.evals_root() / "rebench_queue.json"
 
 
-def load_queue() -> list[dict]:
-    path = queue_path()
-    if not path.is_file():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    entries = data.get("entries") if isinstance(data, dict) else data
-    return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+#: Where the queue keeps its entries: the ``entries`` list of its document, or the document itself
+#: when it is the bare list.
+_QUEUE = record_files.Shape(key="entries", bare=True)
+
+
+def load_queue(*, strict: bool = False) -> list[dict]:
+    """The queued re-benchmarks. A file that cannot be read lists none (the read keeps a copy of
+    it and says so once); a write reads it *strict*, and is refused with
+    ``record_files.Unreadable`` rather than replace the entries it could not read."""
+    read = record_files.records if strict else record_files.records_or_empty
+    return [e for e in read(queue_path(), _QUEUE) if isinstance(e, dict)]
 
 
 def save_queue(entries: list[dict]) -> None:
@@ -441,7 +443,7 @@ def check(
         logger.warning("watchdog: autonomy revocation failed", exc_info=True)
 
     entries = build_queue_entries(model_fp=model_fp, changes=changes, top_n=top_n, now=moment)
-    save_queue(load_queue() + entries)
+    save_queue(load_queue(strict=True) + entries)
     baselines = baselines_by_fingerprint()
     result = WatchdogResult(
         changed=True,

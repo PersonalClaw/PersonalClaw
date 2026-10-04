@@ -1425,6 +1425,14 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "link_in_the_way": (
         "The home holds a link where this was to write, read or lock, and nothing goes through one."
     ),
+    # ── a store file that could not be read (record_files.Unreadable, answered for every /api/*
+    #    route by dashboard/request_boundary.py) ──
+    # 409 on a write: the file is there and cannot be read, so nothing was written to it — a write
+    # would replace everything it holds. 500 on a read it cannot answer. The message names the
+    # file, why, where the copy of it is kept and what to do; it never quotes the file.
+    "store_unreadable": (
+        "A file this needs could not be read, so nothing was written to it; it is kept as it was."
+    ),
 }
 
 

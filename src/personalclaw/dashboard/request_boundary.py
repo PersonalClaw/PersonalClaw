@@ -29,6 +29,13 @@ that did not. The raw exception is logged, never returned: the client gets the s
 envelope and its generic sentence, and the traceback stays in ``gateway.log`` — the
 current behavior leaks the internal fault to the client, this one does not.
 
+**A store file that could not be read** is answered here too, once for every route:
+``record_files.Unreadable`` (a ``ValueError``, so it is caught before the fault family) means a
+file the request needed is there and cannot be read, and nothing was written to it. It answers
+``store_unreadable``, 409 for a write and 500 for a read, with the refusal's own sentence, which
+names the file, why, where its copy is kept and what to do. Answered per handler, the next route
+would let it fall through to ``bad_request``.
+
 **Two precisions, one gate.** The fault family described above is what NOBODY guarded,
 and its generic sentence names no field because it cannot — it is reading an
 ``AttributeError``. The other branch serves
@@ -70,6 +77,7 @@ from typing import Any, Awaitable, Callable
 
 from aiohttp import web
 
+from personalclaw import record_files
 from personalclaw.durability.home_paths import LinkInTheWay
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import RequestValidationError
@@ -121,6 +129,16 @@ def request_boundary_middleware() -> Any:
                 message=f"Stopped at {exc}. Remove the link and try again.",
                 status=409,
             )
+        except record_files.Unreadable as exc:
+            # A store file the request needed could not be read, so nothing was written to it
+            # (`record_files`: never written over unread). Before the fault family below, which
+            # would call it a malformed request because it is a ValueError. 409 for a write it
+            # refused, 500 for a read it cannot answer; the message names the file, why, where
+            # its copy is kept and what to do, and never quotes the file.
+            if not request.path.startswith("/api/"):
+                raise
+            status = 500 if request.method in ("GET", "HEAD") else 409
+            return json_error("store_unreadable", message=str(exc), status=status)
         except (ValueError, TypeError, AttributeError) as exc:
             # Scoped to /api/* for the same reason spa_fallback scopes its 404/405
             # normalization: the wire envelope is what a JSON client reads, and turning a

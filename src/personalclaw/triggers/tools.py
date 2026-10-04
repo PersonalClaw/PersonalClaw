@@ -1237,7 +1237,9 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> Automati
     Broken rows are INCLUDED. `store.load()` keeps a row it could not parse (S87's lenient-parse
     contract), and hiding it here would make a broken automation invisible in the one place an
     agent looks to debug why nothing fired. Times are in the owner's zone, the one the turn's date
-    line is written in (`schedule.get_local_tz`).
+    line is written in (`schedule.get_local_tz`). A store that cannot be read is refused
+    (``record_files.Unreadable``), never listed as holding no automation: the agent would tell
+    the owner they have none.
     """
     import time as _time
 
@@ -1251,7 +1253,7 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> Automati
     out: list[dict[str, Any]] = []
     stood: list[tuple[Any, Any]] = []
     lines: list[str] = []
-    for row in store.load():
+    for row in store.load(strict=True):
         trigger = row.trigger
         if kind and trigger.kind != kind:
             continue
@@ -1722,7 +1724,7 @@ def delete_all(
             f"Error: deleting every {created_by}-created automation needs confirm: true. "
             "Pause them instead if you might want them back.",
         )
-    owned = [row.trigger for row in store.load() if row.trigger.created_by == created_by]
+    owned = [row.trigger for row in store.load(strict=True) if row.trigger.created_by == created_by]
     if not owned:
         return AutomationToolResult(
             True,

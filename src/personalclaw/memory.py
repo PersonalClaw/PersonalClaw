@@ -46,7 +46,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, TypeVar
 
-from personalclaw import memory_writes, notification_kinds
+from personalclaw import memory_writes, notification_kinds, record_files
 from personalclaw.atomic_write import SQLITE_SIDECARS, atomic_write, make_private_dirs
 from personalclaw.config import loader as config_loader
 from personalclaw.home_paths import from_home
@@ -294,8 +294,9 @@ def _kept_by_both(
 
 INDEX_FILE = "memory_index.db"
 #: What a damaged database is renamed to, beside where it was, the files SQLite kept beside it with
-#: it: ``<name>.broken-<UTC instant>``. Never deleted, never written over, never opened again.
-SET_ASIDE_MARK = ".broken-"
+#: it: ``<name>.broken-<UTC instant>``, the one mark a copy of any store that could not be read
+#: carries (``record_files.SET_ASIDE_MARK``). Never deleted, never written over, never opened again.
+SET_ASIDE_MARK = record_files.SET_ASIDE_MARK
 
 _FTS_TABLE = "memory_fts"
 _CREATE_FTS = (

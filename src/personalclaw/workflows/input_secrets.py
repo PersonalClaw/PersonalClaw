@@ -38,6 +38,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from personalclaw import record_files
 from personalclaw.workflows.bindings import BindingContext, BindingError, resolve
 from personalclaw.workflows.models import REFUSED_TO_START, Failure, FailureClass
 from personalclaw.workflows.secrets import SECRET_BINDING_RE
@@ -333,6 +334,9 @@ def redact_home() -> list[str]:
     try:
         if _redact_triggers(_for_project(stored, "")):
             changed.append("triggers")
+    except record_files.Unreadable:
+        # Never written over while it cannot be read; the read has said why, once.
+        logger.warning("the automations file cannot be read, so it is left as it is")
     except Exception:  # noqa: BLE001 - the gateway starts whatever this finds
         logger.warning("could not take secrets' values out of the automations", exc_info=True)
     return changed
@@ -381,20 +385,18 @@ def _redact_triggers(known: list[tuple[str, str]]) -> bool:
     """Rewrite each automation's last error that holds one of the *known* values, written from a
     run as its history row was: in the trigger store, under its lock (``record_files.rewrite``).
     Whether any was."""
-    from personalclaw import record_files
     from personalclaw.config.loader import config_dir
-    from personalclaw.triggers.store import STORE_FILENAME
+    from personalclaw.triggers.store import STORE_FILENAME, STORE_SHAPE
 
     def _change(doc: Any) -> Any:
-        rows = doc.get("triggers") if isinstance(doc, dict) else doc
         changed = False
-        for row in rows if isinstance(rows, list) else []:
+        for row in (STORE_SHAPE.records(doc) if doc is not None else None) or []:
             said = row.get("last_error_summary") if isinstance(row, dict) else None
             if isinstance(said, str) and (kept := _replaced(said, known, set())) != said:
                 row["last_error_summary"], changed = kept, True
         return doc if changed else None
 
-    return bool(known) and record_files.rewrite(config_dir() / STORE_FILENAME, _change)
+    return bool(known) and record_files.rewrite(config_dir() / STORE_FILENAME, _change, STORE_SHAPE)
 
 
 def _redact_history(known: list[tuple[str, str]]) -> bool:

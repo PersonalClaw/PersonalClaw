@@ -19,13 +19,13 @@ new backup wiring.
 from __future__ import annotations
 
 import json
-import logging
 import re
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 
@@ -38,8 +38,6 @@ def config_dir() -> Path:
     """
     return config_loader.config_dir()
 
-
-logger = logging.getLogger(__name__)
 
 _ENTITY = "session_templates"
 
@@ -69,21 +67,17 @@ def _path() -> Path:
 
 
 def _load_raw() -> dict[str, Any]:
-    path = _path()
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        # A corrupt settings file must not break the chat page; an empty template list
-        # is a degraded surface, a 500 on session create is a broken product.
-        logger.warning("session_templates.json unreadable; treating as empty")
-        return {}
-    return data if isinstance(data, dict) else {}
+    # A corrupt settings file must not break the chat page; an empty template list is a
+    # degraded surface, a 500 on session create is a broken product. The read keeps a copy of
+    # it and says so once, and no save writes over it (:func:`_save_raw`).
+    return record_files.read_or_none(_path(), dict) or {}
 
 
 def _save_raw(data: dict[str, Any]) -> None:
+    """Write the templates. Refused (``record_files.Unreadable``), writing nothing, while the file
+    there cannot be read: *data* was built on a read that saw none of it (:func:`_load_raw`)."""
     path = _path()
+    record_files.read(path, dict)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
 

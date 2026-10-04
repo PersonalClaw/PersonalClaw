@@ -39,6 +39,7 @@ import math
 import re
 from dataclasses import dataclass
 
+from personalclaw import record_files
 from personalclaw.agents.defaults import is_reserved_agent
 from personalclaw.agents.native.tool_vectors import ToolVectors, bound_embedder
 from personalclaw.embedding_providers.base import embed_within
@@ -265,6 +266,10 @@ def _save_store(store: dict) -> None:
 
     try:
         _save_entity_settings(_STORE, store)
+    except record_files.Unreadable:
+        # The file there cannot be read, so nothing was written to it: said to whoever asked
+        # for the change, never answered as done.
+        raise
     except Exception:
         logger.debug("agent-routing store save failed", exc_info=True)
 

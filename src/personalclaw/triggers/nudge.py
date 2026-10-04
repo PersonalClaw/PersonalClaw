@@ -53,7 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from personalclaw import shutdown_event
+from personalclaw import record_files, shutdown_event
 from personalclaw.triggers import idle_poll
 from personalclaw.triggers.models import Trigger
 from personalclaw.triggers.store import TriggerStore
@@ -214,10 +214,15 @@ def import_legacy(base_dir: Path, *, now: float = 0.0) -> int:
         )
         return 0
     try:
+        store = TriggerStore(base_dir=root)
+        existing = {row.trigger.id for row in store.load(strict=True)}
+    except record_files.Unreadable:
+        # Every loop would be refused, and the file then retired as imported: left as it is.
+        logger.warning("AutoNudge: %s is left unread: the automations file cannot be read", legacy)
+        return 0
+    try:
         data = json.loads(legacy.read_text(encoding="utf-8"))
         loops = data.get("loops", []) if isinstance(data, dict) else []
-        store = TriggerStore(base_dir=root)
-        existing = {row.trigger.id for row in store.load()}
     except Exception:  # noqa: BLE001 - an unreadable legacy store must not stop the gateway
         logger.warning("AutoNudge: legacy %s unreadable — leaving in place", legacy)
         return 0

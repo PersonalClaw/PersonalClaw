@@ -65,6 +65,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from personalclaw import record_files
+
 logger = logging.getLogger(__name__)
 
 #: entity_settings key (one file, partitioned per provider).
@@ -139,7 +141,7 @@ _DEFAULT_PROVIDER = _default_provider()
 # ── storage (fail-open read, atomic write) ───────────────────────────────────
 
 
-def _read_store() -> dict[str, Any]:
+def _read_store(*, strict: bool = False) -> dict[str, Any]:
     """The whole trust store, or ``{}`` on a corrupt/missing file (warn, never crash).
 
     Reads the raw path rather than delegating to ``_load_entity_settings``. **The reason
@@ -149,22 +151,22 @@ def _read_store() -> dict[str, Any]:
     so `{}` here is the fail-CLOSED answer (nothing is trusted) and CE-1's contract is
     defaults + warn. Folding it into the shared helper would be a change to a security
     control's read path, which is a decision of its own and not a tidy-up.
+
+    A corrupt file is never written over: every write goes through ``_save_entity_settings``,
+    which refuses while it cannot be read, and a recorder that runs on its own reads it
+    *strict* (``record_files.Unreadable``) so it records nothing instead. The read keeps a copy
+    of it and says so in the log, once.
     """
     from personalclaw.providers.entity_routes import _entity_settings_path
 
     path = _entity_settings_path(_ENTITY)
-    if not path.is_file():
-        return {}
     try:
-        import json
-
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        logger.warning(
-            "channel_trust store at %s is unreadable/corrupt — using defaults", path, exc_info=True
-        )
+        data = record_files.read(path, dict)
+    except record_files.Unreadable:
+        if strict:
+            raise
         return {}
-    return data if isinstance(data, dict) else {}
+    return data if data is not None else {}
 
 
 def _write_store(data: dict[str, Any]) -> None:
@@ -365,7 +367,11 @@ def note_untracked_channel(provider: str, channel_id: str, name: str = "") -> No
     :data:`SEEN_CHANNEL_REWRITE_SECS` per group unless its name changed."""
     if not channel_id:
         return
-    store = _read_store()
+    try:
+        store = _read_store(strict=True)
+    except record_files.Unreadable:
+        # Never written over; its messages are refused meanwhile, as every untracked group's are.
+        return
     rec = _provider_record(store, provider)
     if channel_id in (rec.get("tracked_channels") or {}):
         return
@@ -1202,8 +1208,16 @@ def note_unknown_sender(
 
     Deduped on the persisted ``rate`` map (an ISO timestamp per sender, emptied when a revoke
     starts their window over), so the dedup survives a restart — an unknown sender who messaged
-    before you slept does not re-alert when the gateway comes back up."""
-    store = _read_store()
+    before you slept does not re-alert when the gateway comes back up.
+
+    A trust store that cannot be read records nothing and notifies nobody: the message is denied
+    as every sender's is then (nothing is trusted), the store is never written over, and with no
+    dedup that could be kept every message would be a new notice. The read has said why, once,
+    in the log, and the Doctor names the file."""
+    try:
+        store = _read_store(strict=True)
+    except record_files.Unreadable:
+        return False
     rec = _provider_record(store, provider)
     rate = rec.setdefault("rate", {})
 

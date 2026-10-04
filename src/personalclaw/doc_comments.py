@@ -142,19 +142,18 @@ def _from_dict(d: object) -> DocComment | None:
     )
 
 
-def load() -> list[DocComment]:
-    """Every comment, oldest first. A missing or unreadable store reads as empty."""
-    p = store_path()
-    if not p.exists():
-        return []
-    try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        logger.warning("%s unreadable; treating as empty", _STORE_FILENAME, exc_info=True)
-        return []
-    rows = raw.get("comments") if isinstance(raw, dict) else raw
-    if not isinstance(rows, list):
-        return []
+#: Where the store keeps its comments: the ``comments`` list of its document, or the document
+#: itself when it is the bare list.
+_COMMENTS = record_files.Shape(key="comments", bare=True)
+
+
+def load(*, strict: bool = False) -> list[DocComment]:
+    """Every comment, oldest first. A missing store reads as empty, and so does one that cannot
+    be read for a list; a write reads it *strict*, so it refuses with ``record_files.Unreadable``
+    rather than replace the comments it could not read."""
+    rows = (record_files.records if strict else record_files.records_or_empty)(
+        store_path(), _COMMENTS
+    )
     out = [c for c in (_from_dict(r) for r in rows) if c is not None]
     out.sort(key=lambda c: c.ts)
     return out
@@ -189,7 +188,7 @@ def add(
     if not body.strip():
         raise ValueError("comment is required")
     with record_files.locked(store_path()):
-        rows = load()
+        rows = load(strict=True)
         if len(rows) >= MAX_COMMENTS:
             raise ValueError(f"the comment deck is full ({MAX_COMMENTS} comments)")
         row = DocComment(
@@ -215,7 +214,7 @@ def update(comment_id: str, *, comment: str) -> DocComment | None:
     if not body.strip():
         raise ValueError("comment is required")
     with record_files.locked(store_path()):
-        rows = load()
+        rows = load(strict=True)
         found: DocComment | None = None
         for row in rows:
             if row.id == comment_id:
@@ -239,7 +238,7 @@ def remove(ids: list[str]) -> int:
     if not wanted:
         return 0
     with record_files.locked(store_path()):
-        rows = load()
+        rows = load(strict=True)
         kept = [r for r in rows if r.id not in wanted]
         removed = len(rows) - len(kept)
         if removed:
@@ -250,7 +249,7 @@ def remove(ids: list[str]) -> int:
 def clear() -> int:
     """Empty the deck. Returns how many rows went away."""
     with record_files.locked(store_path()):
-        rows = load()
+        rows = load(strict=True)
         if rows:
             _save([])
     return len(rows)

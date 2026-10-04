@@ -40,6 +40,15 @@ lost write: the next `load()` would report every surviving trigger as malformed.
 **A concurrent writer is not silently overwritten.** MCP tools mutate the store from a separate
 process (the carried-over gotcha), so every mutation re-reads under the lock before writing —
 otherwise a chat-created trigger vanishes when the dashboard saves a stale in-memory copy.
+
+**A store that cannot be read is never written over.** That re-read is strict
+(``record_files.records``): a ``triggers.json`` that is there and does not parse makes every write
+refuse with ``record_files.Unreadable``, and the file stays exactly as it was, with a copy of it
+kept beside it. It used to read as empty, so the next write — an edit, a fired run's own record, the
+boot's system automations finding their rows missing — replaced every automation with that one
+row. A read for a LIST lists nothing instead, and :func:`unreadable` says why: what the
+Triggers page and the Doctor show. A read that would act on a row's absence (:meth:`get`) refuses
+too, since nothing is known of the row.
 """
 
 from __future__ import annotations
@@ -64,6 +73,11 @@ logger = logging.getLogger(__name__)
 STORE_VERSION = 1
 
 STORE_FILENAME = "triggers.json"
+
+#: Where ``triggers.json`` keeps its automations: the ``triggers`` list of its document, or the
+#: document itself when a hand edit dropped it from around the list (still read, and written back
+#: inside it). The durability inventory reads the file by the same shape.
+STORE_SHAPE = record_files.Shape(key="triggers", bare=True)
 
 
 @dataclass
@@ -192,27 +206,20 @@ class TriggerStore(TriggerStoreProvider):
     # ── read ──
 
     def _read_rows(self) -> list[dict[str, Any]]:
-        """Raw rows off disk. Returns [] for a missing or unreadable store.
+        """Raw rows off disk: [] for a missing store, or one holding nothing.
 
-        A CORRUPT store returns [] and logs rather than raising: the gateway must still boot with a
-        damaged triggers file, because a boot failure takes every other subsystem with it. The
-        file is
-        left untouched so the user can inspect it — silently rewriting a corrupt store would destroy
-        the evidence.
+        Raises ``record_files.Unreadable`` for a store that is there and cannot be read, after
+        keeping a copy of it beside it — and every write reads through here under the lock, so
+        none is ever built on a store it could not read. The file is left exactly as it is: the
+        owner repairs it, restores it, or removes it, and the copy keeps what it held.
         """
-        if not self._path.exists():
-            self._last_mtime = 0.0
-            return []
         try:
             self._last_mtime = self._path.stat().st_mtime
-            data = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            logger.warning("triggers.json is unreadable or malformed; treating as empty")
-            return []
-        rows = data.get("triggers") if isinstance(data, dict) else data
-        return [r for r in (rows or []) if isinstance(r, dict)]
+        except OSError:
+            self._last_mtime = 0.0
+        return [r for r in record_files.records(self._path, STORE_SHAPE) if isinstance(r, dict)]
 
-    def load(self) -> list[LoadedTrigger]:
+    def load(self, *, strict: bool = False) -> list[LoadedTrigger]:
         """Every row, INCLUDING the broken ones, each with its issues.
 
         The load-bearing decision. A store that dropped invalid rows would make an
@@ -220,9 +227,21 @@ class TriggerStore(TriggerStoreProvider):
         indistinguishable from a trigger that was never created — R15's "silently-dead trigger",
         except the user cannot even see it to fix it. `parse_trigger` forces `enabled=False` on an
         error row, so a broken trigger is visible and inert rather than absent and mysterious.
+
+        A store that cannot be read lists nothing: the gateway still boots (a boot failure takes
+        every other subsystem with it), nothing in it is armed or fired, and :func:`unreadable`
+        says why — so do the Triggers page, the Doctor and, once, the gateway log. A caller that
+        acts on what the store lacks — an import that skips the rows it already has, then retires
+        its source — passes *strict*, and is refused with ``record_files.Unreadable`` instead.
         """
+        try:
+            rows = self._read_rows()
+        except record_files.Unreadable:
+            if strict:
+                raise
+            return []
         out: list[LoadedTrigger] = []
-        for row in self._read_rows():
+        for row in rows:
             trigger, issues = parse_trigger(row)
             out.append(LoadedTrigger(trigger=trigger, issues=list(issues)))
         return out
@@ -244,7 +263,13 @@ class TriggerStore(TriggerStoreProvider):
         return triggers
 
     def get(self, trigger_id: str) -> LoadedTrigger | None:
-        for row in self.load():
+        """One row by id, or None when the store holds none.
+
+        Refused with ``record_files.Unreadable`` when the store cannot be read: nothing is known
+        of the row then, and a caller that acted on None — made the row again, dropped its review
+        card, logged that it was removed — would act on a guess.
+        """
+        for row in self.load(strict=True):
             if row.trigger.id == trigger_id:
                 return row
         return None
@@ -257,9 +282,11 @@ class TriggerStore(TriggerStoreProvider):
         Used by the migration and by tests; a normal mutation goes through `upsert`/`delete`, which
         re-read first. A caller that assembled its list from a stale `load()` would drop a
         concurrent
-        writer's row, which is exactly what `upsert` exists to prevent.
+        writer's row, which is exactly what `upsert` exists to prevent. Refused, like every write,
+        while the store cannot be read.
         """
         with self._file_lock():
+            self._read_rows()
             rows = [t.to_dict() for t in triggers]
             self._write(rows)
             return len(rows)
@@ -271,6 +298,8 @@ class TriggerStore(TriggerStoreProvider):
         mutation
         built on this instance's cached view would silently delete a trigger created in chat thirty
         seconds ago. Read-modify-write inside one lock is the only shape that cannot lose a row.
+        And the read is strict: while the store cannot be read this refuses with
+        ``record_files.Unreadable`` and writes nothing, as every write here does.
 
         🔴 A ROW A REGISTERED `trigger` PROVIDER SERVES IS WRITTEN BACK TO THAT PROVIDER, not here
         (TSE-5). Writing it here instead would put one trigger id in two stores, and since a local
@@ -298,7 +327,8 @@ class TriggerStore(TriggerStoreProvider):
         """Remove one trigger. Returns whether it was there.
 
         Also re-reads under the lock: deleting from a stale view would resurrect every row another
-        process added since the last read.
+        process added since the last read. Refused, writing nothing, while the store cannot
+        be read: "was it there" has no answer then.
 
         Routed to the serving provider for a provider-served id, exactly as `upsert` is: a retire
         (`delete_after_run`) that deleted a local row which never existed would leave the provider's
@@ -423,7 +453,9 @@ class TriggerStore(TriggerStoreProvider):
         written = 0
         waiting = 0
         refused_rows: list[dict[str, Any]] = []
-        existing = {row.trigger.id for row in self.load()}
+        # Strict: a store that cannot be read refuses the import before anything is written or the
+        # file is retired, so its jobs are imported once the store can be read again.
+        existing = {row.trigger.id for row in self.load(strict=True)}
         for converted in getattr(report, "converted", None) or []:
             row = getattr(converted, "trigger", None)
             if not isinstance(row, dict):
@@ -459,6 +491,42 @@ class TriggerStore(TriggerStoreProvider):
         payload["unparseable"] = refused_rows
         payload["retired_to"] = retired.name if retired is not None else ""
         return payload
+
+
+def unreadable(store: TriggerStore) -> record_files.Unreadable | None:
+    """Why *store*'s file cannot be read now, or None when it can (or is not there): what the
+    Triggers page, the Doctor and the CLI say in place of a list that would read as "no
+    automations" (:func:`unreadable_said`)."""
+    try:
+        store._read_rows()
+    except record_files.Unreadable as found:
+        return found
+    return None
+
+
+def unreadable_said(found: record_files.Unreadable) -> dict[str, str]:
+    """What the Triggers page and the Doctor say of a file of automations that cannot be read:
+    which file (from ``~``), what that stops, where its copy is kept, and what to do. One wording,
+    so the two never describe one file two ways."""
+    from personalclaw.home_paths import from_home
+
+    where = from_home(found.path)
+    kept = ""
+    if found.kept is not None:
+        kept = f" A copy of it as it was is kept beside it as {found.kept.name}."
+    said = (
+        f"{where} could not be read ({found.why}). Until it can be, none of the automations in "
+        f"it is listed or runs, and none can be made, changed or deleted.{kept}"
+    )
+    if found.kept is not None:
+        remedy = (
+            "Repair the file, restore it from a snapshot under Settings → Durability, or remove "
+            "it to start over; the copy keeps what it held. Every automation in it is listed and "
+            "runs again as soon as it can be read."
+        )
+    else:
+        remedy = "Once it can be opened again, every automation in it is listed and runs again."
+    return {"file": where, "said": said, "remedy": remedy}
 
 
 #: Fields that belong to one home rather than to what a trigger IS: what has HAPPENED to it there,

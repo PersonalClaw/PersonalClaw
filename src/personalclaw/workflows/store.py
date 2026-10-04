@@ -1042,12 +1042,21 @@ def hold_restored(home: Path) -> list[str]:
 PENDING_MUTATIONS_FILE = "pending_mutations.json"
 
 
+#: A run's queued edits are the list of them itself.
+_PENDING_EDITS = record_files.Shape()
+
+
 def write_pending_mutations(run_id: str, entries: list[dict[str, Any]]) -> None:
     """Persist the run's queued edits — an INTENT, like a pause's, written by the request that
     queued them and applied by the tick loop. On disk because a paused run applies its edits
     when it is resumed, which can be after a restart: held in the controller's memory, an edit
-    queued on a paused run was gone by then. An empty queue removes the file."""
+    queued on a paused run was gone by then. An empty queue removes the file.
+
+    Refused with ``record_files.Unreadable``, writing and removing nothing, while the record there
+    cannot be read: *entries* are what the controller holds, which lacks every edit it could not
+    read from it, so writing them — or removing the file — would lose those edits."""
     path = run_dir(run_id) / PENDING_MUTATIONS_FILE
+    record_files.records(path, _PENDING_EDITS)
     if not entries:
         path.unlink(missing_ok=True)
         return
@@ -1057,13 +1066,7 @@ def write_pending_mutations(run_id: str, entries: list[dict[str, Any]]) -> None:
 
 def read_pending_mutations(run_id: str) -> list[dict[str, Any]]:
     """The run's queued edits, oldest first. `[]` when there are none or the record is unreadable
-    (logged: an edit that cannot be read cannot be applied, and saying so beats guessing)."""
+    (logged once, and a copy of it kept: an edit that cannot be read cannot be applied, and saying
+    so beats guessing; :func:`write_pending_mutations` never writes over it)."""
     path = run_dir(run_id) / PENDING_MUTATIONS_FILE
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return []
-    except (OSError, ValueError):
-        logger.warning("run %s: its queued edits could not be read", run_id)
-        return []
-    return [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []
+    return [e for e in record_files.records_or_empty(path, _PENDING_EDITS) if isinstance(e, dict)]

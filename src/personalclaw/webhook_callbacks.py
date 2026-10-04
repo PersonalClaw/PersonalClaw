@@ -18,7 +18,6 @@ at all, and any other registration vanished at the store's next save.
 from __future__ import annotations
 
 import fcntl
-import json
 import logging
 import time
 from collections.abc import Iterator
@@ -27,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from personalclaw import lasting_work
+from personalclaw import lasting_work, record_files
 from personalclaw.constants import HOOK_SESSION_PREFIX
 from personalclaw.owner_grants import GrantBook
 
@@ -99,20 +98,20 @@ def _locked() -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _read() -> dict[str, Callback]:
-    """Every registration, by id. Never raises: a file that cannot be read, or an entry that is
-    not a registration, is left out and logged, so one bad write cannot stop the rest loading."""
-    path = _path()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError):
-        logger.warning("callbacks: %s is unreadable; no callback in it is listed", path)
-        return {}
-    entries = data.get("callbacks") if isinstance(data, dict) else None
+#: Where the file keeps its registrations.
+_CALLBACKS = record_files.Shape(key="callbacks")
+
+
+def _read(*, strict: bool = False) -> dict[str, Callback]:
+    """Every registration, by id. Never raises for a list: a file that cannot be read lists none
+    (the read keeps a copy of it and says so once, and :func:`unreadable` says why), and an entry
+    that is not a registration is left out and logged, so one bad write cannot stop the rest
+    loading. A write reads it *strict*, and is refused with ``record_files.Unreadable`` rather
+    than replace every registration it could not read with its one."""
+    read = record_files.records if strict else record_files.records_or_empty
+    entries = read(_path(), _CALLBACKS)
     out: dict[str, Callback] = {}
-    for entry in entries if isinstance(entries, list) else []:
+    for entry in entries:
         callback = Callback.from_dict(entry) if isinstance(entry, dict) else None
         if callback is None:
             logger.warning("callbacks: skipping an entry that is not a callback: %r", entry)
@@ -138,6 +137,16 @@ def list_all() -> list[Callback]:
     return list(_read().values())
 
 
+def unreadable() -> record_files.Unreadable | None:
+    """Why the registry cannot be read now, or None when it can (or is not there): what the
+    Triggers page says in place of a list that would read as "no callbacks"."""
+    try:
+        _read(strict=True)
+    except record_files.Unreadable as found:
+        return found
+    return None
+
+
 def get(callback_id: str) -> Callback | None:
     return _read().get(callback_id)
 
@@ -158,7 +167,7 @@ def register(callback_id: str, context_summary: str) -> Callback:
 
     asked = memory_writes.asker()
     with _locked():
-        callbacks = _read()
+        callbacks = _read(strict=True)
         callback = Callback(
             id=callback_id,
             context_summary=context_summary,
@@ -173,7 +182,7 @@ def register(callback_id: str, context_summary: str) -> Callback:
 def remove(callback_id: str) -> bool:
     """Delete a registration and the yes it had. The owner's delete on the Triggers page."""
     with _locked():
-        callbacks = _read()
+        callbacks = _read(strict=True)
         if callbacks.pop(callback_id, None) is None:
             return False
         _write(callbacks)

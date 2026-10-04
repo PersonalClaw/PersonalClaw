@@ -577,7 +577,12 @@ def call_tool_with_logging(
     ``result.startswith("Error:")`` — which missed every coded failure, because
     ``mcp_workflows._fmt`` writes ``Error [CODE]: …``, and missed ``artifact_delete``'s
     ``Artifact not found: X`` entirely.
+
+    A store file the call needed that could not be read (``record_files.Unreadable``: nothing was
+    written to it) is answered here, once for every server's tools, as the call's failure in the
+    refusal's own words — never an exception that ends the server's loop.
     """
+    from personalclaw import record_files
     from personalclaw.sel import sel
     from personalclaw.tool_providers.base import ToolFailure, tool_failure
 
@@ -595,7 +600,10 @@ def call_tool_with_logging(
         )
         return tool_failure(reason)
 
-    result = inner_fn(name, args)
+    try:
+        result = inner_fn(name, args)
+    except record_files.Unreadable as unreadable:
+        result = tool_failure(str(unreadable), code="store_unreadable")
     outcome = "failed" if isinstance(result, ToolFailure) else "completed"
     sel().log_tool_invocation(
         session_key=session_key,

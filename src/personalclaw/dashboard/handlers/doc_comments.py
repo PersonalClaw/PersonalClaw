@@ -17,7 +17,7 @@ the refusal it raises is turned into the envelope once by
 
 from aiohttp import web
 
-from personalclaw import doc_comments
+from personalclaw import doc_comments, record_files
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body
 
@@ -52,6 +52,8 @@ async def api_doc_comments_create(request: web.Request) -> web.Response:
             column=body.get("column"),
             context=body.get("context") or "",
         )
+    except record_files.Unreadable:
+        raise  # the store, not the request: answered 409 by the request boundary
     except ValueError as exc:
         return json_error("field_required", message=str(exc), status=400)
     return web.json_response({"comment": row.to_dict()}, status=201)
@@ -66,6 +68,8 @@ async def api_doc_comments_update(request: web.Request) -> web.Response:
         return json_error("field_not_a_string", message="comment must be a JSON string", status=400)
     try:
         row = doc_comments.update(comment_id, comment=raw or "")
+    except record_files.Unreadable:
+        raise  # the store, not the request: answered 409 by the request boundary
     except ValueError as exc:
         return json_error("field_required", message=str(exc), status=400)
     if row is None:

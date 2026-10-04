@@ -46,6 +46,8 @@ import weakref
 from dataclasses import dataclass, field
 from typing import Any
 
+from personalclaw import record_files
+
 logger = logging.getLogger(__name__)
 
 #: Modes whose sessions must never be proposed for organization. A temporary or incognito
@@ -200,6 +202,10 @@ def _save_store(store: dict) -> None:
 
     try:
         _save_entity_settings(_STORE, store)
+    except record_files.Unreadable:
+        # The file there cannot be read, so nothing was written to it: said to whoever asked
+        # for the change, never answered as done.
+        raise
     except Exception:
         logger.debug("session-organize store save failed", exc_info=True)
 

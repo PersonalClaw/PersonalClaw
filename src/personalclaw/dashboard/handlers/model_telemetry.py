@@ -14,6 +14,7 @@ import logging
 
 from aiohttp import web
 
+from personalclaw import record_files
 from personalclaw.http_errors import json_error
 from personalclaw.stale_write import revision_of, stale_write_refusal
 
@@ -278,7 +279,7 @@ async def api_routing_proposals(request: web.Request) -> web.Response:
     try:
         from personalclaw.routing.proposals import pending
 
-        props = pending()
+        props = pending(strict=True)
         rows = [{**p.summary(), "evidence": p.evidence} for p in props]
     except Exception as exc:  # noqa: BLE001 — the failure is the answer, never an empty queue
         logger.warning("routing proposals read failed", exc_info=True)
@@ -320,6 +321,9 @@ async def api_routing_proposal_accept(request: web.Request) -> web.Response:
             ),
             status=409,
         )
+    except record_files.Unreadable:
+        # The queue cannot be read, so nothing was written: the request boundary says so (409).
+        raise
     except Exception:  # noqa: BLE001
         logger.debug("routing proposal accept failed", exc_info=True)
         return web.json_response(
@@ -352,6 +356,9 @@ async def api_routing_proposal_reject(request: web.Request) -> web.Response:
         from personalclaw.routing.proposals import reject
 
         dismissed = reject(proposal_id)
+    except record_files.Unreadable:
+        # The queue cannot be read, so nothing was written: the request boundary says so (409).
+        raise
     except Exception:  # noqa: BLE001
         logger.debug("routing proposal reject failed", exc_info=True)
         return web.json_response(

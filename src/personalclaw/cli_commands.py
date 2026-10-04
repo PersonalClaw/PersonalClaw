@@ -429,9 +429,14 @@ def _cron(args: argparse.Namespace) -> None:
     from personalclaw.security import redact_for_display
     from personalclaw.triggers import schedule_view as _sv
     from personalclaw.triggers import tools as _tools
-    from personalclaw.triggers.store import TriggerStore
+    from personalclaw.triggers.store import TriggerStore, unreadable
 
     store = TriggerStore(base_dir=config_dir())
+    # A store that cannot be read is said, and nothing is listed or written: "No cron jobs." would
+    # be untrue of it, and every write is refused until it can be read.
+    found = unreadable(store)
+    if found is not None:
+        _refuse(f"Error: {found}")
 
     action = getattr(args, "cron_action", None)
     if action == "list":

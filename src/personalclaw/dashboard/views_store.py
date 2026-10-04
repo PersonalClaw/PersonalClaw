@@ -207,23 +207,31 @@ def _empty_disk() -> dict:
     return {"views": [], "overlay": {}}
 
 
-def _read_disk() -> dict:
+def _read_disk(*, strict: bool = False) -> dict:
+    """The store's document: an empty one when there is no file.
+
+    One that cannot be read — not JSON, or a ``views`` that is not a list, or an ``overlay`` that
+    is not an object — reads as empty for a list (the failed read has kept a copy of it, said it
+    once in the log and named it for the Doctor). Every write reads it *strict*, and is refused
+    with ``record_files.Unreadable`` rather than replace the views and pinned tiles it could not
+    read."""
     p = views_path()
-    if not p.exists():
-        return _empty_disk()
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        logger.warning("dashboard_views.json unreadable; treating as empty", exc_info=True)
-        return _empty_disk()
-    if not isinstance(data, dict):
+        data = record_files.read(p, dict)
+        if data is None:
+            return _empty_disk()
+        if not isinstance(data.get("views", []), list) or not isinstance(
+            data.get("overlay", {}), dict
+        ):
+            raise record_files.not_the_store(
+                p, 'it is JSON, but its "views" is not a list or its "overlay" not an object'
+            )
+    except record_files.Unreadable:
+        if strict:
+            raise
         return _empty_disk()
     data.setdefault("views", [])
     data.setdefault("overlay", {})
-    if not isinstance(data["views"], list):
-        data["views"] = []
-    if not isinstance(data["overlay"], dict):
-        data["overlay"] = {}
     return data
 
 
@@ -401,7 +409,7 @@ def create_view(name: str, icon: str | None = None) -> DashboardView:
         raise ValueError("view name is required")
     view_id = uuid.uuid4().hex[:8]
     with record_files.locked(views_path()):
-        data = _read_disk()
+        data = _read_disk(strict=True)
         data["views"].append(
             {"id": view_id, "name": name, "icon": icon or None, "nav_pinned": False, "tiles": []}
         )
@@ -414,7 +422,7 @@ def update_view(view_id: str, patch: dict) -> DashboardView:
     if _is_preset(view_id):
         raise PresetLockedError(f"'{view_id}' is a preset and cannot be edited")
     with record_files.locked(views_path()):
-        data = _read_disk()
+        data = _read_disk(strict=True)
         for v in data["views"]:
             if v.get("id") == view_id:
                 # No coercion and no truthiness test: the handler has already established
@@ -436,7 +444,7 @@ def delete_view(view_id: str) -> None:
     if _is_preset(view_id):
         raise PresetLockedError(f"'{view_id}' is a preset and cannot be deleted")
     with record_files.locked(views_path()):
-        data = _read_disk()
+        data = _read_disk(strict=True)
         before = len(data["views"])
         data["views"] = [v for v in data["views"] if v.get("id") != view_id]
         if len(data["views"]) == before:
@@ -484,7 +492,7 @@ def add_tile(view_id: str, ref: str, size: str = "m", added_by: str = "user") ->
 
     cap = _max_tiles()
     with record_files.locked(views_path()):
-        data = _read_disk()
+        data = _read_disk(strict=True)
         tiles = data["overlay"].setdefault(view_id, [])
         if not isinstance(tiles, list):
             tiles = []
@@ -507,7 +515,7 @@ def set_tile_refresh(view_id: str, ref: str, patch: dict) -> DashboardTile:
     """
     ref = ref.strip()
     with record_files.locked(views_path()):
-        data = _read_disk()
+        data = _read_disk(strict=True)
         tiles = data["overlay"].get(view_id)
         if not isinstance(tiles, list):
             raise ViewNotFoundError(view_id)
@@ -539,7 +547,7 @@ def resolve_tile(view_id: str, ref: str, keep: bool) -> DashboardView:
     """
     ref = ref.strip()
     with record_files.locked(views_path()):
-        data = _read_disk()
+        data = _read_disk(strict=True)
         tiles = data["overlay"].get(view_id)
         if not isinstance(tiles, list):
             raise ViewNotFoundError(view_id)

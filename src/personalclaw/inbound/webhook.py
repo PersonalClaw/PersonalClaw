@@ -46,6 +46,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
+from personalclaw import record_files
 from personalclaw.config.external_access import WEBHOOK_SURFACE
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,12 @@ SUSPENDED = (
 )
 #: A process that runs no automations: nothing here can run what the request would fire.
 NOT_RUNNING = "This PersonalClaw is not running its automations, so this request fired nothing."
+#: Its automations cannot be read now (``record_files.Unreadable``): nothing fires until they can.
+#: Where and why is the owner's to know (the Triggers page and the Doctor say), never a caller's.
+CANNOT_READ = (
+    "This PersonalClaw cannot read its automations right now, so this request fired nothing. Try "
+    "again later."
+)
 
 
 def held(gate: str, *, headers: dict[str, str]) -> web.Response:
@@ -282,9 +289,13 @@ def accepted(*, route: str, resources: str, client_id: str = "", bytes_in: int =
 
 def automation_of(store: Any, named: str) -> tuple[str, str]:
     """``(address id, "")`` for the webhook automation *named* (its address id, or the store's own
-    id), or ``("", why not)``."""
+    id), or ``("", why not)`` — the owner's answer, so a store that cannot be read is said as it
+    is (``record_files.Unreadable``), never as an automation that is not there."""
     raw = named.strip().removeprefix("store:")
-    row = store.get(raw) if raw else None
+    try:
+        row = store.get(raw) if raw else None
+    except record_files.Unreadable as found:
+        return "", str(found)
     if row is None:
         return (
             "",

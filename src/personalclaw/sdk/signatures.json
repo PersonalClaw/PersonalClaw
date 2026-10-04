@@ -3621,7 +3621,9 @@
    },
    "load": {
     "kind": "method",
-    "params": [],
+    "params": [
+     {"annotation": "bool", "default": "False", "kind": "keyword_only", "name": "strict"}
+    ],
     "returns": "list[LoadedTrigger]"
    },
    "migrate_from_crons": {
