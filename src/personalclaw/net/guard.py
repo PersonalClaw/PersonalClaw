@@ -112,31 +112,33 @@ class GuardDecision:
 #: Why a request made inside a run whose egress tier is ``off`` is refused: the words the agent's
 #: page fetch has always used for it, now the guard's for every request such a run makes.
 EGRESS_OFF_REASON = "egress is off for this run (safety profile egress tier 'off')"
+#: What such a refusal sent, in its first hint.
+EGRESS_OFF_NOTHING_SENT = (
+    "This run's safety settings give it no network access, so nothing was sent."
+)
 
 
 def egress_off_decision(url: str, host: str = "") -> GuardDecision:
     """The guard's refusal of *url* for a run that may not reach the network at all.
 
-    Refused before the host is looked up, since a DNS query is egress too. The hints say where
-    the tier comes from: the operator ceiling, when it is the ceiling that turns egress off for
-    every run on this machine, and otherwise the run's own safety profile."""
+    Refused before the host is looked up, since a DNS query is egress too. The hints say that
+    nothing was sent, and where the tier comes from (:func:`where_egress_is_off`)."""
     return GuardDecision(
         allow=False,
         url=url,
         host=host,
         reason=EGRESS_OFF_REASON,
         risk_level="destructive",
-        recovery_hints=[
-            "This run's safety settings give it no network access, so nothing was sent.",
-            _where_egress_is_off(),
-        ],
+        recovery_hints=[EGRESS_OFF_NOTHING_SENT, where_egress_is_off()],
         category="egress_off",
     )
 
 
-def _where_egress_is_off() -> str:
+def where_egress_is_off() -> str:
     """Which bound turns a run's egress off, in a hint: the operator ceiling's file when its
-    ``egress`` scope says ``off``, else the run's own safety profile."""
+    ``egress`` scope says ``off`` (for every run on this machine), else the run's own safety
+    profile. No host setting lifts either, so a surface that says how to undo an ``egress_off``
+    refusal says this, never Allowed hosts."""
     try:
         from personalclaw.guardrails.ceiling import active_ceiling, ceiling_path
 

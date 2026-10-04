@@ -1277,8 +1277,14 @@ async def dispatch_action(
     if (denied := enforce_action(name, action_config, context, session_key=key)).blocked:
         fix = "change what this step runs, then run the workflow again; until then it is refused"
         return _fail(FailureClass.PERMISSION, denied.refusal(), fix)
+    from personalclaw.net.policy import egress_held_to
+
     try:
-        result = await provider.execute(action_config, context, timeout=timeout)
+        # What the step reaches is held to the egress tier of the identity the denylist judged it
+        # under. Its loop runs in the context of whatever started the run (a chat's tool call, a
+        # fire, a restart), so the step was held to that caller's run, or to none.
+        with egress_held_to(key):
+            result = await provider.execute(action_config, context, timeout=timeout)
     except asyncio.CancelledError:
         raise
     except Exception as exc:

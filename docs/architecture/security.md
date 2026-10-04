@@ -940,9 +940,24 @@ chokepoint:
   unasked (`run_bounds.shell_egress_policy`) and a program an app's code starts
   (`apps/launch_egress.py`). The run is the session the call is made for, bound
   around every tool call (`mcp_core.set_current_session_key`: the native runtime's
-  dispatch, the tool server an agent CLI runs, `POST /api/tools/invoke`); a call
-  made for no run (the owner's own action, a background job) keeps to the Network
-  egress settings alone.
+  dispatch, the tool server an agent CLI runs, `POST /api/tools/invoke`), or the run
+  an automation's action is dispatched for, held around the action alone
+  (`net.policy.egress_held_to`, egress only, under the key its action denylist judges
+  it by: a trigger's fire `unattended_dispatch_key("trigger:<id>")`, which its hand
+  runs take too, a hook its parent session or `"hook:<id>"`, a workflow step
+  `"workflow:<run>"`). A session bound inside the held work (an agent the action
+  starts) is the inner run.
+  A call made for no run (the owner's own action, a background job) keeps to the
+  Network egress settings alone.
+- A remote MCP server's connection (`mcp_client.McpServerConn`) asks the guard about
+  the server's URL before its start and before each tool call, in the caller's
+  context, under `net.policy.MCP_SERVER`: the owner's configured server may be on
+  their machine or network, the metadata service never, and the caller's run narrows
+  it like any request. The native runtime lists a turn's tools held to its session's
+  run (`_build_catalog`), since a listing starts the connection. A refused call sends
+  nothing and answers in `guard.refusal_for`'s words; the open connection, shared by
+  every run, is made for none (`egress_held_to("")`), so a run's refusal never marks
+  the server failed.
 - `egress_policy_for_profile(base, tier)` is the composition — tightest wins, and
   caps only tighten. `off` returns `None`, and the guard refuses every host as
   `egress_off` before it is looked up, audited as an `egress_fetch` refusal (the

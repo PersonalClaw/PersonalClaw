@@ -75,11 +75,10 @@ WHAT THIS DELIBERATELY DOES NOT DO, so nobody mistakes the list above for the wh
   governed action with a different consent story, not a parameter on this one.
 * **No run tier of its own.** The guard holds every request to the egress tier of the run it is
   made for (``net.policy.egress_policy_for_run``), and this provider's fetch goes through the
-  guard, so a tier reaches it wherever a run is bound. An automation's action fire binds none: the
-  session binding that names a run (``mcp_core.set_current_session_key``) is also what a spawned
-  agent takes as its parent, so a fire cannot borrow it, and the tier of the automation that fired
-  does not reach this fetch. Its reach is the operator's Allowed hosts either way, which a tier
-  only keeps: on an exclusive base, ``listed`` and ``registry`` add no host.
+  guard, so the tier of the automation that dispatched it holds here: each dispatch holds its
+  action's requests to the run it judged the action under (``net.policy.egress_held_to``). Its
+  reach is the operator's Allowed hosts, which a tier only keeps or takes away: on an exclusive
+  base, ``listed`` and ``registry`` add no host, and ``off`` refuses every one.
 * **No content-type allow-list.** A template may legitimately fetch HTML, JSON, XML, CSV or plain
   text; enumerating that reliably is a mime-type war, and the bound plus the fence already contain
   the damage a surprising body can do. ``content_type`` is reported so a template can decide.
@@ -276,20 +275,34 @@ class NetFetchActionProvider(ActionProvider):
         its ``recovery_hints`` carry the generic advice — both are preserved, and the concrete
         setting is added because the guard cannot know which surface asked.
         """
-        from personalclaw.net.guard import allow_host_step
+        from personalclaw.net.guard import (
+            EGRESS_OFF_NOTHING_SENT,
+            allow_host_step,
+            where_egress_is_off,
+        )
 
         decision = getattr(blocked, "decision", None)
         host = str(getattr(decision, "host", "") or "")
         reason = str(getattr(decision, "reason", "") or "egress blocked")
-        allowed = len(getattr(policy, "allow_hosts", ()) or ())
-        step = allow_host_step(host or "the host")
-        if allowed:
-            fix = f"{step}, or point the action at a listed host"
+        hints = tuple(getattr(decision, "recovery_hints", ()) or ())
+        if getattr(decision, "category", "") == "egress_off":
+            # The run's tier, not the host: no entry on Allowed hosts lifts it, so none is offered.
+            # The guard's own hints are the why and the fix: nothing was sent, and which bound
+            # turned egress off.
+            why, fix, hints = EGRESS_OFF_NOTHING_SENT, where_egress_is_off(), ()
         else:
-            # The empty-list case is the DEFAULT posture, so it is the one most operators meet
-            # first. Saying "no hosts are permitted yet" is the difference between reading this as
-            # a bug and reading it as a setting nobody has filled in.
-            fix = f"no hosts are permitted for automated fetches yet — {step}"
+            why = (
+                "automated fetches are limited to an operator allow-list, which is exclusive: "
+                "a host that is not on it is refused before the request is made"
+            )
+            step = allow_host_step(host or "the host")
+            if getattr(policy, "allow_hosts", ()):
+                fix = f"{step}, or point the action at a listed host"
+            else:
+                # The empty-list case is the DEFAULT posture, so it is the one most operators meet
+                # first. Saying "no hosts are permitted yet" is the difference between reading this
+                # as a bug and reading it as a setting nobody has filled in.
+                fix = f"no hosts are permitted for automated fetches yet — {step}"
         return ActionResult(
             success=False,
             error=f"net-fetch was refused by the egress guard: {reason}",
@@ -297,12 +310,9 @@ class NetFetchActionProvider(ActionProvider):
             agent_error=AgentError(
                 code="ERR_NET_FETCH_EGRESS_BLOCKED",
                 what=f"net-fetch did not reach {host or 'the requested host'}: {reason}",
-                why=(
-                    "automated fetches are limited to an operator allow-list, which is exclusive: "
-                    "a host that is not on it is refused before the request is made"
-                ),
+                why=why,
                 fix=fix,
-                suggestions=tuple(getattr(decision, "recovery_hints", ()) or ()),
+                suggestions=hints,
             ),
             # Refused before the request was made, by a policy a retry cannot change.
             failure_class="permission",

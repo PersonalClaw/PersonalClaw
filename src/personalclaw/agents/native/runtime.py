@@ -472,7 +472,14 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
         # to the provider that serves it, never to whichever advertised it last (a registered app
         # that offered `bash` used to receive the agent's `bash` calls). A broken provider must not
         # kill start: its failure is logged and the rest still serve.
-        served, failures = await serve(self._tool_providers, skip=disabled_provs)
+        #
+        # Listed for this session's run, held to its egress tier (egress only: nothing else reads
+        # the hold): listing a remote MCP server's tools starts its connection, and a run whose
+        # tier does not reach the server must not reach it to learn what the server offers.
+        from personalclaw.net.policy import egress_held_to
+
+        with egress_held_to(self._session_key):
+            served, failures = await serve(self._tool_providers, skip=disabled_provs)
         for prov, _exc in failures:
             logger.debug("native: tool provider %s list failed", prov.name, exc_info=_exc)
         for prov, tools in served:

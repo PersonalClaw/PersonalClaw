@@ -278,7 +278,7 @@ Content and requests arriving from outside the owner's trust boundary:
   single outbound-HTTP seam with named policies, layered by
   `net/policy.py::egress_policy_for` and narrowed, for every request it judges, by the egress
   tier of the run the call is made for (`egress_policy_for_run`: a run whose tier is off
-  reaches nothing, whichever app or tool makes the request; what it does not reach is
+  reaches nothing, whichever app, tool or automation makes the request; what it does not reach is
   [limitations §18](limitations.md#18-a-runs-egress-tier-holds-where-its-requests-ask-the-guard)).
   Downloads go through it too, each request and each
   redirect hop asked before it is sent and audited: the code map fetches a grammar bundle
@@ -450,7 +450,9 @@ Data leaving the running system:
   verifier, which never leaves the gateway's memory. Every request a sign-in makes goes through the
   egress guard (`net.policy.MCP_SIGN_IN`, no redirects): only the server's own host may be private,
   and the authorization server must be on HTTPS unless the server itself is plain HTTP on this
-  machine.
+  machine. The connection itself asks the guard about the server's URL before every use, for the
+  run the call is made for (`net.policy.MCP_SERVER`): the owner's Denied hosts and the metadata
+  service are refused, and a run's egress tier holds for every call to a remote server.
 - **A reference resolves only against its own owner** (`SecretOwner.holds`): an app's settings,
   its instances and its `{app}:{server}` MCP servers resolve only that app's keys; core's
   settings resolve every key no app holds, the Secrets-panel vault included. A settings file is

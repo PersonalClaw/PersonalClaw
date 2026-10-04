@@ -24,6 +24,11 @@ Every start is recorded where the Tools page reads it (`mcp_discovery.note_start
 in the words of `mcp_status`, and how many starts in a row failed. A server that failed
 ``mcp_status.STOP_AFTER`` times in a row is not started again — by any connection, in any chat —
 until its owner presses Retry or its definition changes.
+
+A server at a URL is reached through the egress guard's judgement: its start and every tool call
+over its connection ask the guard about its URL first (``net.policy.MCP_SERVER``), for the run the
+call is made for, so the owner's Denied hosts and a run's egress tier hold for it, and a refused
+call sends nothing and says why. A refusal is that call's answer, never a failed start.
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ from personalclaw import trace_recorder as _trace
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.mcp_status import (
     StartFailure,
+    _seconds,
     closed,
     command_not_found,
     did_not_answer,
@@ -73,6 +79,8 @@ _SWEEP_INTERVAL_SECS = 120.0
 # How long closing one server's connection may take before it is abandoned (and logged), so a
 # server that will not stop cannot hold up the app unload that is replacing it.
 _CLOSE_TIMEOUT_SECS = 10.0
+# The door a remote server's rows in the audit log name (`egress_fetch` from `mcp:mcp_server`).
+_EGRESS_DOOR = "mcp"
 
 
 @dataclass
@@ -269,27 +277,33 @@ class McpServerConn:
     async def ensure_started(self) -> bool:
         """Start the actor + wait for the handshake. Returns connected-ok.
 
+        A start of a server at a URL is asked of the egress guard first, for the run the call
+        that starts it is made for (:meth:`_egress_refusal`): one it refuses sends nothing, and why
+        is this connection's error, in the guard's words. Each tool call over the connection asks
+        again, for its own run (:meth:`call_tool`), since an open connection serves every run.
+
         A server that failed to start ``mcp_status.STOP_AFTER`` times in a row — by this
         connection, another chat's, or the probe — is not started (`mcp_discovery.start_refused`):
         nothing is spawned, and why is this connection's error. Its owner's Retry, or a change to
         what it runs, starts it again. The actor decides each start's outcome once and records it;
         every caller waiting on it only reads it."""
         self.touch()
-        if self._task is None or self._task.done():
+        if not self.started:
             from personalclaw.mcp_discovery import start_refused
 
             refused = start_refused(self.name, self._definition_seal())
             if refused is not None:
                 self._error = refused
                 return False
-            self._requests = asyncio.Queue()
-            self._ready = asyncio.Event()
-            self._error = ""
-            self._sign_in_needed = False
-            self._closing = False
-            self._failure = None
-            self._timed_out = False
-            self._task = asyncio.create_task(self._run(), name=f"mcp-conn-{self.name}")
+            refused = await self._egress_refusal()
+            # Read again after the look-up: another call may have started the connection meanwhile,
+            # and neither this call's refusal nor a second start may replace the one it made.
+            if refused:
+                if not self.started:
+                    self._error = refused
+                return False
+            if not self.started:
+                self._begin()
         try:
             await asyncio.wait_for(
                 self._ready.wait(), timeout=self._connect_timeout + _ANSWER_SLACK_SECS
@@ -299,12 +313,84 @@ class McpServerConn:
             return False
         return not self._error
 
+    def _begin(self) -> None:
+        """Start the actor that holds the connection, its last start's outcome cleared."""
+        self._requests = asyncio.Queue()
+        self._ready = asyncio.Event()
+        self._error = ""
+        self._sign_in_needed = False
+        self._closing = False
+        self._failure = None
+        self._timed_out = False
+        if self._remote_url():
+            from personalclaw.net.client import audit
+            from personalclaw.net.policy import MCP_SERVER
+
+            audit(self._shown_url(), MCP_SERVER, outcome="allowed", door=_EGRESS_DOOR)
+        # The connection serves every run that calls over it, so it is made for none: what it sends
+        # on its own (a sign-in's renewal) keeps to the owner's Network egress settings, and each
+        # run's call is asked of the guard, for that run, before it is sent (:meth:`call_tool`).
+        from personalclaw.net.policy import egress_held_to
+
+        with egress_held_to(""):
+            self._task = asyncio.create_task(self._run(), name=f"mcp-conn-{self.name}")
+
     def _definition_seal(self) -> str:
         if self._seal is None:
             from personalclaw.mcp_discovery import definition_seal
 
             self._seal = definition_seal(self.name, self.spec)
         return self._seal
+
+    def _remote_url(self) -> str:
+        """The URL of a server PersonalClaw connects to over the network, ``""`` for a stdio one."""
+        from personalclaw.mcp_discovery import mcp_transport
+
+        if mcp_transport(self.spec) not in ("http", "sse"):
+            return ""
+        return str(self.spec.get("url") or "")
+
+    def _shown_url(self) -> str:
+        """The server's URL as a sentence or the audit log may name it: no credential it carries."""
+        from personalclaw.mcp_discovery import masked_url
+
+        return masked_url(self._remote_url())
+
+    async def _egress_refusal(self) -> str:
+        """Why the egress guard refuses the call being made this server, ``""`` when it may.
+
+        Asked about the server's URL (:data:`~personalclaw.net.policy.MCP_SERVER`, with the owner's
+        Network egress settings on it) for the run the call is made for, whose tier the guard
+        applies (``net.policy.egress_policy_for_run``): a run whose tier is off reaches no server,
+        and one whose tier lists hosts reaches a server only on Allowed hosts. A refusal is in the
+        audit log and its sentence is the guard's (``net.guard.refusal_for``), naming the URL
+        without a credential in it. A stdio server is a program on this machine and is not asked
+        about. A name that does not resolve is not a refusal: the start fails on it, in its own
+        words. The look-up runs off the event loop and in this call's context, within the time a
+        start has; one that does not finish in it refuses, since its answer is not known."""
+        url = self._remote_url()
+        if not url:
+            return ""
+        from personalclaw.net.client import audit
+        from personalclaw.net.guard import evaluate, refusal_for
+        from personalclaw.net.policy import MCP_SERVER, egress_policy_for
+
+        policy = egress_policy_for(MCP_SERVER)
+        shown = self._shown_url()
+        try:
+            decision = await asyncio.wait_for(
+                asyncio.to_thread(evaluate, url, policy), timeout=self._connect_timeout
+            )
+        except asyncio.TimeoutError:
+            said = slow_lookup_text(
+                urlsplit(url).hostname or shown, _seconds(self._connect_timeout)
+            )
+            audit(shown, policy, outcome="denied", reason=said, door=_EGRESS_DOOR)
+            return said
+        if decision.allow or decision.category == "unresolvable":
+            return ""
+        audit(shown, policy, outcome="denied", reason=decision.reason, door=_EGRESS_DOOR)
+        return refusal_for(shown, decision, then="then try it again")
 
     async def list_tools(self) -> list[McpToolSpec]:
         if not await self.ensure_started():
@@ -313,7 +399,12 @@ class McpServerConn:
         return list(self._tools)
 
     async def call_tool(self, tool: str, arguments: dict[str, Any]) -> tuple[bool, str]:
-        """Invoke ``tool``; returns ``(ok, text_output_or_error)``."""
+        """Invoke ``tool``; returns ``(ok, text_output_or_error)``. A call the egress guard refuses
+        for the run it is made for sends nothing, and its answer is the guard's sentence
+        (:meth:`_egress_refusal`)."""
+        refused = await self._egress_refusal()
+        if refused:
+            return False, refused
         if not await self.ensure_started():
             return False, f"MCP server '{self.name}' not connected: {self._error}"
         self.touch()

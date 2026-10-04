@@ -7,8 +7,11 @@ for gateway↔mcp self-calls) instead of re-implementing checks. The guard
 enforces the byte/timeout/redirect caps.
 """
 
+import contextvars
 import logging
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -348,6 +351,26 @@ MCP_SIGN_IN = EgressPolicy(
     timeout_s=20.0,
 )
 
+# A remote MCP server's CONNECTION (`mcp_client`). Each use of it, its start and every tool call
+# alike, asks the guard about the server's own URL under this policy before anything is sent. The
+# URL is the owner's: they configured the server and allowed it as it is defined (`mcp_grants`), so
+# it is reachable on their own machine or network as well as a public one (`allow_private`, which
+# reads only that URL: the connection's one host). A run's tier narrows it as it narrows any
+# request, so a run whose tier lists hosts reaches the server only when its host is on Allowed
+# hosts.
+#
+#   * `deny_hosts=METADATA_SERVICE_HOSTS` — refused by name before DNS, as for MCP_SIGN_IN; the
+#     guard refuses a metadata or link-local ADDRESS for every policy.
+#   * `pin_resolved_ip=False` — honest, as for BROWSE: the transport's own HTTP client resolves the
+#     name again for itself, so the connection is not held to the address the guard checked. It
+#     follows a redirect only within the server's own origin, so it reaches no other host.
+MCP_SERVER = EgressPolicy(
+    name="mcp_server",
+    allow_private=True,
+    deny_hosts=METADATA_SERVICE_HOSTS,
+    pin_resolved_ip=False,
+)
+
 _PROFILES: dict[str, EgressPolicy] = {
     p.name: p
     for p in (
@@ -364,6 +387,7 @@ _PROFILES: dict[str, EgressPolicy] = {
         LISTING,
         MEDIA,
         MCP_SIGN_IN,
+        MCP_SERVER,
     )
 }
 
@@ -440,12 +464,14 @@ def egress_policy_for_run(
     app's code starts). Tightest wins (:func:`egress_policy_for_profile`).
 
     *session_key* names the run, ``""`` included (an unnamed run resolves as attended, still
-    bounded by the ceiling). Left out, the run is the one the call is being made for: the session
-    a tool call runs as, which each seam that dispatches one binds around it
-    (``mcp_core.set_current_session_key``: the built-in agent's tool calls, the tool server an
-    agent CLI runs, ``POST /api/tools/invoke``). A call no run is bound for is not a run's (the
-    owner's own action in the app, a background job), and *base* is returned as it is, the
-    owner's Network egress settings already on it.
+    bounded by the ceiling). Left out, the run is the one the call is being made for
+    (:func:`_run_of_this_call`): the session a tool call runs as, which each seam that dispatches
+    one binds around it (``mcp_core.set_current_session_key``: the built-in agent's tool calls, the
+    tool server an agent CLI runs, ``POST /api/tools/invoke``), or the run an automation's action
+    is dispatched for (:func:`egress_held_to`: a trigger's fire and its Run now, a hook, a
+    workflow step). A call no run is bound for is not a run's (the owner's own action in the app,
+    a background job), and *base* is returned as it is, the owner's Network egress settings
+    already on it.
 
     ``None`` means the run may not reach the network at all, and the caller refuses: never fall
     through to *base*. A *base* that reaches only this machine (``loopback_only``: the gateway's
@@ -462,7 +488,52 @@ def egress_policy_for_run(
     return egress_policy_for_profile(base, profile_for_session(key).egress_tier)
 
 
+#: The run :func:`egress_held_to` holds a call's requests to, with the session that was bound when
+#: it did; ``None`` outside every hold.
+_HELD_TO: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar(
+    "personalclaw_egress_held_to", default=None
+)
+
+
+@contextmanager
+def egress_held_to(session_key: str) -> Iterator[None]:
+    """Hold every request made inside the block to the egress tier of *session_key*'s run.
+
+    For a seam that dispatches work for a run without running it as that run's session: an
+    automation's action (a trigger's fire and its Run now, a hook, a workflow step), judged by its
+    other gates under a dispatch key (``guardrails.policy.unattended_dispatch_key``). That key is
+    not bound as the session (``mcp_core.set_current_session_key``), which every other reader of
+    the session would then see, an agent the action starts taking it for its parent among them; it
+    is read by :func:`egress_policy_for_run` and nothing else. A task the action starts inside the
+    block takes the hold with it, as it takes any context, and so does a worker thread of the
+    gateway's own pool (``memory_writes.ScopeCarryingExecutor``).
+
+    The hold gives way to a session bound inside it, other than the one bound when it began: a
+    tool call the work makes for a session of its own (an agent the action starts) is held to that
+    session's run, the way a tool call is everywhere. ``""`` holds the block to no run, the
+    owner's Network egress settings alone (what a connection shared by every run is made under).
+    """
+    token = _HELD_TO.set((session_key or "", _session_of_this_call()))
+    try:
+        yield
+    finally:
+        _HELD_TO.reset(token)
+
+
 def _run_of_this_call() -> str:
+    """The run the call being made is for (``""`` when none is): the innermost of the session a
+    tool call runs as and the run an automation's action is held to (:func:`egress_held_to`).
+
+    A hold names the session that was bound when it began, so a session bound since (a tool call
+    made inside the held work) is the inner of the two and its run is the one asked."""
+    session = _session_of_this_call()
+    held = _HELD_TO.get()
+    if held is not None and held[1] == session:
+        return held[0]
+    return session
+
+
+def _session_of_this_call() -> str:
     """The session the call being made runs as (``""`` when none is bound).
 
     The binding is ``mcp_core``'s, set around each tool call a run dispatches. Read through

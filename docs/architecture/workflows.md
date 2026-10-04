@@ -268,7 +268,10 @@ unattended action refused: it would stop the PersonalClaw gateway that is execut
 …"); the run's ending names it, the audit log has its `guardrails.denylist` row and the
 gateway log a warning. You can still stop or update PersonalClaw yourself, from your own
 shell or Settings → Updates. `tests/test_action_provider_chokepoints.py` fails an
-execution site that reaches a provider, under any name, without asking.
+execution site that reaches a provider, under any name, without asking. What the step then
+reaches is held to the egress tier of that same identity (`net.policy.egress_held_to`), so
+an operator ceiling that gives no run any network refuses a step's fetch or webhook as it
+refuses a trigger's ([limitations §18](../security/limitations.md#18-a-runs-egress-tier-holds-where-its-requests-ask-the-guard)).
 
 **Every `WF_*` code has a registry row: `workflows/error_codes.py`
 (`WF_ERROR_CODES`).** That is where to look one up. `WF_*` is the third of this repo's

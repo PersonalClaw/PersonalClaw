@@ -966,32 +966,54 @@ public host (`all`). The operator ceiling (`governance/ceiling.json`) can narrow
 on the machine, and is what sets it today. The tier is read for every request the egress guard is
 asked about (`net.policy.egress_policy_for_run`, from `net.guard.evaluate`): a page the agent
 fetches or renders, a search, an image or a video a provider's answer points at, a webhook an app
-sends, the browser's navigations and every other request an app makes through the SDK. The
-agent's shell and the programs an app's code starts are held to it as well (§16). In a run whose
-tier is `off` each of those requests is refused before its host is looked up, the agent is told
-"egress is off for this run", and the refusal is in the audit log. A request made for no run (your
-own action in the app, such as a provider's Test, or a background job) keeps to your Network
-egress settings alone.
+sends, the browser's navigations and every other request an app makes through the SDK.
+
+An automation's action is held to it too. A trigger's fire, its Run now, a webhook's or a view's
+fire, a hook and a workflow step hold what their action reaches to the run the action is dispatched
+for (`net.policy.egress_held_to`, under the identity the action denylist judges it by), so a
+webhook, an A2A call or a fetch an automation sends keeps to the tier as a chat's request does; an
+agent the action starts is held to its own run. So is a remote MCP server: its connection's start,
+a turn's listing of its tools and every tool call ask the guard about the server's URL first, for
+the run the call is made for (`net.policy.MCP_SERVER`). A run whose tier is `off` reaches no server
+and is offered none of a server's tools it would have to reach to list, a `listed` run reaches one
+only when its host is on Allowed hosts, and your Denied hosts and the cloud metadata service are
+refused for every call; a server on your own machine or network stays reachable otherwise, since
+you configured it. The agent's shell and the programs an app's code starts are held to the tier as
+well (§16).
+
+In a run whose tier is `off` each of those requests is refused before its host is looked up, the
+agent is told "egress is off for this run", and the refusal is in the audit log. A request made for
+no run (your own action in the app, such as a provider's Test or the Tools page's look at a server,
+or a background job) keeps to your Network egress settings alone.
 
 What the tier does not reach:
 
-- **An automation's action.** A trigger's or a workflow's action step (a webhook, an A2A call, a
-  fetch step) runs outside any run the guard can name, so the tier of the automation that fired
-  does not reach it. Your Network egress settings still do.
-- **A request a tool hands to a worker thread that does not carry the run** (one started with the
-  event loop's `run_in_executor`; `asyncio.to_thread` carries it). Such a request is held to your
-  settings alone.
-- **An app's own HTTP client and a remote MCP server's connection.** A request an app makes without
-  the SDK (§2) asks no guard, and neither does the connection to a remote MCP server, so neither is
-  held to the tier or to your Network egress settings.
+- **A command or a script an automation runs.** A bash action and a script action start a program
+  of their own: what it reaches asks no guard, and its command line is not read for the hosts it
+  names, as the agent's shell's is (§16). The grant you gave the automation when you allowed its
+  action is what holds it.
+- **A request made on a thread its code starts for itself.** Work handed to PersonalClaw's own
+  worker threads carries the run (the gateway's `run_in_executor` pool and `asyncio.to_thread`
+  alike), but a thread code starts by hand, or a pool of its own, does not: a request an app makes
+  through the SDK from one is held to your Network egress settings alone.
+- **An app's own HTTP client, and what an MCP server reaches itself.** A request an app makes
+  without the SDK (§2) asks no guard. A remote MCP server's connection is asked about the server's
+  own host, the one host it reaches, but the server then reaches whatever it reaches, as a stdio
+  server, a program on this machine, does (§9). Once a connection is open (your own look on the
+  Tools page opened it, or a run its tier lets reach the server), any run is shown the server's tools
+  and only its calls are refused. A sign-in's renewal, which the connection sends on its own, keeps
+  to your settings alone, and the connection looks the server's name up again for itself, so it is
+  not held to the address the guard checked.
 - **What a page in the browser loads on its own.** Its images, scripts and frames are not asked of
   the guard; only the navigation is (`net.policy.BROWSE`).
 - **An agent CLI's own tools.** A CLI's built-in web search or fetch runs inside the CLI and never
   asks PersonalClaw (§11); the tools PersonalClaw serves it are held to the tier.
 
-**What this means for you:** a tier set in the ceiling holds for everything the agent and your apps
-reach through PersonalClaw's own requests. It is not a network fence around the machine: an app you
-do not trust with the network should not be installed where its code runs as you (§7).
+**What this means for you:** a tier set in the ceiling holds for everything the agent, your
+automations and your apps reach through PersonalClaw's own requests, and for every call to a remote
+MCP server. It is not a network fence around the machine: an automation's command reaches what it
+reaches, and an app you do not trust with the network should not be installed where its code runs
+as you (§7).
 
 ## Why these are listed, not fixed
 
@@ -1012,8 +1034,7 @@ programs a run may start, enforced by its sandbox rather than read from the comm
 #15; a network and a write fence around an unattended run's shell and an app's programs,
 enforced by the OS rather than read from a command line, for #16; reading the whole of a long
 text a reader makes of a document, and an archive's files one by one as an import writes them
-out, for #17; an automation's action fire naming its own run to the guard, and a network fence
-for an app's own requests and a remote MCP server's connection, for #18). This page will shrink
-as those land.
+out, for #17; a network fence, enforced by the OS, around an automation's commands, an app's own
+requests and an MCP server's program, for #18). This page will shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

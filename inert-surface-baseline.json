@@ -217,9 +217,8 @@
       ]
     },
     "src/personalclaw/sdk/net.py": {
-      "inert": 5,
+      "inert": 4,
       "surfaces": [
-        "sdk_export:WEBHOOK",
         "sdk_export:evaluate",
         "sdk_export:record_seen_urls",
         "sdk_export:web_extract",
@@ -334,9 +333,9 @@
       "config_reader": 6,
       "editable_config": 0,
       "enum": 8,
-      "sdk_export": 137,
+      "sdk_export": 136,
       "trigger_kind": 0
     },
-    "inert": 151
+    "inert": 150
   }
 }

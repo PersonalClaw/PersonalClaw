@@ -1744,9 +1744,16 @@ class GatewayOrchestrator:
             # `id`, `delivery` are all read the same way): the fire path is driven with partial
             # trigger shapes, and a ceiling lookup must never be what turns a fire into an error.
             budget_token = set_current_run_budget(run_budget_for(getattr(trigger, "gates", None)))
+            from personalclaw.net.policy import egress_held_to
+
             try:
                 running = True
-                result = await provider.execute(config, ctx, timeout=timeout)
+                # What the action reaches is held to the egress tier of the identity both gates
+                # above judged it under. Nothing else names the fire's run to the guard: without
+                # this, a ceiling that gives no run on this machine any network let a fire's
+                # webhook or fetch go out.
+                with egress_held_to(dispatch_key):
+                    result = await provider.execute(config, ctx, timeout=timeout)
                 running = False
             finally:
                 reset_current_run_budget(budget_token)

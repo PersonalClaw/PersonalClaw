@@ -1080,8 +1080,13 @@ async def run_script_hook(
             event=hook.event,
             error=f"held for your approval: {route.reason}",
         )
+    from personalclaw.net.policy import egress_held_to
+
     try:
-        result = await provider.execute(hook.provider_config, ctx, timeout=hook.timeout)
+        # What the action reaches is held to the egress tier of the identity the denylist and the
+        # rung judged it under, whichever turn's event fired it.
+        with egress_held_to(_session_key):
+            result = await provider.execute(hook.provider_config, ctx, timeout=hook.timeout)
     except Exception as exc:  # noqa: BLE001 - a misbehaving provider must not crash the seam
         # A provider that RAISES (rather than returning a
         # failed result) is wrapped in the shared WHAT/WHY/FIX envelope here, so
