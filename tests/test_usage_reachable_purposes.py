@@ -16,6 +16,7 @@ they import.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -208,6 +209,22 @@ def test_the_app_name_census_is_not_vacuous() -> None:
     ), "comment stripping is broken — gateway.py's prose is counting as a writer"
 
 
+def _takes_the_passed_app(node: ast.AST) -> bool:
+    """``session._app = app`` or ``(app or …)``: the session keeps the app it was named with."""
+    if not isinstance(node, ast.Assign):
+        return False
+    if not any(
+        isinstance(t, ast.Attribute)
+        and t.attr == "_app"
+        and isinstance(t.value, ast.Name)
+        and t.value.id == "session"
+        for t in node.targets
+    ):
+        return False
+    first = node.value.values[0] if isinstance(node.value, ast.BoolOp) else node.value
+    return isinstance(first, ast.Name) and first.id == "app"
+
+
 def test_loop_has_a_turn_ledger_writer_via_the_worker_session_app() -> None:
     """The loop engine IS a turn-ledger writer, through its worker session's ``app``.
 
@@ -222,7 +239,9 @@ def test_loop_has_a_turn_ledger_writer_via_the_worker_session_app() -> None:
     manager = (_SRC / "loop" / "manager.py").read_text(encoding="utf-8")
     assert manager.count('app="loop"') >= 2, "the main worker + task worker app names moved"
     state = (_SRC / "dashboard" / "state.py").read_text(encoding="utf-8")
-    assert "session._app = app" in state, "the _app assignment moved; re-derive this chain"
+    assert any(
+        _takes_the_passed_app(node) for node in ast.walk(ast.parse(state))
+    ), "the _app assignment moved; re-derive this chain"
     runner = (_SRC / "dashboard" / "chat_runner.py").read_text(encoding="utf-8")
     assert 'source=getattr(session, "_app", "") or "chat"' in runner, "the chat seam moved"
 
