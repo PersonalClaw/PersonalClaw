@@ -91,7 +91,8 @@ class TestWrapArgv:
     def test_namespace_backend(self, mock_ns_argv, mock_detect):
         mock_ns_argv.return_value = [sys.executable, "/tmp/launcher.py", "personalclaw"]
         result, cleanup = wrap_argv(["personalclaw"], mode="strict")
-        mock_ns_argv.assert_called_once_with(["personalclaw"], "strict")
+        # A command made for no run keeps the network.
+        mock_ns_argv.assert_called_once_with(["personalclaw"], "strict", network=True)
 
     @patch("personalclaw.sandbox.detect_backend", return_value="sandbox-exec")
     @patch("personalclaw.sandbox.sandbox_exec_argv")
@@ -101,7 +102,7 @@ class TestWrapArgv:
             "/tmp/p.sb",
         )
         result, cleanup = wrap_argv(["personalclaw"], mode="strict")
-        mock_sb_argv.assert_called_once_with(["personalclaw"], "strict")
+        mock_sb_argv.assert_called_once_with(["personalclaw"], "strict", network=True)
 
 
 class TestBuildSeatbeltProfile:

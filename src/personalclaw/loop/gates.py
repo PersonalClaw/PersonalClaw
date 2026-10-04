@@ -172,6 +172,19 @@ async def run_verify_command(
         logger.warning("loop gate: refusing to run %s command — %s", label, danger)
         report.not_run = f"the safety screen refused it ({danger})"
         return None
+    from personalclaw import sandbox
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+
+    # A check runs with nobody answering it, whatever started its loop or its run, so it is held
+    # to the egress tier of unattended work: where that gives it no network, it runs in the OS
+    # sandbox without one.
+    held_to = unattended_dispatch_key("loop_gate")
+    try:
+        argv, cleanup = sandbox.egress_bound_argv(["/bin/sh", "-c", cmd], run=held_to)
+    except sandbox.SandboxEnforcementUnavailable as exc:
+        audit_command_refusal(cmd, str(exc), source="loop_gate", operation=label, control="sandbox")
+        report.not_run = str(exc).removeprefix(sandbox.NOT_RUN)
+        return None
     try:
         # Resource ceiling: a loop verify command is agent-influenced (the loop
         # persisted it), so deliver the ``tool`` ceiling. Route through the post-exec
@@ -183,9 +196,7 @@ async def run_verify_command(
         # A check is a run of its own: what it starts (a test suite's server) ends when it exits.
         run = run_processes.own()
         proc = await create_subprocess_limited(
-            "/bin/sh",
-            "-c",
-            cmd,
+            *argv,
             profile=PROFILE_TOOL,
             cwd=cwd or None,
             # The loop's persisted command, so the child allowlist (`build_child_env`), like a
@@ -203,6 +214,7 @@ async def run_verify_command(
             start_new_session=True,
         )
     except Exception:
+        sandbox.remove_wrap(cleanup)
         logger.warning("loop gate: could not spawn %s command `%s`", label, cmd, exc_info=True)
         report.not_run = (
             f"its folder {cwd} does not exist"
@@ -225,9 +237,12 @@ async def run_verify_command(
         raise
     finally:
         await run.ended(proc.pid)
+        sandbox.remove_wrap(cleanup)
     rc = proc.returncode
     report.exit_code = rc
     report.output = mask_child_output(printed, limit=CHECK_OUTPUT_TAIL, tail=True, one_line=False)
+    if rc and (note := sandbox.no_network_note(held_to)):
+        report.output = f"{report.output}\n{note}".strip()
     if rc == 127:
         # The tool isn't installed here. For a verifiable gate this command IS the
         # done-ness signal, so a missing tool means the loop can NEVER self-complete

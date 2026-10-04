@@ -280,6 +280,10 @@ Content and requests arriving from outside the owner's trust boundary:
   tier of the run the call is made for (`egress_policy_for_run`: a run whose tier is off
   reaches nothing, whichever app, tool or automation makes the request; what it does not reach is
   [limitations §18](limitations.md#18-a-runs-egress-tier-holds-where-its-requests-ask-the-guard)).
+  A command a run starts asks no guard, so the tier holds for it where the OS sandbox launches it
+  (`sandbox.wrap_argv`, `net/policy.py::no_network_for_commands`): unless the tier is `all`, the
+  command runs with no network at all (a network namespace of its own on Linux, a profile that
+  denies the network on macOS), and one the sandbox cannot do that for is refused, not run.
   Downloads go through it too, each request and each
   redirect hop asked before it is sent and audited: the code map fetches a grammar bundle
   through `net.fetch` and hands the language pack a manifest naming only files on this machine

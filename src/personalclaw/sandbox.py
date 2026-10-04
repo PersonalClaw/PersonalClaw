@@ -13,9 +13,15 @@ Both also keep what runs as the owner (``owner_only``) unwritable at every level
 command started for work that may change none of your memory (an Incognito or Temporary chat's,
 an app's not given your memory), the memory folders too (:func:`_memory_fence`).
 
+A command a run starts is also held to the run's egress tier here (:func:`wrap_argv`): when the
+tier takes its network away, the Linux child gets a network namespace of its own with nothing in
+it (``unshare(CLONE_NEWNET)``), and the Seatbelt profile denies the network, this machine's own
+included.
+
 The parent PersonalClaw process is completely unaffected — isolation applies
 only to the spawned child.  Falls back gracefully to no sandbox when the
-OS mechanism is unavailable (logged as warning).
+OS mechanism is unavailable (logged as warning), except for a command whose
+run gives it no network, which is refused rather than run with the network.
 
 Config: ``"sandbox": "auto" | "off"`` in ``~/.personalclaw/config.json``.
 ``"auto"`` (default) uses namespace sandbox on Linux, seatbelt on macOS.
@@ -584,6 +590,37 @@ def _probe_unshare() -> bool:
         return False
 
 
+@functools.lru_cache(maxsize=1)
+def _probe_unshare_net() -> bool:
+    """Return True if the launcher can give a command a network namespace of its own (Linux).
+
+    The steps the launcher takes for a command whose run gives it no network, in its order:
+    ``unshare(NEWUSER)``, then ``unshare(NEWNS)``, then ``unshare(NEWNET)``. A host can allow the
+    first two and refuse the third (``user.max_net_namespaces`` at 0, a filter on the flag), and
+    such a host can take no command's network away, so the command is refused before it is built
+    rather than failing in the launcher.
+    """
+    if sys.platform != "linux":
+        return False
+    try:
+        _clone_newuser = 0x10000000
+        _clone_newns = 0x00020000
+        _clone_newnet = 0x40000000
+        _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        _libc.unshare.argtypes = [ctypes.c_int]
+        _libc.unshare.restype = ctypes.c_int
+        pid = os.fork()
+        if pid == 0:
+            for flag in (_clone_newuser, _clone_newns, _clone_newnet):
+                if _libc.unshare(flag) != 0:
+                    os._exit(1)
+            os._exit(0)
+        _, status = os.waitpid(pid, 0)
+        return os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+    except Exception:
+        return False
+
+
 # ── The wrapper's OWN enforcement binaries ──
 #
 # `sandbox_exec_argv` execs two binaries of its own ahead of the child's argv: `env` (to
@@ -752,7 +789,7 @@ def _hidden_files(home: str, sandbox_level: str, *, realpath_only: bool) -> list
 # ── Backend: Linux namespace sandbox ──
 
 
-def _build_launcher_script(sandbox_level: str = "strict") -> str:
+def _build_launcher_script(sandbox_level: str = "strict", *, network: bool = True) -> str:
     """Build a Python launcher script for the Linux namespace sandbox.
 
     The launcher is executed as a subprocess.  It:
@@ -761,9 +798,12 @@ def _build_launcher_script(sandbox_level: str = "strict") -> str:
     2. Child calls ``unshare(CLONE_NEWUSER)`` and signals the parent.
     3. Parent writes identity UID/GID map (``uid uid 1``) to
        ``/proc/<child>/{setgroups,uid_map,gid_map}`` and signals back.
-    4. Child calls ``unshare(CLONE_NEWNS)``, sets mount propagation private,
-       bind-mounts empty dirs over credential paths, scrubs env vars,
-       and ``exec``s the real command.
+    4. Child calls ``unshare(CLONE_NEWNS)``, and without *network* also
+       ``unshare(CLONE_NEWNET)``: a network namespace of its own, whose one
+       interface (its loopback) is down, so no address is reachable from it,
+       this machine's own included. It never runs the command when that fails.
+    5. Child sets mount propagation private, bind-mounts empty dirs over
+       credential paths, scrubs env vars, and ``exec``s the real command.
 
     The child retains the real UID/GID — no UID 0, no UID 65534.
     """
@@ -814,6 +854,7 @@ import tempfile
 
 _CLONE_NEWUSER = 0x10000000
 _CLONE_NEWNS   = 0x00020000
+_CLONE_NEWNET  = 0x40000000
 _MS_BIND       = 4096
 _MS_REC        = 16384
 _MS_PRIVATE    = 1 << 18
@@ -833,6 +874,7 @@ OWNER_HOME = {owner_home_json}
 OWNER_ONLY_NAMES = {owner_only_names_json}
 PINNED = {pinned_json}
 MEMORY_FOLDERS = {memory_json}
+NO_NETWORK = {not network}
 
 # The tmpfs the empty bind sources come from, first usable one wins. Same-fs binds (e.g. /tmp
 # on ext4 over ~/.personalclaw/.env on ext4) can corrupt the target's host directory entry via
@@ -986,6 +1028,11 @@ def main():
         # Step 2: enter mount namespace (now we have a mapped UID)
         if libc.unshare(_CLONE_NEWNS) != 0:
             sys.exit(f"sandbox: unshare(NEWNS) failed: errno {{ctypes.get_errno()}}")
+
+        # Step 3, for a command whose run gives it no network: a network namespace of its own,
+        # which has only a loopback interface that is down, so nothing is reachable from it.
+        if NO_NETWORK and libc.unshare(_CLONE_NEWNET) != 0:
+            sys.exit(f"sandbox: unshare(NEWNET) failed: errno {{ctypes.get_errno()}}")
 
         # Private mount propagation
         libc.mount(None, b"/", None, _MS_REC | _MS_PRIVATE, None)
@@ -1159,12 +1206,15 @@ def _resolve_real_agent_bin(name: str) -> str:
 NAMESPACE_REFUSAL = "start the Linux sandbox this command runs in, so it was not run"
 
 
-def namespace_argv(argv: list[str], sandbox_level: str = "strict") -> list[str]:
+def namespace_argv(
+    argv: list[str], sandbox_level: str = "strict", *, network: bool = True
+) -> list[str]:
     """Wrap *argv* via the Python namespace launcher.
 
     The launcher forks, the parent writes identity UID/GID maps, and the
     child bind-mounts empty dirs over credential paths before exec.
-    The child retains the real UID/GID.
+    The child retains the real UID/GID. Without *network* the child also
+    gets a network namespace of its own, with nothing reachable from it.
 
     The launcher is a generated script run by this interpreter, which the desktop app does not
     have: its bundle's executable runs the CLI and nothing else (``python_children``). There the
@@ -1182,7 +1232,7 @@ def namespace_argv(argv: list[str], sandbox_level: str = "strict") -> list[str]:
     if real_argv:
         real_argv[0] = _resolve_real_agent_bin(real_argv[0])
 
-    script = _build_launcher_script(sandbox_level)
+    script = _build_launcher_script(sandbox_level, network=network)
     fd, path = tempfile.mkstemp(suffix=".py", prefix="personalclaw_sandbox_")
     os.write(fd, script.encode())
     os.close(fd)
@@ -1200,8 +1250,9 @@ _SEATBELT_PROFILE = """\
 """
 
 
-def _build_seatbelt_profile(sandbox_level: str = "strict") -> str:
-    """Build a Seatbelt .sb profile denying reads of sensitive dirs."""
+def _build_seatbelt_profile(sandbox_level: str = "strict", *, network: bool = True) -> str:
+    """Build a Seatbelt .sb profile denying reads of sensitive dirs, and without *network* every
+    network operation as well."""
     home = str(Path.home())
     if sandbox_level == "standard":
         dirs = _STANDARD_DIRS
@@ -1269,6 +1320,12 @@ def _build_seatbelt_profile(sandbox_level: str = "strict") -> str:
     for target in _pinned_dirs(realpath_only=False, include_home=True):
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-write* (literal "{escaped}"))')
+
+    # A command whose run gives it no network: every connection, listening socket and name lookup
+    # is refused, to this machine's own addresses and to a local socket alike, since macOS gives
+    # a process no network of its own the way a Linux namespace does.
+    if not network:
+        rules.append("(deny network*)")
 
     return _SEATBELT_PROFILE.format(deny_rules="\n".join(rules))
 
@@ -1350,8 +1407,11 @@ def _owner_only_targets() -> list[tuple[str, bool]]:
 def sandbox_exec_argv(
     argv: list[str],
     sandbox_level: str = "strict",
+    *,
+    network: bool = True,
 ) -> tuple[list[str], str | None]:
-    """Wrap *argv* with ``sandbox-exec -f <profile>``.
+    """Wrap *argv* with ``sandbox-exec -f <profile>``, a profile that without *network* denies
+    the network too.
 
     Also scrubs sensitive env vars via ``env -u`` since Seatbelt only
     handles file-level deny rules, not environment variables.
@@ -1377,7 +1437,7 @@ def sandbox_exec_argv(
             f"cannot build a sandbox-exec wrap: {', '.join(missing)} not found on the "
             f"system utility path ({_system_utility_path()})"
         )
-    profile = _build_seatbelt_profile(sandbox_level)
+    profile = _build_seatbelt_profile(sandbox_level, network=network)
     fd, path = tempfile.mkstemp(suffix=".sb", prefix="personalclaw_sandbox_")
     os.write(fd, profile.encode())
     os.close(fd)
@@ -1442,6 +1502,7 @@ def reset_backend() -> None:
     _backend = None
     _backend_config_mode = None
     _probe_unshare.cache_clear()
+    _probe_unshare_net.cache_clear()
     _probe_sandbox_exec.cache_clear()
 
 
@@ -1449,8 +1510,13 @@ def wrap_refusal(mode: str = "auto") -> str:
     """Why a command wrapped at *mode* would be refused here, or ``""`` when it would run.
 
     The sentence :func:`wrap_argv` raises with, asked before anything is built, so a tool can
-    refuse the call in its pre-flight: the desktop app cannot start the Linux namespace launcher
-    (:func:`namespace_argv`) on a host whose namespaces work."""
+    refuse the call in its pre-flight: the command's run gives it no network and the sandbox
+    cannot take the network away here, or the desktop app cannot start the Linux namespace
+    launcher (:func:`namespace_argv`) on a host whose namespaces work."""
+    from personalclaw.net.policy import no_network_for_commands
+
+    if (held := no_network_for_commands()) and (cannot := _cannot_take_the_network(mode)):
+        return _no_network_refusal(held, cannot)
     if mode == "off":
         return ""
     from personalclaw import python_children
@@ -1461,13 +1527,22 @@ def wrap_refusal(mode: str = "auto") -> str:
 
 
 def wrap_argv(argv: list[str], mode: str = "auto") -> tuple[list[str], str | None]:
-    """Wrap a command argv with OS-level sandbox if available.
+    """Wrap a command a run starts with the OS-level sandbox, held to the run's egress tier.
 
     Args:
         argv: Original command + args.
         mode: ``"auto"``/``"standard"`` (expose .aws/.ssh/.kube),
               ``"cc"`` (hide .aws but expose .aws/config for credential_process),
               ``"strict"`` (hide everything), ``"off"`` (no sandbox).
+
+    The run the call is made for decides whether the command keeps the network
+    (``net.policy.no_network_for_commands``), read through the binding each seam that dispatches
+    work for a run makes, so no launcher hands it on and none can leave it out. A command started
+    for a run whose tier takes the network away is launched with none: a network namespace of
+    its own on Linux, a profile that denies the network on macOS. Each such launch is an
+    ``egress_launch`` row (``denied``) in the audit log. A command for a run whose tier is
+    ``all``, or for no run, keeps the network. A program that is not a command of a run (an agent
+    CLI's process) is wrapped by :func:`wrap_program_argv`.
 
     Returns:
         (wrapped_argv, cleanup_path_or_None).
@@ -1477,9 +1552,82 @@ def wrap_argv(argv: list[str], mode: str = "auto") -> tuple[list[str], str | Non
 
     Raises:
         SandboxEnforcementUnavailable: the host's sandbox cannot be applied here (the desktop
-            app on a Linux host, :func:`namespace_argv`). The caller refuses the command with
-            the message, and never runs it without the sandbox.
+            app on a Linux host, :func:`namespace_argv`), or the command's run gives it no
+            network and the sandbox cannot take the network away (it is off, or this host has
+            none that can). The caller refuses the command with the message, and never runs it
+            without the sandbox, or with the network its run does not give it.
     """
+    from personalclaw.net.policy import no_network_for_commands
+
+    held = no_network_for_commands()
+    if held and (cannot := _cannot_take_the_network(mode)):
+        raise SandboxEnforcementUnavailable(_no_network_refusal(held, cannot))
+    wrapped = _wrapped(argv, mode, network=not held)
+    if held:
+        _record_no_network(held, argv)
+    return wrapped
+
+
+def wrap_program_argv(argv: list[str], mode: str = "auto") -> tuple[list[str], str | None]:
+    """:func:`wrap_argv` for a program that is not a command of a run, which keeps the network.
+
+    The sandbox providers' launch (``sandbox_providers.none``): an agent CLI's session, the agent
+    a second opinion starts, the owner's terminal. An agent CLI reaches its model itself, as the
+    built-in agent does, so the run it works for does not take its network away; the tools
+    PersonalClaw serves it are held to that run where they ask the guard. Same paths hidden, same
+    refusal where the sandbox cannot be applied.
+    """
+    return _wrapped(argv, mode, network=True)
+
+
+def egress_bound_argv(argv: list[str], *, run: str) -> tuple[list[str], str | None]:
+    """*argv* for a command that runs outside the path sandbox, held to the egress tier of *run*:
+    a loop's or a workflow's check, a workflow's setup or teardown step, an effect's teardown.
+
+    Unchanged while the run's commands keep the network. When they do not, it is launched in the
+    sandbox a bash action runs in (``standard``) with its network taken away (:func:`wrap_argv`),
+    and the caller removes the returned file once the command has exited (:func:`remove_wrap`).
+    *run* is the identity the seam judges the command under; it holds the launch to that run
+    (``net.policy.egress_held_to``), since no dispatch binds a run around these seams.
+
+    Raises:
+        SandboxEnforcementUnavailable: the run gives its commands no network and the sandbox
+            cannot take the network away here, so the command is refused.
+    """
+    from personalclaw.net.policy import egress_held_to, no_network_for_commands
+
+    with egress_held_to(run):
+        if not no_network_for_commands():
+            return list(argv), None
+        return wrap_argv(argv, "standard")
+
+
+def no_network_note(run: str | None = None) -> str:
+    """The sentence a failed command's result ends with when it ran with its network taken away,
+    or ``""`` when its run gave it the network. *run* names the run as
+    :func:`egress_bound_argv` takes it; left out, the run is the one this call is made for.
+
+    A program with no network says only that it could not connect, so its run's record says why:
+    a person reading it learns the tier took the network away, not that the host is down."""
+    from personalclaw.net.policy import no_network_for_commands
+
+    held = no_network_for_commands(run)
+    return f"It ran with no network access: {held}." if held else ""
+
+
+def remove_wrap(cleanup: str | None) -> None:
+    """Remove the file a wrap made (the cleanup path it returned) once its command has exited.
+    Best-effort: a file already gone is fine."""
+    if cleanup:
+        try:
+            os.unlink(cleanup)
+        except OSError:
+            pass
+
+
+def _wrapped(argv: list[str], mode: str, *, network: bool) -> tuple[list[str], str | None]:
+    """*argv* in the sandbox *mode* names, with or without the network (see :func:`wrap_argv`).
+    Without *network* the caller has already made sure the sandbox can take it away."""
     if mode == "off":
         return argv, None
 
@@ -1496,17 +1644,76 @@ def wrap_argv(argv: list[str], mode: str = "auto") -> tuple[list[str], str | Non
     backend = detect_backend(config_mode=mode)
 
     if backend == "namespace":
-        wrapped = namespace_argv(argv, sandbox_level)
+        wrapped = namespace_argv(argv, sandbox_level, network=network)
         # The launcher script is argv[1] — caller should clean it up
         return wrapped, wrapped[1]
     if backend == "sandbox-exec":
-        return sandbox_exec_argv(argv, sandbox_level)
+        return sandbox_exec_argv(argv, sandbox_level, network=network)
 
     if backend == "none":
-        if not getattr(wrap_argv, "_warned", False):
+        if not getattr(_wrapped, "_warned", False):
             logger.warning("No OS-level sandbox available — app-level checks only")
-            wrap_argv._warned = True  # type: ignore[attr-defined]
+            _wrapped._warned = True  # type: ignore[attr-defined]
     return argv, None
+
+
+def _cannot_take_the_network(mode: str) -> str:
+    """Why the sandbox at *mode* cannot take a command's network away here, as a clause, or
+    ``""`` when it can."""
+    if mode == "off":
+        return "its sandbox is set to off"
+    backend = detect_backend(config_mode=mode)
+    if backend == "sandbox-exec" or (backend == "namespace" and _probe_unshare_net()):
+        return ""
+    if sys.platform.startswith("linux"):
+        return (
+            "this machine does not let PersonalClaw give a command a network of its own (on "
+            "Linux that needs unprivileged user and network namespaces)"
+        )
+    if sys.platform == "darwin":
+        return "this Mac's sandbox-exec cannot be started"
+    return "this system has no sandbox PersonalClaw can take a command's network away with"
+
+
+#: How the sentence refusing a command whose network cannot be taken away opens; a surface that
+#: frames the refusal in words of its own (a loop's check) takes the rest.
+NOT_RUN = "This command was not run: "
+
+
+def _no_network_refusal(held: str, cannot: str) -> str:
+    """The sentence a command is refused with when its run gives it no network (*held*, the
+    run's reason) and the sandbox cannot take the network away (*cannot*): what was not run, why,
+    and which bound to change."""
+    from personalclaw.net.guard import where_egress_is_narrowed
+
+    return (
+        f"{NOT_RUN}{held}, so it may run only with no network access, and {cannot}. "
+        f"{where_egress_is_narrowed()}"
+    )
+
+
+def _record_no_network(held: str, argv: list[str]) -> None:
+    """One audit row and one log line for a command launched with its network taken away: the
+    run's ``egress_launch`` row (``denied``), naming the program and why. Best-effort, like every
+    egress row: the network is already gone from the launch, whatever the log says."""
+    from personalclaw.net.policy import run_of_this_call
+
+    run = run_of_this_call()
+    program = os.path.basename(argv[0]) if argv else ""
+    logger.info("a command of %s starts with no network (%s): %s", run or "no run", program, held)
+    try:
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller=run,
+            operation="egress_launch",
+            outcome="denied",
+            source="net",
+            resources=f"the network ({program})"[:200],
+            error=held[:200],
+        )
+    except Exception:
+        logger.debug("egress SEL audit failed", exc_info=True)
 
 
 # ── Resource ceilings: post-exec delivery via the stdlib shim ──

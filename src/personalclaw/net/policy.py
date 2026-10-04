@@ -461,11 +461,12 @@ def egress_policy_for_run(
     (``net.guard.evaluate``: behind ``net.fetch``, ``open_url``, the browser's navigations and
     every app that fetches through the SDK), and so does each surface that refuses before it asks
     the guard (a watched source's poll, the hosts the agent's shell reaches unasked, a program an
-    app's code starts). Tightest wins (:func:`egress_policy_for_profile`).
+    app's code starts). Tightest wins (:func:`egress_policy_for_profile`). A command the run starts
+    is held to the same tier at its launch (:func:`no_network_for_commands`).
 
     *session_key* names the run, ``""`` included (an unnamed run resolves as attended, still
     bounded by the ceiling). Left out, the run is the one the call is being made for
-    (:func:`_run_of_this_call`): the session a tool call runs as, which each seam that dispatches
+    (:func:`run_of_this_call`): the session a tool call runs as, which each seam that dispatches
     one binds around it (``mcp_core.set_current_session_key``: the built-in agent's tool calls, the
     tool server an agent CLI runs, ``POST /api/tools/invoke``), or the run an automation's action
     is dispatched for (:func:`egress_held_to`: a trigger's fire and its Run now, a hook, a
@@ -480,12 +481,49 @@ def egress_policy_for_run(
     """
     if base.loopback_only:
         return base
-    key = _run_of_this_call() if session_key is None else session_key
+    tier = _tier_of_this_run(session_key)
+    return egress_policy_for_profile(base, tier) if tier is not None else base
+
+
+def no_network_for_commands(session_key: str | None = None) -> str:
+    """Why a command started for the run a call is made for runs with no network, or ``""`` when
+    it keeps the network.
+
+    A command is a program of its own: nothing it reaches asks the guard, so the run's tier holds
+    for it where it is launched (``sandbox.wrap_argv``), and what the operating system can do
+    there is take its network away, not keep it to a list of hosts. So a run whose tier is ``all``
+    launches its commands with the network, and one whose tier is ``off``, ``listed`` or
+    ``registry`` launches them with none. *session_key* names the run as
+    :func:`egress_policy_for_run` takes it, and its tier is read as that reads it; a call made for
+    no run keeps the network. A tier that cannot be read takes the network away.
+    """
+    try:
+        tier = _tier_of_this_run(session_key)
+    except Exception:  # noqa: BLE001 - an unreadable tier never widens what a command reaches
+        logger.warning("egress: the run's tier is unreadable, so its command gets no network")
+        return "this run's egress tier could not be read"
+    if tier is None or egress_policy_for_tier(tier) is STRICT:
+        return ""
+    if tier == "off":
+        from personalclaw.net.guard import EGRESS_OFF_REASON
+
+        return EGRESS_OFF_REASON
+    return (
+        f"this run reaches only the hosts it lists (safety profile egress tier {tier!r}), and a "
+        "command cannot be held to a list of hosts"
+    )
+
+
+def _tier_of_this_run(session_key: str | None) -> str | None:
+    """The egress tier of the run a call is made for (see :func:`egress_policy_for_run` for
+    *session_key*), or ``None`` for a call made for no run. Raises when the run's profile cannot
+    be resolved."""
+    key = run_of_this_call() if session_key is None else session_key
     if session_key is None and not key:
-        return base
+        return None
     from personalclaw.guardrails.policy import profile_for_session
 
-    return egress_policy_for_profile(base, profile_for_session(key).egress_tier)
+    return profile_for_session(key).egress_tier
 
 
 #: The run :func:`egress_held_to` holds a call's requests to, with the session that was bound when
@@ -504,9 +542,10 @@ def egress_held_to(session_key: str) -> Iterator[None]:
     other gates under a dispatch key (``guardrails.policy.unattended_dispatch_key``). That key is
     not bound as the session (``mcp_core.set_current_session_key``), which every other reader of
     the session would then see, an agent the action starts taking it for its parent among them; it
-    is read by :func:`egress_policy_for_run` and nothing else. A task the action starts inside the
-    block takes the hold with it, as it takes any context, and so does a worker thread of the
-    gateway's own pool (``memory_writes.ScopeCarryingExecutor``).
+    is read by the two readers of the run's tier, :func:`egress_policy_for_run` and
+    :func:`no_network_for_commands`, and nothing else. A task the action starts inside the block
+    takes the hold with it, as it takes any context, and so does a worker thread of the gateway's
+    own pool (``memory_writes.ScopeCarryingExecutor``).
 
     The hold gives way to a session bound inside it, other than the one bound when it began: a
     tool call the work makes for a session of its own (an agent the action starts) is held to that
@@ -520,7 +559,7 @@ def egress_held_to(session_key: str) -> Iterator[None]:
         _HELD_TO.reset(token)
 
 
-def _run_of_this_call() -> str:
+def run_of_this_call() -> str:
     """The run the call being made is for (``""`` when none is): the innermost of the session a
     tool call runs as and the run an automation's action is held to (:func:`egress_held_to`).
 

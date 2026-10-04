@@ -296,6 +296,9 @@ execution site that reaches a provider, under any name, without asking. What the
 reaches is held to the egress tier of that same identity (`net.policy.egress_held_to`), so
 an operator ceiling that gives no run any network refuses a step's fetch or webhook as it
 refuses a trigger's ([limitations §18](../security/limitations.md#18-a-runs-egress-tier-holds-where-its-requests-ask-the-guard)).
+A command the run runs (a setup or teardown step, a verify check, an effect's teardown) is held
+to that tier where it is launched (`sandbox.egress_bound_argv`): under a tier that is not `all`
+it runs in the OS sandbox with no network, or is refused where the sandbox cannot take it away.
 
 **The run's other commands are held to the same rules** (`guardrails.denylist.check_command`):
 a verify gate's command (`loop.gates.run_verify_command`, which a loop's check runs through

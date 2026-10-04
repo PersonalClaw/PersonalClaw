@@ -846,7 +846,8 @@ command it runs (`run_bounds`, `apps/launch_egress.py`):
   or a command that reaches one it does not name (a git remote by name, a URL in a variable, a
   proxy or a registry set in a variable for it), is refused in an unattended run (a loop, a
   schedule, a subagent nobody watches) and asked about in an attended one, with the host on the
-  card, whatever Trust, YOLO or a standing grant would have said.
+  card, whatever Trust, YOLO or a standing grant would have said. In a run whose egress tier is not
+  `all`, a command that goes ahead still runs with no network at all, whatever it names (§18).
   A program an app's code starts may also reach a host its manifest declares for that program, which
   its install review names; every such launch leaves an egress row in the audit log, and one toward
   any other host is stopped before it starts.
@@ -876,7 +877,8 @@ its own, such as your package registry, and the hosts you set an app to reach: G
 repository (its clone and connection check name it) and Rsync Sync's server are named on the
 command lines those apps start, so each is stopped, with a sentence saying how to allow it, until
 its host is on that list. The bounds stop a command that says where it goes; they are not a
-network fence around one that does not.
+network fence around one that does not (in a run whose egress tier is not `all`, the OS sandbox is:
+§18).
 
 ## 17. The content scan reads what comes in from outside, but not all of it
 
@@ -981,20 +983,41 @@ the run the call is made for (`net.policy.MCP_SERVER`). A run whose tier is `off
 and is offered none of a server's tools it would have to reach to list, a `listed` run reaches one
 only when its host is on Allowed hosts, and your Denied hosts and the cloud metadata service are
 refused for every call; a server on your own machine or network stays reachable otherwise, since
-you configured it. The agent's shell and the programs an app's code starts are held to the tier as
-well (§16).
+you configured it. The hosts the agent's shell and the programs an app's code starts name are held
+to the tier as well (§16).
 
 In a run whose tier is `off` each of those requests is refused before its host is looked up, the
 agent is told "egress is off for this run", and the refusal is in the audit log. A request made for
 no run (your own action in the app, such as a provider's Test or the Tools page's look at a server,
 or a background job) keeps to your Network egress settings alone.
 
+A command the run starts is held to the tier where it is launched. It is a program of its own, and
+nothing it reaches asks the guard, so the OS sandbox it runs in (`sandbox.wrap_argv`) is what holds
+it: a bash or a script action, a loop's or a workflow's check, a workflow's setup and teardown
+steps, an effect's teardown, the agent's shell, and a program an app starts in the host sandbox
+(`personalclaw.sdk.util.sandbox_wrap_argv`). A sandbox can take a program's network away but
+cannot keep it to a list of hosts, so only a run whose tier is `all` launches its commands with the
+network. Under `off`, and under `listed` and `registry` as well, a command runs with no network at
+all, this machine's own services included, even a host on Allowed hosts: on Linux in a network
+namespace of its own with nothing in it, on macOS under a profile that denies every network
+operation, a local socket's included. Each such launch is an `egress_launch` row in the audit log,
+and a command that fails there says, after its own error, that it ran with no network and why.
+Where the sandbox cannot take the network away (it is set to off, or the machine offers none that
+can, such as a Linux host or a container that refuses unprivileged user and network namespaces),
+the command is not run: it is refused in a sentence that says so and where the tier is set, with a
+`command_refused` row in the audit log. A command started for no run keeps the network.
+
 What the tier does not reach:
 
-- **A command or a script an automation runs.** A bash action and a script action start a program
-  of their own: what it reaches asks no guard, and its command line is not read for the hosts it
-  names, as the agent's shell's is (§16). The grant you gave the automation when you allowed its
-  action is what holds it.
+- **A program a command can ask to reach the network for it.** The command has no network, but a
+  program running outside its sandbox may, and can be asked over its own channel: on Linux, a
+  container engine's socket, or the system's name resolver where it answers over a local socket (a
+  name the command looks up is then still sent out as a query); on either system, a browser asked
+  to open a page. Do not give a run whose commands should reach nothing such a program to talk to.
+- **An agent CLI's own process.** An agent CLI reaches its model itself, as PersonalClaw's own
+  agent does, so the run it works for does not take its network away. A CLI's built-in web search or
+  fetch, and a command it runs without asking PersonalClaw, run inside the CLI and reach what they
+  reach (§11); the tools PersonalClaw serves it are held to the tier.
 - **A request made on a thread its code starts for itself.** Work handed to PersonalClaw's own
   worker threads carries the run (the gateway's `run_in_executor` pool and `asyncio.to_thread`
   alike), but a thread code starts by hand, or a pool of its own, does not: a request an app makes
@@ -1008,15 +1031,18 @@ What the tier does not reach:
   to your settings alone, and the connection looks the server's name up again for itself, so it is
   not held to the address the guard checked.
 - **What a page in the browser loads on its own.** Its images, scripts and frames are not asked of
-  the guard; only the navigation is (`net.policy.BROWSE`).
-- **An agent CLI's own tools.** A CLI's built-in web search or fetch runs inside the CLI and never
-  asks PersonalClaw (§11); the tools PersonalClaw serves it are held to the tier.
+  the guard; only the navigation is (`net.policy.BROWSE`), and so is a redirect the page takes,
+  judged for the run that opened it.
 
 **What this means for you:** a tier set in the ceiling holds for everything the agent, your
-automations and your apps reach through PersonalClaw's own requests, and for every call to a remote
-MCP server. It is not a network fence around the machine: an automation's command reaches what it
-reaches, and an app you do not trust with the network should not be installed where its code runs
-as you (§7).
+automations and your apps reach through PersonalClaw's own requests, for every call to a remote
+MCP server, and for every command a run starts. Under `off`, `listed` or `registry` a run's
+commands reach no network at all: a package install, a `curl`, or a test suite that starts a server
+of its own and talks to it does not work there, while the agent's own fetch and search keep to
+what the tier allows. Set `all` for runs whose commands need the network. The tier is not a fence
+around the machine: an agent CLI and what it runs itself, an app's own code, and a program running
+outside the command keep their own reach, and an app you do not trust with the network should not
+be installed where its code runs as you (§7).
 
 ## 19. A private chat is kept out of the memory folders, not out of every store
 
@@ -1070,10 +1096,11 @@ programs a run may start, enforced by its sandbox rather than read from the comm
 #15; a network and a write fence around an unattended run's shell and an app's programs,
 enforced by the OS rather than read from a command line, for #16; reading the whole of a long
 text a reader makes of a document, and an archive's files one by one as an import writes them
-out, for #17; a network fence, enforced by the OS, around an automation's commands, an app's own
-requests and an MCP server's program, for #18; the same fence around every store of long-term
-memory a private chat's commands could reach, an agent CLI's process kept to one private chat, and
-a vault that reads back no edit made by such a chat's commands, for #19). This page will shrink as
-those land.
+out, for #17; a proxy the guard answers for, through which a run's commands reach the hosts its
+tier lists, and a network fence, enforced by the OS, around an app's own requests, an MCP server's
+program and an agent CLI's own tools, for #18; a fence, enforced by the OS, around every store of
+long-term memory a private chat's commands could reach, an agent CLI's process kept to one private
+chat, and a vault that reads back no edit made by such a chat's commands, for #19). This page will
+shrink as those land.
 The rest of #5 will not: a small model is the point of a floor, and the remedy for its
 limits is to bind a real one.

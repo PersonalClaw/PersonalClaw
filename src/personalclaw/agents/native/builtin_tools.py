@@ -1607,7 +1607,8 @@ class NativeBuiltinToolProvider(ToolProvider):
         if offer is not None:
             said = security.redact_known_values(offer.reason, handed)
             return _refused_by("bash", "scheduler", said, said, [trigger_handoff.HANDOFF_HINT])
-        if said := sandbox.wrap_refusal(self._sandbox_mode):  # it never runs outside the sandbox
+        # It never runs outside the sandbox, nor with a network its run's egress tier takes away.
+        if said := sandbox.wrap_refusal(self._sandbox_mode):
             return _refused_by("bash", "sandbox", said, said)
         return None
 
@@ -1620,7 +1621,7 @@ class NativeBuiltinToolProvider(ToolProvider):
 
     async def _t_bash(self, a: dict, *, timeout: float | None = None) -> ToolResult:
         from personalclaw import security
-        from personalclaw.sandbox import wrap_argv
+        from personalclaw.sandbox import no_network_note, wrap_argv
 
         # Read the module global at CALL time (not as a default arg, which binds at
         # def-time) so a test monkeypatching _BASH_TIMEOUT still takes effect.
@@ -1718,13 +1719,18 @@ class NativeBuiltinToolProvider(ToolProvider):
             rid = result_store.store_result(self._session_key, raw, content_type="log")
             if rid:
                 meta["raw_ref"] = rid
+        hints = [
+            f"The command exited non-zero ({rc}). Read the error output above, "
+            "fix the cause, and retry — or try a different approach."
+        ]
+        # With its network taken away, a command can only say it could not connect: the agent is
+        # told why, so it does not take the host for down or try another program to reach it.
+        if note := no_network_note():
+            hints.insert(0, f"{note} No command in this run can reach a host.")
         return ToolResult(
             success=False,
             error=f"exit {rc}:\n{proj.text}",
-            recovery_hints=[
-                f"The command exited non-zero ({rc}). Read the error output above, "
-                "fix the cause, and retry — or try a different approach."
-            ],
+            recovery_hints=hints,
             truncated=proj.truncated,
             original_length=proj.original_length,
             metadata=meta,

@@ -38,6 +38,7 @@ from personalclaw.mcp_core import InternalSecretUnavailable, _internal_secret
 from personalclaw.sandbox import (
     PROFILE_TOOL,
     build_child_env,
+    no_network_note,
     spawn_shim_argv,
     wrap_argv,
     wrap_refusal,
@@ -311,12 +312,23 @@ def run_script_sandboxed(
     file, so the user script process never sees them in its environment.
 
     The child runs under all three isolation controls: the OS path sandbox, the ``tool``
-    resource ceiling, and the allowlisted child environment. Where the sandbox cannot start (the
-    desktop app on a Linux host, ``sandbox.wrap_refusal``) the run is refused with the sentence
-    saying so before anything is written, and the script never runs outside it.
+    resource ceiling, and the allowlisted child environment, and with no network when the run it
+    is started for gives its commands none (``sandbox.wrap_argv``). Where the sandbox cannot start
+    (the desktop app on a Linux host), or cannot take that network away, the run is refused with
+    the sentence saying so before anything is written (``sandbox.wrap_refusal``), and the script
+    never runs outside it.
     """
     resolved, func = resolve_script_path(script_spec)
     if refused := wrap_refusal("standard"):
+        from personalclaw.command_audit import audit_command_refusal
+
+        audit_command_refusal(
+            script_spec,
+            refused,
+            source="action_provider",
+            operation="run_script",
+            control="sandbox",
+        )
         return {"status": "error", "error": refused}
     timeout = timeout if timeout and timeout > 0 else _DEFAULT_SCRIPT_TIMEOUT
 
@@ -409,6 +421,8 @@ def run_script_sandboxed(
         result = _parse_launcher_output(proc.stdout)
         if result.get("status") == "error" and proc.returncode != 0 and not result.get("error"):
             result["error"] = (proc.stderr or "script failed")[:4000]
+        if result.get("status") == "error" and (note := no_network_note()):
+            result["error"] = f"{result.get('error') or 'script failed'}\n{note}"
         return result
     finally:
         # cfg_path is normally unlinked by the launcher; remove if it survived

@@ -10,10 +10,12 @@ that came from a stranger.
 **What actually stops the socket.** ``sandbox.wrap_argv`` — the shared OS path sandbox this
 module also uses — denies *file reads* of credential paths; its Seatbelt profile is
 ``(allow default)`` plus deny-read rules and its Linux launcher unshares only
-``CLONE_NEWUSER``/``CLONE_NEWNS``. Neither denies network, and on a host where
-``detect_backend()`` answers ``none`` it is not applied at all. So the OS sandbox is a real
-control over the *filesystem* and no control whatsoever over *egress*, and pretending
-otherwise would leave the property this change exists for resting on nothing.
+``CLONE_NEWUSER``/``CLONE_NEWNS``. Neither denies network unless the parse is started for a run
+whose egress tier takes the network away (``net.policy.no_network_for_commands``), which a
+source's poll, made for no run, is not; and on a host where ``detect_backend()`` answers
+``none`` it is not applied at all. So the OS sandbox is a real control over the *filesystem*
+and no control a parse can count on over *egress*, and pretending otherwise would leave the
+property this change exists for resting on nothing.
 
 The live rail is therefore in-process, installed by :data:`_PARSE_HARNESS_SRC` before the pack
 script is executed. It is **three mechanisms plus a verification**, and the division of labour

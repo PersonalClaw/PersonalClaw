@@ -139,19 +139,34 @@ def where_egress_is_off() -> str:
     ``egress`` scope says ``off`` (for every run on this machine), else the run's own safety
     profile. No host setting lifts either, so a surface that says how to undo an ``egress_off``
     refusal says this, never Allowed hosts."""
+    return (
+        _ceiling_sets_egress("off") or "This run's own safety profile allows it no network access."
+    )
+
+
+def where_egress_is_narrowed() -> str:
+    """Which bound narrows a run's egress tier, in a hint: the operator ceiling's file when its
+    ``egress`` scope narrows every run on this machine, else the run's own safety profile."""
+    return _ceiling_sets_egress() or "This run's own safety profile sets its egress tier."
+
+
+def _ceiling_sets_egress(value: str = "") -> str:
+    """The hint naming the operator ceiling's file when its ``egress`` scope says *value* (any
+    tier narrower than ``all`` when *value* is left out), else ``""``."""
     try:
         from personalclaw.guardrails.ceiling import active_ceiling, ceiling_path
 
         ceiling = active_ceiling()
-        if getattr(ceiling.control("egress"), "value", "") == "off":
+        said = str(getattr(ceiling.control("egress"), "value", "") or "")
+        if said and (said == value if value else said != "all"):
             where = ceiling.source or str(ceiling_path())
             return (
-                f'The operator ceiling ({where}) sets "egress": "off" for every run on this '
+                f'The operator ceiling ({where}) sets "egress": "{said}" for every run on this '
                 "machine; a change to that file applies when PersonalClaw restarts."
             )
     except Exception:  # noqa: BLE001 - a hint must not fail the refusal it explains
         logger.debug("could not read the ceiling for an egress refusal's hint", exc_info=True)
-    return "This run's own safety profile allows it no network access."
+    return ""
 
 
 def egress_refusal(url: str, decision: GuardDecision) -> str:

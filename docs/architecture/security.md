@@ -1012,6 +1012,23 @@ chokepoint:
   nothing and answers in `guard.refusal_for`'s words; the open connection, shared by
   every run, is made for none (`egress_held_to("")`), so a run's refusal never marks
   the server failed.
+- A command a run starts is held to the tier where it is launched (`sandbox.wrap_argv`,
+  which asks `no_network_for_commands`, the other reader of the tier, through the same
+  binding), since nothing it reaches asks the guard. Only a tier of `all`, or no run, keeps
+  its network: the OS can take a program's network away, not keep it to a list, so under
+  `off`, `listed` and `registry` the namespace launcher adds `unshare(CLONE_NEWNET)` (a
+  namespace whose one interface, its loopback, is down) and the Seatbelt profile adds
+  `(deny network*)`, each launch an `egress_launch` row (`denied`) in the audit log. Where
+  the sandbox cannot do that (`mode="off"`, no backend, no network namespaces:
+  `_probe_unshare_net`) the command is refused (`SandboxEnforcementUnavailable`, in `_no_network_refusal`'s words,
+  audited as `command_refused` with control `sandbox`), and `wrap_refusal` gives the same
+  answer to a tool's pre-flight. The runners that use no path sandbox (a loop's or a
+  workflow's check, a workflow's setup and teardown steps, an effect's teardown) hold their
+  launch to their unattended identity and take the sandbox only when the network goes
+  (`sandbox.egress_bound_argv`). An agent CLI's process and the owner's terminal keep the
+  network (`sandbox.wrap_program_argv`, the sandbox providers' launch): a CLI reaches its
+  model itself. `tests/test_a_command_a_run_starts_keeps_to_its_egress_tier.py` fails a
+  site that runs a command someone wrote without the sandbox's launch.
 - `egress_policy_for_profile(base, tier)` is the composition — tightest wins, and
   caps only tighten. `off` returns `None`, and the guard refuses every host as
   `egress_off` before it is looked up, audited as an `egress_fetch` refusal (the
@@ -1045,7 +1062,8 @@ starts do not, so what they reach is read from the command they run
 (`command_effects`: the hosts a command names, and the paths its writes name) and held there:
 
 - **Network.** `shell_egress_policy` is `LISTED` layered with `security.egress` (the operator's
-  allow and deny hosts, exclusively) and narrowed by the run's egress tier. A shell command whose
+  allow and deny hosts, exclusively) and narrowed by the run's egress tier (in a run whose tier
+  is not `all` the command then runs with no network at all, above). A shell command whose
   network facet names a host off it, or names no host it can read, is refused in an unattended
   run (the native runtime's `_guard_and_invoke`, and the dashboard's gate for an agent CLI's ask)
   and put to a person in an attended one: every grant that would answer a call unasked (Trust,

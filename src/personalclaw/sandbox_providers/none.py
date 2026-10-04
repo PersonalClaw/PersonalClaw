@@ -73,9 +73,11 @@ class NoneSandboxProvider(SandboxProvider):
     def wrap(self, spec: SandboxSpec, argv: list[str]) -> _NoneHandle:
         """The OS sandbox applied to *argv*. Where it cannot be applied (the desktop app on a
         Linux host) the launch is refused as a tier refuses one, and never runs on the host
-        without it: an agent CLI session, a terminal, a second opinion."""
+        without it: an agent CLI session, a terminal, a second opinion. Each is a program of its
+        own rather than a command of the run it works for, and keeps the network
+        (``sandbox.wrap_program_argv``): an agent CLI reaches its model itself."""
         try:
-            wrapped, cleanup_path = sandbox.wrap_argv(list(argv), mode=spec.mode)
+            wrapped, cleanup_path = sandbox.wrap_program_argv(list(argv), mode=spec.mode)
         except sandbox.SandboxEnforcementUnavailable as exc:
             from personalclaw.python_children import INSTALL_COMMAND
 

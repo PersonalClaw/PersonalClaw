@@ -89,12 +89,12 @@ def test_declaration_reaches_the_spawn_unwrapped(monkeypatch, tmp_path):
     """End-to-end: the declared mode must survive the factory AND actually suppress
     the wrap. Asserting only on the entry option would not prove the spawn changed.
 
-    ``wrap_argv(mode="off")`` is the seam ``AcpProcess.spawn`` calls through the
+    ``wrap_program_argv(mode="off")`` is the seam ``AcpProcess.spawn`` calls through the
     sandbox provider, so an identical argv is the measurement that the child execs
     directly rather than under ``sandbox-exec``.
     """
     from personalclaw.llm.acp_agent import _factory
-    from personalclaw.sandbox import reset_backend, wrap_argv
+    from personalclaw.sandbox import reset_backend, wrap_program_argv
 
     fake = _fake_cli(monkeypatch, tmp_path, "selfbox-cli")
     argv = [str(fake), "acp"]
@@ -106,7 +106,7 @@ def test_declaration_reaches_the_spawn_unwrapped(monkeypatch, tmp_path):
     assert provider.client._sandbox_mode == "off"
 
     reset_backend()
-    wrapped, cleanup = wrap_argv(list(argv), mode=provider._sandbox_mode)
+    wrapped, cleanup = wrap_program_argv(list(argv), mode=provider._sandbox_mode)
     reset_backend()
     assert wrapped == argv, "a self-sandboxing runtime must exec directly, not under a wrap"
     assert cleanup is None  # nothing to clean up because nothing was wrapped
@@ -185,7 +185,7 @@ def test_a_plain_runtime_is_still_wrapped_when_a_backend_exists():
     tmp bindir, which hides ``sandbox-exec`` from ``detect_backend``'s own probe and
     turns this control into an unconditional skip — i.e. into no control at all.
     """
-    from personalclaw.sandbox import detect_backend, reset_backend, wrap_argv
+    from personalclaw.sandbox import detect_backend, reset_backend, wrap_program_argv
 
     argv = ["/bin/echo", "hi"]
     reset_backend()
@@ -193,7 +193,7 @@ def test_a_plain_runtime_is_still_wrapped_when_a_backend_exists():
     if backend == "none":
         reset_backend()
         pytest.skip("host has no OS sandbox backend — nothing to wrap")
-    wrapped, _cleanup = wrap_argv(list(argv), mode="auto")
+    wrapped, _cleanup = wrap_program_argv(list(argv), mode="auto")
     reset_backend()
     assert wrapped != argv
     assert argv[0] in wrapped  # the real target is still in there, just wrapped
@@ -319,7 +319,7 @@ def test_the_host_profile_forbids_a_nested_sandbox(tmp_path):
     """
     import subprocess
 
-    from personalclaw.sandbox import detect_backend, reset_backend, wrap_argv
+    from personalclaw.sandbox import detect_backend, reset_backend, wrap_program_argv
 
     reset_backend()
     backend = detect_backend(config_mode="auto")
@@ -368,7 +368,7 @@ def test_the_host_profile_forbids_a_nested_sandbox(tmp_path):
     assert control.returncode == 0, f"nesting is not refused per se: {control.stderr}"
     assert "started" in control.stdout
 
-    wrapped, cleanup = wrap_argv(list(inner), mode="auto")
+    wrapped, cleanup = wrap_program_argv(list(inner), mode="auto")
     reset_backend()
     try:
         under_host = subprocess.run(

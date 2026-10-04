@@ -423,6 +423,21 @@ async def run_step(
     found = os.path.exists(binary) if os.path.sep in binary else bool(shutil.which(binary))
     if not found:
         return False, f"command not found: {binary}"
+    from personalclaw import sandbox
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+
+    # A step is part of a run nobody answers, held to the egress tier the run's action steps are
+    # held to (`engine.dispatch_action`): where that gives it no network, it runs in the OS sandbox
+    # without one, in the run's durable session as on its own, and a failure says so.
+    held_to = unattended_dispatch_key(f"workflow:{run_id}")
+    try:
+        launch, cleanup = sandbox.egress_bound_argv(argv, run=held_to)
+    except sandbox.SandboxEnforcementUnavailable as exc:
+        audit_command_refusal(
+            command, str(exc), source="workflow", operation="step", control="sandbox"
+        )
+        return False, str(exc)
+    note = sandbox.no_network_note(held_to)
     from personalclaw.sandbox import PROFILE_TOOL, build_child_env, create_subprocess_limited
 
     # A step is workflow-authored text, so it runs with the child allowlist and its own declared
@@ -437,7 +452,7 @@ async def run_step(
     if durable_session and _durable_enabled():
         try:
             durable = await _run_step_durable(
-                argv,
+                launch,
                 cwd,
                 name=durable_session,
                 step=command,
@@ -452,7 +467,8 @@ async def run_step(
             )
             durable = None
         if durable is not None:
-            return durable
+            sandbox.remove_wrap(cleanup)
+            return durable if durable[0] or not note else (False, f"{durable[1]} {note}")
 
     try:
         # start_new_session: a setup/teardown step is workflow-authored text, and the
@@ -460,7 +476,7 @@ async def run_step(
         # install`, `make`). Only a GROUP signal reaches what they forked. Same reasoning
         # and same shape as `effects.run_teardown`. See kill_timed_out.
         proc = await create_subprocess_limited(
-            *argv,
+            *launch,
             profile=PROFILE_TOOL,
             cwd=str(cwd),
             env=spawn_env,
@@ -475,15 +491,17 @@ async def run_step(
             # and reached only the direct child, leaving the step's own build tree
             # running. The owner signals the group and reaps under a bound.
             await kill_timed_out(proc)
-            return False, f"timed out after {timeout}s"
+            return False, f"timed out after {timeout}s" + (f" {note}" if note else "")
     except FileNotFoundError:
         return False, f"command not found: {argv[0]}"
     except OSError as exc:
         return False, f"could not start: {exc}"[:500]
+    finally:
+        sandbox.remove_wrap(cleanup)
     if proc.returncode == 0:
         return True, (out or b"").decode("utf-8", "replace")[:2000]
     detail = (err or b"").decode("utf-8", "replace")[:2000]
-    return False, f"exited {proc.returncode}: {detail}"
+    return False, f"exited {proc.returncode}: {detail}" + (f" {note}" if note else "")
 
 
 # ── provisioning ──

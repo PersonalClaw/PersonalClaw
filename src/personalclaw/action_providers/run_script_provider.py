@@ -58,12 +58,12 @@ class RunScriptActionProvider(ActionProvider):
         from personalclaw.schedule_script import run_script_sandboxed
 
         start = time.monotonic()
-        loop = asyncio.get_running_loop()
         # job_id/message double as the script's context: the event drives the
-        # session key, the free-form context is the script's input message.
+        # session key, the free-form context is the script's input message. The launch is made on
+        # a worker thread that carries this call's context, so the script is held to the run its
+        # action is dispatched for, whichever pool runs it.
         try:
-            result = await loop.run_in_executor(
-                None,
+            result = await asyncio.to_thread(
                 run_script_sandboxed,
                 script,
                 f"action:{ctx.event}",

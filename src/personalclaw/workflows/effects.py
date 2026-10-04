@@ -290,6 +290,19 @@ async def run_teardown(
     if not _found:
         return False, f"teardown command not found: {_cmd}"
     argv.append(output_id)
+    from personalclaw import sandbox
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+
+    # A teardown runs with nobody answering it, held to the egress tier of unattended work: where
+    # that gives it no network, it runs in the OS sandbox without one, and a failure says so.
+    held_to = unattended_dispatch_key("workflow:teardown")
+    try:
+        launch, cleanup = sandbox.egress_bound_argv(argv, run=held_to)
+    except sandbox.SandboxEnforcementUnavailable as exc:
+        audit_command_refusal(
+            command, str(exc), source="workflow", operation="teardown", control="sandbox"
+        )
+        return False, str(exc)
     # Resource ceiling: a BYOI teardown command is agent-influenced (a workflow
     # effect ran it). Deliver the ``tool`` ceiling via the post-exec shim — no preexec_fn,
     # so this spawn never wedges the event loop.
@@ -309,7 +322,7 @@ async def run_teardown(
         # routinely a wrapper that forks (a `docker`/`terraform` CLI, a shell one-liner).
         # Only a GROUP signal reaches what it forked. See kill_timed_out.
         proc = await create_subprocess_limited(
-            *argv,
+            *launch,
             profile=PROFILE_TOOL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -335,10 +348,13 @@ async def run_teardown(
         return False, f"teardown command not found: {argv[0]}"
     except OSError as exc:
         return False, f"teardown could not start: {exc}"[:500]
+    finally:
+        sandbox.remove_wrap(cleanup)
     if proc.returncode == 0:
         return True, (out or b"").decode("utf-8", "replace")[:2000]
     detail = (err or b"").decode("utf-8", "replace")[:2000]
-    return False, f"teardown exited {proc.returncode}: {detail}"
+    note = sandbox.no_network_note(held_to)
+    return False, f"teardown exited {proc.returncode}: {detail}" + (f" {note}" if note else "")
 
 
 # ── caller idempotency dedupe (start/edit) ───────────────────────────────────

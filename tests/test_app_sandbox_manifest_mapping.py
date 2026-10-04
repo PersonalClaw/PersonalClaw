@@ -114,7 +114,7 @@ def boxed_backend(tmp_path, monkeypatch):
         os.close(fd)
         return list(argv), path
 
-    monkeypatch.setattr(sandbox, "wrap_argv", wrap_that_leaves_a_file)  # the `none` tier reads it
+    monkeypatch.setattr(sandbox, "wrap_program_argv", wrap_that_leaves_a_file)  # the `none` tier
     entry = manager.app_dir("boxed") / "backend" / "server.py"
     entry.parent.mkdir(parents=True)
     entry.write_text("import time\nwhile True:\n    time.sleep(1)\n", encoding="utf-8")

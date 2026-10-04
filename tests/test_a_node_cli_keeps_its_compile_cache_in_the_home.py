@@ -40,7 +40,7 @@ def _cache(home: Path) -> Path:
 
 async def _env_of_agent(agent: AcpProcess) -> dict:
     with (
-        patch("personalclaw.sandbox.wrap_argv", return_value=(["/bin/echo"], None)),
+        patch("personalclaw.sandbox.wrap_program_argv", return_value=(["/bin/echo"], None)),
         patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as spawn,
         patch("personalclaw.session._track_pid"),
         patch("personalclaw.session._track_session_pid"),

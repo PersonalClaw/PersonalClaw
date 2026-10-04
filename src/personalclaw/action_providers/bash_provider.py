@@ -249,6 +249,7 @@ class BashActionProvider(ActionProvider):
             SandboxEnforcementUnavailable,
             build_child_env,
             create_subprocess_limited,
+            no_network_note,
             wrap_argv,
         )
 
@@ -270,11 +271,14 @@ class BashActionProvider(ActionProvider):
         )
         argv = ["/bin/sh", "-c", own_cli_function() + command]
         try:
+            # Held to the egress tier of the run the action is dispatched for, which the
+            # dispatch binds (`net.policy.egress_held_to`): with none, it runs with no network.
             wrapped_argv, cleanup_path = wrap_argv(argv)
         except SandboxEnforcementUnavailable as exc:
-            # Refused, and never run outside the sandbox. Not `blocked`: that is a hook's own
-            # answer (exit 2), and this command never ran to give one.
-            return ActionResult(success=False, error=str(exc), duration_ms=0)
+            # Refused, and never run outside the sandbox or with a network its run does not give
+            # it. Not `blocked`: that is a hook's own answer (exit 2), and this command never ran
+            # to give one.
+            return _refused(command, str(exc), ctx, control="sandbox")
 
         proc = None
         try:
@@ -295,11 +299,16 @@ class BashActionProvider(ActionProvider):
             )
             elapsed = int((time.monotonic() - start) * 1000)
             exit_code = proc.returncode or 0
+            stderr = stderr_b.decode(errors="replace").strip()
+            # A command that failed with its network taken away says only that it could not
+            # connect; its run's record says why. An exit 2 is a hook's own answer, in its words.
+            if exit_code not in (0, 2) and (note := no_network_note()):
+                stderr = f"{stderr}\n{note}" if stderr else note
             return ActionResult(
                 success=exit_code == 0,
                 exit_code=exit_code,
                 stdout=stdout_b.decode(errors="replace").strip(),
-                stderr=stderr_b.decode(errors="replace").strip(),
+                stderr=stderr,
                 duration_ms=elapsed,
                 blocked=exit_code == 2,
             )
