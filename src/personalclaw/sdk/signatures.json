@@ -557,6 +557,7 @@
   }
  },
  "personalclaw.sdk.channel.CANCELLED_STOP_REASONS": {"kind": "value", "type": "tuple", "value": "('cancelled', 'stopped_by_user')"},
+ "personalclaw.sdk.channel.CANNED_OWNER_PAIRED_REPLY": {"kind": "value", "type": "str", "value": "\"Paired — you're my owner here now. I'll reach you in this chat.\""},
  "personalclaw.sdk.channel.CANNED_PAIRING_REPLY": {"kind": "value", "type": "str", "value": "\"I don't recognize you yet. Ask my owner for an 8-digit pairing code, then send it here to start talking.\""},
  "personalclaw.sdk.channel.COMPACTION_AUTOMATIC": {"kind": "value", "type": "str", "value": "'automatic'"},
  "personalclaw.sdk.channel.CRED_OWNER_ID": {"kind": "value", "type": "str", "value": "'PERSONALCLAW_OWNER_ID'"},
@@ -3896,6 +3897,14 @@
   ],
   "returns": "str"
  },
+ "personalclaw.sdk.channel.forget_owner": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "owner_id"}
+  ],
+  "returns": "bool"
+ },
  "personalclaw.sdk.channel.format_schedule": {
   "kind": "function",
   "params": [
@@ -4014,6 +4023,13 @@
    {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"},
    {"annotation": "str", "kind": "positional_or_keyword", "name": "user_id"},
    {"annotation": "int", "default": "3600", "kind": "positional_or_keyword", "name": "ttl_seconds"}
+  ],
+  "returns": "str"
+ },
+ "personalclaw.sdk.channel.paired_owner": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "provider"}
   ],
   "returns": "str"
  },
@@ -4897,12 +4913,13 @@
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
  "personalclaw.sdk.features.CLOSING_STREAMS": {"kind": "value", "type": "str", "value": "'closing-streams'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'messages-run-once', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'approval-answers', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-download', 'links-name-their-channel', 'messages-run-once', 'paired-owner', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked'})"},
  "personalclaw.sdk.features.CUT_OFF_ANSWERS": {"kind": "value", "type": "str", "value": "'cut-off-answers'"},
  "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
  "personalclaw.sdk.features.GUARDED_DOWNLOAD": {"kind": "value", "type": "str", "value": "'guarded-download'"},
  "personalclaw.sdk.features.LINKS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'links-name-their-channel'"},
  "personalclaw.sdk.features.MESSAGES_RUN_ONCE": {"kind": "value", "type": "str", "value": "'messages-run-once'"},
+ "personalclaw.sdk.features.PAIRED_OWNER": {"kind": "value", "type": "str", "value": "'paired-owner'"},
  "personalclaw.sdk.features.TOOL_CALL_SCREEN": {"kind": "value", "type": "str", "value": "'tool-call-screen'"},
  "personalclaw.sdk.features.TURNS_NAME_THEIR_CHANNEL": {"kind": "value", "type": "str", "value": "'turns-name-their-channel'"},
  "personalclaw.sdk.features.TURNS_NAME_WHO_ASKED": {"kind": "value", "type": "str", "value": "'turns-name-who-asked'"},

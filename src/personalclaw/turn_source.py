@@ -108,7 +108,7 @@ def sent_by_owner(row: object) -> bool:
 
     The dashboard's own chat is the owner's (:data:`DASHBOARD_SOURCE`). A row a chat channel took
     in is the owner's when it names the channel and its sender is the owner that channel keeps
-    (``owner_id_for``: the id its owner pairing or its first contact stored); nobody's on a
+    (``owner_id_for``: the id its owner pairing, or its setup, stored); nobody's on a
     channel that knows no owner. In a group, a shared thread, a mailbox or an open direct message
     the door lets in people the owner trusts to talk to the agent, and what they write is theirs.
     Any other source names no one the owner is known to be, so nothing says the owner sent it: a

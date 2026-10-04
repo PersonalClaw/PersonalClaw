@@ -332,11 +332,10 @@ enabling the channel app is what calls `register_transport`
 So on a container install:
 
 ```bash
-# 1. put the three values in the .env the gateway already reads
+# 1. put the two tokens in the .env the gateway already reads
 cat >> .env <<'ENV'
 SLACK_APP_TOKEN=xapp-...
 SLACK_BOT_TOKEN=xoxb-...
-PERSONALCLAW_OWNER_ID=U0123456789
 ENV
 
 # 2. recreate the gateway so it picks them up (credentials are read at startup)
@@ -345,16 +344,21 @@ docker compose -f deploy/compose/compose.yaml up -d --force-recreate personalcla
 
 Then install and enable the Slack channel app from **Store** in the dashboard, the same way
 as any other channel. Tokens come from <https://api.slack.com/apps> after creating a
-Socket-Mode app. Without an owner id the handler refuses every message, by design.
+Socket-Mode app. Then pair yourself as its owner: **Settings → Providers → Slack Channel →
+Configure → Pair as owner** shows a code, and you send it to the bot in a direct message.
+Until you do, the bot answers nobody, and a direct message or a mention gets a note saying how
+to pair. An owner id set in the environment does not name Slack's owner: Slack keeps only the
+owner it paired, and forgets any other id it finds when the channel starts.
 
 A channel keeps its own owner id under `PERSONALCLAW_OWNER_ID_<PROVIDER>`
 (`PERSONALCLAW_OWNER_ID_SLACK`, `…_TELEGRAM`, `…_DISCORD`), and core addresses the owner's
 notifications on a channel with that channel's own, falling back to `PERSONALCLAW_OWNER_ID`
-when it has none. `PERSONALCLAW_OWNER_ID` is the one key every channel used to share, and a
-channel app that has not moved to its own key still reads only that one — so set it, and add
-the per-channel key when a second channel needs a different owner id. A notification for the
-owner tries each connected channel in turn until one delivers it; when none can (no channel
-knows an owner id it can reach), it lands in the Inbox with a sentence saying why.
+when it has none and core has never paired or forgotten an owner for it. `PERSONALCLAW_OWNER_ID`
+is the one key every channel used to share, and a channel app that has not moved to its own key
+still reads only that one. Every channel's Configure page can pair its owner, which stores the
+per-channel key. A notification for the owner tries each connected channel in turn until one
+delivers it; when none can (no channel knows an owner id it can reach), it lands in the Inbox
+with a sentence saying why.
 
 ## Troubleshooting
 

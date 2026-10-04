@@ -948,9 +948,10 @@ def owner_id_for(provider: str) -> str:
 
     The channel's own key first. Then the one shared key the channels used before each had its
     own: it is what an app that still writes ``CRED_OWNER_ID`` stored, so reading it here keeps
-    that channel's owner where it was. Each key is looked up in the environment first (a
-    container passes it that way), then in the store — the precedence ``load_credentials``
-    gives every named credential.
+    that channel's owner where it was, until core keeps the channel's owner itself (it paired
+    one, or forgot one: ``channel_trust.shared_owner_retired``). Each key is looked up in the
+    environment first (a container passes it that way), then in the store — the precedence
+    ``load_credentials`` gives every named credential.
     """
     return owner_id_source(provider)[0]
 
@@ -960,13 +961,17 @@ def owner_id_source(provider: str) -> tuple[str, str]:
     ``"shared"`` (the one every channel wrote before each had its own), or ``("", "")``.
 
     The status a channel shows says which, because a shared id can be another platform's user
-    id — the owner core then tries to reach on this channel is nobody here.
+    id — the owner core then tries to reach on this channel is nobody here. The shared key is
+    not read for a channel whose owner core has paired or forgotten: an owner core forgot must not
+    come back through it, and a paired channel's owner is what its own key holds.
     """
-    for key, source in (
-        (owner_id_credential(provider), "channel"),
-        (_loader.CRED_OWNER_ID, "shared"),
-    ):
-        value = os.environ.get(key) or get_credential(key)
-        if value:
-            return value, source
-    return "", ""
+    own = owner_id_credential(provider)
+    value = os.environ.get(own) or get_credential(own)
+    if value:
+        return value, "channel"
+    from personalclaw.channel_trust import shared_owner_retired
+
+    if shared_owner_retired(provider):
+        return "", ""
+    value = os.environ.get(_loader.CRED_OWNER_ID) or get_credential(_loader.CRED_OWNER_ID)
+    return (value, "shared") if value else ("", "")

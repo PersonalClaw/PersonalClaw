@@ -992,7 +992,7 @@ item vector).
   reads a row only when the owner sent it (`turn_source.sent_by_owner`): the
   dashboard took it in, or the row names its channel (`source_channel`) and its
   sender (`source_user`) is the owner that channel keeps (`owner_id_for`, the id
-  its owner pairing or first contact stored; Slack's two spellings of one member
+  its owner pairing, or its setup, stored; Slack's two spellings of one member
   both match). On a channel that knows no owner nobody is the owner, and any
   other source is nobody's too: a program through the OpenAI-compatible door, a
   channel's row saved before rows named their channel, one saved with no sender.

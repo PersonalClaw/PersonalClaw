@@ -76,7 +76,12 @@ from personalclaw.channel_transports.base import (
 # Provider-agnostic: `provider` is an opaque key the transport picks; no vendor lives
 # in core. A channel app consumes the whole trust API through here so its allow/deny,
 # pairing, fencing and unknown-sender flow can never drift per channel.
+#
+# A channel that keeps no owner but the one its pairing named reads who that is
+# (`paired_owner`), has core forget any other owner it holds (`forget_owner`), and answers the
+# code that paired its owner in core's words (`CANNED_OWNER_PAIRED_REPLY`).
 from personalclaw.channel_trust import (
+    CANNED_OWNER_PAIRED_REPLY,
     CANNED_PAIRING_REPLY,
     TrustVerdict,
     allow_sender,
@@ -84,10 +89,12 @@ from personalclaw.channel_trust import (
     create_pairing_code,
     deny_sender,
     fence_channel_content,
+    forget_owner,
     guard_inbound,
     is_allowed_sender,
     is_tracked_channel,
     note_unknown_sender,
+    paired_owner,
     redeem_owner_pairing_code,
     redeem_pairing_code,
     track,
@@ -330,6 +337,7 @@ __all__ = [
     "AuthMode",
     "AutoSkillProvenance",
     "AutomationToolResult",
+    "CANNED_OWNER_PAIRED_REPLY",
     "CANNED_PAIRING_REPLY",
     "COMPACTION_AUTOMATIC",
     "CRED_OWNER_ID",
@@ -415,6 +423,7 @@ __all__ = [
     "extract_options",
     "extract_text",
     "fence_channel_content",
+    "forget_owner",
     "format_schedule",
     "get_update_info",
     "guard_inbound",
@@ -429,6 +438,7 @@ __all__ = [
     "owner_id_credential",
     "owner_id_for",
     "owner_sign_in_token",
+    "paired_owner",
     "parse_dashboard_url",
     "parse_duration",
     "parse_title",

@@ -78,9 +78,10 @@ class ChannelCapabilities:
     #: sends it to the bot in a direct message becomes the channel's owner. Declare it only when
     #: both halves hold — the code is redeemed (a DM that is the code crosses the guarded door,
     #: ``services.deliver_channel_inbound``, where core redeems it; a channel whose messages carry
-    #: it inside other text hands the code-shaped words to ``redeem_owner_pairing_code``), and the
-    #: channel reads its owner with ``owner_id_for`` each time it needs it (a DM, an approval
-    #: prompt), so a pairing reaches the running receiver at once instead of at its next start.
+    #: it inside other text, or that runs its own turns and hands the door none of its DMs, hands
+    #: the code-shaped words to ``redeem_owner_pairing_code``), and the channel reads its owner
+    #: with ``owner_id_for`` each time it needs it (a DM, an approval prompt), so a pairing reaches
+    #: the running receiver at once instead of at its next start.
     owner_pairing: bool = False
     #: A direct message with this channel is ONE conversation: every message in it reaches core
     #: with the DM's channel id as its ``thread_id``, so core links a chat to the DM itself, not

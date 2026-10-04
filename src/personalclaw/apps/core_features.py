@@ -116,6 +116,14 @@ TURNS_NAME_WHO_ASKED = "turns-name-who-asked"
 #: has no ``claim_message``, so an app that imports it does not load.
 MESSAGES_RUN_ONCE = "messages-run-once"
 
+#: A channel keeps no owner but the one its owner pairing named: ``paired_owner(provider)`` says
+#: who that is, ``forget_owner(provider, owner_id)`` has core forget any other owner it holds for
+#: the channel (its own owner key, its trust list, and the shared key, which then no longer answers
+#: for it), and ``CANNED_OWNER_PAIRED_REPLY`` is what the channel says to the code that paired its
+#: owner, all in ``personalclaw.sdk.channel``. A core without it has none of the three, so an app
+#: that imports them does not load.
+PAIRED_OWNER = "paired-owner"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
@@ -127,6 +135,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
         MESSAGES_RUN_ONCE,
+        PAIRED_OWNER,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,

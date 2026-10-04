@@ -47,6 +47,11 @@ its chat, and a delivery of it made again changes nothing; a channel that acts o
 before the door or instead of it claims it first (``personalclaw.sdk.channel.claim_message``). A
 channel app that claims its messages declares it.
 
+``PAIRED_OWNER``: a channel keeps no owner but the one its owner pairing named
+(``personalclaw.sdk.channel.paired_owner``), has PersonalClaw forget any other owner it holds for
+the channel (``forget_owner``), and answers the code that paired its owner in PersonalClaw's words
+(``CANNED_OWNER_PAIRED_REPLY``). A channel app that keeps only a paired owner declares it.
+
 ``TOOL_CALL_SCREEN``: a channel that runs a conversation itself asks the deny-list about each call
 before it approves or asks about it (``personalclaw.sdk.channel.screen_tool_call``), and refuses a
 call it refuses. A channel app that asks it declares it.
@@ -73,6 +78,7 @@ from personalclaw.apps.core_features import (
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
     MESSAGES_RUN_ONCE,
+    PAIRED_OWNER,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
@@ -89,6 +95,7 @@ __all__ = [
     "GUARDED_DOWNLOAD",
     "LINKS_NAME_THEIR_CHANNEL",
     "MESSAGES_RUN_ONCE",
+    "PAIRED_OWNER",
     "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",
     "TURNS_NAME_WHO_ASKED",

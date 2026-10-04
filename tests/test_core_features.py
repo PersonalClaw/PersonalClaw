@@ -26,6 +26,7 @@ from personalclaw.sdk.features import (
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
     MESSAGES_RUN_ONCE,
+    PAIRED_OWNER,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
@@ -43,6 +44,7 @@ OFFERED_ONCE = {
     "guarded-download",
     "links-name-their-channel",
     "messages-run-once",
+    "paired-owner",
     "tool-call-screen",
     "turns-name-their-channel",
     "turns-name-who-asked",
@@ -60,6 +62,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "GUARDED_DOWNLOAD",
         "LINKS_NAME_THEIR_CHANNEL",
         "MESSAGES_RUN_ONCE",
+        "PAIRED_OWNER",
         "TOOL_CALL_SCREEN",
         "TURNS_NAME_THEIR_CHANNEL",
         "TURNS_NAME_WHO_ASKED",
@@ -73,6 +76,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert GUARDED_DOWNLOAD == "guarded-download"
     assert LINKS_NAME_THEIR_CHANNEL == "links-name-their-channel"
     assert MESSAGES_RUN_ONCE == "messages-run-once"
+    assert PAIRED_OWNER == "paired-owner"
     assert TOOL_CALL_SCREEN == "tool-call-screen"
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
     assert TURNS_NAME_WHO_ASKED == "turns-name-who-asked"
@@ -85,6 +89,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
         MESSAGES_RUN_ONCE,
+        PAIRED_OWNER,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,
@@ -558,6 +563,44 @@ def _messages_run_once_hold() -> None:
     assert ran == ["hello"]
 
 
+def _paired_owner_holds() -> None:
+    """The owner pairing names who it made the owner, a code it pairs is answered in core's words,
+    and an owner stored some other way is forgotten: neither the channel's own key nor the shared
+    key names them afterwards, while another channel still reads the shared key."""
+    from personalclaw import channel_trust
+    from personalclaw.config.credentials import (
+        delete_credential,
+        owner_id_credential,
+        save_credential,
+    )
+    from personalclaw.config.loader import CRED_OWNER_ID
+    from personalclaw.sdk.channel import (
+        CANNED_OWNER_PAIRED_REPLY,
+        forget_owner,
+        owner_id_for,
+        paired_owner,
+    )
+
+    keys = (owner_id_credential("pairchat"), owner_id_credential("keptchat"), CRED_OWNER_ID)
+    try:
+        code = channel_trust.create_owner_pairing_code("pairchat")
+        verdict = channel_trust.guard_inbound(
+            None, "pairchat", "U0OWNER", channel_id="U0OWNER", is_dm=True, text=code
+        )
+        assert verdict.canned_reply == CANNED_OWNER_PAIRED_REPLY
+        assert paired_owner("pairchat") == "U0OWNER"
+
+        save_credential(CRED_OWNER_ID, "U0EARLIER")
+        save_credential(owner_id_credential("keptchat"), "U0TYPED")
+        assert paired_owner("keptchat") == ""
+        assert forget_owner("keptchat", "U0TYPED") is True
+        assert owner_id_for("keptchat") == ""
+        assert owner_id_for("otherchat") == "U0EARLIER"
+    finally:
+        for key in keys:
+            delete_credential(key)
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     APPROVAL_ANSWERS: _approval_answers_hold,
@@ -568,6 +611,7 @@ WITNESSES = {
     GUARDED_DOWNLOAD: _guarded_download_holds,
     LINKS_NAME_THEIR_CHANNEL: _links_name_their_channel_holds,
     MESSAGES_RUN_ONCE: _messages_run_once_hold,
+    PAIRED_OWNER: _paired_owner_holds,
     TOOL_CALL_SCREEN: _tool_call_screen_holds,
     TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,
     TURNS_NAME_WHO_ASKED: _turns_name_who_asked_holds,

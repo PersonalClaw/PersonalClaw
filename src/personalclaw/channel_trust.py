@@ -31,12 +31,20 @@ a hope, not a property, and every shipping channel duly forgot it (#950).
 shows; whoever sends it in a DM becomes that channel's OWNER (its id is stored under
 ``owner_id_credential(provider)``). Same machinery, plus a cap on wrong guesses
 (:data:`OWNER_PAIRING_MAX_ATTEMPTS`), because it hands over the owner's DMs and approval prompts.
-A channel whose messages carry the code inside other text (a mail's body) redeems it with
-:func:`redeem_owner_pairing_code`, by the same rules.
+A channel whose messages carry the code inside other text (a mail's body), or that runs its own
+turns and so hands the gate none of its DMs, redeems it with :func:`redeem_owner_pairing_code`,
+by the same rules.
+
+**The owner the pairing named.** The store records who the owner pairing made the owner
+(:func:`paired_owner`). An owner id stored any other way (typed in, or kept by an earlier release)
+was never confirmed by its account, so a channel that keeps no owner but a paired one has core
+forget any other (:func:`forget_owner`): the id leaves the channel's own key and its trust list,
+and from then on the one key every channel wrote before each had its own no longer answers for
+that channel.
 
 **Audit.** These security events are emitted through the SEL: ``pairing_code_created`` and
 ``owner_pairing_code_created`` (never carrying a code), ``sender_paired``, ``owner_paired``,
-``owner_pairing_cancelled``, ``sender_denied``.
+``owner_pairing_cancelled``, ``owner_forgotten``, ``sender_denied``.
 
 **Observability.** A fail-closed gate that is also silent is indistinguishable from a dead
 socket, so every verdict :func:`guard_inbound` reaches passes through
@@ -118,6 +126,7 @@ def _default_provider() -> dict[str, Any]:
         "tracked_channels": {},
         "pairing": {},
         "owner_pairing": {},
+        "owner": {},
         "policies": {"dm": DEFAULT_DM_POLICY, "group": DEFAULT_GROUP_POLICY},
         "rate": {},
     }
@@ -271,6 +280,16 @@ def deny_sender(provider: str, sender_id: str) -> None:
     about the same person again."""
     store = _read_store()
     rec = _provider_record(store, provider)
+    _revoke(rec, sender_id)
+    store[provider] = rec
+    _write_store(store)
+    _emit_sel("sender_denied", "owner", provider, sender_id)
+
+
+def _revoke(rec: dict[str, Any], sender_id: str) -> None:
+    """Take ``sender_id`` off the provider record's trust list, as :func:`deny_sender` describes:
+    one who was trusted has their renotify window and their count of refused messages start over.
+    One who was never let in is left as they are."""
     if rec.get("allowed_senders", {}).pop(sender_id, None) is not None:
         rate = rec.get("rate")
         if isinstance(rate, dict) and sender_id in rate:
@@ -278,9 +297,6 @@ def deny_sender(provider: str, sender_id: str) -> None:
         seen = rec.get("seen_senders")
         if isinstance(seen, dict):
             seen.pop(sender_id, None)
-    store[provider] = rec
-    _write_store(store)
-    _emit_sel("sender_denied", "owner", provider, sender_id)
 
 
 # ── tracked channels (group/room membership) ─────────────────────────────────
@@ -805,17 +821,84 @@ def owner_ref(provider: str) -> dict[str, str]:
 
 
 def _pair_owner(provider: str, sender_id: str, sender_name: str) -> None:
-    """Make ``sender_id`` the owner of ``provider``: its own owner key, trusted, code spent."""
+    """Make ``sender_id`` the owner of ``provider``: its own owner key, trusted, code spent, and
+    the record of who the pairing named (:func:`paired_owner`)."""
     from personalclaw.config.credentials import owner_id_credential, save_credential
 
     save_credential(owner_id_credential(provider), sender_id)
     store = _read_store()
     rec = _provider_record(store, provider)
     rec["owner_pairing"] = _ended("paired")
+    rec["owner"] = {"id": sender_id, "how": "paired", "at": _iso(_now())}
     store[provider] = rec
     _write_store(store)
     allow_sender(provider, sender_id, sender_name, via="owner_pairing")
     _emit_sel("owner_paired", "paired", provider, sender_id)
+
+
+# ── the owner core keeps on record ──────────────────────────────────────────────────────────
+#
+# ``owner`` holds who the owner pairing named (``how: "paired"``), or that core forgot the owner it
+# held (``how: "forgotten"``, with no id). It is written by the pairing and by :func:`forget_owner`
+# alone, and minting or cancelling a code leaves it as it is, so it still names the owner while she
+# pairs another account. Either way the channel's owner is from then on what its own key holds:
+# the shared key, which predates pairing, no longer answers for it (:func:`shared_owner_retired`).
+
+
+def paired_owner(provider: str) -> str:
+    """The id core's owner pairing made ``provider``'s owner, or ``""``: it never paired one, or has
+    forgotten the owner since. Not necessarily the owner core reads now (``owner_id_for``): setup or
+    an earlier release may have stored another, which a channel that keeps no owner but a paired
+    one has core forget (:func:`forget_owner`)."""
+    record = _provider_record(_read_store(), provider).get("owner")
+    if not isinstance(record, dict) or record.get("how") != "paired":
+        return ""
+    return str(record.get("id", "") or "")
+
+
+def shared_owner_retired(provider: str) -> bool:
+    """Whether the shared owner key no longer answers for ``provider``: core has paired an owner
+    for it, or forgotten one. That key is the one every channel wrote before each had its own, and
+    holds whichever platform's id was saved last, so once core keeps a channel's owner it is not
+    read for that channel again, even when the channel's own key is gone."""
+    record = _provider_record(_read_store(), provider).get("owner")
+    return isinstance(record, dict) and record.get("how") in ("paired", "forgotten")
+
+
+def forget_owner(provider: str, owner_id: str) -> bool:
+    """Make core forget ``owner_id`` as ``provider``'s owner. True when it was that owner.
+
+    For a channel that keeps no owner but the one its pairing named, to drop an owner stored some
+    other way, which nobody confirmed from the account. Afterwards nothing core reads names them
+    as the channel's owner: the id leaves the channel's own owner key (from the store and from the
+    process environment), the shared key no longer answers for the channel (the key itself is left
+    for any other channel that still reads it), and the id leaves the channel's trust list as
+    Revoke takes it off (:func:`_revoke`). The record says core forgot an owner, so the owner
+    pairing is the way back. An owner code on show is left alone, so a pairing under way still
+    works. Emits ``owner_forgotten``.
+
+    ``False``, changing nothing, when ``owner_id`` is empty or is not the owner core reads for the
+    channel now (``owner_id_for``).
+    """
+    from personalclaw.config.credentials import (
+        delete_credential,
+        owner_id_credential,
+        owner_id_source,
+    )
+
+    owner, source = owner_id_source(provider)
+    if not owner_id or owner != owner_id:
+        return False
+    if source == "channel":
+        delete_credential(owner_id_credential(provider))
+    store = _read_store()
+    rec = _provider_record(store, provider)
+    rec["owner"] = {"id": "", "how": "forgotten", "at": _iso(_now())}
+    _revoke(rec, owner_id)
+    store[provider] = rec
+    _write_store(store)
+    _emit_sel("owner_forgotten", "forgotten", provider, owner_id)
+    return True
 
 
 def redeem_owner_pairing_code(provider: str, sender_id: str, code: str, name: str = "") -> bool:
@@ -824,12 +907,13 @@ def redeem_owner_pairing_code(provider: str, sender_id: str, code: str, name: st
     :func:`guard_inbound` redeems the owner's code when a DM is the code and nothing else. A
     channel whose messages cannot be that (a mail's body, under a quote and a signature) finds
     the code-shaped words in the text itself and hands each here, after a sender's code had its
-    turn (:func:`redeem_pairing_code`). A match makes ``sender_id`` the owner exactly as the gate
-    does: stored under ``owner_id_credential(provider)``, trusted, the code spent,
-    ``owner_paired`` audited. A code-shaped word that does not match counts as a wrong guess at
-    the outstanding code, as a code-shaped DM does at the gate, so the cap on wrong guesses
-    (:data:`OWNER_PAIRING_MAX_ATTEMPTS`) holds however the code arrives. ``False`` when no owner
-    code is outstanding, when it expired, and for text that is not code-shaped.
+    turn (:func:`redeem_pairing_code`). So does a channel that runs its own turns, and so hands
+    the gate none of its DMs, with each direct message it is sent. A match makes ``sender_id``
+    the owner exactly as the gate does: stored under ``owner_id_credential(provider)``, trusted,
+    the code spent, ``owner_paired`` audited. A code-shaped word that does not match counts as a
+    wrong guess at the outstanding code, as a code-shaped DM does at the gate, so the cap on wrong
+    guesses (:data:`OWNER_PAIRING_MAX_ATTEMPTS`) holds however the code arrives. ``False`` when
+    no owner code is outstanding, when it expired, and for text that is not code-shaped.
     """
     candidate = (code or "").strip()
     if not _looks_like_a_pairing_code(candidate):
