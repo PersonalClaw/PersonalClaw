@@ -1883,6 +1883,44 @@ def test_the_compaction_digest_is_not_attributed_to_the_human(
     assert "[human]" not in folded, "nothing in this fold is the human's word"
 
 
+def test_the_humans_latest_message_survives_the_fold_word_for_word(
+    enabled, monkeypatch, fresh_fold_history
+):
+    """What the human asked is what the room is answering, however many replies came after it.
+
+    🔴 Red before: the tail kept only the last eight lines, so a question followed by more replies
+    than that went into the digest as its first 200 characters.
+    """
+    from personalclaw.rooms import turn
+
+    ask = "\n".join(
+        [
+            "Both of you: should the billing export move to the new ledger this quarter?",
+            "Weigh the audit team's freeze against the March close, and say what you would cut.",
+            "Answer with a yes or a no first, then your three strongest reasons.",
+        ]
+    )
+    room_id = _two_member_room("Asked once")
+    store.append_message(room_id, role="user", content=ask, speaker=store.HUMAN_SPEAKER)
+    _long_room(room_id, count=40)
+    _pin_window(monkeypatch, 200)
+    room = store.require_room(room_id)
+
+    folded = asyncio.run(
+        turn.member_context(
+            room,
+            room.member("skeptic"),
+            store.read_messages(room_id),
+            since_last_turn=False,
+            serving=_StreamingProvider("k"),
+            reach="",
+        )
+    )
+
+    assert "CONTEXT COMPACTION" in folded and "turn 0:" not in folded, "the replies folded"
+    assert f"[human]: {ask}" in folded, "the human's question, whole and still the human's"
+
+
 def test_compaction_stops_when_it_stops_helping(enabled, monkeypatch, fresh_fold_history):
     """``should_compact``'s anti-thrash rule, per member: two folds that each freed under 10% say
     folding is not the remedy here, and re-summarizing every turn would charge it for nothing."""

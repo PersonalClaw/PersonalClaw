@@ -349,7 +349,7 @@ def test_compaction_bumps_cache_generation(monkeypatch):
     # Force a compaction that shrinks the history.
     monkeypatch.setattr(cc, "should_compact", lambda saves: True)
     monkeypatch.setattr(cc, "total_chars", lambda msgs: 400 if msgs is rt._messages else 40)
-    monkeypatch.setattr(cc, "compact", lambda msgs: [{"role": "user", "content": "x"}])
+    monkeypatch.setattr(cc, "compact", lambda msgs, **_: [{"role": "user", "content": "x"}])
 
     rt._maybe_compact()
     assert rt._cache_generation == 1

@@ -605,7 +605,18 @@ chat, channel thread, loop worker, webhook, subagent).
    and tail hold whole exchanges, a call with every result it got
    (`context_compaction._whole_exchanges`). Cut between them, a kept result was
    dropped as an orphan and the account said its call had no result, so an agent
-   disowned a fact it had read from that result.
+   disowned a fact it had read from that result. It also keeps, word for word
+   wherever they sit, the request the running turn answers, every message the
+   user added after it (a steer) and the turn's runtime note (its tool catalog):
+   the tail is eight messages, so a long turn's own rounds used to push its
+   request out of it, and the summary then kept that request's first line or
+   nothing. The summary lists what the user asked in their own words, the newest
+   word for word and older ones by their first line within a fixed budget, and
+   counts the rest; a later pass carries an earlier summary forward instead of
+   cutting it to its first characters. A room member's fold keeps the human's
+   latest line the same way, and a workflow node's prompt, which the ladder splits
+   at its paragraphs, lists the paragraphs it folds as sections, by their first
+   line.
 3. **Agent resolution** — an agent's own `system_prompt` governs when it has one;
    the default agent ships with none, so its prompt is the one bound in Settings →
    Prompts for the turn's context (`chat`, or `background` for unattended runs).

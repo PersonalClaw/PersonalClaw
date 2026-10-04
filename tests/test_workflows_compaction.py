@@ -142,6 +142,16 @@ class TestCompactPrompt:
         assert "[CONTEXT COMPACTION — REFERENCE ONLY" in out
         assert "[END CONTEXT COMPACTION]" in out
 
+    def test_the_record_lists_the_folded_paragraphs_by_their_first_line(self) -> None:
+        """A node's folded paragraphs are the bulk the ladder sheds, not requests a user made: the
+        record names the newest of them by their first line and keeps none of them whole."""
+        out, _saved = C.compact_prompt(_long_prompt())
+        record = out[out.index("[CONTEXT COMPACTION") : out.index("[END CONTEXT COMPACTION]")]
+        assert "### Sections folded, oldest first" in record
+        assert "### Requests made" not in record
+        assert "finding 36: " + "x" * 100 in record, "the newest folded paragraph's first line"
+        assert "x" * 1200 not in record, "a folded paragraph kept whole"
+
     def test_aggressive_frees_more_than_proactive(self) -> None:
         """Layer 2 must actually be a HARDER squeeze — otherwise the retry sends a prompt
         of the same size to the provider that just rejected it for size."""
@@ -210,7 +220,8 @@ class TestDegradeToPlaceholder:
         out, saved = C.compact_prompt(_long_prompt(), summarize_fn=None)
         assert saved > 0.5
         assert "DROPPED (not summarized)" not in out
-        assert "## Earlier conversation (compacted)" in out
+        assert "## Earlier part of this prompt (compacted)" in out
+        assert "### Sections folded, oldest first" in out, "its paragraphs, not requests"
 
 
 class TestOverflowDetection:
@@ -325,6 +336,22 @@ class TestTheLadder:
         assert out == "ok"
         assert len(seen) == 2, "exactly one retry — not zero, and not a loop"
         assert len(seen[1]) < len(seen[0])
+
+    async def test_layer_2_compacts_the_prompt_the_node_composed_not_layer_1s_output(
+        self,
+    ) -> None:
+        """🔴 Red before: the retry folded layer 1's output, so its record was split into
+        paragraphs and listed inside the new one, cut to 200 characters a piece."""
+        seen: list[str] = []
+        fn = self._fn(seen, fail_first=RuntimeError("context_length_exceeded"))
+        prompt = _long_prompt()
+        out = await C.complete_with_compaction(
+            fn, prompt, use_case="reasoning", model_resolver=lambda uc: SMALL_MODEL
+        )
+        assert out == "ok" and len(seen) == 2
+        assert "[CONTEXT COMPACTION — REFERENCE ONLY" in seen[0], "layer 1 must have folded"
+        assert seen[1].count("[CONTEXT COMPACTION") == 1, "a record listed inside a record"
+        assert seen[1] == C.compact_prompt(prompt, aggressive=True)[0]
 
     async def test_layer_2_does_not_retry_a_failure_compaction_cannot_fix(self) -> None:
         seen: list[str] = []

@@ -77,7 +77,7 @@ while not terminal:
 | `gate_policy.py` | risk-scoped auto-approval |
 | `attention.py` | a step waiting on a human → a durable inbox row + one notification; a run's ending that needs one (`announce_run_end`) → the same |
 | `context.py` | handoffs, carryover buckets, decision records |
-| `compaction.py` | the two-layer prompt-compaction ladder for LLM-backed nodes: proactive at ~80% of the bound model window, then aggressive re-compaction + one retry on a length rejection, degrading to drop-with-placeholder if a summarizer raises. Wraps `personalclaw.context_compaction` — it does not reimplement it |
+| `compaction.py` | the two-layer prompt-compaction ladder for LLM-backed nodes: proactive at ~80% of the bound model window, then aggressive re-compaction of the prompt as the node composed it + one retry on a length rejection, degrading to drop-with-placeholder if a summarizer raises. Wraps `personalclaw.context_compaction` — it does not reimplement it — and tells it the prompt is one message split at its paragraphs (`sections=True`), so the record lists the folded paragraphs by their first line |
 | `macros.py` | template macros, expanded at definition time |
 | `blocks.py` | shared prompt blocks, resolved at definition time |
 | `coalescer.py` | per-observer event batching in front of the SSE write |
@@ -1300,8 +1300,9 @@ failure would turn an uninstalled linter into a broken deliverable.
 
 ## Where things are NOT
 
-- **no compaction ladder yet** — the two-layer proactive/error-triggered
-  summarizer from WF2-R6 needs a summarizer seam that does not exist;
+- **no model-written summary in the compaction ladder** — `complete_with_compaction`
+  takes a `summarize_fn`, but the engine passes none, so a node's folded paragraphs
+  are listed by the deterministic record;
 - **no `{{nodes.x.artifact}}` binding** — oversize outputs spill to a stub with
   an `output_ref`, but the artifact-pointer binding form and `artifact_inspect`
   action are unbuilt;

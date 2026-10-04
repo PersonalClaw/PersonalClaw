@@ -13,7 +13,8 @@ measured and avoided one call earlier.
 1. **Proactive**, before the call: measure the prompt against the bound model's window
    and compact at ~80% of it. Cheap, and it keeps the failure from happening.
 2. **Error-triggered**, after a failed call: if the provider rejected the prompt for
-   LENGTH specifically, re-compact aggressively and retry ONCE before the node fails.
+   LENGTH specifically, compact the prompt as the node composed it again, aggressively, and
+   retry ONCE before the node fails.
    Layer 2 exists because layer 1's measurement is an APPROXIMATION (see
    `prompt_char_budget`'s `chars_per_token`) — it is the backstop for the cases the
    estimate gets wrong, not a duplicate of it.
@@ -35,7 +36,9 @@ context first, the task instruction last), so protecting the head and the tail a
 the middle keeps exactly the two things that must survive — the framing the reader needs
 before the instruction, and the instruction itself — and digests the accumulated bulk
 between them. A prompt with no middle left to fold is returned unchanged, because there is
-then nothing that can be dropped safely.
+then nothing that can be dropped safely. ``sections=True`` tells `compact()` so: what it folds
+is the prompt's own bulk, not requests a user made, and its record lists those paragraphs by
+their first line rather than spending a chat's word-for-word budget on the bulk being shed.
 """
 
 from __future__ import annotations
@@ -174,6 +177,7 @@ def compact_prompt(
         summarize_fn=_guarded_summarizer(summarize_fn),
         protect_head=head,
         protect_tail=tail,
+        sections=True,
     )
     after = total_chars(compacted)
     if before <= 0 or after >= before:
@@ -231,6 +235,7 @@ async def complete_with_compaction(
     # that is the same resolution `one_shot_completion` performs for this use case.
     bound = model or (resolve(use_case) or "")
     budget = prompt_char_budget(bound)
+    composed = prompt
 
     # ── layer 1: proactive, at ~80% of the bound window ──
     if total_chars(segment_prompt(prompt)) > budget:
@@ -261,7 +266,9 @@ async def complete_with_compaction(
         # prompt would burn a second call on something compaction provably cannot fix.
         if not is_context_overflow(exc):
             raise
-        retry_prompt, saved = compact_prompt(prompt, summarize_fn=summarize_fn, aggressive=True)
+        # From the prompt the node composed, never from layer 1's output: a fold of that fold read
+        # layer 1's record as prompt text, split at its paragraphs and listed inside the new one.
+        retry_prompt, saved = compact_prompt(composed, summarize_fn=summarize_fn, aggressive=True)
         if saves is not None:
             saves.append(saved)
         if saved <= 0.0:

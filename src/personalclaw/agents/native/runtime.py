@@ -2454,8 +2454,8 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
         Never mutates ``_messages``. The images go onto the turn's own user message, found by
         identity (``mark_cacheable_prefix`` keeps positions), so a steer or a volatile note
-        appended later in the turn never takes them. A turn message compaction folded away
-        takes its images with it — there is nothing left for them to belong to. The request for
+        appended later in the turn never takes them, and compaction keeps that message (it is
+        the pass's ``request``), so they ride every inference of the turn. The request for
         the reply (`owed_reply`) is a volatile note at the tail, like the correction note, so it
         rides every attempt of that one inference and never enters the history.
         """

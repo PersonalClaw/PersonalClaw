@@ -100,7 +100,8 @@ _ROOM_LABEL = "room"
 #: deliberately not ``context_compaction``'s own defaults: that head exists to protect a system
 #: prompt and the opening framing, and a room feed has neither — its oldest line is simply the
 #: oldest thing this member has not read. What must survive verbatim is the TAIL, the exchange the
-#: member is about to answer.
+#: member is about to answer, and the human's latest line, which ``compact`` keeps wherever it sits
+#: (it is the request the room is answering, however many replies followed it).
 _PROTECT_HEAD = 0
 _PROTECT_TAIL = 8
 
@@ -456,10 +457,11 @@ async def _summarize_slice(
 def _attribute_synthetic(folded: list[dict], original: list[dict]) -> list[dict]:
     """Stamp every message ``compact`` SYNTHESIZED with :data:`_DIGEST_SPEAKER`.
 
-    Found by object identity rather than by matching text: ``compact`` hands the protected tail
-    back as the same dicts it was given, so anything else in its result is something it made (the
-    digest, and the resume account it may derive beside it). Both would otherwise render as
-    ``[human]`` (see :data:`_DIGEST_SPEAKER`).
+    Found by object identity rather than by matching text: ``compact`` hands back what it keeps
+    (the protected tail, and the human's latest line wherever it sat) as the same dicts it was
+    given, so anything else in its result is something it made (the digest, and the resume
+    account it may derive beside it). Both would otherwise render as ``[human]`` (see
+    :data:`_DIGEST_SPEAKER`).
     """
     known = {id(m) for m in original}
     return [m if id(m) in known else {**m, "speaker": _DIGEST_SPEAKER} for m in folded]
@@ -487,7 +489,8 @@ async def _fold(
         messages, summarize_fn=_probe, protect_head=_PROTECT_HEAD, protect_tail=_PROTECT_TAIL
     )
     if not captured:
-        # Nothing was foldable: the feed is no longer than the protected tail.
+        # Nothing was foldable: the feed holds no more than what is kept (the tail, and the
+        # human's latest line).
         return probe
     body = (
         await _summarize_slice(room, member, captured[0], model_ref=model_ref) if model_ref else ""

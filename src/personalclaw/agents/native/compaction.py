@@ -44,6 +44,7 @@ class InProcessCompaction:
     # The loop's own state, which the runtime sets in ``__init__``: declared here so the pass is
     # checked against the runtime's types rather than against what its own assignments imply.
     _messages: list[dict]
+    _turn_message: dict | None
     _last_context_pct: float | None
     _compaction_saves: list[float]
     _cache_generation: int
@@ -139,13 +140,17 @@ class InProcessCompaction:
 
         *measured_pct* is the gauge the trigger read, or ``None`` when the gauge is
         unmeasured; it only scales the optimistic post-compaction gauge reset.
+
+        The running turn's own message is the pass's ``request``: it, every steer after it and the
+        turn's note are kept word for word however many rounds have pushed them out of the tail. A
+        pass between turns (``/compact``) has none, and keeps the latest message the user wrote.
         """
         from personalclaw import context_compaction as cc
 
         before = cc.total_chars(self._messages)
         if before <= 0:
             return 0, 0
-        compacted = cc.compact(self._messages)
+        compacted = cc.compact(self._messages, request=self._turn_message)
         after = cc.total_chars(compacted)
         saved = (before - after) / before if before else 0.0
         if after < before:
