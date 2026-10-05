@@ -15,7 +15,8 @@ the bundle against the size and digest the manifest gives, and writes the manife
 bundle's address on this machine. The pack then copies the bundle into its cache, checks its digest
 itself, and unpacks the grammar it was asked for; the copy here is removed once the pack holds its
 own. The manifest names only files on this machine, so the pack can never reach the network, even
-for a language nothing has asked for yet.
+for a language nothing has asked for yet. The processes on one home fetch once between them: a fetch
+holds the grammar folder's lock, and the others wait for it and use what it unpacked.
 """
 
 from __future__ import annotations
@@ -122,15 +123,30 @@ def ensure(language: str) -> None:
 
     Raises :class:`GrammarUnavailable` with the reason when it cannot: the language has no grammar,
     the fetch was refused or did not complete, or what arrived is not what the manifest promised.
+
+    Every process on one home shares its grammar folder (two gateways, a command beside one), so a
+    fetch holds the folder's lock, the one beside the manifest it writes: another process that needs
+    a grammar meanwhile waits for it, then finds what it unpacked rather than fetching the same
+    bundle beside it. A grammar the pack already holds asks for no lock.
     """
     import tree_sitter_language_pack as pack
 
     with _lock:
         manifest_file = manifest_path()
-        if not _unpacked(pack, language):
-            _fetch_for(pack, language, manifest_file)
-        # The pack keeps its own copy of the bundle once it has unpacked from it.
-        bundle_path(manifest_file.parent).unlink(missing_ok=True)
+        # The pack knows its languages without a manifest: a language it has no grammar for is
+        # answered here, with nothing fetched to say no.
+        if not pack.has_language(language):
+            raise GrammarUnavailable(f"The language pack has no grammar for {language}.")
+        fetched = bundle_path(manifest_file.parent)
+        if _unpacked(pack, language) and not fetched.exists():
+            return
+        from personalclaw import record_files
+
+        with record_files.locked(manifest_file):
+            if not _unpacked(pack, language):
+                _fetch_for(pack, language, manifest_file)
+            # The pack keeps its own copy of the bundle once it has unpacked from it.
+            fetched.unlink(missing_ok=True)
 
 
 def _fetch_for(pack: Any, language: str, manifest_file: Path) -> None:

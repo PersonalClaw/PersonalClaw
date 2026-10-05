@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 import zstandard
 
+from personalclaw import record_files
 from personalclaw.codegraph import grammars
 from personalclaw.config.loader import config_dir
 from personalclaw.library_env import library_env
@@ -97,12 +98,19 @@ class _ReleasesHandler(http.server.BaseHTTPRequestHandler):
 
 
 class _Pack:
-    """The language pack's two calls the code map makes, reading what the real pack reads: the
+    """The language pack's calls the code map makes, reading what the real pack reads: the
     manifest file its setting names, and the bundle that manifest names, which it checks."""
+
+    #: The languages the pack itself knows: python, which the releases' manifest lists, and go,
+    #: which it does not.
+    known = frozenset({"python", "go"})
 
     def __init__(self) -> None:
         self.unpacked: set[str] = set()
         self.read: list[str] = []
+
+    def has_language(self, language: str) -> bool:
+        return language in self.known
 
     def downloaded_languages(self) -> list[str]:
         return sorted(self.unpacked)
@@ -201,7 +209,10 @@ def test_a_bundle_that_is_not_the_one_listed_is_not_kept(releases, pack, tmp_pat
 
     assert pack.unpacked == set()
     folder = tmp_path / "grammars"
-    assert not folder.exists() or list(folder.iterdir()) == [], list(folder.iterdir())
+    # Nothing that arrived is kept: the folder holds no more than the empty lock a fetch holds.
+    lock = record_files.lock_path(grammars.manifest_path())
+    assert [p for p in folder.iterdir() if p != lock] == [], list(folder.iterdir())
+    assert lock.read_bytes() == b""
 
 
 def test_more_than_the_manifest_lists_is_not_kept(releases, pack, tmp_path):
@@ -215,13 +226,66 @@ def test_more_than_the_manifest_lists_is_not_kept(releases, pack, tmp_path):
     assert pack.unpacked == set()
 
 
-def test_a_language_with_no_grammar_fetches_no_bundle(releases, pack):
+def test_a_language_the_pack_has_no_grammar_for_asks_the_network_nothing(releases, pack):
+    """The pack knows its languages without a manifest, so a language it has no grammar for is
+    answered on this machine: nothing is fetched to say no."""
     _egress(allow_hosts=["127.0.0.1"])
 
     with pytest.raises(grammars.GrammarUnavailable, match="has no grammar for klingon"):
         grammars.ensure("klingon")
 
+    assert releases.paths == []
+    assert pack.read == []
+
+
+def test_a_language_the_release_does_not_list_fetches_no_bundle(releases, pack):
+    _egress(allow_hosts=["127.0.0.1"])
+
+    with pytest.raises(grammars.GrammarUnavailable, match="has no grammar for go"):
+        grammars.ensure("go")
+
     assert releases.paths == [f"/releases/v{VERSION}/parsers.json"]
+
+
+def test_a_fetch_another_process_is_making_is_waited_for_and_not_made_again(releases, pack):
+    """Every process on one home shares its grammar folder: two gateways, a command beside one, the
+    workers of one test run. While one fetches, another that needs a grammar waits for it and then
+    uses what it unpacked, rather than fetching the same bundle beside it. The other process here
+    is this test, holding the folder's lock as a fetch holds it."""
+    _egress(allow_hosts=["127.0.0.1"])
+    finished = threading.Event()
+    failed: list[BaseException] = []
+
+    def needs_python() -> None:
+        try:
+            grammars.ensure("python")
+        except BaseException as exc:  # noqa: BLE001 — the assertion below reports it
+            failed.append(exc)
+        finally:
+            finished.set()
+
+    with record_files.locked(grammars.manifest_path()):
+        threading.Thread(target=needs_python, daemon=True).start()
+        assert not finished.wait(1.0), "it went ahead while another process was fetching"
+        assert releases.paths == []
+        pack.unpacked.add("python")  # what the other process's fetch leaves behind
+
+    assert finished.wait(10), "it was still waiting after the other process had finished"
+    assert failed == []
+    assert releases.paths == [], "the bundle was fetched again beside the other process's fetch"
+
+
+def test_a_grammar_already_unpacked_waits_for_no_other_process(releases, pack):
+    """The control arm: a grammar the pack holds is used at once, while another process fetches."""
+    pack.unpacked.add("python")
+
+    with record_files.locked(grammars.manifest_path()):
+        worker = threading.Thread(target=grammars.ensure, args=("python",), daemon=True)
+        worker.start()
+        worker.join(5)
+        assert not worker.is_alive(), "a grammar on this machine waited for another fetch"
+
+    assert releases.paths == []
 
 
 def test_a_refused_fetch_is_not_asked_again_for_every_file(releases, pack):

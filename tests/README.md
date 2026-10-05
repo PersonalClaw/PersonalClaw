@@ -31,6 +31,28 @@ docker build --target test .
 That stage runs `black --check`, `isort --check-only`, `flake8`, `mypy`, and
 `pytest` against the in-image source tree.
 
+## What the suite downloads
+
+Two kinds of test need files from the internet. A run fetches each once, through
+PersonalClaw's own download path, and keeps it for the next run in pytest's cache
+folder in the checkout (`.pytest_cache/d/`):
+
+- `tree-sitter-grammars/`: the code map's grammars for this machine, about 25 MB,
+  fetched by the first test that parses code, through the egress guard and
+  checked against the language pack's manifest. The workers of a run share
+  them: one fetches while the others wait for it.
+- `bundled-chat-model/`: the default chat model's weight, 145 MB, fetched by the
+  first test in `tests/test_bundled_model_gate.py` that drives a chat turn on it,
+  with `scripts/fetch_bundled_model.py`, and checked against its sign-off record
+  before any test reads it. No other test file asks for it.
+
+Set `PERSONALCLAW_TEST_DOWNLOADS=<folder>` to keep them in `<folder>` instead. A
+run reads what the folder holds and fetches only what is missing into it, so a
+folder that holds both serves a run that fetches nothing, and one folder can
+serve every checkout on a machine. `bundled-chat-model/` is only read once it
+holds the weight; `tree-sitter-grammars/` must be writable, since the language
+pack unpacks each grammar into it the first time a run parses that language.
+
 ## Bytecode cache (mutation testing is only evidence with this armed)
 
 Every run points its bytecode cache at a fresh temp directory —

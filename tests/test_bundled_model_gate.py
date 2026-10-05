@@ -24,8 +24,10 @@ refusals — a weight the record does not declare, and a record the wheel does n
 digest mismatch that stops a record from describing a different artifact.
 
 **Clause 3 — the end-to-end drive.** ``scripts/zero_config_first_turn_drive.py`` on a throwaway
-``PERSONALCLAW_HOME``, bootstrapping providers the way a real process does and COMPLETING one
-chat turn. Its teeth are
+``PERSONALCLAW_HOME``, downloading the weight, bootstrapping providers the way a real process does
+and COMPLETING one chat turn. The download reads its bytes from the run's own copy of the weight,
+fetched once and checked against the record (``signed_off_weight``), and runs every check of its
+own on them; only where the bytes come from differs from a user's download. Its teeth are
 :func:`test_the_drive_contradicts_a_declared_bundle_with_nothing_runnable`: hand the drive a
 sign-off record whose weight is installed and with no runnable provider behind it, and it must
 report a CONTRADICTION. A drive that said MET there would be a rubber stamp, and this clause is
@@ -37,7 +39,7 @@ permissive: it compares a declared identifier against an allowlist. Whether the 
 the truth about the model is the sign-off, and the sign-off is a human act. It also does not
 prove the shipped weight ANSWERS — that is
 ``tests/test_bundled_chat_provider.py`` (the executor, against an independent reference) plus the
-drive's own quoted reply on a tree that has fetched the weight.
+drive's own quoted reply on the signed-off weight.
 """
 
 from __future__ import annotations
@@ -55,6 +57,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import tool_homes
 
 from personalclaw import bundled_model as rail
 from personalclaw.bundled_model import (
@@ -73,6 +76,7 @@ from personalclaw.bundled_model import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DRIVE = _REPO_ROOT / "scripts" / "zero_config_first_turn_drive.py"
+_FETCH = _REPO_ROOT / "scripts" / "fetch_bundled_model.py"
 _VERIFY_WHEEL = _REPO_ROOT / "scripts" / "verify_wheel.py"
 
 #: Licences that MUST be refused, each with the reason it is a trap rather than an obvious no.
@@ -525,11 +529,14 @@ def test_the_fetch_script_carries_no_url_or_digest_of_its_own() -> None:
     ``scripts/fetch_bundled_model.py`` reads the source URL and the digest out of the record. If
     it ever grew its own copy, the two could disagree about which bytes were signed off — and
     the disagreement would be invisible, because each half would look internally consistent.
+    The drive, which can read the bytes from a copy, holds to the same: it reports the source it
+    read from the record.
     """
     declaration = repo_declaration(_REPO_ROOT)
     assert declaration is not None
     for path in (
-        _REPO_ROOT / "scripts" / "fetch_bundled_model.py",
+        _FETCH,
+        _DRIVE,
         _REPO_ROOT / "src/personalclaw/apps/native/bundled-chat/provider.py",
     ):
         source = path.read_text(encoding="utf-8")
@@ -614,7 +621,17 @@ def _drive_module():
     return _load_by_path(_DRIVE, "_zero_config_drive_under_test")
 
 
-def _run_drive(cwd: Path | None = None) -> tuple[int, dict[str, object]]:
+#: How long the drive itself may take, in its own process.
+_DRIVE_TIMEOUT_S = 180
+#: How long the run's first fetch of the signed-off weight may take on a cold cache: 145 MB in ten
+#: minutes is 240 KB/s, below the slowest link this suite has been measured on.
+_FETCH_TIMEOUT_S = 600
+#: What a test that drives the signed-off weight may take: that first fetch, then the drive, with a
+#: minute to check the copy. A run that already holds the copy reads it, and takes seconds.
+_WEIGHT_TEST_TIMEOUT_S = _FETCH_TIMEOUT_S + _DRIVE_TIMEOUT_S + 60
+
+
+def _run_drive(*options: str) -> tuple[int, dict[str, object]]:
     """Run the real drive script in its own process and parse its JSON.
 
     Its own process on purpose: the script sets ``PERSONALCLAW_HOME`` BEFORE importing
@@ -622,51 +639,88 @@ def _run_drive(cwd: Path | None = None) -> tuple[int, dict[str, object]]:
     do that inside an already-imported test session.
     """
     proc = subprocess.run(
-        [sys.executable, str(_DRIVE), "--json"],
-        cwd=str(cwd or _REPO_ROOT),
+        [sys.executable, str(_DRIVE), "--json", *options],
+        cwd=str(_REPO_ROOT),
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=_DRIVE_TIMEOUT_S,
     )
     assert proc.stdout.strip(), f"the drive printed nothing (stderr={proc.stderr[-2000:]!r})"
     return proc.returncode, json.loads(proc.stdout)
 
 
-def test_the_drive_is_consistent_and_credential_free_whatever_this_tree_carries() -> None:
-    """The real-turn clause, driven — and written to hold in BOTH trees, without skipping in either.
+@pytest.fixture(scope="module")
+def signed_off_weight(request: pytest.FixtureRequest) -> Path:
+    """The signed-off weight, from the run's own copy, checked against the record's size and digest.
 
-    A CI checkout has no weight (it is not in git); a release build and a dev tree that ran
-    ``make bundled-model`` do. Those are genuinely different observations, so the invariants
-    asserted here are the ones that must hold in both: a signed-off record, an internally
-    CONSISTENT verdict, no credential, no persisted provider row — and, where the weight IS
-    present, a completed turn with real text.
+    The copy lives in the run's downloads folder (``tool_homes.downloads``: pytest's cache in this
+    checkout, or the folder ``PERSONALCLAW_TEST_DOWNLOADS`` names), in a home of its own, where the
+    first test that needs it fetches it with ``scripts/fetch_bundled_model.py``: the download a
+    user's click makes, through the egress guard, verified against the record. Its lock is in that
+    home, so two workers that both need the copy fetch it once between them.
 
-    Written this way rather than with a skip because the weight-present arm is precisely the
-    arm the zero-config floor is about: ``pytest.skip`` on a CI runner would silently retire it.
+    A missing copy is fetched, never skipped: the weight-present arm is precisely the arm the
+    zero-config floor is about, and a skip on a runner without the copy would silently retire it.
+    Only the tests here ask for it, so a run of other files never starts the download.
     """
-    code, obs = _run_drive()
+    declaration = repo_declaration(_REPO_ROOT)
+    assert declaration is not None, f"no bundled model is signed off in {rail.DECLARATION_RELPATH}"
+    home = tool_homes.downloads(request.config, tool_homes.WEIGHT)
+    weight = home / declaration.artifact
+    fetched = ""
+    if not rail.verify_download(weight, declaration).ok:
+        home.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(
+            [sys.executable, str(_FETCH)],
+            env={**os.environ, "PERSONALCLAW_HOME": str(home)},
+            capture_output=True,
+            text=True,
+            timeout=_FETCH_TIMEOUT_S,
+        )
+        fetched = f"\nthe fetch said (exit {proc.returncode}):\n{proc.stdout}{proc.stderr}"
+    verdict = rail.verify_download(weight, declaration)
+    assert verdict.ok, f"the run's copy of the weight at {weight}: {verdict.detail}{fetched}"
+    return weight
+
+
+@pytest.fixture(scope="module")
+def drive_on_the_weight(signed_off_weight: Path) -> tuple[int, dict[str, object]]:
+    """One drive on the signed-off weight, shared by the tests that read its observation."""
+    return _run_drive("--weight-from", str(signed_off_weight))
+
+
+@pytest.mark.timeout(_WEIGHT_TEST_TIMEOUT_S)
+def test_the_drive_completes_a_first_turn_on_the_signed_off_weight(
+    signed_off_weight: Path, drive_on_the_weight
+) -> None:
+    """The real-turn clause, driven: the weight downloaded into a fresh home resolves chat to the
+    bundled model with no credential and no persisted provider row, and a first turn completes
+    with real text.
+
+    The download's bytes come from the run's checked copy, so it runs where the record's source
+    is slow or out of reach; the drive says where it read them, and that is the copy.
+    """
+    code, obs = drive_on_the_weight
     assert obs["bundle_declared"] is True, obs
     assert obs["bundle_licence"] == "Apache-2.0", obs
+    assert obs["weight_source"] == signed_off_weight.resolve().as_uri(), obs
+    assert obs["fetch_error"] == "", obs["fetch_error"]
+    assert obs["weight_present"] is True, obs
     assert obs["credential_written"] is False, obs
     assert obs["providers_persisted"] is False, obs
     assert obs["consistent"] is True, obs["why"]
     assert code == 0, f"exit {code}: {obs['why']}"
-    if obs["weight_present"]:
-        assert obs["promise"] == "MET", obs["why"]
-        assert obs["chat_resolved"] is True, obs
-        assert obs["chat_model_provider"] == "BundledChatProvider", obs
-        assert str(obs["first_turn_reply"] or "").strip(), (
-            "the weight is installed and chat resolved, but the first turn produced no text — "
-            "resolution is not the clause"
-        )
-    else:
-        assert obs["promise"] == "UNMET", obs["why"]
-        assert obs["chat_resolved"] is False, obs
-        assert obs["error_code"] == "ERR_MODEL_UNRESOLVED", obs
-        assert "fetch_bundled_model" in str(obs["why"]), obs["why"]
+    assert obs["promise"] == "MET", obs["why"]
+    assert obs["chat_resolved"] is True, obs
+    assert obs["chat_model_provider"] == "BundledChatProvider", obs
+    assert str(obs["first_turn_reply"] or "").strip(), (
+        "the weight is installed and chat resolved, but the first turn produced no text — "
+        "resolution is not the clause"
+    )
 
 
-def test_the_drive_writes_no_credential_and_no_provider_row() -> None:
+@pytest.mark.timeout(_WEIGHT_TEST_TIMEOUT_S)
+def test_the_drive_writes_no_credential_and_no_provider_row(drive_on_the_weight) -> None:
     """The cost half of the clause.
 
     NOT "the home is untouched": bootstrapping providers legitimately creates first-boot state
@@ -676,10 +730,34 @@ def test_the_drive_writes_no_credential_and_no_provider_row() -> None:
     An in-memory floor entry vanishes with the app; a ``config.json`` row would outlive it and
     become a stale pin naming a provider that is gone.
     """
-    _code, obs = _run_drive()
+    _code, obs = drive_on_the_weight
     assert obs["credential_written"] is False, obs
     assert obs["providers_persisted"] is False, obs
     assert ".env" not in obs["home_entries_after"], obs["home_entries_after"]
+
+
+def test_a_copy_that_is_not_the_signed_off_file_is_refused_as_its_download_would_be(
+    tmp_path: Path,
+) -> None:
+    """``--weight-from`` changes where the bytes come from and nothing else: the download checks
+    them as it checks a transfer. A copy of exactly the signed-off size whose bytes are not the
+    signed-off file's passes the size checks and is refused by the digest, so nothing runs it, and
+    the drive reports that consistently, with the copy as the source it read."""
+    declaration = repo_declaration(_REPO_ROOT)
+    assert declaration is not None
+    copy = tmp_path / "not-the-signed-off-weight.gguf"
+    with copy.open("wb") as handle:
+        handle.truncate(declaration.size_bytes)  # the signed-off size, and none of its bytes
+
+    code, obs = _run_drive("--weight-from", str(copy))
+
+    assert obs["weight_source"] == copy.resolve().as_uri(), obs
+    assert str(obs["fetch_error"]).startswith(f"[{rail.DOWNLOAD_DIGEST_MISMATCH}]"), obs
+    assert obs["weight_present"] is False, obs
+    assert obs["chat_resolved"] is False, obs
+    assert obs["promise"] == "UNMET", obs["why"]
+    assert obs["consistent"] is True, obs["why"]
+    assert code == 0, f"exit {code}: {obs['why']}"
 
 
 def test_the_drive_and_the_runtime_read_ONE_record() -> None:

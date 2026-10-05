@@ -136,15 +136,10 @@ _TEST_HOME_NUMBERS = itertools.count()
 def pytest_configure(config):
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
     config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
-    # The grammars the code map's tests parse with, fetched once and kept between runs, in pytest's
-    # own cache folder in the checkout (every worker shares it); a run without that cache keeps them
-    # in its own folder.
-    cache = getattr(config, "cache", None)
-    grammars = (
-        Path(cache.mkdir("tree-sitter-grammars"))
-        if cache is not None
-        else tool_homes.BASE / "grammars"
-    )
+    # The grammars the code map's tests parse with, fetched once and kept between runs, in the run's
+    # downloads folder, which every worker shares: pytest's own cache folder in the checkout, or the
+    # folder PERSONALCLAW_TEST_DOWNLOADS names (`tool_homes.downloads`).
+    grammars = tool_homes.downloads(config, tool_homes.GRAMMARS)
     _PUT_THE_PROGRAMS_BACK.append(tool_homes.for_collection(tool_homes.BASE, grammars))
 
 

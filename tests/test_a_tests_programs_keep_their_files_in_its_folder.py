@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import tool_homes
@@ -26,11 +27,6 @@ from personalclaw.library_env import LIBRARY_ENV_NAMES, library_env
 def _inside(path: str | Path, folder: str | Path) -> bool:
     real, root = os.path.realpath(path), os.path.realpath(folder)
     return real == root or real.startswith(root + os.sep)
-
-
-def _grammar_folder(config: pytest.Config) -> Path:
-    cache = getattr(config, "cache", None)
-    return Path(cache.mkdir("tree-sitter-grammars")) if cache else tool_homes.BASE / "grammars"
 
 
 def test_every_programs_setting_names_this_tests_own_folder(_isolate_real_home_writers):
@@ -48,7 +44,7 @@ def test_every_programs_setting_names_this_tests_own_folder(_isolate_real_home_w
 
 def test_the_libraries_are_told_what_every_command_tells_them(request, _isolate_real_home_writers):
     """Every setting ``library_env`` names is set, for this test's own home; the code map's grammars
-    are the run's, which it fetches once for every test, in pytest's own cache folder."""
+    are the run's, which it fetches once for every test, in the run's downloads folder."""
     told = library_env()
     assert _inside(
         told["TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"], _isolate_real_home_writers / "home"
@@ -57,9 +53,28 @@ def test_the_libraries_are_told_what_every_command_tells_them(request, _isolate_
         assert name in os.environ, f"{name} is not set in a test, though every command sets it"
         if name not in tool_homes.GRAMMAR_SETTINGS:
             assert os.environ[name] == told[name], name
-    grammars = _grammar_folder(request.config)
+    grammars = tool_homes.downloads(request.config, tool_homes.GRAMMARS)
     for name in tool_homes.GRAMMAR_SETTINGS:
         assert _inside(os.environ[name].removeprefix("file://"), grammars), os.environ[name]
+
+
+def test_the_downloads_are_kept_where_the_setting_says_else_in_pytests_cache(tmp_path, monkeypatch):
+    """A folder the setting names holds the run's downloads, and is only named, since a run may only
+    read it; without the setting they are in pytest's cache, kept between runs, or for a run without
+    that cache in a folder of the run's own."""
+    cached = SimpleNamespace(cache=SimpleNamespace(mkdir=lambda name: tmp_path / "cache" / name))
+    uncached = SimpleNamespace(cache=None)
+    monkeypatch.setenv(tool_homes.DOWNLOADS_SETTING, str(tmp_path / "filled"))
+
+    for config in (cached, uncached):
+        assert tool_homes.downloads(config, tool_homes.GRAMMARS) == (
+            tmp_path / "filled" / tool_homes.GRAMMARS
+        )
+    assert not (tmp_path / "filled").exists(), "a folder the setting names was written"
+
+    monkeypatch.delenv(tool_homes.DOWNLOADS_SETTING)
+    assert tool_homes.downloads(cached, tool_homes.WEIGHT) == tmp_path / "cache" / tool_homes.WEIGHT
+    assert tool_homes.downloads(uncached, tool_homes.WEIGHT) == tool_homes.BASE / tool_homes.WEIGHT
 
 
 def test_a_child_a_test_starts_gets_them():

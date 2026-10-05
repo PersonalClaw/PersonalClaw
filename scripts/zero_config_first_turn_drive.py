@@ -38,12 +38,19 @@ promise is kept:
 The ``zero_config_first_chat:`` line, not the exit code, is the promise.
 
 Usage:
-    python scripts/zero_config_first_turn_drive.py [--home DIR] [--json]
+    python scripts/zero_config_first_turn_drive.py [--home DIR] [--weight-from FILE] [--json]
 
-    --home DIR  drive against DIR instead of a fresh temporary directory. The directory is
-                created if absent. Refuses the default home outright: a probe that wrote to
-                the install's own home would invalidate the observation and touch its state.
-    --json      emit the observation as JSON instead of the human block.
+    --home DIR          drive against DIR instead of a fresh temporary directory. The directory
+                        is created if absent. Refuses the default home outright: a probe that
+                        wrote to the install's own home would invalidate the observation and
+                        touch its state.
+    --weight-from FILE  read the signed-off weight's bytes from FILE, a copy of it on this
+                        machine, instead of from the record's source. Only where the bytes come
+                        from changes: the download runs every step of its own on them (the size
+                        ceiling, the partial file, the digest check, the lock, the licence texts),
+                        so a copy that is not the signed-off file is refused as a download of its
+                        bytes would be. Without it the drive downloads from the record's source.
+    --json              emit the observation as JSON instead of the human block.
 """
 
 from __future__ import annotations
@@ -98,12 +105,34 @@ def _first_turn(provider: object) -> str:
     return asyncio.run(run())
 
 
-def observe(home: Path) -> dict[str, object]:
+class _Copy:
+    """The signed-off file opened from a copy on this machine, in the shape the download reads its
+    source in: the length the source announces, then the bytes, read by read."""
+
+    def __init__(self, path: Path) -> None:
+        self._file = path.open("rb")
+        self.headers = {"Content-Length": str(path.stat().st_size)}
+
+    def read(self, size: int = -1) -> bytes:
+        return self._file.read(size)
+
+    def __enter__(self) -> "_Copy":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._file.close()
+
+
+def observe(home: Path, weight_from: Path | None = None) -> dict[str, object]:
     """Drive one in-process chat turn on *home* and report what happened.
 
     ``PERSONALCLAW_HOME`` is set BEFORE ``personalclaw`` is imported, because several core
     modules capture a home-derived path into a module-level constant at import time; setting it
     afterwards would drive a different directory than the one reported.
+
+    *weight_from* is a copy of the signed-off weight to read its bytes from in place of the
+    record's source: the app's opener is the one thing replaced, so the download checks the
+    copy's bytes as it checks a transfer's.
     """
     home.mkdir(parents=True, exist_ok=True)
     os.environ["PERSONALCLAW_HOME"] = str(home)
@@ -129,6 +158,12 @@ def observe(home: Path) -> dict[str, object]:
     # runtime is not using — measured: a planted repo-root record was invisible to the app,
     # whose own copy ships beside it in the wheel and takes precedence.
     declaration = app._declaration()
+    weight_source = declaration.source_url if declaration is not None else None
+    if weight_from is not None:
+        # The transport, and nothing else: `download_weight` still enforces the ceiling, writes a
+        # partial file, checks the digest, holds its lock and installs the licence texts.
+        app._open = lambda _url: _Copy(weight_from)
+        weight_source = weight_from.as_uri()
     offer_before = app.offer()
     fetch_error = ""
     fetch_seconds = 0.0
@@ -186,6 +221,8 @@ def observe(home: Path) -> dict[str, object]:
         "bundle_model_id": declaration.model_id if declaration else None,
         "bundle_licence": declaration.licence if declaration else None,
         "offer_before_fetch": offer_before,
+        # Where the weight's bytes were read from: the record's source, or the copy named.
+        "weight_source": weight_source,
         "fetch_error": fetch_error,
         "fetch_seconds": fetch_seconds,
         "progress_frames": frames,
@@ -311,8 +348,17 @@ def verdict(observation: dict[str, object]) -> tuple[bool, str, str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Drive the zero-config first chat turn.")
     ap.add_argument("--home", help="drive against this dir instead of a fresh temp dir")
+    ap.add_argument(
+        "--weight-from",
+        help="read the signed-off weight's bytes from this copy instead of the record's source",
+    )
     ap.add_argument("--json", action="store_true", help="emit JSON instead of the human block")
     args = ap.parse_args(argv)
+    weight_from: Path | None = None
+    if args.weight_from:
+        weight_from = Path(args.weight_from).expanduser().resolve()
+        if not weight_from.is_file():
+            ap.error(f"--weight-from: {weight_from} is not a file")
 
     scratch: Path | None = None
     if args.home:
@@ -322,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
         named = scratch / "home"
     home = named_home.scratch_home(named)
     try:
-        observation = observe(home)
+        observation = observe(home, weight_from)
     finally:
         if scratch is not None:
             shutil.rmtree(scratch, ignore_errors=True)
@@ -343,6 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"bundle model id           : {observation['bundle_model_id']}")
         print(f"bundle licence            : {observation['bundle_licence']}")
         print(f"offer before fetch        : {observation['offer_before_fetch']}")
+        print(f"weight read from          : {observation['weight_source']}")
         print(f"fetch seconds             : {observation['fetch_seconds']}")
         print(f"progress frames           : {observation['progress_frames']}")
         print(f"fetch error               : {observation['fetch_error'] or '(none)'}")

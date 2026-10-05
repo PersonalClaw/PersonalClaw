@@ -17,7 +17,9 @@ cases want it without a browser:
   weight in the image itself (see the app's ``bundled-model-signoff.txt``), and this is how
   anyone who needs that builds it without a second artifact pipeline.
 * **A fleet.** Warm one home, copy it.
-* **A test rig.** ``scripts/zero_config_first_turn_drive.py`` uses it to reach a first chat turn.
+* **A test rig.** Core's test suite fetches its one copy of the weight with it
+  (``tests/test_bundled_model_gate.py``), and ``scripts/zero_config_first_turn_drive.py`` reads
+  that copy's bytes (``--weight-from``) to reach a first chat turn.
 
 Usage::
 

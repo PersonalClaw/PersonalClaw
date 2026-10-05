@@ -13,8 +13,10 @@ and with ``library_env`` for its own home (``conftest._each_program_keeps_its_fi
 folder``); what runs before any test, a module's import, gets the same for a folder of the run's own
 (:func:`for_collection`). The code map's grammars are the one exception, and they are not in
 ``HOME`` either: they are a download of tens of megabytes, so a run fetches them once, through the
-egress guard as every download is, into pytest's own cache folder in the checkout, and every test
-reads them there (:func:`grammar_env`).
+egress guard as every download is, and every test reads them there (:func:`grammar_env`). They and
+the default chat model's weight, the suite's two downloads, are kept in the run's downloads folder
+(:func:`downloads`): pytest's own cache folder in the checkout, or the folder
+:data:`DOWNLOADS_SETTING` names, where a run that finds them already fetches nothing.
 
 What this does not move: a program that ignores its setting, a setting a shell's own startup file
 overrides, and what a program only reads (its configuration, the tools it runs). A rustup proxy only
@@ -56,6 +58,15 @@ PROGRAM_VALUES: dict[str, str] = {
 #: The language pack's settings :func:`grammar_env` keeps for the whole run.
 GRAMMAR_SETTINGS = ("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR", "TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL")
 
+#: The setting that names the folder a run keeps the suite's downloads in, in place of pytest's
+#: cache folder: what the folder holds is read, and what it lacks is fetched into it, once.
+DOWNLOADS_SETTING = "PERSONALCLAW_TEST_DOWNLOADS"
+#: The code map's grammars, in the downloads folder: the folder :func:`grammar_env` is given.
+GRAMMARS = "tree-sitter-grammars"
+#: The default chat model's weight, in the downloads folder: a home it is fetched into, where it
+#: lands at the record's ``artifact`` (``test_bundled_model_gate.signed_off_weight``).
+WEIGHT = "bundled-chat-model"
+
 #: The run's own folder, for what runs before any test (a module's import).
 BASE = Path(tempfile.mkdtemp(prefix="pclaw-tests-programs-"))
 
@@ -83,6 +94,20 @@ def library_env_for(home: Path) -> dict[str, str]:
             os.environ.pop("PERSONALCLAW_HOME", None)
         else:
             os.environ["PERSONALCLAW_HOME"] = chosen
+
+
+def downloads(config: object, name: str) -> Path:
+    """The run's folder for the download *name*, kept for the whole run and shared by every worker:
+    in the folder :data:`DOWNLOADS_SETTING` names, else in pytest's own cache folder in the
+    checkout, kept between runs, else (a run without that cache) in a folder of the run's own.
+    Named only: nothing is made in a folder the setting names, which may be one a run only reads."""
+    named = os.environ.get(DOWNLOADS_SETTING, "")
+    if named:
+        return Path(named).expanduser().resolve() / name
+    cache = getattr(config, "cache", None)
+    if cache is not None:
+        return Path(cache.mkdir(name))
+    return BASE / name
 
 
 def grammar_env(folder: Path) -> dict[str, str]:
