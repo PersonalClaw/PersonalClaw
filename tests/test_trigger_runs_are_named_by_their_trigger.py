@@ -97,6 +97,9 @@ async def test_the_background_agents_list_carries_each_runs_title() -> None:
     its framing."""
     import json
 
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
     from personalclaw.dashboard.handlers.messaging import api_spawn_list
 
     subagents = MagicMock()
@@ -104,8 +107,11 @@ async def test_the_background_agents_list_carries_each_runs_title() -> None:
         SubagentInfo(id="rem00001", task="framed", title="Call the dentist"),
         SubagentInfo(id="plain001", task="Summarize the thread"),
     ]
-    request = MagicMock()
-    request.app = {"state": MagicMock(subagents=subagents)}
+    app = web.Application()
+    app["state"] = MagicMock(subagents=subagents)
+    # The Background agents list: your own signed-in page, which lists every run.
+    request = make_mocked_request("GET", "/api/spawn", app=app)
+    request["user"] = "owner"
 
     body = json.loads((await api_spawn_list(request)).body)
     titles = {row["id"]: row["title"] for row in body["agents"]}

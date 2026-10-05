@@ -342,7 +342,10 @@ def _list_tools() -> list[dict[str, Any]]:
         {
             "name": "subagent_list",
             "annotations": {"readOnlyHint": True},
-            "description": "List all running and completed subagents (read-only, no commands executed)",  # noqa: E501
+            "description": (
+                "List this conversation's subagents, running and completed, and the agents a "
+                "subagent can run as (read-only, no commands executed)"
+            ),
             "inputSchema": {"type": "object", "properties": {}},
         },
         {

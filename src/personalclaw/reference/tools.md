@@ -1849,7 +1849,7 @@ Sample N candidate answers to the SAME prompt in parallel (each at a different t
 
 ### `subagent_list`
 
-List all running and completed subagents (read-only, no commands executed)
+List this conversation's subagents, running and completed, and the agents a subagent can run as (read-only, no commands executed)
 
 **Response type:** `subagent.list`
 

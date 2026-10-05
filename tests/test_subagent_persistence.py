@@ -1165,12 +1165,19 @@ class TestSpawnStatusReadsFromAgentFolder:
         write_result_chunk("disk_agent", "disk result")
         write_tombstone("disk_agent", cause="gateway_restart", recovery_action="delivered")
 
+        from aiohttp import web
+        from aiohttp.test_utils import make_mocked_request
+
         # subagents must be truthy (not None/empty) but missing the agent_id
         subagents = MagicMock()
         subagents.get = MagicMock(return_value=None)
-        request = MagicMock()
-        request.match_info = {"agent_id": "disk_agent"}
-        request.app = {"state": MagicMock(subagents=subagents)}
+        app = web.Application()
+        app["state"] = MagicMock(subagents=subagents)
+        # Your own signed-in session, which reads every agent's folder.
+        request = make_mocked_request(
+            "GET", "/api/spawn/disk_agent", match_info={"agent_id": "disk_agent"}, app=app
+        )
+        request["user"] = "owner"
 
         resp = await api_spawn_status(request)
         body = json.loads(resp.body)

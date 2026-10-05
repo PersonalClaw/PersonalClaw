@@ -22,6 +22,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.request_validation import RequestValidationError, bool_field
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
 from personalclaw.subagent_persistence import _agent_dir, read_state
+from personalclaw.subagent_reach import reader_of
 from personalclaw.validation import (
     SPAWN_RUN_SCHEMA,
     ValidationError,
@@ -125,17 +126,53 @@ def _redact(text: str) -> str:
     return text
 
 
+def _no_such_agent() -> web.Response:
+    """What a status read answers about a subagent its caller does not read: one that never
+    existed, and another chat's, in the same words, so the answer does not say that one exists."""
+    return web.json_response({"error": "not found"}, status=404)
+
+
+def _not_theirs(work: str, agent_id: str) -> web.Response:
+    """A status read the work *work* made of another chat's subagent: one audit row, and the
+    answer an id that never existed gets (:func:`_no_such_agent`), whether or not the row could be
+    written, since any other answer would say the subagent exists."""
+    try:
+        _sel().log_api_access(
+            caller=work or "unknown",
+            operation="spawn.status",
+            outcome="denied",
+            source="dashboard",
+            resources=f"subagent:{agent_id}",
+            error="the subagent is another chat's",
+        )
+    except Exception:  # noqa: BLE001 - the answer stands whether or not it is written down
+        logger.warning("could not audit a refused read of subagent %s", agent_id, exc_info=True)
+    return _no_such_agent()
+
+
 async def api_spawn_status(request: web.Request) -> web.Response:
-    """GET /api/spawn/{id} — poll subagent status."""
+    """GET /api/spawn/{id} — one subagent's status, and its report once it has ended.
+
+    Read for the caller's own chat's subagents, and every one for you (`subagent_reach`): from the
+    gateway's table while it holds the agent, then from the agent's folder (one a restart stopped,
+    or whose report was not handed on), then from the copy of its report kept in its chat. Another
+    chat's reads as not found, as an id that never existed does."""
     state: DashboardState = request.app["state"]
     if not state.subagents:
         return web.json_response({"error": "subagents not available"}, status=503)
     agent_id = request.match_info["agent_id"]
+    reader = reader_of(request, state)
     info = state.subagents.get(agent_id)
+    if info and not await asyncio.to_thread(reader.reads, info.parent_session_key):
+        return _not_theirs(reader.work, agent_id)
     if not info:
         # Fall back to persistence layer (orphaned/recovered agents)
         try:
             disk_state = read_state(agent_id)
+            parent = str((disk_state or {}).get("parent_session", "") or "")
+            readable = bool(disk_state) and await asyncio.to_thread(reader.reads, parent)
+            if disk_state and not readable:
+                return _not_theirs(reader.work, agent_id)
             if disk_state:
                 disk_data: dict[str, object] = {
                     "id": agent_id,
@@ -170,17 +207,16 @@ async def api_spawn_status(request: web.Request) -> web.Response:
                 return web.json_response(disk_data)
         except Exception:
             logger.debug("Persistence fallback failed for %s", agent_id, exc_info=True)
-        # A report handed to its chat outlives the agent's folder, kept in that chat: read by the
-        # chat that asks for it, and by no other (`subagent_report.kept`).
-        from personalclaw.approval_answer import work_of_request
+        # A report handed to its chat outlives the agent's folder, kept in that chat: read by that
+        # chat's work, and by no other (`subagent_report.kept`).
         from personalclaw.subagent_report import kept
 
-        report = await asyncio.to_thread(kept, work_of_request(request), agent_id)
+        report = await asyncio.to_thread(lambda: kept(reader.chat, agent_id))
         if report:
             return web.json_response(
                 {"id": agent_id, "done": True, "result": _redact(report), "error": ""}
             )
-        return web.json_response({"error": "not found"}, status=404)
+        return _no_such_agent()
     data = {
         "id": info.id,
         "task": _redact(info.task),
@@ -200,10 +236,15 @@ async def api_spawn_status(request: web.Request) -> web.Response:
 
 
 async def api_spawn_list(request: web.Request) -> web.Response:
-    """GET /api/spawn — list all subagents."""
+    """GET /api/spawn — the caller's own chat's subagents, and every chat's for you.
+
+    Running and finished. You read every one: the Background agents page, ``personalclaw spawn``
+    (`subagent_reach`)."""
     state: DashboardState = request.app["state"]
     if not state.subagents:
         return web.json_response({"agents": []})
+    reader = reader_of(request, state)
+    readable = await asyncio.to_thread(reader.of, state.subagents.all_agents)
     # What each agent waits on its owner's answer for, from the asks it is listed under: its start,
     # or a call by its tool's name. The list said "running" through the wait, and the agent that
     # started it guessed why.
@@ -221,7 +262,7 @@ async def api_spawn_list(request: web.Request) -> web.Response:
                 ),
             )
     agents = []
-    for info in state.subagents.all_agents:
+    for info in readable:
         entry: dict[str, object] = {
             "id": info.id,
             "task": _redact(info.task),

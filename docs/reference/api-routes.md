@@ -930,11 +930,11 @@ The 923 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/skills/{name}/verify` | compare one skill with its install record. |
 | `GET` | `/api/slash-commands` | the slash commands the composer "/" menu offers. |
 | `DELETE` | `/api/spawn` | clear all completed subagents. |
-| `GET` | `/api/spawn` | list all subagents. |
+| `GET` | `/api/spawn` | the caller's own chat's subagents, and every chat's for you. |
 | `POST` | `/api/spawn` | spawn a subagent. |
 | `POST` | `/api/spawn/cancel-fanout` | kill EVERY child of one parent/run in one |
 | `DELETE` | `/api/spawn/{agent_id}` | cancel a running subagent or remove a finished one. |
-| `GET` | `/api/spawn/{agent_id}` | poll subagent status. |
+| `GET` | `/api/spawn/{agent_id}` | one subagent's status, and its report once it has ended. |
 | `GET` | `/api/status` | _(no summary)_ |
 | `GET` | `/api/stt/ffmpeg` | the ffmpeg transcription runs, or why there is none. |
 | `POST` | `/api/stt/transcribe` | transcribe uploaded audio via the active STT model. |

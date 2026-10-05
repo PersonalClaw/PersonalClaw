@@ -269,6 +269,13 @@ says what that means.
   asks (one task's start, or the batch's one ask), so the call is not a second question. A batch
   that only reads starts on what starts its chat's subagents (its Trust, YOLO) or on your answer
   to its one ask; a waiting batch's record (`workflows/batches/`) only ever asks again.
+- **A chat's subagents are that chat's** (`subagent_reach.py`). `subagent_list` and
+  `subagent_status` answer a call with the subagents of the chat its work is for, as its sign-in
+  proves it (an agent's tools name their chat with the internal credential; an app's token is the
+  app's own work), a nested subagent and a batch's tasks counting as their chat's. That holds while
+  the gateway holds a subagent, for the folder a restart leaves of one, and for the report kept in
+  its chat. Another chat's subagent reads as not found, in the words an id that never existed does;
+  a call whose chat cannot be known reads none. Your own sign-in reads every one.
 - **The app's own code is outside all of this.** An app's provider module is imported
   into the gateway's process, its backend is a process under your account, each MCP
   server in its manifest is a command the gateway launches with the gateway's own

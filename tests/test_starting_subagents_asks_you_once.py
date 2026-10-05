@@ -610,7 +610,11 @@ async def test_the_list_of_agents_says_one_waits_for_its_owner_and_on_what(relay
 
     app = web.Application()
     app["state"] = relay.state
-    listed = json.loads((await api_spawn_list(make_mocked_request("GET", "/", app=app))).text)
+    # Asked as the chat's agent asks it: its tool names the chat with the internal credential.
+    asked = make_mocked_request(
+        "GET", "/", headers={"X-Internal-Secret": "internal", "X-Session-Key": "x"}, app=app
+    )
+    listed = json.loads((await api_spawn_list(asked)).text)
     (row,) = listed["agents"]
     assert row["waiting_for"] == "bash"
 

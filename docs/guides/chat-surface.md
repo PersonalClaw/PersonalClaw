@@ -211,6 +211,13 @@ goes a week unused. A report is the subagent's words, not yours, so the agent re
 outside: one the injection screen refuses never reaches the agent, which is told it was withheld
 and why, as your note about the run is.
 
+Each chat's agent sees only that chat's subagents. `subagent_list` lists the ones the chat started,
+a batch's tasks and the subagents a subagent starts included, and `subagent_status` reads only
+theirs, before and after a restart. Another chat's subagent, a Temporary or an Incognito chat's
+included, reads as not found, as an id that never existed does, and so does a subagent of a turn
+someone else started in a shared channel thread, to every chat but that thread. You see every
+chat's subagents on the Background agents page.
+
 ### What a private chat leaves behind
 
 In a **Temporary** or **Incognito** chat the agent sets up no work that lasts after the chat: it
