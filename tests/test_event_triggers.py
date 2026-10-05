@@ -181,6 +181,39 @@ def test_an_attached_router_receives_every_event_and_nothing_is_spooled(tmp_path
     assert not router_attached()
 
 
+def test_an_event_spooled_with_its_owner_s_instruction_comes_back_with_it(tmp_path, monkeypatch):
+    """A process with no router parks the event for the gateway, and its instruction with it: the
+    gateway's re-entry hands the router the event as it was emitted."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.triggers import loop
+    from personalclaw.triggers.dispatch import drain_spool
+    from personalclaw.triggers.store import TriggerStore
+
+    TriggerStore(base_dir=config_dir()).upsert(_row(INBOX_ADDRESS, "travel@example.com"))
+    emit_event(
+        source=SOURCE_INBOX,
+        event_type="message_received",
+        key="mail_1",
+        value="Seat 14C.",
+        now=1.0,
+        meta={"address": "travel@example.com"},
+        instruction="File it under Travel.",
+    )
+    [envelope] = drain_spool()[0]
+    seen: list[BusEvent] = []
+
+    def router(event):
+        seen.append(event)
+
+    attach(router)
+    try:
+        assert loop._reenter_spooled(envelope, now=2.0)[0] == "delivered"
+    finally:
+        detach(router)
+    [event] = seen
+    assert (event.value, event.instruction) == ("Seat 14C.", "File it under Travel.")
+
+
 def test_detach_removes_only_the_router_it_names():
     """A stale shutdown must not detach a router a newer gateway in the same process attached."""
 
@@ -247,6 +280,26 @@ def test_text_already_fenced_at_origin_is_not_re_wrapped():
     payload, _context = fire_payload("event:t", event)
     assert payload["value"].count("<untrusted_content") == 1
     assert "source_type=app:cal" in payload["value"]
+
+
+def test_the_owner_s_instruction_rides_beside_the_fenced_value_never_inside_it():
+    from personalclaw.event_triggers import INSTRUCTION_KEY
+    from personalclaw.outside_text import is_whole_fence
+
+    event = BusEvent(
+        source="inbox",
+        event_type="message_received",
+        key="mail_1",
+        value="Seat 14C.",
+        now=1.0,
+        instruction="File it under Travel.",
+    )
+    payload, context = fire_payload("event:t", event)
+    assert payload[INSTRUCTION_KEY] == "File it under Travel."
+    assert is_whole_fence(payload["value"]) and "Seat 14C." in payload["value"]
+    assert "File it" not in payload["value"] and "File it" not in context
+    plain = BusEvent(source="inbox", event_type="message_received", key="k", value="v", now=1.0)
+    assert INSTRUCTION_KEY not in fire_payload("event:t", plain)[0]
 
 
 def test_the_advertised_variables_are_exactly_what_the_payload_carries():

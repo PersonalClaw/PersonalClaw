@@ -29,7 +29,18 @@ class IncomingMessage:
     ``files`` are the files the message came with (a mail's attachments), each as the message
     gave it (:class:`~personalclaw.attachments.Attachment`). The row lists them beside ``text``
     and core keeps them (``attachments.keep``), so ``text`` is the message's words alone: a
-    source never turns an attached file into text in it.
+    source never turns an attached file into text in it, and never fences it. Core fences the
+    words wherever a model reads them, with where they came from.
+
+    ``instruction`` is the owner's instruction for the message, when she gave the source one for
+    messages like it (Mail Inbox's prompt for mail to one of its addresses), word for word as a
+    setting of the source's app holds it. Never words of the message: those are ``text``. Core
+    takes it as hers only when the app holds it in a setting its manifest declares an instruction
+    (``x-meta.instruction``), or gives that setting it as its default
+    (``apps.instruction_settings``); anything else handed over here is refused, and the message
+    arrives without one. A fire on the message hands its action her instruction first, outside
+    any fence, then the message fenced once (``triggers.fire_facts.hand_on``). It is not kept on
+    the Inbox row, whose text is the message's.
     """
 
     id: str
@@ -44,6 +55,7 @@ class IncomingMessage:
     is_dm: bool = False
     kind: str = ItemKind.MESSAGE.value
     files: list[Attachment] = field(default_factory=list, kw_only=True)
+    instruction: str = field(default="", kw_only=True)
 
 
 class MessageSourceProvider(ABC):

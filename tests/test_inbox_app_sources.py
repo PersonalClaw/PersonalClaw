@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -264,15 +265,17 @@ def test_app_source_registry_rejects_a_nameless_source():
 
 def test_handler_register_deregister_round_trips():
     """Direct handler round trip (the KnowledgeTypeHandler pattern): registered by
-    source_name, and gone after deregister."""
-    from personalclaw.inbox_providers.registry import get_source, list_source_names
+    source_name, kept with the app it came from, and gone, app and all, after deregister."""
+    from personalclaw.inbox_providers.registry import app_of, get_source, list_source_names
     from personalclaw.providers.registry import InboxTypeHandler
 
     handler = InboxTypeHandler()
     inst = _EntryPointFixture()
-    handler.register(None, inst)  # ext unused by register()
+    handler.register(SimpleNamespace(name="fixture-inbox-app"), inst)
     assert list_source_names() == [SOURCE_NAME]
     assert get_source(SOURCE_NAME) is inst
+    assert app_of(SOURCE_NAME) == "fixture-inbox-app"
 
     handler.deregister(None, inst)
     assert list_source_names() == []
+    assert app_of(SOURCE_NAME) == ""

@@ -93,7 +93,15 @@ relative to `PersonalClaw/src/personalclaw/`.
   path, a message's sender and attachments, a page's items, a webhook's body,
   what a workflow run said it produced) are read by the injection screen and
   reach the action fenced with the trigger as their source; one the screen
-  refuses leaves a `blocked_injection` row and runs nothing. `gates.max_fires` switches the trigger off once spent ("alert me
+  refuses leaves a `blocked_injection` row and runs nothing. An Inbox message
+  can carry the owner's instruction beside its words (a prompt she gave the
+  address it came to, which her settings for the source's app hold:
+  `IncomingMessage.instruction`, `inbox_service.admitted_instruction`); the
+  event carries it beside its value (`BusEvent.instruction`), and the door puts
+  it before the value once the value has passed the screen, outside any fence
+  (`fire_facts._instructed`, `outside_text.instructed`), so `$value` is her
+  instruction and then the message fenced once. No other fire hands its action
+  an instruction. `gates.max_fires` switches the trigger off once spent ("alert me
   the NEXT time X"), and a quiet-session automation that wakes keeps to it, and to its spec's
   `max_cycles`: once either is spent, its poll skips it (`idle_poll.fires_spent`,
   `fire_budget_spent`); `gates.debounce_secs` (5 s unless set) collapses a burst,

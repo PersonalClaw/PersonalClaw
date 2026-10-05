@@ -201,6 +201,24 @@ against core protocols). Paths are relative to
   named and not read. A linked channel's message from someone trusted carries its files as
   the turn's attached files (`attachments.keep_for_chat`, under `uploads/`); a fenced
   sender's do not ride into the turn.
+  **A message's words are its `text`, as they arrived**: a source never fences them, and
+  core fences them wherever a model reads them. **The owner's instruction for a message** is
+  its `instruction` (`IncomingMessage.instruction`), handed over beside the words, never in
+  them: what she told the source to have done with messages like it, such as the prompt Mail
+  Inbox runs for mail to one of its addresses, word for word as one of the app's settings holds
+  it. Core takes it as hers only when the app that registered the source
+  (`inbox_providers.registry.app_of`) holds it in a setting its manifest declares an
+  instruction (`x-meta.instruction: true` on a string property of its settings schema, a
+  column of a table of rows included) or gives that setting it as its default
+  (`apps/instruction_settings.holds`). Anything else handed over as an instruction is not one:
+  the message arrives without it, and the refusal is a warning and an
+  `inbox_instruction_refused` row in the Security log naming the source and its app, never the
+  words (`inbox_service.admitted_instruction`). The instruction rides the inbox event beside its
+  value (`BusEvent.instruction`), and a fire on the message hands its action her instruction
+  first, outside any fence, then the message fenced once (`triggers/fire_facts.hand_on`), so a
+  `$value` task is her instruction grounded in the message. It is not kept on the row, whose
+  text is the message's. An app whose source hands one over declares the `message-instructions`
+  core feature.
   **Watched channels.** Every source's `poll` is handed `inbox.watched_channels`; a source
   that reads it sets `watches_channels = True` (Slack's), and Settings → Inbox shows the
   list ("Channels to read"), named by those sources, while one is polled.

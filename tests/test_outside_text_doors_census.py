@@ -387,6 +387,141 @@ def test_a_new_screen_beside_the_door_fails_the_census():
     ]
 
 
+# ── the owner's instruction, beside text from outside ──
+#
+# A source may hand PersonalClaw the owner's instruction beside a message's words
+# (``IncomingMessage.instruction``). It reaches a model outside every fence, so it must be hers: an
+# event carries one only from the places below, the Inbox takes one in only when its source's app
+# holds it in a setting its manifest declares an instruction (``apps.instruction_settings.holds``),
+# and only the fire's door puts it before what the action is handed.
+
+#: Every function that hands an event an instruction (``instruction=`` to ``emit_event`` or
+#: ``BusEvent``), and where the instruction it hands on comes from.
+INSTRUCTION_ENTRIES: dict[tuple[str, str], str] = {
+    ("inbox_service.py", "InboxService._ingest"): (
+        "an Inbox message's, which its source's app holds in a setting declared an instruction"
+    ),
+    ("event_triggers.py", "emit_event"): "the event the one emitter builds from what it is handed",
+}
+
+#: Every function that reads or writes the instruction an event's fire carries in its payload
+#: (``event_triggers.INSTRUCTION_KEY``).
+INSTRUCTION_KEY_USERS: dict[tuple[str, str], str] = {
+    ("event_triggers.py", "fire_payload"): "puts the event's instruction beside its fenced value",
+    ("event_triggers.py", "_spool_if_wanted"): "keeps it with the event it spools",
+    ("triggers/loop.py", "_reenter_spooled"): "hands a spooled event's back to it, as spooled",
+    ("triggers/fire_facts.py", "_instructed"): "puts it before the value the fire hands on",
+}
+
+
+def instruction_sites(sources: dict[str, str]) -> dict[str, set[tuple[str, str]]]:
+    """``{"entry": {(file, function)}, "key": {(file, function)}}`` for *sources*: the functions
+    that hand ``emit_event`` or ``BusEvent`` an ``instruction=``, and those that read or write
+    ``INSTRUCTION_KEY``, named as :func:`scan` names them."""
+    found: dict[str, set[tuple[str, str]]] = {"entry": set(), "key": set()}
+    for rel, text in sources.items():
+
+        def _walk(node: ast.AST, scope: tuple[str, ...], in_function: bool) -> None:
+            for child in ast.iter_child_nodes(node):
+                inner, inner_in_function = scope, in_function
+                if isinstance(child, ast.ClassDef) and not in_function:
+                    inner = (*scope, child.name)
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and not in_function:
+                    inner, inner_in_function = (*scope, child.name), True
+                where = (rel, ".".join(scope) or "<module>")
+                if isinstance(child, ast.Call):
+                    callee = child.func
+                    name = (
+                        callee.id
+                        if isinstance(callee, ast.Name)
+                        else callee.attr if isinstance(callee, ast.Attribute) else ""
+                    )
+                    if name in ("emit_event", "BusEvent") and any(
+                        kw.arg == "instruction" for kw in child.keywords
+                    ):
+                        found["entry"].add(where)
+                elif (
+                    isinstance(child, ast.Name)
+                    and child.id == "INSTRUCTION_KEY"
+                    and isinstance(child.ctx, ast.Load)
+                ) or (isinstance(child, ast.Attribute) and child.attr == "INSTRUCTION_KEY"):
+                    found["key"].add(where)
+                _walk(child, inner, inner_in_function)
+
+        _walk(ast.parse(text), (), False)
+    return found
+
+
+def instruction_problems(sources: dict[str, str]) -> list[str]:
+    """What is wrong with *sources* by the instruction's census: every problem, each named."""
+    found = instruction_sites(sources)
+    problems = [
+        f"{rel}:{fn} hands an event an instruction: say where it comes from in "
+        "INSTRUCTION_ENTRIES, or hand it none"
+        for rel, fn in sorted(found["entry"] - set(INSTRUCTION_ENTRIES))
+    ]
+    problems += [
+        f"{rel}:{fn} is listed but hands an event no instruction now: delete its row"
+        for rel, fn in sorted(set(INSTRUCTION_ENTRIES) - found["entry"])
+    ]
+    problems += [
+        f"{rel}:{fn} reads the instruction a fire carries: list it in INSTRUCTION_KEY_USERS"
+        for rel, fn in sorted(found["key"] - set(INSTRUCTION_KEY_USERS))
+    ]
+    problems += [
+        f"{rel}:{fn} is listed but reads no instruction now: delete its row"
+        for rel, fn in sorted(set(INSTRUCTION_KEY_USERS) - found["key"])
+    ]
+    held_by = {
+        ("inbox_service.py", "InboxService._ingest"): "admitted_instruction",
+        ("inbox_service.py", "admitted_instruction"): "holds",
+    }
+    for (rel, fn), call in sorted(held_by.items()):
+        node = _function(sources.get(rel, ""), fn) if rel in sources else None
+        if node is None or call not in _calls(node):
+            problems.append(f"{rel}:{fn} takes in an instruction without {call}()")
+    return problems
+
+
+def test_the_owner_s_instruction_reaches_an_event_only_from_her_settings():
+    assert instruction_problems(_tree()) == []
+
+
+def test_the_instruction_census_reads_the_whole_tree():
+    """Vacuity: a scan that stopped matching would find no site at all, and pass."""
+    found = instruction_sites(_tree())
+    assert found["entry"] and found["key"], found
+
+
+_PLANTED_INSTRUCTION = """
+from personalclaw.event_triggers import emit_event
+
+
+def relay(message):
+    emit_event(
+        source="inbox", event_type="message_received", key=message.id, value=message.text,
+        now=0.0, instruction=message.text,
+    )
+"""
+
+
+def test_a_new_place_that_hands_an_event_an_instruction_fails_the_census():
+    tree = {**_tree(), "planted.py": _PLANTED_INSTRUCTION}
+    assert instruction_problems(tree) == [
+        "planted.py:relay hands an event an instruction: say where it comes from in "
+        "INSTRUCTION_ENTRIES, or hand it none"
+    ]
+
+
+def test_an_inbox_that_takes_an_instruction_in_unchecked_fails_the_census():
+    tree = _tree()
+    rel = "inbox_service.py"
+    tree[rel] = tree[rel].replace("if app and holds(app, claimed):", "if app:")
+    assert instruction_problems(tree) == [
+        f"{rel}:admitted_instruction takes in an instruction without holds()"
+    ]
+
+
 def test_a_door_that_stops_going_through_the_one_function_fails_the_census():
     tree = _tree()
     rel = "channel_history.py"

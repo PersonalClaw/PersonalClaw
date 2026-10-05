@@ -133,6 +133,15 @@ MESSAGES_RUN_ONCE = "messages-run-once"
 #: that imports them does not load.
 PAIRED_OWNER = "paired-owner"
 
+#: An Inbox source hands core the owner's instruction for a message beside its words
+#: (``IncomingMessage.instruction`` beside ``text``, from ``personalclaw.sdk.inbox``), word for word
+#: as one of the app's settings holds it. Core takes it as hers when the app's manifest declares
+#: that setting an instruction (``x-meta.instruction: true`` on a string property of its settings
+#: schema) or gives the setting it as its default, and refuses anything else handed over as one; a
+#: fire on the message hands its action her instruction first, outside any fence, then the
+#: message fenced once with where it came from. A core without it has no ``instruction`` on
+#: ``IncomingMessage``, so an app that hands one over fails to poll.
+MESSAGE_INSTRUCTIONS = "message-instructions"
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
@@ -143,6 +152,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         DIGEST_REPLIES,
         GUARDED_DOWNLOAD,
         LINKS_NAME_THEIR_CHANNEL,
+        MESSAGE_INSTRUCTIONS,
         MESSAGES_RUN_ONCE,
         PAIRED_OWNER,
         PRE_TOOL_HOOKS,

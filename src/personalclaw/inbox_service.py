@@ -281,6 +281,54 @@ def _resolve_source_kind(declared: str, source_name: str) -> str:
     return ItemKind.MESSAGE.value
 
 
+def admitted_instruction(source_name: str, message: "IncomingMessage") -> str:
+    """The owner's instruction *message* carries, as an instruction: the one its source handed
+    over (``IncomingMessage.instruction``), when the app that registered the source holds it in a
+    setting its manifest declares an instruction (``apps.instruction_settings.holds``), else "".
+
+    Fail closed. A run on the message is handed what this returns outside any fence, as an
+    instruction, so a text the app's settings do not hold is not one, whatever the source called
+    it; a source no app registered has no settings to hold one. Such a message arrives without an
+    instruction, as a message, and the refusal is a warning and a Security-log row naming the
+    source and its app, never the words.
+    """
+    claimed = str(getattr(message, "instruction", "") or "").strip()
+    if not claimed:
+        return ""
+    from personalclaw.apps.instruction_settings import holds
+    from personalclaw.inbox_providers.registry import app_of
+
+    app = app_of(source_name)
+    if app and holds(app, claimed):
+        return claimed
+    logger.warning(
+        "inbox source %r handed over an instruction with a message that %s, so the message "
+        "arrives without one",
+        source_name,
+        f"no setting of {app!r} holds" if app else "no app's settings hold (no app registered it)",
+    )
+    try:
+        from personalclaw.instants import utc_now_iso
+        from personalclaw.sel import SecurityEvent, sel
+
+        sel().log(
+            SecurityEvent(
+                event_id=uuid.uuid4().hex[:16],
+                timestamp=utc_now_iso(),
+                event_type="inbox_instruction",
+                caller_identity=f"app:{app}" if app else f"inbox:{source_name}",
+                agent="personalclaw",
+                source="inbox",
+                operation="inbox_instruction_refused",
+                outcome="refused",
+                resources=f"source={source_name} app={app or 'none'}",
+            )
+        )
+    except Exception:  # noqa: BLE001 - the audit row must never stop the message arriving
+        logger.debug("could not record a refused inbox instruction", exc_info=True)
+    return ""
+
+
 def fence_message_for_prompt(
     item: InboxItem,
     owner: str | None = None,
@@ -558,7 +606,10 @@ class InboxService:
             # (dedup/mute/self), so an accepted item raises EXACTLY ONE event and a filtered
             # message raises none. The value is the RAW message text — it is fenced once, when a
             # trigger fires on it (`event_triggers.fire_payload`), never here, so it is never
-            # double-fenced. `meta` carries the fields the inbox patterns match: `sender`/`address`.
+            # double-fenced. The owner's instruction rides beside it, never in it, and only one
+            # her settings for the source's app hold (`admitted_instruction`): a fire hands its
+            # action that outside any fence, before the fenced value (`fire_facts.hand_on`).
+            # `meta` carries the fields the inbox patterns match: `sender`/`address`.
             try:
                 from personalclaw.event_triggers import SOURCE_INBOX, emit_event
 
@@ -567,6 +618,7 @@ class InboxService:
                     event_type="message_received",
                     key=item_id,
                     value=m.text,
+                    instruction=admitted_instruction(source_name, m),
                     now=time.time(),
                     meta={
                         "sender": m.sender_id,

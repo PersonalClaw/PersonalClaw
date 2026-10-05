@@ -20,6 +20,10 @@ body) keeps that fence when the fence holds all of it (:func:`is_whole_fence`), 
 source written there survives; the screen reads it all the same. Text straight from outside (a
 program's output, a message as it was sent) has no fence of PersonalClaw's on it, so a fence in it
 is only more of its own text, and it is wrapped like any other.
+
+The owner's instruction for such a text (an Inbox message to an address she gave a prompt) is
+handed over beside it, never in it, and goes before what the door let through, outside any fence
+(:func:`instructed`).
 """
 
 from __future__ import annotations
@@ -111,6 +115,24 @@ def ends_inside_a_fence(text: str) -> bool:
     """
     end = "\x00"
     return not outside_fences(f"{text or ''}{end}").endswith(end)
+
+
+def instructed(instruction: str, admitted: str) -> str:
+    """The owner's *instruction* and what :func:`admit` let through of the text from outside it is
+    about (*admitted*), as a model is handed the two: her instruction first, outside any fence,
+    then the text, fenced with its source.
+
+    Her words are neither screened nor fenced, as a task an automation's owner writes is not: they
+    are hers. Only text from outside is. Whose words an instruction is, is settled before it gets
+    here (``inbox_service.admitted_instruction``): the instruction a source hands over beside a
+    message is hers only when her settings for the source's app hold it.
+    """
+    instruction = (instruction or "").strip()
+    if not instruction:
+        return admitted
+    if not (admitted or "").strip():
+        return instruction
+    return f"{instruction}\n\n{admitted}"
 
 
 def withheld(what: str, refused: Iterable[str]) -> str:

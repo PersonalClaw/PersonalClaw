@@ -8,6 +8,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+- **A prompt you gave a mail address reaches the automation that mail starts as your instruction: its run is handed your prompt first, outside any fence, then the mail fenced once by PersonalClaw as data, with where it came from, and only a prompt your settings for the app hold is taken as yours (`personalclaw.sdk.inbox.IncomingMessage.instruction`, a setting declared `x-meta.instruction`, the `message-instructions` core feature; used by `mail-inbox`)**
 - **The security log says which refusal an agent's refused document write was: one that named no base, or one whose base another write had replaced**
 - **Docs, code comments and the shared-store kit's failure messages give the engineering reason for a behaviour instead of naming another product**
 - **Investigating a past automation run says the cadence and action it shows are the automation's current ones, which may have changed since that run**

@@ -590,7 +590,12 @@ def _reenter_spooled(envelope: Any, *, now: float) -> tuple[str, str]:
     from personalclaw.triggers.dispatch import Handling, classify_handler_outcome
 
     try:
-        from personalclaw.event_triggers import SOURCE_MEMORY, emit_event, router_attached
+        from personalclaw.event_triggers import (
+            INSTRUCTION_KEY,
+            SOURCE_MEMORY,
+            emit_event,
+            router_attached,
+        )
 
         # `kind` is `f"{source}.{event_type}"`; split on the first dot so the
         # spooled fire re-enters scoped to the source it came from. Legacy envelopes with
@@ -614,6 +619,8 @@ def _reenter_spooled(envelope: Any, *, now: float) -> tuple[str, str]:
             "value": str(payload.get("value", "") or ""),
             "now": now,
             "meta": dict(meta) if isinstance(meta, dict) else None,
+            # The owner's instruction the inbox bridge spooled with the event, as it spooled it.
+            "instruction": str(payload.get(INSTRUCTION_KEY, "") or ""),
         }
         if not router_attached():
             raise RuntimeError("no event router is attached in this process")

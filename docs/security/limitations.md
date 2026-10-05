@@ -594,7 +594,12 @@ refusals in §2 applies, because none of this goes through the API.
 **What is enforced:** an app cannot add code or instructions through the gateway after you
 install it. Its MCP servers, its scheduled jobs and the skills it gives your agents come
 from the manifest you consented to, and defining any of them through the API is owner-only
-(§2), as is writing your agents and the system prompts they start from. A backend that names a sandbox tier
+(§2), as is writing your agents and the system prompts they start from. An instruction an app's
+Inbox source hands over beside a message, which a run is handed outside any fence, is taken as
+yours only when its settings hold it in a setting its manifest declares an instruction, or the
+manifest gives that setting it by default (`apps/instruction_settings.holds`); the app's code can
+still write its own settings file, so an app that wrote a message's words there would hand them
+over as yours. A backend that names a sandbox tier
 (`backend.sandbox`, such as `docker`) launches inside that tier rather than on the host,
 with its `network` permission deciding its egress and its `storage` permission its one
 writable folder (`apps/backend_runtime.py::build_backend_sandbox_spec`). A named tier that

@@ -17,8 +17,11 @@ and push the shape confusion into every future reader of either path.
 
 Keyed by the provider's own ``source_name`` (not the app name), because that is
 what an inbox item records (``inbox.py``'s ``source`` field) and what a reply to that
-item is routed by (``inbox_providers.polled_source``). This module deliberately imports
-nothing from ``providers/`` — the dependency runs one way, handler → registry.
+item is routed by (``inbox_providers.polled_source``). The app that registered each source is
+kept beside it (:func:`app_of`): an instruction a source hands over with a message is the
+owner's only when that app's settings hold it (``inbox_service.admitted_instruction``). This
+module deliberately imports nothing from ``providers/`` — the dependency runs one way,
+handler → registry.
 """
 
 from __future__ import annotations
@@ -32,10 +35,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _sources: dict[str, "MessageSourceProvider"] = {}
+#: Source name → the installed app that registered it.
+_apps: dict[str, str] = {}
 
 
-def register_source(provider: "MessageSourceProvider") -> str:
-    """Register an app-contributed source under its own ``source_name``.
+def register_source(provider: "MessageSourceProvider", *, app: str = "") -> str:
+    """Register an app-contributed source under its own ``source_name``; *app* is the installed
+    app it comes from.
 
     Returns the name it was registered under so the caller can log/deregister by
     the same key it actually used.
@@ -44,6 +50,10 @@ def register_source(provider: "MessageSourceProvider") -> str:
     if not name:
         raise ValueError("an app-contributed inbox source must expose a non-empty source_name")
     _sources[name] = provider
+    if app:
+        _apps[name] = app
+    else:
+        _apps.pop(name, None)
     return name
 
 
@@ -51,6 +61,13 @@ def unregister_source(name: str) -> None:
     """Remove a source. A disabled/uninstalled app must leave NO phantom source
     still being polled — see ``InboxTypeHandler``."""
     _sources.pop(name, None)
+    _apps.pop(name, None)
+
+
+def app_of(name: str) -> str:
+    """The installed app that registered the source *name*, or "" for one no app registered: a
+    source PersonalClaw ships, or one that is gone."""
+    return _apps.get(name, "")
 
 
 def get_source(name: str) -> "MessageSourceProvider | None":

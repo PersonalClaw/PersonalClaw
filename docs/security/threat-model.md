@@ -356,6 +356,25 @@ Content and requests arriving from outside the owner's trust boundary:
   fetches or browses, a file attached in a chat, an Inbox message, what a
   room's members said, a workflow step's output, among others) are listed
   there, and that list may only shrink.
+- **The owner's instruction beside text from outside**: a source hands it over
+  apart from a message's words (`IncomingMessage.instruction`, such as the
+  prompt Mail Inbox runs for mail to one of its addresses), and a fire on the
+  message hands its action her instruction outside any fence, then the message
+  fenced once (`outside_text.instructed`, at the fire's door). Since the
+  instruction is not fenced, core takes one as hers only when her settings for
+  the source's app hold it, word for word, in a setting the app's manifest
+  declares an instruction (`x-meta.instruction`), or the manifest gives that
+  setting it as its default (`apps/instruction_settings.holds`): a text from
+  outside cannot become an instruction by being handed over as one. Anything
+  else handed over is dropped and recorded (`inbox_instruction_refused`); the
+  injection screen still reads the message, and one it refuses runs nothing
+  whatever instruction came with it. An app's own event (`SourceEvent`) carries
+  no instruction: its text is fenced whole. The census holds the places that
+  hand an event an instruction to the inbox's check
+  (`tests/test_outside_text_doors_census.py`). Who can write those settings is
+  the limit: the owner on the app's Configure page, and the app itself, whose
+  code runs as hers (an app that wrote a message's words into its own
+  instruction setting would be handing them over as hers on purpose).
 - **Injection screen** (`triggers/screen.py::screen`) reads that text before a
   model does, at every door `outside_text.admit` serves (above). It refuses text
   addressed to the model that tells it to drop what it was told, hands it a new

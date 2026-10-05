@@ -150,6 +150,12 @@ EVENT_VARS: tuple[str, ...] = (
     "$value",
 )
 
+#: The key a fire's payload carries the owner's instruction under (:attr:`BusEvent.instruction`),
+#: beside the fenced value, from :func:`fire_payload` to the fire's door, which puts it before the
+#: value it hands the action (``triggers.fire_facts.hand_on``). Not a template variable: ``$value``
+#: is the instruction and the value, together.
+INSTRUCTION_KEY = "instruction"
+
 
 def event_spec(pattern: str, matcher: str = "") -> dict[str, str]:
     """The canonical spec for ``pattern`` and its one matcher value.
@@ -285,7 +291,15 @@ def matches(
 
 @dataclass(frozen=True)
 class BusEvent:
-    """One event on the bus, as a source reported it."""
+    """One event on the bus, as a source reported it.
+
+    ``instruction`` is the owner's instruction for what the event is about, when its source holds
+    one for it: an Inbox message to an address she gave an instruction
+    (``inbox_service.admitted_instruction``). It is her words, never the event's, so a fire hands
+    its action the instruction outside any fence, then the value fenced
+    (``triggers.fire_facts.hand_on``). Only the inbox bridge hands an event one; an app's own
+    event carries none, its text all fenced (``trigger_sources.emit``).
+    """
 
     source: str
     event_type: str
@@ -293,6 +307,7 @@ class BusEvent:
     value: str
     now: float
     meta: dict | None = None
+    instruction: str = ""
 
     def matches(self, trigger: Any) -> bool:
         return matches(
@@ -346,6 +361,9 @@ def fire_payload(trigger_id: str, event: BusEvent) -> tuple[dict[str, Any], str]
     word of it fenced: one fence around both when the value arrived raw, and the key in a fence of
     the event's own beside the origin's fence when it did not. Both are screened at the dispatch
     before an action is handed them (``fire_facts.hand_on``), which keeps a line fenced whole.
+
+    The owner's instruction an event carries (:attr:`BusEvent.instruction`) goes beside the value
+    under :data:`INSTRUCTION_KEY`, in neither fence nor line.
     """
     from personalclaw.outside_text import is_whole_fence
     from personalclaw.security import fence_untrusted
@@ -387,6 +405,10 @@ def fire_payload(trigger_id: str, event: BusEvent) -> tuple[dict[str, Any], str]
     }
     if event.meta:
         payload["meta"] = dict(event.meta)
+    if event.instruction:
+        # Beside the value, never in it: the fire's door puts it before the value, outside the
+        # fence, once the value has passed the screen (`fire_facts.hand_on`).
+        payload[INSTRUCTION_KEY] = event.instruction
     return payload, context
 
 
@@ -435,13 +457,15 @@ def emit_event(
     value: str | None,
     now: float,
     meta: dict | None = None,
+    instruction: str = "",
 ) -> None:
     """The ONE emitter every source calls after an event. Best-effort, never raises.
 
     ``source`` (``SOURCE_MEMORY``/``SOURCE_INBOX``/``SOURCE_APP``) scopes which triggers can fire,
     and ``meta`` carries source-specific fields (an inbox message's ``sender``/``address``) the
-    inbox patterns match. A trigger fault must never break the source's own work, so every failure
-    here is logged and swallowed.
+    inbox patterns match. ``instruction`` is the owner's, held by her settings, that the event is
+    about (:attr:`BusEvent.instruction`). A trigger fault must never break the source's own work,
+    so every failure here is logged and swallowed.
     """
     try:
         event = BusEvent(
@@ -451,6 +475,7 @@ def emit_event(
             value=value or "",
             now=now,
             meta=dict(meta) if meta else None,
+            instruction=instruction or "",
         )
         router = _router
         if router is not None:
@@ -485,6 +510,8 @@ def _spool_if_wanted(event: BusEvent) -> None:
     payload: dict[str, Any] = {"key": event.key, "value": event.value}
     if event.meta:
         payload["meta"] = dict(event.meta)
+    if event.instruction:
+        payload[INSTRUCTION_KEY] = event.instruction
     if not spool_fire(
         Envelope(
             seq=0,

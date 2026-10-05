@@ -1097,7 +1097,9 @@ class InboxTypeHandler(_TypeHandler):
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.inbox_providers.registry import register_source
 
-        register_source(instance)
+        # Kept with the app it came from, whose settings are where an instruction the source
+        # hands over with a message must be held (`inbox_service.admitted_instruction`).
+        register_source(instance, app=ext.name)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.inbox_providers.registry import unregister_source

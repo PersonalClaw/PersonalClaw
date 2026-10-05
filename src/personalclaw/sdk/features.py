@@ -42,6 +42,12 @@ the chat answers (``link_channel(chat, thread, channel_id, provider=…)``,
 ``SessionManager.get_channel_provider``). A channel app that links a chat to one of its threads
 declares it.
 
+``MESSAGE_INSTRUCTIONS``: an Inbox source hands PersonalClaw the owner's instruction for a message
+beside its words (``personalclaw.sdk.inbox.IncomingMessage.instruction``), word for word as a
+setting of the app declared an instruction (``x-meta.instruction``) holds it, and a fire on the
+message hands its action the instruction outside any fence, then the message fenced once. An app
+whose source hands one over declares it.
+
 ``MESSAGES_RUN_ONCE``: the door takes each channel message once, by the channel's own id for it in
 its chat, and a delivery of it made again changes nothing; a channel that acts on a message itself
 before the door or instead of it claims it first (``personalclaw.sdk.channel.claim_message``). A
@@ -82,6 +88,7 @@ from personalclaw.apps.core_features import (
     DIGEST_REPLIES,
     GUARDED_DOWNLOAD,
     LINKS_NAME_THEIR_CHANNEL,
+    MESSAGE_INSTRUCTIONS,
     MESSAGES_RUN_ONCE,
     PAIRED_OWNER,
     PRE_TOOL_HOOKS,
@@ -100,6 +107,7 @@ __all__ = [
     "DIGEST_REPLIES",
     "GUARDED_DOWNLOAD",
     "LINKS_NAME_THEIR_CHANNEL",
+    "MESSAGE_INSTRUCTIONS",
     "MESSAGES_RUN_ONCE",
     "PAIRED_OWNER",
     "PRE_TOOL_HOOKS",

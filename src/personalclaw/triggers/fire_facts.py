@@ -271,7 +271,9 @@ async def hand_on(trigger: Any, payload: dict[str, Any] | None, *, context: str 
     (``outside_text.admit_payload`` under the trigger's kind), the ``$CONTEXT`` line an event's
     fire carries, and what started the run (:func:`describe`, read from the payload as it
     arrived). Text fenced where it arrived keeps its fence. When the screen refuses any of their
-    words the fire hands on nothing, and its dispatch records it as ``blocked_injection``.
+    words the fire hands on nothing, and its dispatch records it as ``blocked_injection``. The
+    owner's instruction an Inbox message carries goes before the value it is about, outside the
+    fence, once that has passed (:func:`_instructed`).
     """
     from personalclaw.outside_text import admit, admit_payload
 
@@ -290,4 +292,26 @@ async def hand_on(trigger: Any, payload: dict[str, Any] | None, *, context: str 
     refused = {*facts.refused, *handed.refused, *line.refused}
     if refused:
         return HandedOn(refused=tuple(sorted(refused)))
-    return HandedOn(payload=handed.payload, context=line.text, facts=facts)
+    return HandedOn(payload=_instructed(kind, handed.payload), context=line.text, facts=facts)
+
+
+def _instructed(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """*payload*, as the door let it through, with the owner's instruction an event's fire carries
+    (``event_triggers.INSTRUCTION_KEY``) put before its value, outside the fence, once the value
+    has passed the screen (``outside_text.instructed``): ``$value`` is then her instruction and the
+    message it is about, the message fenced once.
+
+    Only an event's fire carries one, from an event the inbox bridge handed the instruction her
+    settings hold (``event_triggers.fire_payload``). Any other kind's payload that names one loses
+    it here, so no other fire hands its action an instruction.
+    """
+    from personalclaw.event_triggers import INSTRUCTION_KEY
+    from personalclaw.outside_text import instructed
+
+    if INSTRUCTION_KEY not in payload:
+        return payload
+    out = dict(payload)
+    instruction = str(out.pop(INSTRUCTION_KEY) or "")
+    if kind == "event":
+        out["value"] = instructed(instruction, str(out.get("value") or ""))
+    return out
