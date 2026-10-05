@@ -271,10 +271,15 @@ class TestNamespacedSkillsAreListed:
         from personalclaw.skills import marketplace as M
 
         assert 'rglob("SKILL.md")' in inspect.getsource(L.iter_skill_files)
-        for fn in (H.api_skills_list, M.list_local_skills):
-            src = inspect.getsource(fn)
-            assert "iter_skill_files(" in src, f"{fn.__qualname__} re-derives the walk"
-            assert ".iterdir()" not in src, f"{fn.__qualname__} still walks ONE level"
+        # The loader's own listing walks those files, and the Skills page lists what it lists.
+        assert "iter_skill_files(" in inspect.getsource(L.SkillsLoader._iter)
+        assert "self._iter()" in inspect.getsource(L.SkillsLoader.list_skills)
+        rows = inspect.getsource(H._skill_rows)
+        assert ".list_skills(" in rows, "the Skills page re-derives the walk"
+        assert ".iterdir()" not in rows, "the Skills page still walks ONE level"
+        src = inspect.getsource(M.list_local_skills)
+        assert "iter_skill_files(" in src, "list_local_skills re-derives the walk"
+        assert ".iterdir()" not in src, "list_local_skills still walks ONE level"
 
     def test_the_CLI_and_the_loop_classifier_see_the_auto_namespace(self, home, monkeypatch):
         """🔴 `list_local_skills` was the LAST one-level walk, and it has two consumers that both
