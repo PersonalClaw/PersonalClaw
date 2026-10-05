@@ -29,7 +29,9 @@ to the model:
 3. **Holder precedence is enforced at the DECISION point.** A lower-precedence claim
    (an ``external`` rumour) cannot supersede a higher-precedence one (something the user
    said) no matter what the model returns. Ranking it lower at read time would not be
-   the same guarantee.
+   the same guarantee. Nor can a fact formation forms supersede or remove one the owner set
+   herself (``vector_memory.only_a_person_replaces``, the store's one rule): a supersession
+   of hers keeps both, flagged, and a removal of hers keeps it.
 4. **Fail-safe degradation.** No Decide prompt, no model, or an unparseable response →
    every candidate falls back to ``ADD``, i.e. exactly today's behavior. A formation
    failure must never mean "this session's memories were dropped".
@@ -111,6 +113,8 @@ class Overlap:
     holder: str = ""
     weight: float = 1.0
     why: str = "keyword"
+    #: Who wrote the row (its ``source``): a row the owner set is replaced by her alone.
+    source: str = ""
 
     def as_payload(self) -> dict:
         out: dict[str, Any] = {"key": self.key, "value": self.value_str, "matched_by": self.why}
@@ -270,8 +274,8 @@ def gather(vs, candidates: Sequence[Candidate]) -> list[Candidate]:
     from personalclaw.vector_memory import is_fact_key
 
     rows = vs.db.execute(
-        "SELECT key, value_json, holder, weight FROM semantic_memory WHERE is_deleted = 0 "
-        "ORDER BY key"
+        "SELECT key, value_json, holder, weight, source FROM semantic_memory "
+        "WHERE is_deleted = 0 ORDER BY key"
     ).fetchall()
     existing = {}
     for r in rows:
@@ -286,6 +290,7 @@ def gather(vs, candidates: Sequence[Candidate]) -> list[Candidate]:
             value_str=_value_str(val),
             holder=memory_holder.normalize_holder(r["holder"]),
             weight=float(r["weight"] if r["weight"] is not None else 1.0),
+            source=str(r["source"] or ""),
         )
 
     for cand in candidates:
@@ -391,8 +396,9 @@ def parse_decisions(result: object, candidates: Sequence[Candidate]) -> dict[int
     return out
 
 
-def adjudicate(cand: Candidate, decision: Decision | None) -> Decision:
-    """Resolve one candidate's final action, enforcing the invariants the model can't.
+def adjudicate(cand: Candidate, decision: Decision | None, *, source: str) -> Decision:
+    """Resolve one candidate's final action, written from *source*, enforcing the invariants the
+    model can't.
 
     Returns a Decision whose ``verdict``/``unsure`` are safe to execute:
 
@@ -402,8 +408,12 @@ def adjudicate(cand: Candidate, decision: Decision | None) -> Decision:
       ``unsure``, which the executor turns into keep-both;
     * a ``SUPERSEDE``/``UPDATE`` where the target's holder outranks the candidate's →
       forced ``unsure`` (holder precedence, §4.2). This is the rule that stops an
-      external rumour from retiring something the user told us.
+      external rumour from retiring something the user told us;
+    * a ``SUPERSEDE``/``UPDATE`` of a row the owner set herself, from a write that is not hers
+      (:func:`_written_as`) → forced ``unsure`` too: only she replaces what she set.
     """
+    from personalclaw.vector_memory import only_a_person_replaces
+
     if decision is None:
         return Decision(index=cand.index, verdict=VERDICT_ADD, reason="no verdict — default add")
     verdict, target = decision.verdict, decision.target
@@ -429,6 +439,8 @@ def adjudicate(cand: Candidate, decision: Decision | None) -> Decision:
         unsure = decision.unsure
         if memory_holder.precedence(cand.holder) < memory_holder.precedence(targets[target].holder):
             unsure = True
+        if only_a_person_replaces(targets[target].source, _written_as(cand, source)):
+            unsure = True
         return Decision(
             index=cand.index,
             verdict=verdict,
@@ -444,12 +456,18 @@ def adjudicate(cand: Candidate, decision: Decision | None) -> Decision:
 # ── Execute ───────────────────────────────────────────────────────────────────
 
 
+def _written_as(cand: Candidate, source: str) -> str:
+    """The source formation writes *cand* as, for a pass from *source*: the owner's own for a
+    fact extracted at full confidence (she said it), *source* otherwise."""
+    return "user_explicit" if cand.confidence >= 1.0 else source
+
+
 def _write(
     vs, cand: Candidate, source: str, *, holder_attribution: bool, replaces: str = ""
 ) -> str:
     """Store *cand*. The key it was stored under (a marked key is stored under the fact it names,
     :func:`_as_stored`), or ``""`` when it was not stored."""
-    item_source = "user_explicit" if cand.confidence >= 1.0 else source
+    item_source = _written_as(cand, source)
     kwargs: dict[str, Any] = {}
     if holder_attribution and cand.holder:
         kwargs = {"holder": cand.holder, "weight": cand.weight}
@@ -572,13 +590,18 @@ def apply_decisions(
     pointed at it. Superseding first would leave a window where neither the old nor the
     new value is live, and a crash inside that window would lose the fact outright.
     """
+    from personalclaw.vector_memory import only_a_person_replaces
+
     report = FormationReport()
     for cand in candidates:
-        final = adjudicate(cand, decisions.get(cand.index))
+        final = adjudicate(cand, decisions.get(cand.index), source=source)
         if cand.delete:
             # An extract-phase retirement. Still a soft tombstone with a WAL entry —
-            # the row stays readable — so it needs no verdict.
-            if vs.delete_semantic(cand.key, source):
+            # the row stays readable — so it needs no verdict. A row the owner set stays.
+            row = vs.get_semantic(cand.key)
+            if row is not None and only_a_person_replaces(row["source"], _written_as(cand, source)):
+                report.rejected += 1
+            elif vs.delete_semantic(cand.key, source):
                 report.superseded += 1
             continue
         if final.verdict == VERDICT_NOOP:

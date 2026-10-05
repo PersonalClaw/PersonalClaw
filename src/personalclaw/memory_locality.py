@@ -365,6 +365,21 @@ def partition_named(pid: str) -> Partition | None:
     return Partition(pid, path, recorded_folder(path))
 
 
+def partition_holding(db: Path) -> Partition | None:
+    """The memory whose record store is the database *db*: the global memory for the home's own
+    (``vector_memory.home_database``), a folder's for the one in its partition
+    (``memory.INDEX_FILE``), and None for any other database (a scratch or benchmark store)."""
+    from personalclaw.memory import INDEX_FILE
+    from personalclaw.vector_memory import home_database
+
+    real = db.resolve()
+    if real == home_database().resolve():
+        return global_partition()
+    if db.name != INDEX_FILE or real.parent.parent != partition_for(None).parent.resolve():
+        return None
+    return partition_named(real.parent.name)
+
+
 def open_partition(part: Partition, *, writes: bool = False) -> "MemoryStore":
     """The memory store of the folder's partition *part*: the one every chat working in its folder
     reads and keeps (``context.memory_at``). Not for the global memory, whose store is the

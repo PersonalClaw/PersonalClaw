@@ -60,6 +60,7 @@ PROMPT_CARD = "prompt_card"
 PROJECT_CONTEXT = "project_context"
 SKILL = "skill"
 SELF_MODEL = "self_model"
+LESSON_CONFLICT = "lesson_conflict"
 LEARNED_FROM_TEXT_NOT_TYPED = "learned_from_text_not_typed"
 #: Claimed, and writing nothing is the CORRECT outcome — see :data:`NOTHING_TO_INSTALL`.
 NOTHING = "nothing"
@@ -69,7 +70,8 @@ NOTHING = "nothing"
 #:
 #: * ``lesson_batch`` — a correction-derived lesson is ALREADY in the lesson store; the queue gate
 #:   exists to stop an *inferred* one writing live, not to write it a second time. (A self-model
-#:   principle is a ``lesson_batch`` too, and :func:`branch_for` checks that branch first.)
+#:   principle is a ``lesson_batch`` too, and so is the question a learned lesson that would
+#:   replace one she taught raises; :func:`branch_for` checks those branches first.)
 #: * ``template_diff`` — applied AFTER the decision by
 #:   ``handlers.learning._apply_accepted_template_diff``, which saves a new template VERSION. It
 #:   is deliberately not an installer: the apply is async and reports its own ``applied`` result
@@ -92,7 +94,9 @@ def branch_for(data: dict[str, Any]) -> str:
     * the review of what may have been learned from text nobody typed claims a ``retirement``
       by its tag too (``learning.composed_text``), the one retirement anything installs;
     * the self-model branch is checked before :data:`NOTHING_TO_INSTALL` because a promoted
-      principle IS a ``lesson_batch`` and would otherwise be read as "nothing to write".
+      principle IS a ``lesson_batch`` and would otherwise be read as "nothing to write", and so is
+      the branch of the question whether to keep a lesson she taught or a learned one
+      (``learning.lesson_conflicts``), a ``lesson_batch`` it claims by its tag.
 
     Split out from :func:`install` so a caller can ask the question without performing the write:
     the route needs to know a kind is unsupported, and a predicate is cheaper to test than a
@@ -100,6 +104,7 @@ def branch_for(data: dict[str, Any]) -> str:
     """
     from personalclaw.learning import (
         composed_text,
+        lesson_conflicts,
         project_context_review,
         self_model_observer,
         skill_promotion,
@@ -118,6 +123,8 @@ def branch_for(data: dict[str, Any]) -> str:
         return SKILL
     if self_model_observer.is_self_model_proposal(data):
         return SELF_MODEL
+    if lesson_conflicts.is_conflict_proposal(data):
+        return LESSON_CONFLICT
     if str(data.get("kind") or "") in NOTHING_TO_INSTALL:
         return NOTHING
     return ""
@@ -135,7 +142,8 @@ def install(prop: Any, *, service: Any = None) -> str:
     exception is a genuine install FAILURE and ``accept`` reports it the same way — either path
     leaves the proposal pending and retryable, which the injected-installer design could not.
 
-    ``service`` is the memory service the self-model branch writes through. It is a parameter
+    ``service`` is the memory service the self-model branch writes through, and whose record store
+    the lesson-conflict branch keeps a lesson of the global memory in. It is a parameter
     rather than something resolved here because the only live one is cached on the dashboard's
     state: building a second :class:`~personalclaw.memory_service.MemoryService` over the same
     files would give the process two handles on one store.
@@ -167,6 +175,10 @@ def install(prop: Any, *, service: Any = None) -> str:
                 "nothing was removed (no memory store is reachable): the review is still pending"
             )
         composed_text.install_accepted_review(data, main)
+    elif branch == LESSON_CONFLICT:
+        from personalclaw.learning import lesson_conflicts
+
+        lesson_conflicts.install_accepted(data, service)
     elif branch == SELF_MODEL:
         from personalclaw.learning import self_model_observer
 

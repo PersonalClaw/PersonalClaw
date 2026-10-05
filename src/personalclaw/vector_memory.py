@@ -28,6 +28,7 @@ from uuid import uuid4
 from snowballstemmer import stemmer as _snowball_stemmer
 
 from personalclaw import bounded_log, memory_holder, memory_slots, memory_writes
+from personalclaw.after_turn_review import CORRECTION_PREFIX
 from personalclaw.atomic_write import atomic_write, make_private_database
 from personalclaw.config import loader as config_loader
 from personalclaw.identity import contributor_label as _contributor_label
@@ -44,6 +45,12 @@ def config_dir() -> Path:
     import-time binding captures whatever the name pointed at on first use (#2443).
     """
     return config_loader.config_dir()
+
+
+def home_database() -> Path:
+    """The home's own memory database: the record store of the global memory, which a store
+    opened with no ``db_path`` keeps."""
+    return config_dir() / _DB_FILE
 
 
 if TYPE_CHECKING:
@@ -145,7 +152,8 @@ _SECURITY_REJECT_CODES = {
 }
 
 #: Write sources whose value came from a PERSON deciding it, and which therefore win
-#: conflict resolution outright (`_write_semantic` step 7).
+#: conflict resolution outright (`_write_semantic` step 7), and are the only sources that replace
+#: what one of them wrote (:func:`only_a_person_replaces`).
 #:
 #: ``vault_edit`` joined ``user_explicit`` with the two-way
 #: vault: editing a fact in the vault is the same act as editing it in the dashboard,
@@ -159,6 +167,30 @@ _SECURITY_REJECT_CODES = {
 #: ``user_explicit`` only): a markdown file is trivially writable by anything on the
 #: machine, so it may speak for the user about the user's own facts and nothing more.
 _HUMAN_AUTHORED_SOURCES = frozenset({"user_explicit", "vault_edit"})
+
+
+def only_a_person_replaces(row_source: object, source: str) -> bool:
+    """Whether a write from *source* must leave as it is a row that *row_source* wrote: what a
+    person decided (:data:`_HUMAN_AUTHORED_SOURCES`) is overwritten, replaced or retired by a person
+    alone. The store's one rule for it, asked wherever a write would replace a row: conflict
+    resolution under the row's own key (:func:`_conflict`), every retirement toward another row
+    (:meth:`VectorMemoryStore._retire_toward`), the lessons a new one would replace
+    (:meth:`VectorMemoryStore.write_lesson`), and the facts consolidation's formation would
+    supersede or remove (``memory_formation``)."""
+    return source not in _HUMAN_AUTHORED_SOURCES and row_source in _HUMAN_AUTHORED_SOURCES
+
+
+#: Two lessons are one rule said again, and the newer replaces the older, when the significant
+#: words they share are at least this share of all the words either holds, and at least
+#: :data:`_RESTATED_WORDS` of them. Measured over the SMALLER lesson's words alone, as it was, one
+#: shared word made any lesson of two words the same rule as a longer one: "Never deploy on
+#: Fridays" (deploy, fridays) was replaced by "Deploy the docs site from the release branch".
+_RESTATED_SHARE = 0.5
+_RESTATED_WORDS = 2
+
+#: The framing a correction lesson opens with, as :meth:`VectorMemoryStore._lesson_keywords` reads
+#: a rule: the same in every one of them, so none of its words says which rule a lesson teaches.
+_CORRECTION_FRAMING = CORRECTION_PREFIX.lower()
 
 #: The columns a semantic write may store beside its row, in the transaction that stores it
 #: (`VectorMemoryStore._write_semantic`): a lesson's reach and its vector.
@@ -995,8 +1027,7 @@ def _conflict(existing: Any, confidence: float, source: str) -> str | None:
     *source*, or None when the write wins."""
     if source in _HUMAN_AUTHORED_SOURCES:
         return None  # the human always wins
-    if existing["source"] in _HUMAN_AUTHORED_SOURCES:
-        # Existing came from the human — only the human can overwrite it
+    if only_a_person_replaces(existing["source"], source):
         return "Existing entry set by user cannot be overwritten by automated source"
     old_conf = existing["confidence"]
     if confidence > old_conf:
@@ -1263,7 +1294,7 @@ class VectorMemoryStore(MemoryProvider):
         episodic_max: int = _DEFAULT_EPISODIC_MAX,
         episodic_limit: int = _DEFAULT_EPISODIC_LIMIT,
     ):
-        self._db_path = db_path or (config_dir() / _DB_FILE)
+        self._db_path = db_path or home_database()
         self._faiss_path = self._db_path.parent / _FAISS_FILE
         # None = read `memory.semantic_confidence_threshold` live (see `confidence_threshold`).
         self._confidence_threshold = confidence_threshold
@@ -2056,12 +2087,12 @@ class VectorMemoryStore(MemoryProvider):
     ) -> str | None:
         """Write a pre-validated semantic entry (conflict resolution + DB upsert).
 
-        ``retiring`` names the rows this one replaces: each live one is retired toward it
-        (:meth:`_retire_toward`) in the transaction that stores it, so a row is only ever retired
-        for a replacement that was stored, and a write conflict resolution turns away retires
-        nothing. ``columns`` are more of the row's own columns (:data:`_STORED_WITH_ROW`), stored
-        in that transaction too. The history rows, and the data-event triggers told of them,
-        follow once it is committed.
+        ``retiring`` names the rows this one replaces: each live one its source may replace is
+        retired toward it (:meth:`_retire_toward`) in the transaction that stores it, so a row is
+        only ever retired for a replacement that was stored, and a write conflict resolution turns
+        away retires nothing. ``columns`` are more of the row's own columns
+        (:data:`_STORED_WITH_ROW`), stored in that transaction too. The history rows, and the
+        data-event triggers told of them, follow once it is committed.
 
         Returns None on success, or a human-readable conflict reason string.
         """
@@ -2099,7 +2130,7 @@ class VectorMemoryStore(MemoryProvider):
                 )
                 if columns:
                     self._store_columns(key, columns)
-                retired = self._retire_toward(key, retiring)
+                retired = self._retire_toward(key, retiring, source)
         if conflict is not None:
             # A write that did not happen: recorded in the history alone, heard by no trigger.
             self._record_event(
@@ -2219,19 +2250,22 @@ class VectorMemoryStore(MemoryProvider):
             (*(columns[name] for name in names), key),
         )
 
-    def _retire_toward(self, new_key: str, old_keys: Iterable[str]) -> list[tuple[str, str]]:
-        """Retire each live row of *old_keys* toward *new_key*, inside the caller's transaction:
-        soft-deleted with ``superseded_by`` and ``invalidated_at`` set, the supersession chain
-        :meth:`undo_event` reverses. Returns each retired row's key and the value it held, for its
-        history row."""
+    def _retire_toward(
+        self, new_key: str, old_keys: Iterable[str], source: str
+    ) -> list[tuple[str, str]]:
+        """Retire each live row of *old_keys* toward *new_key*, for a write from *source*, inside
+        the caller's transaction: soft-deleted with ``superseded_by`` and ``invalidated_at`` set,
+        the supersession chain :meth:`undo_event` reverses. A row a person wrote is left as it is
+        unless *source* is a person's too (:func:`only_a_person_replaces`). Returns each retired
+        row's key and the value it held, for its history row."""
         retired: list[tuple[str, str]] = []
         now = _now_iso()
         for old_key in dict.fromkeys(k for k in old_keys if k and k != new_key):
             row = self.db.execute(
-                "SELECT value_json FROM semantic_memory WHERE key = ? AND is_deleted = 0",
+                "SELECT value_json, source FROM semantic_memory WHERE key = ? AND is_deleted = 0",
                 (old_key,),
             ).fetchone()
-            if row is None:
+            if row is None or only_a_person_replaces(row["source"], source):
                 continue
             self.db.execute(
                 "UPDATE semantic_memory SET is_deleted = 1, superseded_by = ?, "
@@ -2268,12 +2302,14 @@ class VectorMemoryStore(MemoryProvider):
         a row is only retired toward a replacement that is stored, as read in the transaction that
         retires it, so nothing drops out of recall for a replacement that does not exist. A writer
         that stores the replacement in the same call retires through :meth:`_write_semantic`.
+        False too when a person wrote ``old_key`` and *source* is not a person's
+        (:func:`only_a_person_replaces`).
         """
         with self.db.transaction():
             replacement = self.db.execute(
                 "SELECT 1 FROM semantic_memory WHERE key = ? AND is_deleted = 0", (new_key,)
             ).fetchone()
-            retired = self._retire_toward(new_key, [old_key]) if replacement else []
+            retired = self._retire_toward(new_key, [old_key], source) if replacement else []
         for key, value in retired:
             self._log_event("supersede", "semantic", key, value, new_key, source)
         return bool(retired)
@@ -4312,7 +4348,8 @@ class VectorMemoryStore(MemoryProvider):
 
         Deduplicates against existing lessons **within the same scope bucket**:
         - Substring match: if existing contains new (or vice versa), longer wins
-        - Topic overlap: if >50% of significant words match, newer replaces older
+        - The same rule in other words: when the two share at least half of all the significant
+          words either holds, and two words at the least, newer replaces older
         - Semantic similarity: if >85% cosine similarity, longer wins
 
         Bucket-scoping the dedup pass is deliberate: a narrower write must never
@@ -4330,11 +4367,16 @@ class VectorMemoryStore(MemoryProvider):
         are retired toward it in the transaction that stores it (:meth:`_write_semantic`), so no
         lesson drops out of recall for a replacement that was not kept.
 
+        A lesson a person taught is replaced by a person alone (:func:`only_a_person_replaces`):
+        one from anything else (a chat's consolidation, the after-turn review, an app's work, a
+        migration) that would replace one of hers, by the pass above or by the contradiction
+        judge's verdict, keeps nothing and retires nothing, and returns False: hers stays as it is
+        and she is asked which to keep (``learning.lesson_conflicts``), which she answers through
+        :meth:`keep_lesson_in_place_of`. Her own new lesson replaces her older one as any other.
+
         An app's work writes its lesson as the app (``memory_writes.written_by``): the source is
         settled here, before it sets the lesson's confidence and counts as a sighting.
         """
-        from personalclaw.memory_record import MemoryScope
-
         source = memory_writes.written_by(source)
         memory_writes.refuse_memory_write("a lesson")
         scope, scope_ref = _lesson_reach(scope, scope_ref)
@@ -4352,12 +4394,21 @@ class VectorMemoryStore(MemoryProvider):
         pending_backfills: list[tuple[bytes, str]] = []  # (blob, key) pairs
         # What the pass finds, acted on once it is over: the lesson that already says this one,
         # else the lessons this one replaces ("newer replaces older" SUPERSEDES the loser toward
-        # the new key, a reversible pointer, rather than hard-deleting it).
+        # the new key, a reversible pointer, rather than hard-deleting it), and of those the ones a
+        # person taught that this write may not replace (key → the rule each holds).
         says_it: str | None = None
         replaced: list[str] = []
-        # Best mid-band (same-topic, not-a-dup) neighbor → judged for contradiction
-        # AFTER the new lesson is written. (key, value, similarity).
-        contradiction_candidate: tuple[str, str, float] | None = None
+        taught: dict[str, str] = {}
+
+        def replace(row: dict, text: str) -> None:
+            replaced.append(row["key"])
+            if only_a_person_replaces(row.get("source"), source):
+                taught[row["key"]] = text
+
+        # Best mid-band (same-topic, not-a-dup) neighbor → judged for contradiction AFTER the new
+        # lesson is written, or before anything is when a person taught it.
+        # (key, value, similarity, source).
+        contradiction_candidate: tuple[str, str, float, str] | None = None
 
         for existing in self._lessons_in_bucket(scope, scope_ref):
             existing_val = str(json.loads(existing["value_json"]))
@@ -4369,24 +4420,23 @@ class VectorMemoryStore(MemoryProvider):
                 says_it = existing["key"]
                 break
             if existing_lower in rule_lower:
-                replaced.append(existing["key"])
+                replace(existing, existing_val)
                 continue
 
-            # Topic overlap dedup
-            if rule_words:
-                existing_words = self._lesson_keywords(existing_lower)
-                if existing_words:
-                    overlap = rule_words & existing_words
-                    ratio = len(overlap) / min(len(rule_words), len(existing_words))
-                    if ratio >= 0.5:
-                        logger.info(
-                            "Lesson conflict: %r replaces %r (%.0f%% overlap)",
-                            rule[:60],
-                            existing_val[:60],
-                            ratio * 100,
-                        )
-                        replaced.append(existing["key"])
-                        continue
+            # The same rule in other words: the two share half of all the words either holds.
+            existing_words = self._lesson_keywords(existing_lower)
+            shared = rule_words & existing_words
+            either = rule_words | existing_words
+            if len(shared) >= _RESTATED_WORDS and len(shared) >= _RESTATED_SHARE * len(either):
+                logger.info(
+                    "Lesson restated: %r replaces %r (%d of their %d words)",
+                    rule[:60],
+                    existing_val[:60],
+                    len(shared),
+                    len(either),
+                )
+                replace(existing, existing_val)
+                continue
 
             # Semantic dedup via embeddings: the stored vector when this model wrote it. One
             # another model wrote is not comparable — two models' vectors share no space, and at
@@ -4423,7 +4473,7 @@ class VectorMemoryStore(MemoryProvider):
                             pending_backfills[:] = [
                                 (b, k) for b, k in pending_backfills if k != existing["key"]
                             ]
-                            replaced.append(existing["key"])
+                            replace(existing, existing_val)
                             continue
                         # Same rule, said no better — a corroborating sighting of the
                         # one already stored, not a discardable duplicate.
@@ -4436,7 +4486,12 @@ class VectorMemoryStore(MemoryProvider):
                     ):
                         # Same topic, not a dup: a candidate for the contradiction
                         # judge ("always X" vs "never X"). Keep only the nearest.
-                        contradiction_candidate = (existing["key"], existing_val, sim)
+                        contradiction_candidate = (
+                            existing["key"],
+                            existing_val,
+                            sim,
+                            str(existing.get("source") or ""),
+                        )
 
         if says_it is not None:
             # The world produced this rule AGAIN. Recorded against the lesson that already covers
@@ -4448,43 +4503,56 @@ class VectorMemoryStore(MemoryProvider):
             self._store_lesson_vectors(pending_backfills, lesson_model)
             return False
 
-        columns: dict[str, object] = {}
-        if scope is not MemoryScope.GLOBAL:
-            # The REACH axis, stored with the row: only the lesson writer has a caller-declared
-            # scope to record. Skipped for GLOBAL so a global write stays byte-identical to today
-            # (the same rule `_apply_axes` follows for plain global/durable records).
-            columns.update(scope=scope.value, scope_ref=scope_ref)
-        if rule_emb:
-            columns.update(
-                embedding=struct.pack(f"{len(rule_emb)}f", *rule_emb),
-                embedding_model=lesson_model or None,
+        # Her nearest same-topic lesson is judged now, before anything is kept: a verdict that
+        # the two contradict would retire it, and nothing is kept over a lesson she taught. Its
+        # contradiction is not counted against hers either: an inference does not refute her.
+        if (
+            not taught
+            and contradiction_candidate is not None
+            and only_a_person_replaces(contradiction_candidate[3], source)
+        ):
+            old_key, old_val, _sim, _old_source = contradiction_candidate
+            contradiction_candidate = None
+            if self._contradicts(value, old_val):
+                taught[old_key] = old_val
+        if taught:
+            self._store_lesson_vectors(pending_backfills, lesson_model)
+            self._ask_which_lesson(
+                key,
+                rule,
+                negative,
+                source,
+                scope=scope,
+                scope_ref=scope_ref,
+                taught=taught,
+                replacing=list(dict.fromkeys([*replaced, *taught])),
             )
-        stored = self._store_semantic(
-            key, value, value_json, confidence, source, retiring=replaced, columns=columns
-        )
-        if stored is not None:
             return False
-        # The evidence of each lesson it retired belongs to it now: a supersession is the same
-        # rule said better (`learning.lesson_confidence`).
-        for old_key in self._retired_toward(key, replaced):
-            self._carry_lesson_evidence(old_key, key)
-        # One sighting of the lesson that was actually written. Recorded HERE rather
-        # than in `set_semantic` because only the lesson writer has an observation to
-        # count — a fact upsert is a restatement of a value, not a repeat sighting of
-        # a rule. The `confidence` argument above is a SOURCE constant for write
-        # conflict resolution; the derived confidence that gates injection comes from
-        # these counters alone (`learning.lesson_confidence`).
-        self._observe_lesson(key, source)
+
+        if not self._keep_lesson(
+            key,
+            value,
+            value_json,
+            confidence,
+            source,
+            scope=scope,
+            scope_ref=scope_ref,
+            replacing=replaced,
+            vector=rule_emb,
+            model=lesson_model,
+        ):
+            return False
         self._store_lesson_vectors(pending_backfills, lesson_model)
         # Contradiction judge: the new lesson is written, so if a same-topic
         # neighbor is in the mid-band, ask the judge whether they contradict. If
         # so, supersede the OLD one (pointer → the new key) — never hard-delete,
         # so it's reversible. Fail-safe: any judge error keeps both.
         if contradiction_candidate is not None:
-            old_key, old_val, sim = contradiction_candidate
+            old_key, old_val, sim, _old_source = contradiction_candidate
             try:
-                if self.contradiction_judge(value, old_val):  # type: ignore[misc]
-                    self.supersede_semantic(old_key, key, source)
+                if self._contradicts(value, old_val) and self.supersede_semantic(
+                    old_key, key, source
+                ):
                     # A refuted lesson's corroboration does NOT transfer to its refuter —
                     # so this path records a contradiction against the old key instead of
                     # calling `_carry_lesson_evidence` like the other supersede paths do.
@@ -4497,8 +4565,139 @@ class VectorMemoryStore(MemoryProvider):
                         sim,
                     )
             except Exception:
-                logger.debug("contradiction judge failed — keeping both", exc_info=True)
+                logger.debug("contradicted lesson not retired — keeping both", exc_info=True)
         return True
+
+    def keep_lesson_in_place_of(
+        self,
+        rule: str,
+        negative: str | None = None,
+        *,
+        replacing: Iterable[str],
+        scope: "MemoryScope | None" = None,
+        scope_ref: str | None = None,
+    ) -> bool:
+        """Keep *rule* as a lesson the owner taught, in place of each live lesson *replacing* names:
+        her Accept of a lesson that was learned and would have replaced hers, held for her answer
+        (:meth:`write_lesson`, ``learning.lesson_conflicts``). Validated as a lesson she teaches
+        is, and kept with no pass over the other lessons and no call to a model: her answer names
+        what it replaces, and it is given on the gateway's loop. The lesson gets its vector from
+        the next lesson's pass, which embeds the lessons that have none. True when it was stored.
+        """
+        source = memory_writes.written_by("user_explicit")
+        memory_writes.refuse_memory_write("a lesson")
+        scope, scope_ref = _lesson_reach(scope, scope_ref)
+        key, value, confidence = _lesson_record(rule, negative, source, scope, scope_ref)
+        value_json = json.dumps(value)
+        if self._refusal(key, value, confidence, source, value_json=value_json) is not None:
+            return False
+        return self._keep_lesson(
+            key,
+            value,
+            value_json,
+            confidence,
+            source,
+            scope=scope,
+            scope_ref=scope_ref,
+            replacing=list(replacing),
+        )
+
+    def _keep_lesson(
+        self,
+        key: str,
+        value: str,
+        value_json: str,
+        confidence: float,
+        source: str,
+        *,
+        scope: "MemoryScope",
+        scope_ref: str | None,
+        replacing: list[str],
+        vector: list[float] | None = None,
+        model: str | None = None,
+    ) -> bool:
+        """Store the validated lesson *key* and retire toward it each of *replacing* that *source*
+        may replace, in one transaction (:meth:`_store_semantic`); hand it the evidence of each it
+        retired and count one sighting of it. True when it was stored, False when conflict
+        resolution kept what was there."""
+        from personalclaw.memory_record import MemoryScope
+
+        columns: dict[str, object] = {}
+        if scope is not MemoryScope.GLOBAL:
+            # The REACH axis, stored with the row: only the lesson writer has a caller-declared
+            # scope to record. Skipped for GLOBAL so a global write stays byte-identical to today
+            # (the same rule `_apply_axes` follows for plain global/durable records).
+            columns.update(scope=scope.value, scope_ref=scope_ref)
+        if vector:
+            columns.update(
+                embedding=struct.pack(f"{len(vector)}f", *vector), embedding_model=model or None
+            )
+        stored = self._store_semantic(
+            key, value, value_json, confidence, source, retiring=replacing, columns=columns
+        )
+        if stored is not None:
+            return False
+        # The evidence of each lesson it retired belongs to it now: a supersession is the same
+        # rule said better (`learning.lesson_confidence`).
+        for old_key in self._retired_toward(key, replacing):
+            self._carry_lesson_evidence(old_key, key)
+        # One sighting of the lesson that was actually written. Recorded HERE rather
+        # than in `set_semantic` because only the lesson writer has an observation to
+        # count — a fact upsert is a restatement of a value, not a repeat sighting of
+        # a rule. The `confidence` argument above is a SOURCE constant for write
+        # conflict resolution; the derived confidence that gates injection comes from
+        # these counters alone (`learning.lesson_confidence`).
+        self._observe_lesson(key, source)
+        return True
+
+    def _contradicts(self, rule: str, existing: str) -> bool:
+        """The contradiction judge's verdict on whether *rule* contradicts *existing*: False with no
+        judge, and when the judge fails (fail-safe: both are kept)."""
+        if self.contradiction_judge is None:
+            return False
+        try:
+            return bool(self.contradiction_judge(rule, existing))
+        except Exception:
+            logger.debug("contradiction judge failed — keeping both", exc_info=True)
+            return False
+
+    def _ask_which_lesson(
+        self,
+        key: str,
+        rule: str,
+        negative: str | None,
+        source: str,
+        *,
+        scope: "MemoryScope",
+        scope_ref: str | None,
+        taught: dict[str, str],
+        replacing: list[str],
+    ) -> None:
+        """Ask the owner which to keep: the lessons she taught (*taught*, key → rule), or the
+        lesson *rule* from *source* under *key* that would replace them and the others in
+        *replacing* (``learning.lesson_conflicts``). Hers stand whether or not the question can be
+        filed."""
+        try:
+            from personalclaw.learning import lesson_conflicts
+
+            lesson_conflicts.ask(
+                self,
+                key=key,
+                rule=rule,
+                negative=negative,
+                learned_by=source,
+                scope=scope,
+                scope_ref=scope_ref,
+                taught=taught,
+                replacing=replacing,
+            )
+        except Exception:  # noqa: BLE001 - her lessons stand; only the question is lost
+            logger.warning(
+                "Kept the lesson the owner taught over one %s learned, but could not ask her "
+                "which to keep",
+                source,
+                exc_info=True,
+            )
 
     def lesson_refusal(
         self,
@@ -4704,7 +4903,11 @@ class VectorMemoryStore(MemoryProvider):
 
     @staticmethod
     def _lesson_keywords(text: str) -> set[str]:
-        """Extract significant words from a lesson rule, ignoring stop words."""
+        """The significant words of a lesson rule (*text*, lowercased): stop words left out, and
+        the framing a correction lesson opens with (:data:`_CORRECTION_FRAMING`). That framing is
+        the same in every correction lesson, so its words say nothing about which rule one teaches;
+        counted, they made any two short corrections one rule said again."""
+        text = text.removeprefix(_CORRECTION_FRAMING)
         stop = {
             "always",
             "never",

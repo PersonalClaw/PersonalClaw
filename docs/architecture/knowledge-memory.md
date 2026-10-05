@@ -966,6 +966,32 @@ item vector).
   sightings it had carried onto that key, or points at the lesson taught since that
   says it in full (recorded in Memory → History under the source `repair`). The
   same repair brings back any row a purge left retired toward a row it removed.
+- **Only she replaces what she taught.** A row whose source is a person's
+  (`user_explicit` from her own routes and tools, `vault_edit` from her vault) is
+  overwritten, replaced or retired by a person alone: `vector_memory.only_a_person_replaces`
+  is the store's one rule, asked by conflict resolution under the row's own key, by
+  every retirement toward another row (`_retire_toward`, so `supersede_semantic`
+  too), by the lesson dedup and by consolidation's formation. A lesson something
+  else learned (a chat's consolidation, the after-turn review's correction or veto,
+  an app's work, a migration) that would replace one of hers, through the dedup or
+  through the contradiction judge's verdict (asked about her lesson before anything
+  is kept, and never counted against it), keeps nothing and retires nothing: hers
+  stays as it is and she is asked which to keep (`learning.lesson_conflicts`: a
+  `lesson_batch` proposal tagged `lesson_conflict`, on the Learning page and in the
+  Inbox, naming both rules and the memory hers is in). Accept saves the learned
+  lesson as hers in place of hers (`VectorMemoryStore.keep_lesson_in_place_of`,
+  undoable in Settings → Memory → Audit); Reject keeps hers, and the queue's decision
+  memory never asks the same question again. Her own new lesson replaces her older
+  one as before. Formation's supersession or cross-key update of a fact she set
+  keeps both, flagged as a conflict, and its extract-phase removal of one is not
+  applied.
+- Two lessons are one rule said again, and the newer replaces the older, when the
+  significant words they share number at least two and are at least half of all the
+  words either holds (`_RESTATED_SHARE`, `_RESTATED_WORDS`), or one contains the
+  other, or their vectors are more alike than 0.85. The share was measured over the
+  smaller lesson's words alone, so one shared word retired a rule of two words; and
+  the framing every correction lesson opens with counted as shared words, so any two
+  short corrections were one rule. That framing is no word of a rule now.
 - **Deleting a chat forgets what memory drew from it alone**
   (`chat_forget.delete_chats`, through `memory_writes.forget_what_sessions_left`,
   the one purge the start-up sweep of Incognito and Temporary chats runs too). A

@@ -150,13 +150,38 @@ def test_a_correction_that_only_mentions_the_platforms_words_is_kept(store):
     assert _rules(store) == [rule]
 
 
-def test_a_lesson_the_retracted_one_displaced_comes_back_as_it_was(store):
-    """The quoted text held her own standing rule, so writing it superseded the rule: taking the
-    quoted lesson back gives her rule back, still followed."""
-    rule = "never read health/ or finance/ notes"
+def _displaced_as_an_earlier_version_left_it(store, rule: str, quoted: str) -> None:
+    """Her standing *rule*, retired toward the *quoted* lesson the after-turn review wrote, as an
+    earlier version left it: that version let a learned lesson replace one she taught."""
+    from personalclaw.memory_record import MemoryScope
+    from personalclaw.vector_memory import _lesson_record
+
     store.write_lesson(rule, source="user_explicit")
+    hers = store.get_lessons()[0]
+    key = _lesson_record(quoted, None, "after_turn_review", MemoryScope.GLOBAL, None)[0]
+    assert store.set_semantic(key, quoted, 0.9, "after_turn_review") is None
+    store.db.execute(
+        "UPDATE semantic_memory SET is_deleted = 1, superseded_by = ?, invalidated_at = ? "
+        "WHERE key = ?",
+        (key, hers["updated_at"], hers["key"]),
+    )
+    store.db.commit()
+    store.append_event(
+        event_type="supersede",
+        memory_type="semantic",
+        memory_key=hers["key"],
+        old_value=hers["value_json"],
+        new_value=key,
+        source="after_turn_review",
+    )
+
+
+def test_a_lesson_the_retracted_one_displaced_comes_back_as_it_was(store):
+    """The quoted text held her own standing rule, so writing it superseded the rule in an earlier
+    version: taking the quoted lesson back gives her rule back, still followed."""
+    rule = "never read health/ or finance/ notes"
     quoted = f"{BODY_LESSON[:180]}and {rule} without asking."
-    store.write_lesson(quoted, category="preference", source="after_turn_review")
+    _displaced_as_an_earlier_version_left_it(store, rule, quoted)
     assert _rules(store) == [quoted], "the precondition: her rule was displaced"
 
     composed_text.settle(store)

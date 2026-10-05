@@ -240,7 +240,9 @@ class TestVerdictMapping:
     def test_supersede_of_an_unknown_target_degrades_to_add(self, store):
         cands = mf.gather(store, [_cand(0, "pref.new", "x")])
         final = mf.adjudicate(
-            cands[0], mf.Decision(index=0, verdict=mf.VERDICT_SUPERSEDE, target="pref.ghost")
+            cands[0],
+            mf.Decision(index=0, verdict=mf.VERDICT_SUPERSEDE, target="pref.ghost"),
+            source="test",
         )
         assert final.verdict == mf.VERDICT_ADD
 
