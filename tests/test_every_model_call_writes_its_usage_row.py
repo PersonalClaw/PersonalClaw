@@ -218,7 +218,7 @@ def test_the_rail_finds_the_sites_it_exists_for():
     assert len(found) >= 20, found
     for known in (
         # The one-shot call every background chore is (``chores.run_chore``).
-        ("llm_helpers.py", "_one_shot_completion._run"),
+        ("llm_helpers.py", "_one_shot_completion._ask"),
         ("dashboard/handlers/optimizer.py", "handle_optimize._optimize"),
         ("loop/judge.py", "_stream"),
         ("eval/judge.py", "LLMJudge.judge_turn"),

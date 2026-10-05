@@ -133,12 +133,21 @@ async def test_the_read_follows_the_project_through_archive_restore_and_delete(t
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_file_reads_as_no_default_and_a_write_repairs_it(tmp_path):
-    (tmp_path / "entity_settings").mkdir(parents=True)
-    (tmp_path / "entity_settings" / "projects.json").write_text("{not json")
+async def test_an_unreadable_file_reads_as_no_default_and_no_write_goes_over_it(tmp_path):
+    """A file that is there and cannot be read is never written over: the write would replace
+    whatever it holds. It reads as no default, every write refuses until it can be read again, and
+    once it is fixed or removed the next write works."""
+    settings = tmp_path / "entity_settings" / "projects.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("{not json")
     async with _client(tmp_path) as client:
         assert await _default(client) == ""
         pid = await _project(client, "Q4 Launch Plan")
+        r = await client.put("/api/projects/settings", json={"default_project_id": pid})
+        assert r.status == 409
+        assert (await r.json())["error"]["code"] == "store_unreadable"
+        assert settings.read_text() == "{not json"
+        settings.unlink()
         r = await client.put("/api/projects/settings", json={"default_project_id": pid})
         assert r.status == 200
         assert await _default(client) == pid
